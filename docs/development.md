@@ -12,7 +12,7 @@ bun run build all
 bun run bundle
 ```
 
-`targets.json` records the build graph. ViaBedrock uses the `vv-json` branch of `oryxel1/CubeConverter`, as its upstream build does. The build tool injects a private Gradle Maven repository and substitutes StackAnvil versions for downstream builds. It does not edit upstream build files for local dependency routing. Artifacts and manifests go to `dist/`. The PrismLauncher ZIP goes to `dist/prism/`.
+`targets.json` records the build order. ViaBedrock uses the `vv-json` branch of `oryxel1/CubeConverter`, as its upstream build does. The build tool publishes each JAR and POM to `.stackanvil/maven/` and passes that path to Gradle. The downstream branding patches use the local artifacts when the path is present. Direct Gradle builds use the upstream dependencies. Artifacts and manifests go to `dist/`. The PrismLauncher ZIP goes to `dist/prism/`.
 
 The add-on build includes one downstream compatibility patch for the current ViaBedrock API. It is a custom patch, so it will not appear in the upstream PR branch.
 

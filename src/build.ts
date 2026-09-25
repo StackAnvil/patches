@@ -12,7 +12,6 @@ import { sync } from "./stack.ts";
 interface Coordinates { group: string; artifact: string; version: string }
 
 const localRepo = join(root, ".stackanvil", "maven");
-const initScript = join(root, ".stackanvil", "local-dependencies.gradle");
 
 async function javaHome(version: string): Promise<string> {
   const explicit = process.env[`STACKANVIL_JAVA_${version}`] ?? process.env[`JAVA_HOME_${version}_X64`];
@@ -39,30 +38,6 @@ function coordinates(pom: string): Coordinates {
   return { group: pomValue(pom, "groupId"), artifact: pomValue(pom, "artifactId"), version: pomValue(pom, "version") };
 }
 
-async function writeInitScript(built: Map<string, Coordinates>): Promise<void> {
-  const substitutions = [
-    ["cubeconverter", "com.github.oryxel1:CubeConverter"],
-    ["viabedrock", "net.raphimc:ViaBedrock"],
-    ["viafabricplus", "com.viaversion:viafabricplus"],
-  ].flatMap(([id, original]) => {
-    const local = built.get(id!);
-    return local ? [`substitute module('${original}') using module('${local.group}:${local.artifact}:${local.version}')`] : [];
-  });
-  const script = [
-    "gradle.beforeProject { project ->",
-    `  project.repositories.maven { name = 'StackAnvilLocal'; url = uri(${JSON.stringify(localRepo)}) }`,
-    "  project.configurations.configureEach { configuration ->",
-    "    configuration.resolutionStrategy.dependencySubstitution {",
-    ...substitutions.map((line) => `      ${line}`),
-    "    }",
-    "  }",
-    "}",
-    "",
-  ].join("\n");
-  await mkdir(join(root, ".stackanvil"), { recursive: true });
-  await writeFile(initScript, script);
-}
-
 async function publishLocal(artifact: string, pom: string, coordinate: Coordinates): Promise<void> {
   const directory = join(localRepo, ...coordinate.group.split("."), coordinate.artifact, coordinate.version);
   await mkdir(directory, { recursive: true });
@@ -75,9 +50,8 @@ function buildOne(id: string, built: Map<string, Coordinates>) {
   return Effect.gen(function* () {
     const target = yield* Effect.promise(() => getTarget(id));
     const dir = yield* sync(id);
-    yield* Effect.promise(() => writeInitScript(built));
     const jdk = yield* Effect.promise(() => javaHome(target.java));
-    yield* command("bash", ["./gradlew", "--no-daemon", "--init-script", initScript, "clean", target.buildTask,
+    yield* command("bash", ["./gradlew", "--no-daemon", `-PstackanvilMavenRepo=${localRepo}`, "clean", target.buildTask,
       `generatePomFileFor${target.publication}Publication`], dir,
       { ...process.env, JAVA_HOME: jdk, PATH: `${join(jdk, "bin")}:${process.env.PATH ?? ""}` });
     const artifacts = yield* Effect.promise(() => listArtifacts(dir));
