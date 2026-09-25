@@ -1,0 +1,1435 @@
+From f9de929bc7e791818ef7eb7d8cc585e577c4e70c Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 25 Sep 2026 16:52:39 +0200
+Subject: [PATCH] fix(maps): restore held and framed map rendering
+
+Preserve the map rendering work from ViaBedrock PR #425 while retaining the current JUnit configuration introduced by the resource-pack cache patch.
+---
+ .../viabedrock/protocol/BedrockProtocol.java  |   2 +
+ .../protocol/packet/ClientPlayerPackets.java  |  15 +
+ .../protocol/packet/InteractionPackets.java   | 264 ++++++++--------
+ .../protocol/packet/MapPackets.java           | 168 ++++++++++
+ .../protocol/packet/WorldPackets.java         |   1 +
+ .../protocol/rewriter/ItemDataRewriter.java   |   5 -
+ .../protocol/rewriter/ItemRewriter.java       |  38 ++-
+ .../protocol/storage/ChunkTracker.java        |  22 +-
+ .../protocol/storage/EntityTracker.java       |  56 +++-
+ .../protocol/storage/MapTracker.java          |  31 +-
+ .../protocol/util/map/JavaMapPaletteUtil.java | 142 +++++++++
+ .../protocol/util/map/MapColor.java           | 288 ++++++++++++++++++
+ .../util/map/JavaMapPaletteUtilTest.java      |  29 ++
+ 13 files changed, 892 insertions(+), 169 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/MapPackets.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/util/map/JavaMapPaletteUtil.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/util/map/MapColor.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/util/map/JavaMapPaletteUtilTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+index 9595bea..6e12a59 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+@@ -37,6 +37,7 @@ import io.netty.buffer.ByteBufUtil;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.protocol.StatelessTransitionProtocol;
+ import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.protocol.packet.MapPackets;
+ import net.raphimc.viabedrock.platform.ViaBedrockConfig;
+ import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayStatus;
+@@ -96,6 +97,7 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
+         ClientPlayerPackets.register(this);
+         OtherPlayerPackets.register(this);
+         WorldPackets.register(this);
++        MapPackets.register(this);
+         EntityPackets.register(this);
+         HudPackets.register(this);
+         InventoryPackets.register(this);
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+index 08f286e..e8999f1 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+@@ -388,6 +388,21 @@ public final class ClientPlayerPackets {
+             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+             final InventoryContainer inventoryContainer = wrapper.user().get(InventoryTracker.class).getInventoryContainer();
+             final int entityId = wrapper.read(Types.VAR_INT); // entity id
++            final EntityTracker.ItemFrame itemFrame = entityTracker.getItemFrameByJid(entityId);
++            if (itemFrame != null) {
++                wrapper.cancel();
++                final InteractionHand hand = InteractionHand.values()[wrapper.read(Types.VAR_INT)];
++                final Vector3d location = wrapper.read(Types.LOW_PRECISION_VECTOR);
++                wrapper.read(Types.BOOLEAN); // using secondary action
++                if (hand == InteractionHand.MAIN_HAND) {
++                    InteractionPackets.sendUseItemOnBlock(
++                            wrapper.user(), itemFrame.position(), itemFrame.facing(),
++                            new Position3f((float) location.x() + 0.5F, (float) location.y() + 0.5F, (float) location.z() + 0.5F),
++                            false
++                    );
++                }
++                return;
++            }
+             final Entity entity = entityTracker.getEntityByJid(entityId);
+             if (entity == null) {
+                 wrapper.cancel();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
+index 0fc8d66..4a41209 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
+@@ -19,6 +19,7 @@ package net.raphimc.viabedrock.protocol.packet;
+ 
+ import com.viaversion.viaversion.api.minecraft.BlockFace;
+ import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+ import com.viaversion.viaversion.api.type.Types;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
+@@ -29,6 +30,11 @@ import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
+ import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
+ import net.raphimc.viabedrock.api.model.entity.Entity;
+ import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.protocol.model.inventory.BedrockInventoryTransaction;
++import net.raphimc.viabedrock.protocol.model.inventory.InventoryActionData;
++import net.raphimc.viabedrock.protocol.model.inventory.InventorySource;
++import net.raphimc.viabedrock.protocol.model.inventory.InventoryTransactionData;
++import net.raphimc.viabedrock.protocol.rewriter.InventoryTransactionRewriter;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.PlayerActionPacketFactory;
+@@ -42,11 +48,6 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerActionAct
+ import net.raphimc.viabedrock.protocol.model.BedrockItem;
+ import net.raphimc.viabedrock.protocol.model.EntityLink;
+ import net.raphimc.viabedrock.protocol.model.Position3f;
+-import net.raphimc.viabedrock.protocol.model.inventory.BedrockInventoryTransaction;
+-import net.raphimc.viabedrock.protocol.model.inventory.InventoryActionData;
+-import net.raphimc.viabedrock.protocol.model.inventory.InventorySource;
+-import net.raphimc.viabedrock.protocol.model.inventory.InventoryTransactionData;
+-import net.raphimc.viabedrock.protocol.rewriter.InventoryTransactionRewriter;
+ import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
+ import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+ import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
+@@ -57,22 +58,25 @@ import java.util.logging.Level;
+ 
+ public final class InteractionPackets {
+ 
++    private InteractionPackets() {
++    }
++
+     public static boolean handlePlayerAction(final PacketWrapper wrapper, final PlayerActionAction action) {
+         final InventoryTransactionRewriter transactionRewriter = wrapper.user().get(InventoryTransactionRewriter.class);
+         final InventoryContainer inventory = wrapper.user().get(InventoryTracker.class).getInventoryContainer();
+ 
+         if (action == PlayerActionAction.RELEASE_USE_ITEM) {
+             final BedrockInventoryTransaction transaction = new BedrockInventoryTransaction(
+-                0,
+-                null,
+-                null,
+-                ComplexInventoryTransaction_Type.ItemReleaseTransaction,
+-                new InventoryTransactionData.ReleaseItemTransactionData(
+-                    ItemReleaseActionType.Release,
+-                    inventory.getSelectedHotbarSlot(),
+-                    inventory.getSelectedHotbarItem(),
+-                    wrapper.user().get(EntityTracker.class).getClientPlayer().position()
+-                )
++                    0,
++                    null,
++                    null,
++                    ComplexInventoryTransaction_Type.ItemReleaseTransaction,
++                    new InventoryTransactionData.ReleaseItemTransactionData(
++                            ItemReleaseActionType.Release,
++                            inventory.getSelectedHotbarSlot(),
++                            inventory.getSelectedHotbarItem(),
++                            wrapper.user().get(EntityTracker.class).getClientPlayer().position()
++                    )
+             );
+             final PacketWrapper transactionPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper.user());
+             transactionPacket.write(transactionRewriter.getInventoryTransactionType(), transaction);
+@@ -102,24 +106,24 @@ public final class InteractionPackets {
+         }
+ 
+         final BedrockInventoryTransaction transaction = new BedrockInventoryTransaction(
+-            0,
+-            null,
+-            List.of(
+-                new InventoryActionData(
+-                    new InventorySource(InventorySourceType.World_Interaction, ContainerID.CONTAINER_ID_NONE.getValue(), InventorySourceFlags.No_Flag),
+-                    0,
+-                    BedrockItem.empty(),
+-                    droppedItem
++                0,
++                null,
++                List.of(
++                        new InventoryActionData(
++                                new InventorySource(InventorySourceType.World_Interaction, ContainerID.CONTAINER_ID_NONE.getValue(), InventorySourceFlags.No_Flag),
++                                0,
++                                BedrockItem.empty(),
++                                droppedItem
++                        ),
++                        new InventoryActionData(
++                                new InventorySource(InventorySourceType.Container_Inventory, ContainerID.CONTAINER_ID_INVENTORY.getValue(), InventorySourceFlags.No_Flag),
++                                inventory.getSelectedHotbarSlot(),
++                                currentItem,
++                                remainingItem
++                        )
+                 ),
+-                new InventoryActionData(
+-                    new InventorySource(InventorySourceType.Container_Inventory, ContainerID.CONTAINER_ID_INVENTORY.getValue(), InventorySourceFlags.No_Flag),
+-                    inventory.getSelectedHotbarSlot(),
+-                    currentItem,
+-                    remainingItem
+-                )
+-            ),
+-            ComplexInventoryTransaction_Type.NormalTransaction,
+-            new InventoryTransactionData.NormalTransactionData()
++                ComplexInventoryTransaction_Type.NormalTransaction,
++                new InventoryTransactionData.NormalTransactionData()
+         );
+         final PacketWrapper transactionPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper.user());
+         transactionPacket.write(transactionRewriter.getInventoryTransactionType(), transaction);
+@@ -127,6 +131,83 @@ public final class InteractionPackets {
+         return true;
+     }
+ 
++    public static void sendUseItemOnBlock(final UserConnection user, final BlockPosition position, final int faceInt,
++                                          final Position3f clickPosition, final boolean insideBlock) {
++        final Direction direction = Direction.getFromVerticalId(faceInt);
++        if (direction == null) {
++            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown block face id: " + faceInt);
++            return;
++        }
++        final BlockFace face = direction.blockFace();
++        final ClientPlayerEntity clientPlayer = user.get(EntityTracker.class).getClientPlayer();
++        final InventoryTracker inventoryTracker = user.get(InventoryTracker.class);
++        final ChunkTracker chunkTracker = user.get(ChunkTracker.class);
++        final InventoryTransactionRewriter inventoryTransactionRewriter = user.get(InventoryTransactionRewriter.class);
++
++        // The bedrock client will send a start item use on action to the server first.
++        PlayerActionPacketFactory.sendBedrockPlayerAction(
++                user,
++                clientPlayer.runtimeId(),
++                PlayerActionType.StartItemUseOn,
++                position,
++                insideBlock ? position : position.getRelative(face),
++                faceInt
++        );
++
++        // This is the main packet that the bedrock client use to interact with block.The rest of the
++        final PacketWrapper transactionPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, user);
++
++        BedrockItem predictedToItem = inventoryTracker.getInventoryContainer().getSelectedHotbarItem().copy();
++        // This is not entirely correct, but at least it's more accurate than not sending actions or sending the original item data.
++        if (predictedToItem.blockRuntimeId() != 0 && clientPlayer.javaGameMode() != GameMode.CREATIVE) {
++            predictedToItem.setAmount(predictedToItem.amount() - 1);
++        }
++        if (predictedToItem.amount() <= 0) {
++            predictedToItem = BedrockItem.empty();
++        }
++
++        final BedrockInventoryTransaction inventoryTransaction = new BedrockInventoryTransaction(
++                0, // legacy request id
++                null,
++                List.of(
++                        new InventoryActionData(
++                                new InventorySource(InventorySourceType.Container_Inventory, ContainerID.CONTAINER_ID_INVENTORY.getValue(), InventorySourceFlags.No_Flag),
++                                inventoryTracker.getInventoryContainer().getSelectedHotbarSlot(),
++                                inventoryTracker.getInventoryContainer().getSelectedHotbarItem(),
++                                predictedToItem
++                        )
++                ),
++                ComplexInventoryTransaction_Type.ItemUseTransaction,
++                new InventoryTransactionData.UseItemTransactionData(
++                        ItemUseActionType.Place,
++                        ItemUseTriggerType.Player_Input,
++                        position,
++                        faceInt,
++                        inventoryTracker.getInventoryContainer().getSelectedHotbarSlot(),
++                        HandSlot.Mainhand,
++                        inventoryTracker.getInventoryContainer().getSelectedHotbarItem(),
++                        clientPlayer.position(),
++                        clickPosition,
++                        chunkTracker.getBlockState(position),
++                        ItemUsePredictedResult.Success,
++                        ItemUseClientCooldownState.Off
++                )
++        );
++        transactionPacket.write(inventoryTransactionRewriter.getInventoryTransactionType(), inventoryTransaction);
++
++        transactionPacket.sendToServer(BedrockProtocol.class);
++
++        // Bedrock sends a stop item use on after the transaction packet
++        PlayerActionPacketFactory.sendBedrockPlayerAction(
++                user,
++                clientPlayer.runtimeId(),
++                PlayerActionType.StopItemUseOn,
++                position,
++                new BlockPosition(0, 0, 0),
++                0
++        );
++    }
++
+     public static void register(final BedrockProtocol protocol) {
+         // TODO: Track when the player start using item and send the StartUsingItem input data to the server.
+         protocol.registerServerbound(ServerboundPackets26_3.USE_ITEM, ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper -> {
+@@ -147,24 +228,24 @@ public final class InteractionPackets {
+             }
+ 
+             final BedrockInventoryTransaction inventoryTransaction = new BedrockInventoryTransaction(
+-                0, // legacy request id
+-                null,
+-                null,
+-                ComplexInventoryTransaction_Type.ItemUseTransaction,
+-                new InventoryTransactionData.UseItemTransactionData(
+-                    ItemUseActionType.Use,
+-                    ItemUseTriggerType.Unknown,
+-                    new BlockPosition(0, 0, 0), // block position
+-                    255, // block face
+-                    inventoryContainer.getSelectedHotbarSlot(),
+-                    HandSlot.Mainhand,
+-                    inventoryContainer.getSelectedHotbarItem(),
+-                    entityTracker.getClientPlayer().position(),
+-                    Position3f.ZERO, // click position
+-                    0, // block runtime id
+-                    ItemUsePredictedResult.Failure,
+-                    ItemUseClientCooldownState.Off
+-                )
++                    0, // legacy request id
++                    null,
++                    null,
++                    ComplexInventoryTransaction_Type.ItemUseTransaction,
++                    new InventoryTransactionData.UseItemTransactionData(
++                            ItemUseActionType.Use,
++                            ItemUseTriggerType.Unknown,
++                            new BlockPosition(0, 0, 0), // block position
++                            255, // block face
++                            inventoryContainer.getSelectedHotbarSlot(),
++                            HandSlot.Mainhand,
++                            inventoryContainer.getSelectedHotbarItem(),
++                            entityTracker.getClientPlayer().position(),
++                            Position3f.ZERO, // click position
++                            0, // block runtime id
++                            ItemUsePredictedResult.Failure,
++                            ItemUseClientCooldownState.Off
++                    )
+             );
+             wrapper.write(inventoryTransactionRewriter.getInventoryTransactionType(), inventoryTransaction);
+         });
+@@ -172,25 +253,14 @@ public final class InteractionPackets {
+         protocol.registerServerbound(ServerboundPackets26_3.USE_ITEM_ON, null, wrapper -> {
+             wrapper.cancel();
+ 
+-            final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
+-            final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
+-            final ChunkTracker chunkTracker = wrapper.user().get(ChunkTracker.class);
+-            final InventoryTransactionRewriter inventoryTransactionRewriter = wrapper.user().get(InventoryTransactionRewriter.class);
+-
+             final InteractionHand hand = InteractionHand.values()[wrapper.read(Types.VAR_INT)]; // hand
+ 
+             final BlockPosition position = wrapper.read(Types.BLOCK_POSITION1_14); // block position
+             final int faceInt = wrapper.read(Types.UNSIGNED_BYTE); // face
+-            final Direction direction = Direction.getFromVerticalId(faceInt);
+-            if (direction == null) {
+-                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown block face id: " + faceInt);
+-                return;
+-            }
+-            final BlockFace face = direction.blockFace();
+             final Position3f clickPosition = new Position3f(
+-                wrapper.read(Types.FLOAT), // x
+-                wrapper.read(Types.FLOAT), // y
+-                wrapper.read(Types.FLOAT)  // z
++                    wrapper.read(Types.FLOAT), // x
++                    wrapper.read(Types.FLOAT), // y
++                    wrapper.read(Types.FLOAT)  // z
+             );
+             final boolean insideBlock = wrapper.read(Types.BOOLEAN); // inside block
+             wrapper.read(Types.BOOLEAN); // world border, this doesn't exist on Bedrock.
+@@ -203,68 +273,7 @@ public final class InteractionPackets {
+                 return;
+             }
+ 
+-            // The bedrock client will send a start item use on action to the server first.
+-            PlayerActionPacketFactory.sendBedrockPlayerAction(
+-                wrapper.user(),
+-                clientPlayer.runtimeId(),
+-                PlayerActionType.StartItemUseOn,
+-                position,
+-                insideBlock ? position : position.getRelative(face),
+-                faceInt
+-            );
+-
+-            // This is the main packet that the bedrock client use to interact with block.The rest of the
+-            final PacketWrapper transactionPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper.user());
+-
+-            BedrockItem predictedToItem = inventoryTracker.getInventoryContainer().getSelectedHotbarItem().copy();
+-            // This is not entirely correct, but at least it's more accurate than not sending actions or sending the original item data.
+-            if (predictedToItem.blockRuntimeId() != 0 && clientPlayer.javaGameMode() != GameMode.CREATIVE) {
+-                predictedToItem.setAmount(predictedToItem.amount() - 1);
+-            }
+-            if (predictedToItem.amount() <= 0) {
+-                predictedToItem = BedrockItem.empty();
+-            }
+-
+-            final BedrockInventoryTransaction inventoryTransaction = new BedrockInventoryTransaction(
+-                0, // legacy request id
+-                null,
+-                List.of(
+-                    new InventoryActionData(
+-                        new InventorySource(InventorySourceType.Container_Inventory, ContainerID.CONTAINER_ID_INVENTORY.getValue(), InventorySourceFlags.No_Flag),
+-                        inventoryTracker.getInventoryContainer().getSelectedHotbarSlot(),
+-                        inventoryTracker.getInventoryContainer().getSelectedHotbarItem(),
+-                        predictedToItem
+-                    )
+-                ),
+-                ComplexInventoryTransaction_Type.ItemUseTransaction,
+-                new InventoryTransactionData.UseItemTransactionData(
+-                    ItemUseActionType.Place,
+-                    ItemUseTriggerType.Player_Input,
+-                    position,
+-                    faceInt,
+-                    inventoryTracker.getInventoryContainer().getSelectedHotbarSlot(),
+-                    HandSlot.Mainhand,
+-                    inventoryTracker.getInventoryContainer().getSelectedHotbarItem(),
+-                    clientPlayer.position(),
+-                    clickPosition,
+-                    chunkTracker.getBlockState(position),
+-                    ItemUsePredictedResult.Success,
+-                    ItemUseClientCooldownState.Off
+-                )
+-            );
+-            transactionPacket.write(inventoryTransactionRewriter.getInventoryTransactionType(), inventoryTransaction);
+-
+-            transactionPacket.sendToServer(BedrockProtocol.class);
+-
+-            // Bedrock sends a stop item use on after the transaction packet
+-            PlayerActionPacketFactory.sendBedrockPlayerAction(
+-                wrapper.user(),
+-                clientPlayer.runtimeId(),
+-                PlayerActionType.StopItemUseOn,
+-                position,
+-                new BlockPosition(0, 0, 0),
+-                0
+-            );
++            sendUseItemOnBlock(wrapper.user(), position, faceInt, clickPosition, insideBlock);
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.INVENTORY_TRANSACTION, null, wrapper -> {
+             final InventoryTransactionRewriter inventoryTransactionRewriter = wrapper.user().get(InventoryTransactionRewriter.class);
+@@ -350,7 +359,4 @@ public final class InteractionPackets {
+ 
+     }
+ 
+-    private InteractionPackets() {
+-    }
+-
+ }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MapPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MapPackets.java
+new file mode 100644
+index 0000000..1abaea1
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MapPackets.java
+@@ -0,0 +1,168 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.raphimc.viabedrock.api.util.TextUtil;
++import net.raphimc.viabedrock.protocol.util.map.JavaMapPaletteUtil;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.storage.MapTracker;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++import java.util.ArrayList;
++import java.util.List;
++
++public final class MapPackets {
++
++    private MapPackets() {
++    }
++
++    public static void register(final BedrockProtocol protocol) {
++        protocol.registerClientbound(ClientboundBedrockPackets.MAP_ITEM_DATA, ClientboundPackets26_3.MAP_ITEM_DATA, wrapper -> {
++            final long bedrockId = wrapper.read(BedrockTypes.VAR_LONG);
++            wrapper.read(Types.BYTE); // dimension
++            final boolean locked = wrapper.read(Types.BOOLEAN);
++            wrapper.read(BedrockTypes.BLOCK_POSITION); // origin
++
++            if (wrapper.read(Types.BOOLEAN)) { // creation map ids present
++                final int count = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
++                for (int i = 0; i < count; i++) {
++                    wrapper.read(BedrockTypes.VAR_LONG); // related map id
++                }
++            }
++
++            final byte scale = wrapper.read(Types.BOOLEAN) ? wrapper.read(Types.BYTE) : 0;
++            if (wrapper.read(Types.BOOLEAN)) { // tracked actor ids present
++                final int trackedCount = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
++                for (int i = 0; i < trackedCount; i++) {
++                    wrapper.read(BedrockTypes.INT_LE); // tracked actor type
++                    if (wrapper.read(Types.BOOLEAN)) {
++                        wrapper.read(BedrockTypes.VAR_LONG); // entity id
++                    }
++                    if (wrapper.read(Types.BOOLEAN)) {
++                        wrapper.read(BedrockTypes.BLOCK_POSITION); // block position
++                    }
++                }
++            }
++
++            final List<Decoration> decorations = new ArrayList<>();
++            final boolean hasDecorations = wrapper.read(Types.BOOLEAN);
++            if (hasDecorations) {
++                final int count = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
++                for (int i = 0; i < count; i++) {
++                    final int type = Byte.toUnsignedInt(wrapper.read(Types.BYTE));
++                    final byte rotation = wrapper.read(Types.BYTE);
++                    final byte x = wrapper.read(Types.BYTE);
++                    final byte y = wrapper.read(Types.BYTE);
++                    final String label = wrapper.read(BedrockTypes.STRING);
++                    wrapper.read(BedrockTypes.INT_LE); // color, used by Bedrock markers
++                    final int javaType = javaDecorationType(type);
++                    if (javaType != -1) {
++                        decorations.add(new Decoration(javaType, x, y, rotation, label));
++                    }
++                }
++            }
++
++            int width = 0;
++            int height = 0;
++            int startX = 0;
++            int startY = 0;
++            short[] colors = new short[0];
++            if (wrapper.read(Types.BOOLEAN)) {
++                width = wrapper.read(BedrockTypes.VAR_INT);
++            }
++            if (wrapper.read(Types.BOOLEAN)) {
++                height = wrapper.read(BedrockTypes.VAR_INT);
++            }
++            if (wrapper.read(Types.BOOLEAN)) {
++                startX = wrapper.read(BedrockTypes.VAR_INT);
++            }
++            if (wrapper.read(Types.BOOLEAN)) {
++                startY = wrapper.read(BedrockTypes.VAR_INT);
++            }
++            if (wrapper.read(Types.BOOLEAN)) {
++                final int colorCount = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
++                if (width < 0 || height < 0 || startX < 0 || startY < 0
++                        || width + startX > 128 || height + startY > 128 || colorCount != width * height) {
++                    wrapper.cancel();
++                    return;
++                }
++
++                final int[] bedrockColors = new int[colorCount];
++                for (int i = 0; i < colorCount; i++) {
++                    bedrockColors[i] = (int) (long) wrapper.read(BedrockTypes.UNSIGNED_INT_LE);
++                }
++                colors = JavaMapPaletteUtil.convertToJavaPalette(bedrockColors);
++            }
++
++            wrapper.write(Types.VAR_INT, wrapper.user().get(MapTracker.class).javaId(bedrockId));
++            wrapper.write(Types.BYTE, scale);
++            wrapper.write(Types.BOOLEAN, locked);
++            wrapper.write(Types.BOOLEAN, hasDecorations);
++            if (hasDecorations) {
++                wrapper.write(Types.VAR_INT, decorations.size());
++                for (Decoration decoration : decorations) {
++                    wrapper.write(Types.VAR_INT, decoration.type());
++                    wrapper.write(Types.BYTE, decoration.x());
++                    wrapper.write(Types.BYTE, decoration.y());
++                    wrapper.write(Types.BYTE, decoration.rotation());
++                    wrapper.write(Types.OPTIONAL_TAG, decoration.label().isEmpty() ? null : TextUtil.stringToNbt(decoration.label()));
++                }
++            }
++            wrapper.write(Types.UNSIGNED_BYTE, (short) width);
++            if (width > 0) {
++                wrapper.write(Types.UNSIGNED_BYTE, (short) height);
++                wrapper.write(Types.UNSIGNED_BYTE, (short) startX);
++                wrapper.write(Types.UNSIGNED_BYTE, (short) startY);
++                wrapper.write(Types.VAR_INT, colors.length);
++                for (short color : colors) {
++                    wrapper.write(Types.UNSIGNED_BYTE, color);
++                }
++            }
++        });
++    }
++
++    private static int javaDecorationType(final int bedrockType) {
++        return switch (bedrockType) {
++            case 0 -> 0; // player
++            case 1 -> 23; // green banner
++            case 2 -> 24; // red banner
++            case 3 -> 21; // blue banner
++            case 4 -> 4; // target x
++            case 5 -> 2; // red marker
++            case 6 -> 5; // target point
++            case 7 -> 10; // white banner
++            case 8 -> 16; // pink banner
++            case 9 -> 11; // orange banner
++            case 10 -> 14; // yellow banner
++            case 11 -> 19; // cyan banner
++            case 12 -> 23; // green banner
++            case 13 -> 1; // frame
++            case 14 -> 8; // mansion
++            case 15 -> 9; // monument
++            case 17, 18, 19, 20, 21, 22, 23, 24 -> bedrockType + 10; // structures
++            default -> -1;
++        };
++    }
++
++    private record Decoration(int type, byte x, byte y, byte rotation, String label) {
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+index d91e9cf..9a9fc45 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+@@ -466,6 +466,7 @@ public final class WorldPackets {
+                     final ChunkTracker chunkTracker = wrapper.user().get(ChunkTracker.class);
+                     final BedrockBlockEntity bedrockBlockEntity = new BedrockBlockEntity(wrapper.get(Types.BLOCK_POSITION1_14, 0), (CompoundTag) tag);
+                     chunkTracker.addBlockEntity(bedrockBlockEntity);
++                    wrapper.user().get(EntityTracker.class).updateItemFrame(bedrockBlockEntity.position(), bedrockBlockEntity);
+ 
+                     final BlockEntity javaBlockEntity = BlockEntityRewriter.toJava(wrapper.user(), chunkTracker.getBlockState(bedrockBlockEntity.position()), bedrockBlockEntity);
+                     if (javaBlockEntity instanceof BlockEntityWithBlockState blockEntityWithBlockState) {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
+index 2fa8f75..e21bddd 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
+@@ -28,7 +28,6 @@ import net.raphimc.viabedrock.api.util.RegistryUtil;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Enchant_Type;
+ import net.raphimc.viabedrock.protocol.model.BedrockItem;
+-import net.raphimc.viabedrock.protocol.storage.MapTracker;
+ 
+ import java.util.logging.Level;
+ 
+@@ -43,10 +42,6 @@ public final class ItemDataRewriter {
+                 javaItem.dataContainer().set(StructuredDataKey.DAMAGE, durability.asInt());
+             }
+ 
+-            if (bedrockTag.get("map_uuid") instanceof NumberTag uuidTag) {
+-                javaItem.dataContainer().set(StructuredDataKey.MAP_ID, user.get(MapTracker.class).getJavaId(uuidTag.asLong()));
+-            }
+-
+             if (bedrockTag.get("ench") instanceof ListTag<?> enchantments) {
+ 
+                 final StructuredData<Enchantments> enchantmentsData = javaItem.dataContainer().getData(StructuredDataKey.ENCHANTMENTS1_21_5);
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
+index bba68b8..2ca1c4e 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
+@@ -21,6 +21,7 @@ import com.google.common.collect.BiMap;
+ import com.google.common.collect.HashBiMap;
+ import com.viaversion.nbt.tag.CompoundTag;
+ import com.viaversion.nbt.tag.IntTag;
++import com.viaversion.nbt.tag.NumberTag;
+ import com.viaversion.nbt.tag.StringTag;
+ import com.viaversion.nbt.tag.Tag;
+ import com.viaversion.viaversion.api.Via;
+@@ -50,6 +51,7 @@ import net.raphimc.viabedrock.protocol.model.ItemEntry;
+ import net.raphimc.viabedrock.protocol.rewriter.item.BundleItemRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomAttachableResourceRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
++import net.raphimc.viabedrock.protocol.storage.MapTracker;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ import net.raphimc.viabedrock.protocol.types.array.ArrayType;
+@@ -213,6 +215,9 @@ public class ItemRewriter extends StoredObject {
+ 
+         final CompoundTag bedrockTag = bedrockItem.tag();
+         if (bedrockTag != null) {
++            if (identifier.equals("minecraft:filled_map") && bedrockTag.get("map_uuid") instanceof NumberTag mapUuid) {
++                javaItem.dataContainer().set(StructuredDataKey.MAP_ID, this.user().get(MapTracker.class).itemJavaId(mapUuid.asLong()));
++            }
+             if (bedrockTag.get("display") instanceof CompoundTag display) {
+                 if (display.contains("Name")) { // Bedrock client defaults to empty string if the type is wrong
+                     javaItem.dataContainer().set(StructuredDataKey.CUSTOM_NAME, TextUtil.stringToNbt(display.getString("Name", "")));
+@@ -231,8 +236,21 @@ public class ItemRewriter extends StoredObject {
+     }
+ 
+     public CompoundTag javaItem(final CompoundTag bedrockTag) {
++        final Item javaItem = this.javaItemStack(bedrockTag);
++        if (javaItem == null) {
++            return null;
++        }
+         final CompoundTag javaTag = new CompoundTag();
++        final String javaId = BedrockProtocol.MAPPINGS.getJavaItems().inverse().get(javaItem.identifier());
++        javaTag.put("id", new StringTag(javaId));
++        javaTag.put("count", new IntTag(javaItem.amount()));
++        if (javaItem.tag() != null) {
++            javaTag.put("components", javaItem.tag());
++        }
++        return javaTag;
++    }
+ 
++    public Item javaItemStack(final CompoundTag bedrockTag) {
+         if (bedrockTag == null) {
+             return null;
+         }
+@@ -249,26 +267,16 @@ public class ItemRewriter extends StoredObject {
+         }
+ 
+         final BedrockItem item = new BedrockItem(
+-            id,
+-            (short) 0,
+-            bedrockTag.getByte("Count"),
+-            bedrockTag.getCompoundTag("tag")
++                id,
++                (short) 0,
++                bedrockTag.getByte("Count"),
++                bedrockTag.getCompoundTag("tag")
+         );
+         if (item.isEmpty()) {
+             return null;
+         }
+ 
+-        final Item javaItem = this.javaItem(item);
+-
+-        final String javaId = BedrockProtocol.MAPPINGS.getJavaItems().inverse().get(javaItem.identifier());
+-        javaTag.put("id", new StringTag(javaId));
+-
+-        javaTag.put("count", new IntTag(javaItem.amount()));
+-        if (javaItem.tag() != null) {
+-            javaTag.put("components", javaItem.tag());
+-        }
+-
+-        return javaTag;
++        return this.javaItem(item);
+     }
+ 
+     public Item[] javaItems(final BedrockItem[] bedrockItems) {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+index f990a97..10b5d18 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+@@ -430,7 +430,9 @@ public class ChunkTracker extends StoredObject {
+             }
+             this.invalidateNearbyLight(chunkX, chunkZ);
+ 
+-            if (BlockEntityRewriter.isBlockEntity(tag)) {
++            if (CustomBlockTags.ITEM_FRAME.equals(tag)) {
++                entityTracker.spawnItemFrame(blockPosition, blockStateRewriter.blockState(blockState));
++            } else if (BlockEntityRewriter.isBlockEntity(tag)) {
+                 final BedrockBlockEntity bedrockBlockEntity = this.getBlockEntity(blockPosition);
+                 BlockEntity javaBlockEntity = null;
+                 if (bedrockBlockEntity != null) {
+@@ -446,8 +448,6 @@ public class ChunkTracker extends StoredObject {
+                 if (javaBlockEntity != null && javaBlockEntity.tag() != null) {
+                     return new IntObjectImmutablePair<>(remappedBlockState, javaBlockEntity);
+                 }
+-            } else if (CustomBlockTags.ITEM_FRAME.equals(tag)) {
+-                entityTracker.spawnItemFrame(blockPosition, blockStateRewriter.blockState(blockState));
+             }
+         }
+ 
+@@ -876,9 +876,9 @@ public class ChunkTracker extends StoredObject {
+                     this.transferPaletteData(layer0, remappedBlockPalette);
+                 }
+ 
+-                final String[] paletteIndexBlockStateTags = new String[remappedBlockPalette.size()];
+-                for (int i = 0; i < remappedBlockPalette.size(); i++) {
+-                    paletteIndexBlockStateTags[i] = blockStateRewriter.tag(remappedBlockPalette.idByIndex(i));
++                final String[] paletteIndexBlockStateTags = new String[layer0.size()];
++                for (int i = 0; i < layer0.size(); i++) {
++                    paletteIndexBlockStateTags[i] = blockStateRewriter.tag(layer0.idByIndex(i));
+                 }
+                 remappedBlockPalette.replaceIds(bedrockBlockState -> {
+                     final int javaBlockState = blockStateRewriter.javaId(bedrockBlockState);
+@@ -893,9 +893,12 @@ public class ChunkTracker extends StoredObject {
+                 for (int y = 0; y < 16; y++) {
+                     for (int z = 0; z < 16; z++) {
+                         for (int x = 0; x < 16; x++) {
+-                            final String tag = paletteIndexBlockStateTags[remappedBlockPalette.paletteIndexAt(remappedBlockPalette.index(x, y, z))];
++                            final String tag = paletteIndexBlockStateTags[layer0.paletteIndexAt(layer0.index(x, y, z))];
+                             if (tag != null) {
+-                                if (BlockEntityRewriter.isBlockEntity(tag)) {
++                                if (tag.equals(CustomBlockTags.ITEM_FRAME)) {
++                                    final BlockPosition position = new BlockPosition((chunk.getX() << 4) + x, this.minY + (idx << 4) + y, (chunk.getZ() << 4) + z);
++                                    this.user().get(EntityTracker.class).spawnItemFrame(position, blockStateRewriter.blockState(layer0.idAt(x, y, z)));
++                                } else if (BlockEntityRewriter.isBlockEntity(tag)) {
+                                     final int absY = this.minY + (idx << 4) + y;
+                                     final BlockPosition position = new BlockPosition((chunk.getX() << 4) + x, absY, (chunk.getZ() << 4) + z);
+                                     final BedrockBlockEntity bedrockBlockEntity = chunk.getBlockEntityAt(position);
+@@ -912,9 +915,6 @@ public class ChunkTracker extends StoredObject {
+                                         final BlockEntity javaBlockEntity = new BlockEntityImpl(BlockEntity.pack(x, z), (short) absY, javaType, new CompoundTag());
+                                         remappedChunk.blockEntities().add(javaBlockEntity);
+                                     }
+-                                } else if (tag.equals(CustomBlockTags.ITEM_FRAME)) {
+-                                    final BlockPosition position = new BlockPosition((chunk.getX() << 4) + x, this.minY + (idx << 4) + y, (chunk.getZ() << 4) + z);
+-                                    this.user().get(EntityTracker.class).spawnItemFrame(position, blockStateRewriter.blockState(layer0.idAt(x, y, z)));
+                                 }
+                             }
+                         }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
+index 85d216c..aebd19b 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
+@@ -17,14 +17,20 @@
+  */
+ package net.raphimc.viabedrock.protocol.storage;
+ 
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.NumberTag;
+ import com.viaversion.viaversion.api.connection.StoredObject;
+ import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.minecraft.BlockPosition;
+ import com.viaversion.viaversion.api.minecraft.ChunkPosition;
+ import com.viaversion.viaversion.api.minecraft.Vector3d;
+ import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
++import com.viaversion.viaversion.api.minecraft.item.Item;
++import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
+ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+ import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
+ import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectMap;
+ import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectOpenHashMap;
+ import com.viaversion.viaversion.libs.fastutil.longs.Long2ObjectMap;
+@@ -33,9 +39,12 @@ import com.viaversion.viaversion.libs.fastutil.objects.Object2IntMap;
+ import com.viaversion.viaversion.libs.fastutil.objects.Object2IntOpenHashMap;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
+ import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
+ import net.raphimc.viabedrock.api.model.BlockState;
+ import net.raphimc.viabedrock.api.model.entity.*;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+ 
+ import java.util.ArrayList;
+ import java.util.List;
+@@ -52,6 +61,7 @@ public class EntityTracker extends StoredObject {
+     private final Long2ObjectMap<Long> runtimeIdToUniqueId = new Long2ObjectOpenHashMap<>();
+     private final Int2ObjectMap<Long> javaIdToUniqueId = new Int2ObjectOpenHashMap<>();
+     private final Object2IntMap<BlockPosition> itemFrames = new Object2IntOpenHashMap<>();
++    private final Int2ObjectMap<ItemFrame> itemFramesByJavaId = new Int2ObjectOpenHashMap<>();
+ 
+     public EntityTracker(final UserConnection user) {
+         super(user);
+@@ -121,26 +131,52 @@ public class EntityTracker extends StoredObject {
+ 
+         final int javaId = this.getNextJavaEntityId();
+         this.itemFrames.put(position, javaId);
++        final int facing = Integer.parseInt(blockState.properties().get("facing_direction"));
++        this.itemFramesByJavaId.put(javaId, new ItemFrame(position, facing));
+ 
+         final PacketWrapper spawnEntity = PacketWrapper.create(ClientboundPackets26_3.ADD_ENTITY, this.user());
+         spawnEntity.write(Types.VAR_INT, javaId); // entity id
+         spawnEntity.write(Types.UUID, UUID.randomUUID()); // uuid
+         spawnEntity.write(Types.VAR_INT, blockState.identifier().equals("frame") ? EntityTypes26_3.ITEM_FRAME.getId() : EntityTypes26_3.GLOW_ITEM_FRAME.getId()); // type id
+-        spawnEntity.write(Types.DOUBLE, (double) position.x()); // x
+-        spawnEntity.write(Types.DOUBLE, (double) position.y()); // y
+-        spawnEntity.write(Types.DOUBLE, (double) position.z()); // z
++        spawnEntity.write(Types.DOUBLE, position.x() + 0.5D); // x
++        spawnEntity.write(Types.DOUBLE, position.y() + 0.5D); // y
++        spawnEntity.write(Types.DOUBLE, position.z() + 0.5D); // z
+         spawnEntity.write(Types.LOW_PRECISION_VECTOR, Vector3d.ZERO); // velocity
+         spawnEntity.write(Types.BYTE, (byte) 0); // pitch
+         spawnEntity.write(Types.BYTE, (byte) 0); // yaw
+         spawnEntity.write(Types.BYTE, (byte) 0); // head yaw
+-        spawnEntity.write(Types.VAR_INT, Integer.valueOf(blockState.properties().get("facing_direction"))); // data
++        spawnEntity.write(Types.VAR_INT, facing); // data
+         spawnEntity.send(BedrockProtocol.class);
++        this.updateItemFrame(position, this.user().get(ChunkTracker.class).getBlockEntity(position));
++    }
++
++    public void updateItemFrame(final BlockPosition position, final BedrockBlockEntity blockEntity) {
++        if (!this.itemFrames.containsKey(position) || blockEntity == null) {
++            return;
++        }
++
++        final CompoundTag tag = blockEntity.tag();
++        final Item item = this.user().get(ItemRewriter.class).javaItemStack(tag.getCompoundTag("Item"));
++        final int rotation = tag.get("ItemRotation") instanceof NumberTag rotationTag ? rotationTag.asInt() : 0;
++        final EntityTypes26_3 frameType = EntityTypes26_3.ITEM_FRAME;
++        final List<String> fields = BedrockProtocol.MAPPINGS.getJavaEntityDataFields().get(frameType);
++        final List<EntityData> data = List.of(
++                new EntityData(fields.indexOf(EntityDataFields.ITEM), VersionedTypes.V26_3.entityDataTypes.itemType,
++                        item == null ? StructuredItem.empty() : item),
++                new EntityData(fields.indexOf(EntityDataFields.ROTATION), VersionedTypes.V26_3.entityDataTypes.varIntType, rotation)
++        );
++        final PacketWrapper metadata = PacketWrapper.create(ClientboundPackets26_3.SET_ENTITY_DATA, this.user());
++        metadata.write(Types.VAR_INT, this.itemFrames.getInt(position));
++        metadata.write(VersionedTypes.V26_3.entityDataList, data);
++        metadata.send(BedrockProtocol.class);
+     }
+ 
+     public void removeItemFrame(final BlockPosition position) {
+         if (this.itemFrames.containsKey(position)) {
++            final int javaId = this.itemFrames.removeInt(position);
++            this.itemFramesByJavaId.remove(javaId);
+             final PacketWrapper removeEntities = PacketWrapper.create(ClientboundPackets26_3.REMOVE_ENTITIES, this.user());
+-            removeEntities.write(Types.VAR_INT_ARRAY_PRIMITIVE, new int[]{this.itemFrames.getInt(position)}); // entity ids
++            removeEntities.write(Types.VAR_INT_ARRAY_PRIMITIVE, new int[]{javaId}); // entity ids
+             removeEntities.send(BedrockProtocol.class);
+         }
+     }
+@@ -184,7 +220,12 @@ public class EntityTracker extends StoredObject {
+     }
+ 
+     public Entity getEntityByJid(final int javaId) {
+-        return this.entities.get((long) this.javaIdToUniqueId.get(javaId));
++        final Long uniqueId = this.javaIdToUniqueId.get(javaId);
++        return uniqueId == null ? null : this.entities.get(uniqueId.longValue());
++    }
++
++    public ItemFrame getItemFrameByJid(final int javaId) {
++        return this.itemFramesByJavaId.get(javaId);
+     }
+ 
+     public ClientPlayerEntity getClientPlayer() {
+@@ -199,4 +240,7 @@ public class EntityTracker extends StoredObject {
+         return this.idCounter.getAndIncrement();
+     }
+ 
++    public record ItemFrame(BlockPosition position, int facing) {
++    }
++
+ }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/MapTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/MapTracker.java
+index 2af0a50..39d92ce 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/MapTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/MapTracker.java
+@@ -19,6 +19,10 @@ package net.raphimc.viabedrock.protocol.storage;
+ 
+ import com.viaversion.viaversion.api.connection.StoredObject;
+ import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
+ import java.util.HashMap;
+ import java.util.Map;
+@@ -26,14 +30,35 @@ import java.util.Map;
+ public class MapTracker extends StoredObject {
+ 
+     private final Map<Long, Integer> javaIds = new HashMap<>();
+-    private int nextMapId;
++    private int nextJavaId;
+ 
+     public MapTracker(final UserConnection user) {
+         super(user);
+     }
+ 
+-    public int getJavaId(final long bedrockUuid) {
+-        return this.javaIds.computeIfAbsent(bedrockUuid, ignored -> this.nextMapId++);
++    public int javaId(final long bedrockId) {
++        final Integer existingId = this.javaIds.get(bedrockId);
++        if (existingId != null) {
++            return existingId;
++        }
++
++        final int javaId = this.nextJavaId++;
++        this.javaIds.put(bedrockId, javaId);
++        return javaId;
++    }
++
++    public int itemJavaId(final long bedrockId) {
++        final Integer existingId = this.javaIds.get(bedrockId);
++        if (existingId != null) {
++            return existingId;
++        }
++
++        final int javaId = this.javaId(bedrockId);
++        final PacketWrapper request = PacketWrapper.create(ServerboundBedrockPackets.MAP_INFO_REQUEST, this.user());
++        request.write(BedrockTypes.VAR_LONG, bedrockId);
++        request.write(BedrockTypes.UNSIGNED_INT_LE, 0L); // client pixel count
++        request.sendToServer(BedrockProtocol.class);
++        return javaId;
+     }
+ 
+ }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/util/map/JavaMapPaletteUtil.java b/src/main/java/net/raphimc/viabedrock/protocol/util/map/JavaMapPaletteUtil.java
+new file mode 100644
+index 0000000..8149281
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/util/map/JavaMapPaletteUtil.java
+@@ -0,0 +1,142 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.util.map;
++
++import java.awt.Color;
++import java.util.HashMap;
++import java.util.Map;
++
++public final class JavaMapPaletteUtil {
++
++    private static final float[] JAVA_L;
++    private static final float[] JAVA_A;
++    private static final float[] JAVA_B;
++
++    static {
++        final MapColor[] colors = MapColor.values();
++        JAVA_L = new float[colors.length];
++        JAVA_A = new float[colors.length];
++        JAVA_B = new float[colors.length];
++
++        for (int i = 0; i < colors.length; i++) {
++            final Color c = colors[i].getColor();
++            final float[] lab = rgbToLab(c.getRed(), c.getGreen(), c.getBlue());
++            JAVA_L[i] = lab[0];
++            JAVA_A[i] = lab[1];
++            JAVA_B[i] = lab[2];
++        }
++    }
++
++    private JavaMapPaletteUtil() {
++    }
++
++    public static short[] convertToJavaPalette(final int[] bedrockColors) {
++        //TODO: Check biome tinting for grass/foliage/water
++        final short[] javaColors = new short[bedrockColors.length];
++        final Map<Integer, Short> cache = new HashMap<>();
++
++        for (int i = 0; i < bedrockColors.length; i++) {
++            final int c = bedrockColors[i];
++
++            final int a = (c >>> 24);
++            if (a == 0) {
++                javaColors[i] = 0;
++                continue;
++            }
++
++            // Bedrock map pixels arrive as RGBA bytes in a little-endian uint32.
++            final int r = c & 0xFF;
++            final int g = (c >> 8) & 0xFF;
++            final int b = (c >> 16) & 0xFF;
++
++            final int rgb = c & 0xFFFFFF;
++            final Short cached = cache.get(rgb);
++            if (cached != null) {
++                javaColors[i] = cached;
++                continue;
++            }
++
++            final float[] lab = rgbToLab(r, g, b);
++
++            float bestDist = Float.MAX_VALUE;
++            short best = 0;
++
++            for (short j = 4; j < JAVA_L.length; j++) {
++                final float dL = lab[0] - JAVA_L[j];
++                final float dA = lab[1] - JAVA_A[j];
++                final float dB = lab[2] - JAVA_B[j];
++
++                final float dist = dL * dL + dA * dA + dB * dB;
++                if (dist < bestDist) {
++                    bestDist = dist;
++                    best = j;
++                }
++            }
++
++            cache.put(rgb, best);
++            javaColors[i] = best;
++        }
++
++        return javaColors;
++    }
++
++    private static float[] rgbToLab(final int r, final int g, final int b) {
++        // sRGB to linear
++        final float rf = pivotRgb(r / 255f);
++        final float gf = pivotRgb(g / 255f);
++        final float bf = pivotRgb(b / 255f);
++
++        // linear RGB to XYZ
++        final float x = rf * 0.4124f + gf * 0.3576f + bf * 0.1805f;
++        final float y = rf * 0.2126f + gf * 0.7152f + bf * 0.0722f;
++        final float z = rf * 0.0193f + gf * 0.1192f + bf * 0.9505f;
++
++        // XYZ to LAB
++        return xyzToLab(x, y, z);
++    }
++
++    private static float pivotRgb(final float n) {
++        return n <= 0.04045f
++            ? n / 12.92f
++            : (float) Math.pow((n + 0.055f) / 1.055f, 2.4f);
++    }
++
++    private static float[] xyzToLab(final float x, final float y, final float z) {
++        // D65 reference white
++        final float xr = x / 0.95047f;
++        final float yr = y / 1.00000f;
++        final float zr = z / 1.08883f;
++
++        final float fx = pivotXyz(xr);
++        final float fy = pivotXyz(yr);
++        final float fz = pivotXyz(zr);
++
++        final float lightness = 116f * fy - 16f;
++        final float greenRed = 500f * (fx - fy);
++        final float blueYellow = 200f * (fy - fz);
++
++        return new float[]{lightness, greenRed, blueYellow};
++    }
++
++    private static float pivotXyz(final float n) {
++        return n > 0.008856f
++            ? (float) Math.cbrt(n)
++            : (7.787f * n) + (16f / 116f);
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/util/map/MapColor.java b/src/main/java/net/raphimc/viabedrock/protocol/util/map/MapColor.java
+new file mode 100644
+index 0000000..d0e3a17
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/util/map/MapColor.java
+@@ -0,0 +1,288 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.util.map;
++
++import java.awt.Color;
++
++// TODO: Auto generate this...
++public enum MapColor {
++
++    COLOR_0(-1, -1, -1),
++    COLOR_1(-1, -1, -1),
++    COLOR_2(-1, -1, -1),
++    COLOR_3(-1, -1, -1),
++    COLOR_4(89, 125, 39),
++    COLOR_5(109, 153, 48),
++    COLOR_6(127, 178, 56),
++    COLOR_7(67, 94, 29),
++    COLOR_8(174, 164, 115),
++    COLOR_9(213, 201, 140),
++    COLOR_10(247, 233, 163),
++    COLOR_11(130, 123, 86),
++    COLOR_12(140, 140, 140),
++    COLOR_13(171, 171, 171),
++    COLOR_14(199, 199, 199),
++    COLOR_15(105, 105, 105),
++    COLOR_16(180, 0, 0),
++    COLOR_17(220, 0, 0),
++    COLOR_18(255, 0, 0),
++    COLOR_19(135, 0, 0),
++    COLOR_20(112, 112, 180),
++    COLOR_21(138, 138, 220),
++    COLOR_22(160, 160, 255),
++    COLOR_23(84, 84, 135),
++    COLOR_24(117, 117, 117),
++    COLOR_25(144, 144, 144),
++    COLOR_26(167, 167, 167),
++    COLOR_27(88, 88, 88),
++    COLOR_28(0, 87, 0),
++    COLOR_29(0, 106, 0),
++    COLOR_30(0, 124, 0),
++    COLOR_31(0, 65, 0),
++    COLOR_32(180, 180, 180),
++    COLOR_33(220, 220, 220),
++    COLOR_34(255, 255, 255),
++    COLOR_35(135, 135, 135),
++    COLOR_36(115, 118, 129),
++    COLOR_37(141, 144, 158),
++    COLOR_38(164, 168, 184),
++    COLOR_39(86, 88, 97),
++    COLOR_40(106, 76, 54),
++    COLOR_41(130, 94, 66),
++    COLOR_42(151, 109, 77),
++    COLOR_43(79, 57, 40),
++    COLOR_44(79, 79, 79),
++    COLOR_45(96, 96, 96),
++    COLOR_46(112, 112, 112),
++    COLOR_47(59, 59, 59),
++    COLOR_48(45, 45, 180),
++    COLOR_49(55, 55, 220),
++    COLOR_50(64, 64, 255),
++    COLOR_51(33, 33, 135),
++    COLOR_52(100, 84, 50),
++    COLOR_53(123, 102, 62),
++    COLOR_54(143, 119, 72),
++    COLOR_55(75, 63, 38),
++    COLOR_56(180, 177, 172),
++    COLOR_57(220, 217, 211),
++    COLOR_58(255, 252, 245),
++    COLOR_59(135, 133, 129),
++    COLOR_60(152, 89, 36),
++    COLOR_61(186, 109, 44),
++    COLOR_62(216, 127, 51),
++    COLOR_63(114, 67, 27),
++    COLOR_64(125, 53, 152),
++    COLOR_65(153, 65, 186),
++    COLOR_66(178, 76, 216),
++    COLOR_67(94, 40, 114),
++    COLOR_68(72, 108, 152),
++    COLOR_69(88, 132, 186),
++    COLOR_70(102, 153, 216),
++    COLOR_71(54, 81, 114),
++    COLOR_72(161, 161, 36),
++    COLOR_73(197, 197, 44),
++    COLOR_74(229, 229, 51),
++    COLOR_75(121, 121, 27),
++    COLOR_76(89, 144, 17),
++    COLOR_77(109, 176, 21),
++    COLOR_78(127, 204, 25),
++    COLOR_79(67, 108, 13),
++    COLOR_80(170, 89, 116),
++    COLOR_81(208, 109, 142),
++    COLOR_82(242, 127, 165),
++    COLOR_83(128, 67, 87),
++    COLOR_84(53, 53, 53),
++    COLOR_85(65, 65, 65),
++    COLOR_86(76, 76, 76),
++    COLOR_87(40, 40, 40),
++    COLOR_88(108, 108, 108),
++    COLOR_89(132, 132, 132),
++    COLOR_90(153, 153, 153),
++    COLOR_91(81, 81, 81),
++    COLOR_92(53, 89, 108),
++    COLOR_93(65, 109, 132),
++    COLOR_94(76, 127, 153),
++    COLOR_95(40, 67, 81),
++    COLOR_96(89, 44, 125),
++    COLOR_97(109, 54, 153),
++    COLOR_98(127, 63, 178),
++    COLOR_99(67, 33, 94),
++    COLOR_100(36, 53, 125),
++    COLOR_101(44, 65, 153),
++    COLOR_102(51, 76, 178),
++    COLOR_103(27, 40, 94),
++    COLOR_104(72, 53, 36),
++    COLOR_105(88, 65, 44),
++    COLOR_106(102, 76, 51),
++    COLOR_107(54, 40, 27),
++    COLOR_108(72, 89, 36),
++    COLOR_109(88, 109, 44),
++    COLOR_110(102, 127, 51),
++    COLOR_111(54, 67, 27),
++    COLOR_112(108, 36, 36),
++    COLOR_113(132, 44, 44),
++    COLOR_114(153, 51, 51),
++    COLOR_115(81, 27, 27),
++    COLOR_116(17, 17, 17),
++    COLOR_117(21, 21, 21),
++    COLOR_118(25, 25, 25),
++    COLOR_119(13, 13, 13),
++    COLOR_120(176, 168, 54),
++    COLOR_121(215, 205, 66),
++    COLOR_122(250, 238, 77),
++    COLOR_123(132, 126, 40),
++    COLOR_124(64, 154, 150),
++    COLOR_125(79, 188, 183),
++    COLOR_126(92, 219, 213),
++    COLOR_127(48, 115, 112),
++    COLOR_128(52, 90, 180),
++    COLOR_129(63, 110, 220),
++    COLOR_130(74, 128, 255),
++    COLOR_131(39, 67, 135),
++    COLOR_132(0, 153, 40),
++    COLOR_133(0, 187, 50),
++    COLOR_134(0, 217, 58),
++    COLOR_135(0, 114, 30),
++    COLOR_136(91, 60, 34),
++    COLOR_137(111, 74, 42),
++    COLOR_138(129, 86, 49),
++    COLOR_139(68, 45, 25),
++    COLOR_140(79, 1, 0),
++    COLOR_141(96, 1, 0),
++    COLOR_142(112, 2, 0),
++    COLOR_143(59, 1, 0),
++    COLOR_144(147, 124, 113),
++    COLOR_145(180, 152, 138),
++    COLOR_146(209, 177, 161),
++    COLOR_147(110, 93, 85),
++    COLOR_148(112, 57, 25),
++    COLOR_149(137, 70, 31),
++    COLOR_150(159, 82, 36),
++    COLOR_151(84, 43, 19),
++    COLOR_152(105, 61, 76),
++    COLOR_153(128, 75, 93),
++    COLOR_154(149, 87, 108),
++    COLOR_155(78, 46, 57),
++    COLOR_156(79, 76, 97),
++    COLOR_157(96, 93, 119),
++    COLOR_158(112, 108, 138),
++    COLOR_159(59, 57, 73),
++    COLOR_160(131, 93, 25),
++    COLOR_161(160, 114, 31),
++    COLOR_162(186, 133, 36),
++    COLOR_163(98, 70, 19),
++    COLOR_164(72, 82, 37),
++    COLOR_165(88, 100, 45),
++    COLOR_166(103, 117, 53),
++    COLOR_167(54, 61, 28),
++    COLOR_168(112, 54, 55),
++    COLOR_169(138, 66, 67),
++    COLOR_170(160, 77, 78),
++    COLOR_171(84, 40, 41),
++    COLOR_172(40, 28, 24),
++    COLOR_173(49, 35, 30),
++    COLOR_174(57, 41, 35),
++    COLOR_175(30, 21, 18),
++    COLOR_176(95, 75, 69),
++    COLOR_177(116, 92, 84),
++    COLOR_178(135, 107, 98),
++    COLOR_179(71, 56, 51),
++    COLOR_180(61, 64, 64),
++    COLOR_181(75, 79, 79),
++    COLOR_182(87, 92, 92),
++    COLOR_183(46, 48, 48),
++    COLOR_184(86, 51, 62),
++    COLOR_185(105, 62, 75),
++    COLOR_186(122, 73, 88),
++    COLOR_187(64, 38, 46),
++    COLOR_188(53, 43, 64),
++    COLOR_189(65, 53, 79),
++    COLOR_190(76, 62, 92),
++    COLOR_191(40, 32, 48),
++    COLOR_192(53, 35, 24),
++    COLOR_193(65, 43, 30),
++    COLOR_194(76, 50, 35),
++    COLOR_195(40, 26, 18),
++    COLOR_196(53, 57, 29),
++    COLOR_197(65, 70, 36),
++    COLOR_198(76, 82, 42),
++    COLOR_199(40, 43, 22),
++    COLOR_200(100, 42, 32),
++    COLOR_201(122, 51, 39),
++    COLOR_202(142, 60, 46),
++    COLOR_203(75, 31, 24),
++    COLOR_204(26, 15, 11),
++    COLOR_205(31, 18, 13),
++    COLOR_206(37, 22, 16),
++    COLOR_207(19, 11, 8),
++    COLOR_208(133, 33, 34),
++    COLOR_209(163, 41, 42),
++    COLOR_210(189, 48, 49),
++    COLOR_211(100, 25, 25),
++    COLOR_212(104, 44, 68),
++    COLOR_213(127, 54, 83),
++    COLOR_214(148, 63, 97),
++    COLOR_215(78, 33, 51),
++    COLOR_216(64, 17, 20),
++    COLOR_217(79, 21, 25),
++    COLOR_218(92, 25, 29),
++    COLOR_219(48, 13, 15),
++    COLOR_220(15, 88, 94),
++    COLOR_221(18, 108, 115),
++    COLOR_222(22, 126, 134),
++    COLOR_223(11, 66, 70),
++    COLOR_224(40, 100, 98),
++    COLOR_225(50, 122, 120),
++    COLOR_226(58, 142, 140),
++    COLOR_227(30, 75, 74),
++    COLOR_228(60, 31, 43),
++    COLOR_229(74, 37, 53),
++    COLOR_230(86, 44, 62),
++    COLOR_231(45, 23, 32),
++    COLOR_232(14, 127, 93),
++    COLOR_233(17, 155, 114),
++    COLOR_234(20, 180, 133),
++    COLOR_235(10, 95, 70),
++    COLOR_236(70, 70, 70),
++    COLOR_237(86, 86, 86),
++    COLOR_238(100, 100, 100),
++    COLOR_239(52, 52, 52),
++    COLOR_240(152, 123, 103),
++    COLOR_241(186, 150, 126),
++    COLOR_242(216, 175, 147),
++    COLOR_243(114, 92, 77),
++    COLOR_244(89, 117, 105),
++    COLOR_245(109, 144, 129),
++    COLOR_246(127, 167, 150),
++    COLOR_247(67, 88, 79);
++
++    private final int value;
++
++    MapColor(final int red, final int green, final int blue) {
++        final int alpha = red == -1 && green == -1 && blue == -1 ? 0 : 255;
++        this.value = ((alpha & 0xFF) << 24)
++            | ((red & 0xFF) << 16)
++            | ((green & 0xFF) << 8)
++            | (blue & 0xFF);
++    }
++
++    public Color getColor() {
++        return new Color((this.value >> 16) & 0xFF, (this.value >> 8) & 0xFF, this.value & 0xFF, (this.value >> 24) & 0xFF);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/util/map/JavaMapPaletteUtilTest.java b/src/test/java/net/raphimc/viabedrock/protocol/util/map/JavaMapPaletteUtilTest.java
+new file mode 100644
+index 0000000..970dfc2
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/util/map/JavaMapPaletteUtilTest.java
+@@ -0,0 +1,29 @@
++package net.raphimc.viabedrock.protocol.util.map;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class JavaMapPaletteUtilTest {
++
++    @Test
++    void convertsBedrockRgbaWirePixelToJavaRed() {
++        assertEquals(18, JavaMapPaletteUtil.convertToJavaPalette(new int[]{0xFF0000FF})[0]);
++    }
++
++    @Test
++    void keepsOpaqueDarkPixelsVisible() {
++        final short[] palette = JavaMapPaletteUtil.convertToJavaPalette(new int[]{0x00000000, 0xFF000000});
++        assertEquals(0, palette[0]);
++        assertTrue(palette[1] >= 4);
++    }
++
++    @Test
++    void distinguishesPaletteColorsWithNearbyRgbValues() {
++        final short[] palette = JavaMapPaletteUtil.convertToJavaPalette(new int[]{0xFF696969, 0xFF6C6C6C});
++        assertEquals(15, palette[0]);
++        assertEquals(88, palette[1]);
++    }
++
++}
+-- 
+2.55.0
+

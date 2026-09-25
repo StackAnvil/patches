@@ -1,0 +1,964 @@
+From cbc871cfee2e22069a73e34293ea04e417c50b68 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 25 Sep 2026 16:53:39 +0200
+Subject: [PATCH] feat(bedrock): add classic Dressing Room
+
+Import the appearance controls from viafabricplus-bedrock PR #11. Carry the native skin-rendering callback into the new appearance provider so the earlier rendering patch remains functional.
+---
+ README.md                                     |  12 +
+ build.gradle.kts                              |   6 +
+ .../bedrock/ViaFabricPlusBedrock.java         |  11 +-
+ .../appearance/BedrockAppearanceStore.java    | 246 +++++++++++++++
+ .../appearance/ViaFabricPlusSkinProvider.java |  78 +++++
+ .../friends/FriendWorldSkinProvider.java      |  49 ---
+ .../screen/BedrockDressingRoomScreen.java     | 291 ++++++++++++++++++
+ .../bedrock/settings/BedrockSettings.java     |   5 +
+ .../viafabricplus-bedrock/lang/en_us.json     |  18 ++
+ .../BedrockAppearanceStoreTest.java           |  89 ++++++
+ 10 files changed, 754 insertions(+), 51 deletions(-)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java
+ delete mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/friends/FriendWorldSkinProvider.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStoreTest.java
+
+diff --git a/README.md b/README.md
+index d037839..c2df24f 100644
+--- a/README.md
++++ b/README.md
+@@ -14,6 +14,18 @@ to the mod.
+ Log in once. The same account is used for every online mode Bedrock
+ server. `Bedrock Realms` and `Bedrock Friends` in the ViaFabricPlus screen stay disabled until an account is set.
+ 
++### Dressing Room
++
++Open the `Bedrock` settings tab and select `Dressing Room`. Choose Steve or Alex, or import a custom skin PNG.
++For a custom skin, choose the wide or slim model. You can also import or remove a cape PNG.
++The screen previews the selected skin and cape. Your choice takes effect the next time you join a Bedrock world.
++An imported cape is sent with your Bedrock appearance. It does not unlock an account cape, and other servers or clients
++may choose not to show it.
++
++Skin PNGs must be square, from 64 × 64 to 1024 × 1024 pixels. Cape PNGs must be twice as wide as they are tall,
++from 64 × 32 to 1024 × 512 pixels. The Dressing Room keeps one imported skin per account.
++It saves the appearance separately for each Bedrock account and for offline play.
++
+ Open `Bedrock Friends` to see your Xbox friends and their online status. The `Requests` tab lets you accept, decline,
+ or cancel friend requests. Use `Find players` to search by Gamertag and send a request. Select a player and click
+ `Profile` to see their Xbox details, or `Remove friend` to remove them.
+diff --git a/build.gradle.kts b/build.gradle.kts
+index b49093e..f7cd4d4 100644
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -33,6 +33,8 @@ val shade = configureJarInJar()
+ 
+ dependencies {
+     implementation("com.viaversion:viafabricplus:5.1.0")
++    testImplementation("org.junit.jupiter:junit-jupiter:5.12.2")
++    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+ 
+     shade("net.raphimc:ViaBedrock:0.0.31-SNAPSHOT") {
+         exclude(group = "com.mojang", module = "brigadier")
+@@ -59,3 +61,7 @@ includeTransitiveJijDependencies()
+ tasks.withType<Jar>().configureEach {
+     manifest.attributes["Implementation-Vendor"] = "StackAnvil"
+ }
++
++tasks.test {
++    useJUnitPlatform()
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+index a8f239a..92f1b49 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+@@ -24,7 +24,8 @@ package com.viaversion.viafabricplus.bedrock;
+ import com.viaversion.viafabricplus.ViaFabricPlus;
+ import com.viaversion.viafabricplus.api.entrypoint.ViaFabricPlusEntrypoint;
+ import com.viaversion.viafabricplus.bedrock.account.BedrockAccount;
+-import com.viaversion.viafabricplus.bedrock.friends.FriendWorldSkinProvider;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
++import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusSkinProvider;
+ import com.viaversion.viafabricplus.bedrock.protocoltranslator.platform.ViaFabricPlusNettyPipelineProvider;
+ import com.viaversion.viafabricplus.bedrock.protocoltranslator.platform.ViaFabricPlusViaBedrockPlatform;
+ import com.viaversion.viafabricplus.bedrock.settings.BedrockSettings;
+@@ -42,6 +43,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+ 
+     private BedrockSettings settings;
+     private BedrockAccount account;
++    private BedrockAppearanceStore appearances;
+ 
+     public ViaFabricPlusBedrock() {
+         INSTANCE = this;
+@@ -51,13 +53,14 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+     public void onPreSettingsLoading() {
+         this.settings = new BedrockSettings();
+         this.account = new BedrockAccount(ViaFabricPlus.api().path().resolve("bedrock.json"));
++        this.appearances = new BedrockAppearanceStore(ViaFabricPlus.api().path().resolve("bedrock-appearances"));
+     }
+ 
+     @Override
+     public void onPostProtocolTranslationLoading() {
+         new ViaFabricPlusViaBedrockPlatform();
+         Via.getManager().getProviders().use(NettyPipelineProvider.class, new ViaFabricPlusNettyPipelineProvider());
+-        Via.getManager().getProviders().use(SkinProvider.class, new FriendWorldSkinProvider());
++        Via.getManager().getProviders().use(SkinProvider.class, new ViaFabricPlusSkinProvider());
+     }
+ 
+     public static ViaFabricPlusBedrock impl() {
+@@ -76,4 +79,8 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+         return this.account;
+     }
+ 
++    public BedrockAppearanceStore appearances() {
++        return this.appearances;
++    }
++
+ }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
+new file mode 100644
+index 0000000..fb83c63
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
+@@ -0,0 +1,246 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++import java.awt.image.BufferedImage;
++import java.io.IOException;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.AtomicMoveNotSupportedException;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.nio.file.StandardCopyOption;
++import java.util.UUID;
++import java.util.function.Function;
++import javax.imageio.ImageIO;
++import javax.imageio.ImageReader;
++import javax.imageio.stream.ImageInputStream;
++import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.DataValues;
++
++/** Stores the selected classic appearance separately for each Bedrock account. */
++public final class BedrockAppearanceStore {
++
++    private static final String METADATA = "appearance.json";
++    private static final String CUSTOM_SKIN = "skin.png";
++    private static final String CAPE = "cape.png";
++    private static final int MAX_FILE_BYTES = 8 * 1024 * 1024;
++
++    private final Path root;
++    private final Function<Selection, BufferedImage> presets;
++
++    public BedrockAppearanceStore(final Path root) {
++        this(root, selection -> BedrockProtocol.MAPPINGS.getBedrockSkinPacks().get(DataValues.VANILLA_SKIN_PACK_KEY)
++            .content().getImage(selection == Selection.STEVE ? "steve.png" : "alex.png").getImage());
++    }
++
++    BedrockAppearanceStore(final Path root, final Function<Selection, BufferedImage> presets) {
++        this.root = root;
++        this.presets = presets;
++    }
++
++    public static String accountId(final BedrockAuthManager account) {
++        if (account == null || !account.getMinecraftMultiplayerToken().hasValue()) {
++            return "offline";
++        }
++        final String xuid = account.getMinecraftMultiplayerToken().getCached().getXuid();
++        return xuid != null && xuid.matches("[0-9]+") ? xuid : "offline";
++    }
++
++    public synchronized Appearance load(final String accountId) throws IOException {
++        final Path directory = this.directory(accountId);
++        Selection selection = Selection.STEVE;
++        boolean slim = false;
++        String skinId = "";
++        String capeId = "";
++        final Path metadata = directory.resolve(METADATA);
++        if (Files.isRegularFile(metadata)) {
++            try {
++                final JsonObject object = JsonParser.parseString(Files.readString(metadata)).getAsJsonObject();
++                selection = Selection.valueOf(object.get("selection").getAsString());
++                slim = object.get("slim").getAsBoolean();
++                skinId = object.get("skinId").getAsString();
++                capeId = object.get("capeId").getAsString();
++            } catch (RuntimeException e) {
++                throw new IOException("The saved Bedrock appearance is invalid", e);
++            }
++        }
++
++        BufferedImage skin = switch (selection) {
++            case STEVE -> this.presets.apply(Selection.STEVE);
++            case ALEX -> this.presets.apply(Selection.ALEX);
++            case CUSTOM -> Files.isRegularFile(directory.resolve(CUSTOM_SKIN))
++                ? readPng(directory.resolve(CUSTOM_SKIN), false) : null;
++        };
++        if (skin == null) {
++            selection = Selection.STEVE;
++            skin = this.presets.apply(Selection.STEVE);
++        }
++        final Path capePath = directory.resolve(CAPE);
++        final BufferedImage cape = Files.isRegularFile(capePath) ? readPng(capePath, true) : null;
++        return new Appearance(selection, slim,
++            skin, cape, skinId.isBlank() ? UUID.randomUUID().toString() : skinId,
++            cape != null && capeId.isBlank() ? UUID.randomUUID().toString() : capeId);
++    }
++
++    public boolean hasCustomSkin(final String accountId) {
++        return Files.isRegularFile(this.directory(accountId).resolve(CUSTOM_SKIN));
++    }
++
++    public synchronized Appearance select(final String accountId, final Selection selection) throws IOException {
++        final Appearance current = this.load(accountId);
++        if (selection == Selection.CUSTOM && !Files.isRegularFile(this.directory(accountId).resolve(CUSTOM_SKIN))) {
++            throw new IOException("Import a custom skin first");
++        }
++        final Appearance updated = new Appearance(selection, current.slim(), current.skin(), current.cape(),
++            UUID.randomUUID().toString(), current.capeId());
++        this.saveMetadata(accountId, updated);
++        return this.load(accountId);
++    }
++
++    public synchronized Appearance setSlim(final String accountId, final boolean slim) throws IOException {
++        final Appearance current = this.load(accountId);
++        final Appearance updated = new Appearance(current.selection(), slim, current.skin(), current.cape(),
++            UUID.randomUUID().toString(), current.capeId());
++        this.saveMetadata(accountId, updated);
++        return this.load(accountId);
++    }
++
++    public synchronized Appearance importSkin(final String accountId, final Path source) throws IOException {
++        final BufferedImage image = readPng(source, false);
++        final Appearance current = this.load(accountId);
++        final Path directory = this.directory(accountId);
++        Files.createDirectories(directory);
++        writePng(image, directory.resolve(CUSTOM_SKIN));
++        final Appearance updated = new Appearance(Selection.CUSTOM, current.slim(), image, current.cape(),
++            UUID.randomUUID().toString(), current.capeId());
++        this.saveMetadata(accountId, updated);
++        return updated;
++    }
++
++    public synchronized Appearance importCape(final String accountId, final Path source) throws IOException {
++        final BufferedImage image = readPng(source, true);
++        final Appearance current = this.load(accountId);
++        final Path directory = this.directory(accountId);
++        Files.createDirectories(directory);
++        writePng(image, directory.resolve(CAPE));
++        final Appearance updated = new Appearance(current.selection(), current.slim(), current.skin(), image,
++            current.skinId(), UUID.randomUUID().toString());
++        this.saveMetadata(accountId, updated);
++        return updated;
++    }
++
++    public synchronized Appearance removeCape(final String accountId) throws IOException {
++        Files.deleteIfExists(this.directory(accountId).resolve(CAPE));
++        final Appearance current = this.load(accountId);
++        final Appearance updated = new Appearance(current.selection(), current.slim(), current.skin(), null,
++            current.skinId(), "");
++        this.saveMetadata(accountId, updated);
++        return updated;
++    }
++
++    private Path directory(final String accountId) {
++        return this.root.resolve(accountId != null && accountId.matches("[0-9]+") ? accountId : "offline");
++    }
++
++    private void saveMetadata(final String accountId, final Appearance appearance) throws IOException {
++        final JsonObject object = new JsonObject();
++        object.addProperty("selection", appearance.selection().name());
++        object.addProperty("slim", appearance.slim());
++        object.addProperty("skinId", appearance.skinId());
++        object.addProperty("capeId", appearance.capeId());
++        final Path directory = this.directory(accountId);
++        Files.createDirectories(directory);
++        final Path temporary = Files.createTempFile(directory, "appearance-", ".json");
++        try {
++            Files.writeString(temporary, object.toString(), StandardCharsets.UTF_8);
++            moveIntoPlace(temporary, directory.resolve(METADATA));
++        } finally {
++            Files.deleteIfExists(temporary);
++        }
++    }
++
++    private static BufferedImage readPng(final Path path, final boolean cape) throws IOException {
++        if (!Files.isRegularFile(path) || Files.size(path) > MAX_FILE_BYTES) {
++            throw new IOException("The PNG file is missing or too large");
++        }
++        try (ImageInputStream input = ImageIO.createImageInputStream(path.toFile())) {
++            if (input == null) {
++                throw new IOException("Could not read the PNG file");
++            }
++            final var readers = ImageIO.getImageReaders(input);
++            if (!readers.hasNext()) {
++                throw new IOException("The file is not a PNG image");
++            }
++            final ImageReader reader = readers.next();
++            try {
++                if (!"png".equalsIgnoreCase(reader.getFormatName())) {
++                    throw new IOException("The file is not a PNG image");
++                }
++                reader.setInput(input);
++                final int width = reader.getWidth(0);
++                final int height = reader.getHeight(0);
++                final boolean valid = cape ? width == height * 2 && height >= 32 && height <= 512
++                    : width == height && width >= 64 && width <= 1024;
++                if (!valid || Integer.bitCount(width) != 1) {
++                    throw new IOException(cape ? "Capes must be 64x32 through 1024x512 PNGs"
++                        : "Skins must be square 64x64 through 1024x1024 PNGs");
++                }
++                return reader.read(0);
++            } finally {
++                reader.dispose();
++            }
++        }
++    }
++
++    private static void writePng(final BufferedImage image, final Path destination) throws IOException {
++        final Path temporary = Files.createTempFile(destination.getParent(), "appearance-", ".png");
++        try {
++            if (!ImageIO.write(image, "png", temporary.toFile())) {
++                throw new IOException("Could not save the PNG image");
++            }
++            moveIntoPlace(temporary, destination);
++        } finally {
++            Files.deleteIfExists(temporary);
++        }
++    }
++
++    private static void moveIntoPlace(final Path source, final Path destination) throws IOException {
++        try {
++            Files.move(source, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
++        } catch (AtomicMoveNotSupportedException e) {
++            Files.move(source, destination, StandardCopyOption.REPLACE_EXISTING);
++        }
++    }
++
++    public enum Selection {
++        STEVE, ALEX, CUSTOM
++    }
++
++    public record Appearance(Selection selection, boolean slim, BufferedImage skin, BufferedImage cape,
++                             String skinId, String capeId) {
++
++        public boolean effectiveSlim() {
++            return this.selection == Selection.CUSTOM ? this.slim : this.selection == Selection.ALEX;
++        }
++    }
++
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java
+new file mode 100644
+index 0000000..0808013
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java
+@@ -0,0 +1,78 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2021-2026 the original authors
++ *                         - Florian Reuth <git@florianreuth.de>
++ *                         - RK_01/RaphiMC
++ * Copyright (C) 2023-2026 ViaVersion and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import com.viaversion.viafabricplus.bedrock.friends.BedrockFriendsService;
++import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import java.io.IOException;
++import java.nio.charset.StandardCharsets;
++import java.util.Base64;
++import java.util.Map;
++import java.util.UUID;
++import net.raphimc.viabedrock.protocol.model.SkinData;
++import net.raphimc.viabedrock.protocol.types.primitive.ImageType;
++import net.raphimc.viabedrock.protocol.provider.SkinProvider;
++
++/** Sends the selected appearance and any friend-world session nonce in Bedrock's client data. */
++public final class ViaFabricPlusSkinProvider extends SkinProvider {
++
++    @Override
++    public Map<String, Object> getClientPlayerSkin(final UserConnection user) {
++        final Map<String, Object> claims = super.getClientPlayerSkin(user);
++        try {
++            final var addon = ViaFabricPlusBedrock.impl();
++            final String accountId = BedrockAppearanceStore.accountId(addon.account().get());
++            final var appearance = addon.appearances().load(accountId);
++            final var skin = appearance.skin();
++            final boolean slim = appearance.effectiveSlim();
++            claims.put("SkinId", appearance.skinId());
++            claims.put("SkinData", Base64.getEncoder().encodeToString(ImageType.getImageData(skin)));
++            claims.put("SkinImageWidth", skin.getWidth());
++            claims.put("SkinImageHeight", skin.getHeight());
++            claims.put("SkinResourcePatch", Base64.getEncoder().encodeToString(("{\"geometry\":{\"default\":\"geometry.humanoid.custom"
++                + (slim ? "Slim" : "") + "\"}}").getBytes(StandardCharsets.UTF_8)));
++            claims.put("ArmSize", slim ? "slim" : "wide");
++            if (appearance.cape() != null) {
++                claims.put("CapeId", appearance.capeId());
++                claims.put("CapeData", Base64.getEncoder().encodeToString(ImageType.getImageData(appearance.cape())));
++                claims.put("CapeImageWidth", appearance.cape().getWidth());
++                claims.put("CapeImageHeight", appearance.cape().getHeight());
++                claims.put("CapeOnClassicSkin", true);
++            }
++        } catch (IOException e) {
++            ViaFabricPlusBedrock.impl().logger().warn("Could not load the selected Bedrock appearance; using Steve", e);
++        }
++        final String nonce = BedrockFriendsService.nonceFor(user.getChannel().remoteAddress());
++        if (nonce != null) {
++            claims.put("Nonce", nonce);
++        }
++        return claims;
++    }
++
++    @Override
++    public void setSkin(final UserConnection user, final UUID playerUuid, final SkinData skin) {
++        BedrockPlayerSkins.accept(user, playerUuid, skin);
++    }
++
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/friends/FriendWorldSkinProvider.java b/src/main/java/com/viaversion/viafabricplus/bedrock/friends/FriendWorldSkinProvider.java
+deleted file mode 100644
+index 79efc1d..0000000
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/friends/FriendWorldSkinProvider.java
++++ /dev/null
+@@ -1,49 +0,0 @@
+-/*
+- * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
+- * Copyright (C) 2021-2026 the original authors
+- *                         - Florian Reuth <git@florianreuth.de>
+- *                         - RK_01/RaphiMC
+- * Copyright (C) 2023-2026 ViaVersion and contributors
+- *
+- * This program is free software: you can redistribute it and/or modify
+- * it under the terms of the GNU General Public License as published by
+- * the Free Software Foundation, either version 3 of the License, or
+- * (at your option) any later version.
+- *
+- * This program is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- * GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License
+- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+- */
+-
+-package com.viaversion.viafabricplus.bedrock.friends;
+-
+-import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
+-import com.viaversion.viaversion.api.connection.UserConnection;
+-import java.util.Map;
+-import java.util.UUID;
+-import net.raphimc.viabedrock.protocol.model.SkinData;
+-import net.raphimc.viabedrock.protocol.provider.SkinProvider;
+-
+-/** Adds the host-issued session nonce to Bedrock's client data for friend worlds. */
+-public final class FriendWorldSkinProvider extends SkinProvider {
+-
+-    @Override
+-    public Map<String, Object> getClientPlayerSkin(final UserConnection user) {
+-        final Map<String, Object> claims = super.getClientPlayerSkin(user);
+-        final String nonce = BedrockFriendsService.nonceFor(user.getChannel().remoteAddress());
+-        if (nonce != null) {
+-            claims.put("Nonce", nonce);
+-        }
+-        return claims;
+-    }
+-
+-    @Override
+-    public void setSkin(final UserConnection user, final UUID playerUuid, final SkinData skin) {
+-        BedrockPlayerSkins.accept(user, playerUuid, skin);
+-    }
+-
+-}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
+new file mode 100644
+index 0000000..a3a1cdd
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
+@@ -0,0 +1,291 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package com.viaversion.viafabricplus.bedrock.screen;
++
++import com.mojang.blaze3d.platform.NativeImage;
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore.Appearance;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore.Selection;
++import com.viaversion.viafabricplus.screen.base.VFPScreen;
++import java.awt.image.BufferedImage;
++import java.io.IOException;
++import java.nio.ByteBuffer;
++import java.nio.file.Path;
++import java.util.List;
++import java.util.Locale;
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.concurrent.atomic.AtomicLong;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.gui.components.Button;
++import net.minecraft.client.gui.components.PlayerSkinWidget;
++import net.minecraft.client.renderer.RenderPipelines;
++import net.minecraft.client.renderer.texture.DynamicTexture;
++import net.minecraft.core.ClientAsset;
++import net.minecraft.network.chat.Component;
++import net.minecraft.resources.Identifier;
++import net.minecraft.world.entity.player.PlayerModelType;
++import net.minecraft.world.entity.player.PlayerSkin;
++import org.jspecify.annotations.NonNull;
++import org.lwjgl.sdl.SDLDialog;
++import org.lwjgl.sdl.SDLError;
++import org.lwjgl.sdl.SDL_DialogFileCallback;
++import org.lwjgl.sdl.SDL_DialogFileFilter;
++import org.lwjgl.system.MemoryUtil;
++
++/** Selects a classic Bedrock skin and cape for the next connection. */
++public final class BedrockDressingRoomScreen extends VFPScreen {
++
++    public static final Component TITLE = Component.translatable("screen.viafabricplus.bedrock_dressing_room");
++
++    private static final Identifier PREVIEW_TEXTURE = Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "dressing_room/preview");
++    private static final Identifier CAPE_PREVIEW_TEXTURE = Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "dressing_room/cape");
++    private static final ByteBuffer PNG_FILTER_NAME = MemoryUtil.memUTF8("PNG images");
++    private static final ByteBuffer PNG_FILTER_PATTERN = MemoryUtil.memUTF8("png");
++    private static final SDL_DialogFileFilter.Buffer PNG_FILTER = SDL_DialogFileFilter.calloc(1);
++    private static final AtomicLong NEXT_DIALOG_ID = new AtomicLong();
++    private static final Map<Long, FileDialogRequest> OPEN_DIALOGS = new ConcurrentHashMap<>();
++    private static final SDL_DialogFileCallback FILE_DIALOG_CALLBACK = SDL_DialogFileCallback.create((dialogId, files, _) -> {
++        final FileDialogRequest request = OPEN_DIALOGS.remove(dialogId);
++        if (request == null) {
++            return;
++        }
++        final String error = files == 0 ? SDLError.SDL_GetError() : null;
++        final long firstFile = files == 0 ? 0 : MemoryUtil.memGetAddress(files);
++        final String selected = firstFile == 0 ? null : MemoryUtil.memUTF8(firstFile);
++        request.screen.minecraft.schedule(() -> request.screen.finishFileDialog(request.cape, selected, error));
++    });
++
++    static {
++        // SDL keeps the filter until the asynchronous file dialog callback completes.
++        PNG_FILTER.get(0).name(PNG_FILTER_NAME).pattern(PNG_FILTER_PATTERN);
++    }
++
++    private final BedrockAppearanceStore store = ViaFabricPlusBedrock.impl().appearances();
++    private final String accountId = BedrockAppearanceStore.accountId(ViaFabricPlusBedrock.impl().account().get());
++
++    private Appearance appearance;
++    private Component status = Component.translatable("bedrock_dressing_room.viafabricplus.reconnect");
++    private PlayerSkin previewSkin;
++    private Button customButton;
++    private Button modelButton;
++    private Button removeCapeButton;
++    private boolean previewRegistered;
++    private boolean capePreviewRegistered;
++    private boolean filePickerOpen;
++
++    public BedrockDressingRoomScreen() {
++        super(TITLE, true);
++    }
++
++    @Override
++    protected void init() {
++        super.init();
++        final int left = this.width / 2 - 150;
++        final int top = this.contentTop();
++        final int buttonWidth = 96;
++        this.addRenderableWidget(Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.steve"), _ -> this.select(Selection.STEVE))
++            .bounds(left, top, buttonWidth, 20).build());
++        this.addRenderableWidget(Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.alex"), _ -> this.select(Selection.ALEX))
++            .bounds(left + 102, top, buttonWidth, 20).build());
++        this.customButton = this.addRenderableWidget(Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.custom"),
++            _ -> this.select(Selection.CUSTOM)).bounds(left + 204, top, buttonWidth, 20).build());
++
++        this.modelButton = this.addRenderableWidget(Button.builder(Component.empty(), _ -> this.toggleModel())
++            .bounds(left + 157, top + 53, 143, 20).build());
++
++        this.addFooter(
++            Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.import_skin"), _ -> this.chooseFile(false)).build(),
++            Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.import_cape"), _ -> this.chooseFile(true)).build(),
++            this.removeCapeButton = Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.remove_cape"), _ -> this.removeCape()).build()
++        );
++
++        try {
++            this.showAppearance(this.store.load(this.accountId));
++            final PlayerSkinWidget preview = new PlayerSkinWidget(145, this.previewHeight(), this.minecraft.getEntityModels(), () -> this.previewSkin);
++            preview.setX(left);
++            preview.setY(top + 30);
++            this.addRenderableWidget(preview);
++        } catch (IOException e) {
++            ViaFabricPlusBedrock.impl().logger().warn("Could not load the selected Bedrock appearance", e);
++            this.status = Component.translatable("bedrock_dressing_room.viafabricplus.load_failed");
++        }
++    }
++
++    @Override
++    public void extractRenderState(final @NonNull GuiGraphicsExtractor graphics, final int mouseX, final int mouseY, final float delta) {
++        super.extractRenderState(graphics, mouseX, mouseY, delta);
++        this.renderScreenTitle(graphics);
++
++        final int left = this.width / 2 - 150;
++        final int previewTop = this.contentTop() + 30;
++        if (this.appearance != null) {
++            graphics.text(this.font, Component.translatable("bedrock_dressing_room.viafabricplus.selected",
++                Component.translatable("bedrock_dressing_room.viafabricplus." + this.appearance.selection().name().toLowerCase(Locale.ROOT))),
++                left + 157, previewTop + 4, -1);
++            graphics.text(this.font, Component.translatable(this.appearance.cape() == null
++                ? "bedrock_dressing_room.viafabricplus.no_cape" : "bedrock_dressing_room.viafabricplus.cape_selected"),
++                left + 157, previewTop + 56, -1);
++            if (this.capePreviewRegistered && this.previewHeight() >= 130) {
++                graphics.blit(RenderPipelines.GUI_TEXTURED, CAPE_PREVIEW_TEXTURE, left + 157, previewTop + 74, 0, 0,
++                    64, 32, this.appearance.cape().getWidth(), this.appearance.cape().getHeight(),
++                    this.appearance.cape().getWidth(), this.appearance.cape().getHeight());
++            }
++        }
++        graphics.textWithWordWrap(this.font, this.status, left, previewTop + this.previewHeight() + 6, 300, ACCENT_COLOR);
++    }
++
++    private int contentTop() {
++        return Math.max(88, (this.height - 250) / 2);
++    }
++
++    private int previewHeight() {
++        return Math.min(200, Math.max(60, this.height - this.contentTop() - 90));
++    }
++
++    @Override
++    public void onFilesDrop(final List<Path> paths) {
++        if (paths.size() == 1) {
++            this.importFile(paths.getFirst(), false);
++        } else {
++            this.status = Component.translatable("bedrock_dressing_room.viafabricplus.one_file");
++        }
++    }
++
++    @Override
++    public void removed() {
++        this.releasePreview();
++        super.removed();
++    }
++
++    private void select(final Selection selection) {
++        try {
++            this.showAppearance(this.store.select(this.accountId, selection));
++        } catch (IOException e) {
++            this.failed(e);
++        }
++    }
++
++    private void toggleModel() {
++        if (this.appearance == null || this.appearance.selection() != Selection.CUSTOM) {
++            return;
++        }
++        try {
++            this.showAppearance(this.store.setSlim(this.accountId, !this.appearance.slim()));
++        } catch (IOException e) {
++            this.failed(e);
++        }
++    }
++
++    private void removeCape() {
++        try {
++            this.showAppearance(this.store.removeCape(this.accountId));
++        } catch (IOException e) {
++            this.failed(e);
++        }
++    }
++
++    private void chooseFile(final boolean cape) {
++        if (this.filePickerOpen) {
++            return;
++        }
++        this.filePickerOpen = true;
++        final long dialogId = NEXT_DIALOG_ID.incrementAndGet();
++        OPEN_DIALOGS.put(dialogId, new FileDialogRequest(this, cape));
++        try {
++            SDLDialog.SDL_ShowOpenFileDialog(FILE_DIALOG_CALLBACK, dialogId, this.minecraft.getWindow().handle(), PNG_FILTER, (CharSequence) null, false);
++        } catch (RuntimeException | LinkageError e) {
++            OPEN_DIALOGS.remove(dialogId);
++            this.filePickerOpen = false;
++            this.failed(new IOException("Could not open the file picker", e));
++        }
++    }
++
++    private void finishFileDialog(final boolean cape, final String selected, final String error) {
++        this.filePickerOpen = false;
++        if (this.minecraft.gui.screen() != this) {
++            return;
++        }
++        if (error != null) {
++            this.failed(new IOException("Could not open the file picker: " + error));
++        } else if (selected != null) {
++            this.importFile(Path.of(selected), cape);
++        }
++    }
++
++    private record FileDialogRequest(BedrockDressingRoomScreen screen, boolean cape) {
++    }
++
++    private void importFile(final Path path, final boolean cape) {
++        try {
++            this.showAppearance(cape ? this.store.importCape(this.accountId, path) : this.store.importSkin(this.accountId, path));
++        } catch (IOException e) {
++            this.failed(e);
++        }
++    }
++
++    private void showAppearance(final Appearance appearance) {
++        this.appearance = appearance;
++        this.releasePreview();
++        this.registerPreview(PREVIEW_TEXTURE, appearance.skin());
++        this.previewRegistered = true;
++        if (appearance.cape() != null) {
++            this.registerPreview(CAPE_PREVIEW_TEXTURE, appearance.cape());
++            this.capePreviewRegistered = true;
++        }
++        this.previewSkin = PlayerSkin.insecure(new ClientAsset.ResourceTexture(PREVIEW_TEXTURE, PREVIEW_TEXTURE),
++            appearance.cape() == null ? null : new ClientAsset.ResourceTexture(CAPE_PREVIEW_TEXTURE, CAPE_PREVIEW_TEXTURE),
++            null, appearance.effectiveSlim() ? PlayerModelType.SLIM : PlayerModelType.WIDE);
++        this.customButton.active = appearance.selection() == Selection.CUSTOM || this.store.hasCustomSkin(this.accountId);
++        this.modelButton.active = appearance.selection() == Selection.CUSTOM;
++        this.modelButton.setMessage(Component.translatable(appearance.effectiveSlim()
++            ? "bedrock_dressing_room.viafabricplus.slim" : "bedrock_dressing_room.viafabricplus.wide"));
++        this.removeCapeButton.active = appearance.cape() != null;
++        this.status = Component.translatable("bedrock_dressing_room.viafabricplus.reconnect");
++    }
++
++    private void registerPreview(final Identifier id, final BufferedImage image) {
++        final NativeImage nativeImage = new NativeImage(image.getWidth(), image.getHeight(), false);
++        for (int y = 0; y < image.getHeight(); y++) {
++            for (int x = 0; x < image.getWidth(); x++) {
++                final int argb = image.getRGB(x, y);
++                nativeImage.setPixelABGR(x, y, (argb & 0xFF00FF00) | ((argb & 0xFF) << 16) | ((argb >>> 16) & 0xFF));
++            }
++        }
++        this.minecraft.getTextureManager().register(id, new DynamicTexture(id::toString, nativeImage));
++    }
++
++    private void releasePreview() {
++        if (this.previewRegistered) {
++            this.minecraft.getTextureManager().release(PREVIEW_TEXTURE);
++            this.previewRegistered = false;
++        }
++        if (this.capePreviewRegistered) {
++            this.minecraft.getTextureManager().release(CAPE_PREVIEW_TEXTURE);
++            this.capePreviewRegistered = false;
++        }
++    }
++
++    private void failed(final IOException e) {
++        ViaFabricPlusBedrock.impl().logger().warn("Could not update the Bedrock appearance", e);
++        this.status = Component.literal(e.getMessage());
++    }
++
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/BedrockSettings.java b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/BedrockSettings.java
+index 9c5931e..4f57c5f 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/BedrockSettings.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/BedrockSettings.java
+@@ -25,8 +25,10 @@ import com.viaversion.viafabricplus.ViaFabricPlus;
+ import com.viaversion.viafabricplus.api.settings.base.BooleanSetting;
+ import com.viaversion.viafabricplus.api.settings.base.SettingGroup;
+ import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import com.viaversion.viafabricplus.bedrock.screen.BedrockDressingRoomScreen;
+ import com.viaversion.viaversion.api.protocol.version.ProtocolVersion;
+ import java.util.Objects;
++import net.minecraft.client.Minecraft;
+ import net.minecraft.network.chat.Component;
+ import net.raphimc.viabedrock.api.BedrockProtocolVersion;
+ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+@@ -39,6 +41,9 @@ public final class BedrockSettings {
+     public BedrockSettings() {
+         final SettingGroup group = ViaFabricPlus.api().settings().register("bedrock");
+         group.register("account", new ActionSetting(Component.translatable("bedrock_settings.viafabricplus.account"), BedrockSettings::accountName, () -> ViaFabricPlusBedrock.impl().account().login()));
++        group.register("dressing_room", new ActionSetting(Component.translatable("bedrock_settings.viafabricplus.dressing_room"),
++            () -> Component.translatable("bedrock_settings.viafabricplus.dressing_room.open"),
++            () -> new BedrockDressingRoomScreen().open(Minecraft.getInstance().gui.screen())));
+         this.replaceDefaultPort = group.registerBoolean("replace_default_port", true);
+         this.experimentalFeatures = group.registerBoolean("experimental_features", true);
+     }
+diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
+index 364ec25..b3c9874 100644
+--- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
++++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
+@@ -6,6 +6,8 @@
+   "bedrock_settings.viafabricplus": "Bedrock",
+   "bedrock_settings.viafabricplus.account": "Account for Bedrock Edition",
+   "bedrock_settings.viafabricplus.account.login": "Click to log in",
++  "bedrock_settings.viafabricplus.dressing_room": "Dressing Room",
++  "bedrock_settings.viafabricplus.dressing_room.open": "Open",
+   "bedrock_settings.viafabricplus.replace_default_port": "Replace default port in server list",
+   "bedrock_settings.viafabricplus.experimental_features": "Enable experimental features (may be unstable)",
+ 
+@@ -14,8 +16,24 @@
+   "screen.viafabricplus.bedrock_realms": "Bedrock Realms",
+   "screen.viafabricplus.bedrock_friends": "Bedrock Friends",
+   "screen.viafabricplus.bedrock_party": "Bedrock Party",
++  "screen.viafabricplus.bedrock_dressing_room": "Bedrock Dressing Room",
+   "screen.viafabricplus.accept_invite": "Accept an invitation code",
+ 
++  "bedrock_dressing_room.viafabricplus.steve": "Steve",
++  "bedrock_dressing_room.viafabricplus.alex": "Alex",
++  "bedrock_dressing_room.viafabricplus.custom": "Custom",
++  "bedrock_dressing_room.viafabricplus.selected": "Skin: %s",
++  "bedrock_dressing_room.viafabricplus.slim": "Model: Slim",
++  "bedrock_dressing_room.viafabricplus.wide": "Model: Wide",
++  "bedrock_dressing_room.viafabricplus.no_cape": "Cape: None",
++  "bedrock_dressing_room.viafabricplus.cape_selected": "Cape: Custom",
++  "bedrock_dressing_room.viafabricplus.import_skin": "Import skin",
++  "bedrock_dressing_room.viafabricplus.import_cape": "Import cape",
++  "bedrock_dressing_room.viafabricplus.remove_cape": "Remove cape",
++  "bedrock_dressing_room.viafabricplus.reconnect": "Applies when you next join a Bedrock world.",
++  "bedrock_dressing_room.viafabricplus.load_failed": "Could not load your saved appearance. Check the log.",
++  "bedrock_dressing_room.viafabricplus.one_file": "Drop one skin PNG at a time.",
++
+   "bedrock_realms.viafabricplus.warning": "This feature requires a Bedrock Edition account to be set in the settings!",
+   "bedrock_realms.viafabricplus.availability_check": "Checking availability...",
+   "bedrock_realms.viafabricplus.no_worlds": "No worlds found :(",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStoreTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStoreTest.java
+new file mode 100644
+index 0000000..c244fac
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStoreTest.java
+@@ -0,0 +1,89 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertNotEquals;
++import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore.Selection;
++import java.awt.image.BufferedImage;
++import java.io.IOException;
++import java.nio.file.Path;
++import javax.imageio.ImageIO;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.io.TempDir;
++
++final class BedrockAppearanceStoreTest {
++
++    @TempDir
++    Path directory;
++
++    @Test
++    void keepsSelectionsAndCapesSeparateByAccount() throws IOException {
++        final BedrockAppearanceStore store = this.store();
++        final Path skin = this.image(64, 64);
++        final Path cape = this.image(64, 32);
++
++        final var imported = store.importSkin("123", skin);
++        assertEquals(Selection.CUSTOM, imported.selection());
++        assertEquals(Selection.STEVE, store.load("456").selection());
++
++        store.setSlim("123", true);
++        final var withCape = store.importCape("123", cape);
++        assertTrue(withCape.effectiveSlim());
++        assertEquals(64, withCape.cape().getWidth());
++
++        store.select("123", Selection.ALEX);
++        assertTrue(store.load("123").effectiveSlim());
++        assertNotEquals(withCape.skinId(), store.load("123").skinId());
++        store.select("123", Selection.CUSTOM);
++        assertTrue(store.load("123").effectiveSlim());
++        assertTrue(store.hasCustomSkin("123"));
++
++        assertEquals(Selection.CUSTOM, this.store().load("123").selection());
++        assertEquals(Selection.STEVE, this.store().load("456").selection());
++        assertNull(store.removeCape("123").cape());
++    }
++
++    @Test
++    void rejectsInvalidSkinWithoutChangingSelection() throws IOException {
++        final BedrockAppearanceStore store = this.store();
++        final Path invalid = this.image(64, 32);
++
++        assertThrows(IOException.class, () -> store.importSkin("123", invalid));
++        assertEquals(Selection.STEVE, store.load("123").selection());
++        assertFalse(store.hasCustomSkin("123"));
++    }
++
++    private BedrockAppearanceStore store() {
++        return new BedrockAppearanceStore(this.directory.resolve("appearances"),
++            _ -> new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB));
++    }
++
++    private Path image(final int width, final int height) throws IOException {
++        final Path path = this.directory.resolve(width + "x" + height + ".png");
++        ImageIO.write(new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB), "png", path.toFile());
++        return path;
++    }
++
++}
+-- 
+2.55.0
+
