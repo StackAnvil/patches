@@ -76,3 +76,5 @@ The private session has a raw `flows.mitm`, redacted `events.jsonl`, screenshots
 Use `bun run lab jvm list` to find a running Java process. `bun run lab jvm threads <pid>` and `bun run lab jvm properties <pid>` save private diagnostics. Use `jfr-start`, `jfr-dump`, and `jfr-stop` to record a Java Flight Recorder trace. For deeper analysis, compile your own Java agent JAR or JVMTI library and attach it with `bun run lab jvm agent <pid> <jar>` or `bun run lab jvm native-agent <pid> <library>`.
 
 The UI command can send input to both Bedrock and Java clients without taking focus from your desktop. This lets you compare the same menu or connection step without hardcoding account tokens or packet contents in tests. Gameplay packets over UDP need separate protocol logs or packet capture. The HTTPS proxy covers only traffic that the launched process routes through it.
+
+For skin behavior, see [the Bedrock skin flow](skin-flow.md). It explains what HTTPS captures show, what gameplay packets carry, and why Character Creator skins still need renderer work.
