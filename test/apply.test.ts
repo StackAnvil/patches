@@ -8,7 +8,12 @@ const fixtures: string[] = [];
 afterAll(async () => Promise.all(fixtures.map((fixture) => rm(fixture, { recursive: true, force: true }))));
 
 async function run(program: string, args: string[], cwd: string, shouldFail = false): Promise<string> {
-  const process = Bun.spawn([program, ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  const process = Bun.spawn([program, ...args], {
+    cwd,
+    env: { ...Bun.env, GIT_CONFIG_GLOBAL: "/dev/null" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [output, error, code] = await Promise.all([
     new Response(process.stdout).text(),
     new Response(process.stderr).text(),

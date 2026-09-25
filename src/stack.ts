@@ -155,7 +155,11 @@ export function abortApply(id: string, mode: "full" | "pr" = "full") {
     if (!existsSync(join(dir, ".git", "rebase-apply"))) {
       return yield* Effect.fail(new Error(`Git has no active am operation in ${dir}. Inspect it before removing ${path}.`));
     }
-    yield* git(["am", "--abort"], dir);
+    yield* git([
+      "-c", "user.name=StackAnvil Patch Bot",
+      "-c", "user.email=patches@stackanvil.invalid",
+      "am", "--abort",
+    ], dir);
     yield* git(["update-ref", syncedRef(mode), "HEAD"], dir);
     yield* Effect.promise(() => rm(path));
     return `Aborted the patch apply in ${dir}. Run bun run ${mode === "pr" ? "pr check" : "stack sync"} ${id} to start again.`;
