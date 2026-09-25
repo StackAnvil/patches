@@ -61,8 +61,9 @@ export function syncPr(id: string, artifact: ArtifactReference = {}) {
     const bodyFile = join(root, ".stackanvil", `${id}-pr-body.md`);
     yield* Effect.promise(() => mkdir(join(root, ".stackanvil"), { recursive: true }));
     yield* Effect.promise(() => writeFile(bodyFile, body));
-    const existing = yield* gh(["pr", "list", "--repo", target.upstream, "--head", `StackAnvil:${head}`, "--state", "open", "--json", "number,url"], root);
-    const prs = JSON.parse(existing) as { number: number; url: string }[];
+    const existing = yield* gh(["api", "-X", "GET", `repos/${target.upstream}/pulls`, "-f", "state=open", "-f", `head=StackAnvil:${head}`], root);
+    const prs = (JSON.parse(existing) as { number: number; html_url: string }[])
+      .map(({ number, html_url }) => ({ number, url: html_url }));
     if (prs.length > 1) return yield* Effect.fail(new Error(`Multiple open north-star PRs for ${id}`));
     if (prs[0]) {
       yield* gh(["pr", "edit", String(prs[0].number), "--repo", target.upstream, "--title", feature.title, "--body-file", bodyFile], root);
