@@ -60,6 +60,7 @@ type Step =
   | { action: "wait"; ms: number }
   | { action: "screenshot"; name: string }
   | { action: "click"; x: number; y: number }
+  | { action: "type"; text: string }
   | { action: "key"; key: string }
   | { action: "videoStart"; name: string }
   | { action: "videoStop" };
@@ -392,6 +393,14 @@ async function key(name: string, windowId?: string, client?: Client, allowFocus 
   }
 }
 
+async function typeText(value: string, windowId?: string, client?: Client, allowFocus = false): Promise<void> {
+  if (!/^[a-z0-9 .-]{1,120}$/.test(value)) throw new Error("Text must contain 1 to 120 lowercase ASCII letters, digits, spaces, periods, or hyphens.");
+  const window = await chosenWindow(windowId, client);
+  const isolated = await displayEnv();
+  if (!isolated && !allowFocus) throw new Error("Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.");
+  await run(nativeBinary, ["type", window.id, value], root, isolated ?? process.env);
+}
+
 async function scenario(file: string, windowId?: string, client: Client = "bedrock", allowFocus = false): Promise<void> {
   const path = resolve(root, file);
   const recipe = JSON.parse(await readFile(path, "utf8")) as { name: string; steps: Step[] };
@@ -407,6 +416,7 @@ async function scenario(file: string, windowId?: string, client: Client = "bedro
       case "screenshot": await screenshot(step.name, windowId, client); break;
       case "click": await click(step.x, step.y, windowId, client, allowFocus); break;
       case "key": await key(step.key, windowId, client, allowFocus); break;
+      case "type": await typeText(step.text, windowId, client, allowFocus); break;
       case "videoStart": await startVideo(step.name, client, windowId); break;
       case "videoStop": await stopVideo(client); break;
       default: throw new Error("Unknown scenario action.");
@@ -533,6 +543,7 @@ async function main(): Promise<void> {
         case "screenshot": if (!input[0]) throw new Error("Supply a screenshot name."); await screenshot(input[0], windowId, client); return;
         case "click": await click(Number(input[0]), Number(input[1]), windowId, client, allowFocus); return;
         case "key": if (!input[0]) throw new Error("Supply a key name."); await key(input[0], windowId, client, allowFocus); return;
+        case "type": if (!input[0]) throw new Error("Supply text."); await typeText(input[0], windowId, client, allowFocus); return;
         case "run": if (!input[0]) throw new Error("Supply a scenario JSON file."); await scenario(input[0], windowId, client, allowFocus); return;
       }
       throw new Error("Usage: bun run capture ui <list|screenshot|click|key|run>");

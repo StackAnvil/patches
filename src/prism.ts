@@ -78,12 +78,12 @@ export async function bundlePrism(): Promise<string> {
   return file;
 }
 
-export async function installPrism(): Promise<string> {
+export async function installPrism(instanceName = prismInstance): Promise<string> {
   const { directory, version } = await prepareFiles();
-  const destination = join(prismHome, prismInstance);
+  const destination = join(prismHome, instanceName);
   const marker = join(destination, ".stackanvil-managed");
   if (existsSync(destination) && !existsSync(marker)) {
-    throw new Error(`Prism instance ${prismInstance} already exists and is not managed by StackAnvil`);
+    throw new Error(`Prism instance ${instanceName} already exists and is not managed by StackAnvil`);
   }
   const mods = join(destination, "minecraft", "mods");
   await mkdir(mods, { recursive: true });

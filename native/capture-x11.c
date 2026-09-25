@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static void json_string(const char *value) {
     putchar('"');
@@ -160,9 +161,31 @@ int main(int argc, char **argv) {
             XRaiseWindow(display, window);
             XSetInputFocus(display, window, RevertToParent, CurrentTime);
             XTestFakeMotionEvent(display, DefaultScreen(display), root_x, root_y, CurrentTime);
+            XFlush(display);
+            usleep(50000);
             XTestFakeButtonEvent(display, 1, True, CurrentTime);
+            XFlush(display);
+            usleep(50000);
             XTestFakeButtonEvent(display, 1, False, CurrentTime);
             XFlush(display);
+        } else if (strcmp(argv[1], "type") == 0 && argc == 4) {
+            XRaiseWindow(display, window);
+            XSetInputFocus(display, window, RevertToParent, CurrentTime);
+            for (const char *character = argv[3]; *character; character++) {
+                KeySym symbol = *character == ' ' ? XK_space : *character == '.' ? XK_period
+                    : *character == '-' ? XK_minus : XStringToKeysym((char[]){ *character, '\0' });
+                KeyCode code = XKeysymToKeycode(display, symbol);
+                if (!code || !((*character >= 'a' && *character <= 'z')
+                    || (*character >= '0' && *character <= '9') || *character == ' '
+                    || *character == '.' || *character == '-')) {
+                    fprintf(stderr, "Only lowercase ASCII letters, digits, spaces, periods, and hyphens can be typed\n");
+                    return 1;
+                }
+                XTestFakeKeyEvent(display, code, True, CurrentTime);
+                XTestFakeKeyEvent(display, code, False, CurrentTime);
+                XFlush(display);
+                usleep(30000);
+            }
         } else if (strcmp(argv[1], "key") == 0 && argc == 4) {
             char *sequence = strdup(argv[3]);
             char *position = NULL;

@@ -39,7 +39,7 @@ bun run capture ui click 0.50 0.60 --client bedrock
 bun run capture ui screenshot java-connected --client java
 ```
 
-Click coordinates are fractions of the chosen client window, from 0 to 1. Use `--window-id` if more than one window matches. `ui key` accepts names such as `Escape`, `Return`, and `Control+b`. A scenario JSON file can combine `mark`, `wait`, `screenshot`, `key`, `click`, `videoStart`, and `videoStop` steps. Run the example with `bun run capture ui run scenarios/realm-hub-observe.json`.
+Click coordinates are fractions of the chosen client window, from 0 to 1. Use `--window-id` if more than one window matches. `ui key` accepts names such as `Escape`, `Return`, and `Control+b`. Use `bun run capture ui type "127.0.0.1"` to enter lowercase ASCII text, digits, spaces, periods, or hyphens in a focused field. A scenario JSON file can combine `mark`, `wait`, `screenshot`, `key`, `type`, `click`, `videoStart`, and `videoStop` steps. Run the example with `bun run capture ui run scenarios/realm-hub-observe.json`.
 
 ## Record before and after video
 

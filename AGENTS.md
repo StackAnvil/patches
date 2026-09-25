@@ -24,6 +24,7 @@ bun run pr assign <project>
 bun run build <project>
 bun run build all
 bun run bundle
+bun run test:integration
 ```
 
 If `stack sync` stops at a conflict, resolve it in the generated checkout, stage the files, and run `bun run stack continue <project>`. To discard that apply, run `bun run stack abort <project>`. Add `--pr` to those commands for a conflict in the PR-only checkout. If `stack rebuild` stops during a cherry-pick, resolve and stage the files, then run `stack rebuild` again. See [the patch workflow](docs/patch-workflow.md) before changing a patch stack.

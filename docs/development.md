@@ -31,3 +31,21 @@ The lab starts a separate Xvfb display, the Bedrock server, ViaProxy, and the Pr
 PrismLauncher must be installed as a Flatpak for `bun run lab java start`. You can also import the ZIP from `dist/prism/` into another PrismLauncher installation. The ZIP contains Minecraft and Fabric version metadata plus the patched ViaFabricPlus and Bedrock add-on JARs. It does not contain the game itself or an account.
 
 For HTTPS capture, client control, credentials, and JVM diagnostics, see the [capture lab guide](capture-lab.md). Bedrock gameplay packets use UDP and are outside the HTTPS proxy capture.
+
+## Run join integration tests
+
+The local join suite starts fresh servers on temporary ports. It launches the Java and Bedrock clients on a private Xvfb display with silent audio. Each case waits for a player spawn in the server log, then checks that the client stays connected and does not crash for 20 seconds. Java cases run once without Iris and once with Iris 1.11.6 and Sodium 0.9.2. The Java server case also summons a vanilla interaction entity near the player to exercise entity rendering. The suite downloads the Minecraft 26.3 server from Mojang and the pinned Iris and Sodium builds from Modrinth, then verifies their published hashes.
+
+Install Flatpak PrismLauncher and sign in to a Java account in PrismLauncher. Install BedrockOnLinux and sign in to a Bedrock account for the native case. Run `bun run dev:setup` to get ViaProxy. Point the test at compatible Bedrock server installations:
+
+```bash
+BEDROCK_SERVER_HOME=/path/to/bedrock-1.26.51 \
+STACKANVIL_JAVA_BEDROCK_SERVER_HOME=/path/to/bedrock-supported-by-viaproxy \
+bun run test:integration
+```
+
+`BEDROCK_SERVER_HOME` is used for the native client. `STACKANVIL_JAVA_BEDROCK_SERVER_HOME` is used for Java through ViaProxy. You can omit the second variable when your ViaProxy build supports the same Bedrock version as the native client. Set `VIAPROXY_JAR` to select a different ViaProxy build. Use `--route java-java`, `--route java-bedrock`, or `--route bedrock-bedrock` to run one route. Use `--reuse-build` after a successful build when only changing the test runner.
+
+The suite creates a managed Prism instance named `StackAnvil Integration 26.3`. It leaves your other instances alone. Server data and logs stay under `.stackanvil/integration/`. Native screenshots and HTTPS flows stay under `.stackanvil/captures/`. The test removes its temporary Bedrock server entry and stops only processes it started. The full join suite needs signed-in game clients, so the ordinary GitHub hosted CI job runs the tooling tests and build but does not claim to run account-based game joins.
+
+The renderer regression from [this client log](https://mclo.gs/r01cqUJ) was a cast from a vanilla entity render state to the Bedrock renderer's state. The feature patch now selects its renderer only for tracked Bedrock actors and accepts a vanilla state safely. A focused Java test calls that failure path directly. The Java server join case also runs with Iris and a vanilla interaction entity in view. The local lab sets SDL3 to use EGL so Iris can start with OpenGL on the private display.
