@@ -71,7 +71,7 @@ export async function bundlePrism(): Promise<string> {
   const { directory, version } = await prepareFiles();
   const output = join(root, "dist", "prism");
   await mkdir(output, { recursive: true });
-  const file = join(output, `StackAnvil-Minecraft-${version}.zip`);
+  const file = join(output, `StackAnvil-${version}-Prism-Launcher_Config.zip`);
   await rm(file, { force: true });
   await execute("zip", ["-q", "-r", file, "instance.cfg", "mmc-pack.json", "minecraft"], { cwd: directory });
   await execute("unzip", ["-tq", file]);

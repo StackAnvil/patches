@@ -54,6 +54,6 @@ The sync command adds the project's default PR assignees when your GitHub accoun
 
 ## Builds and licenses
 
-[GitHub releases](https://github.com/StackAnvil/patches/releases) contain the full StackAnvil builds. The [Maven repository](https://github.com/StackAnvil/maven) serves published release artifacts. A full build can contain features that are still under upstream review. Test it before using it in a production server.
+[GitHub releases](https://github.com/StackAnvil/patches/releases) provide four direct JAR downloads and a PrismLauncher instance ZIP. The [Maven repository](https://github.com/StackAnvil/maven) serves published release artifacts. A full build can contain features that are still under upstream review. Test it before using it in a production server.
 
 StackAnvil tooling is licensed under [GPL-3.0-or-later](LICENSE). Each upstream project keeps its own license and copyright notices. StackAnvil is an independent experiment and is not an official ViaVersion release.
