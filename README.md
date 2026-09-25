@@ -18,7 +18,7 @@ The full build applies every group. The upstream PR branch starts at clean upstr
 | --- | --- | --- |
 | ViaBedrock | [ViaVersionAddons/ViaBedrock](https://github.com/ViaVersionAddons/ViaBedrock) | [#420](https://github.com/ViaVersionAddons/ViaBedrock/pull/420), [#425](https://github.com/ViaVersionAddons/ViaBedrock/pull/425), [#427](https://github.com/ViaVersionAddons/ViaBedrock/pull/427), [#429](https://github.com/ViaVersionAddons/ViaBedrock/pull/429) |
 | viafabricplus-bedrock | [ViaVersionAddons/viafabricplus-bedrock](https://github.com/ViaVersionAddons/viafabricplus-bedrock) | [#7](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/7), [#9](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/9), [#11](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/11) |
-| CubeConverter | [Oryxel/CubeConverter](https://github.com/Oryxel/CubeConverter) | Ready for contributions |
+| CubeConverter | [oryxel1/CubeConverter](https://github.com/oryxel1/CubeConverter/tree/vv-json) | Ready for contributions |
 | ViaFabricPlus | [ViaVersion/ViaFabricPlus](https://github.com/ViaVersion/ViaFabricPlus) | Ready for contributions |
 
 ## Try a stack
@@ -31,7 +31,9 @@ bun run stack sync viabedrock
 bun run build viabedrock
 ```
 
-The tool clones upstream into `.worktrees/viabedrock`. The full source tree remains a normal Git repository. The build JAR and its SHA-256 manifest go to `dist/viabedrock/`.
+The tool clones upstream into `.worktrees/viabedrock`. The full source tree remains a normal Git repository. The build JAR and its SHA-256 manifest go to `dist/viabedrock/`. A target build also builds its dependencies. `bun run build all` follows CubeConverter → ViaBedrock → viafabricplus-bedrock and ViaFabricPlus → viafabricplus-bedrock. The local Maven repository in `.stackanvil/maven/` makes each downstream build use the patched dependency built in the same run.
+
+Run `bun run bundle` after `bun run build all` to make a PrismLauncher instance ZIP with the two Fabric mods. Import that ZIP in PrismLauncher to try the Java client. The add-on embeds the StackAnvil ViaBedrock and CubeConverter JARs. Our [capture lab guide](docs/capture-lab.md) explains the local server, ViaProxy, Bedrock client, Java client, screenshots, and private HTTPS capture workflow.
 
 Use `bun run stack status <project>` to see its pinned upstream commit and feature order. Use `bun run dev:setup` to prepare ViaProxy and mitmproxy, then check your Bedrock server and client paths. The [development guide](docs/development.md) explains traffic capture and manual tests.
 

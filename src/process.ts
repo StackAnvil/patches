@@ -4,14 +4,14 @@ import { Effect } from "effect";
 
 const execFileAsync = promisify(execFile);
 
-export function command(program: string, args: string[], cwd: string) {
+export function command(program: string, args: string[], cwd: string, env: NodeJS.ProcessEnv = process.env) {
   return Effect.tryPromise({
     try: async () => {
       const { stdout, stderr } = await execFileAsync(program, args, {
         cwd,
         encoding: "utf8",
         maxBuffer: 64 * 1024 * 1024,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+        env: { ...env, GIT_TERMINAL_PROMPT: "0" },
       });
       if (stderr.trim()) process.stderr.write(stderr);
       return stdout.trimEnd();

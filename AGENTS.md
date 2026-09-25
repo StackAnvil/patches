@@ -21,6 +21,8 @@ bun run stack edit <project> <patch-file>
 bun run stack rebuild <project>
 bun run pr check <project>
 bun run build <project>
+bun run build all
+bun run bundle
 ```
 
 If `stack sync` stops at a conflict, resolve it in the generated checkout, stage the files, and run `bun run stack continue <project>`. To discard that apply, run `bun run stack abort <project>`. Add `--pr` to those commands for a conflict in the PR-only checkout. If `stack rebuild` stops during a cherry-pick, resolve and stage the files, then run `stack rebuild` again. See [the patch workflow](docs/patch-workflow.md) before changing a patch stack.
@@ -31,5 +33,7 @@ If `stack sync` stops at a conflict, resolve it in the generated checkout, stage
 - Use Conventional Commit messages in the form `<type>(<scope>): <description>`. Add a body for non-trivial changes. Do not bypass Git hooks or Lefthook.
 - Do not create a branch unless the user explicitly asks for one.
 - Run `bun run check` after tooling changes. Add targeted tests for behavior that could lose patch work or change PR contents.
+- Keep `targets.json` dependencies in build order. A downstream build must resolve the StackAnvil JARs that the same run built, including the ViaFabricPlus API artifact.
+- Use `bun run lab` and `bun run capture` for local Bedrock and Java tests. Keep their virtual display and zero volume defaults. Desktop input requires an explicit `--allow-focus`. Follow [the capture lab guide](docs/capture-lab.md). Keep credentials, raw flows, screenshots, and JVM dumps private.
 - Do not commit `.worktrees/`, `.stackanvil/`, `dist/`, downloaded servers, credentials, or traffic captures.
 - Treat the patches repository as GPL-3.0-or-later tooling. Keep upstream projects' license and copyright notices in generated source and builds.

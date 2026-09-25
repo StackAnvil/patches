@@ -1,31 +1,33 @@
 # Development environment
 
-This guide prepares a local test setup. It checks for a Bedrock client, Bedrock Dedicated Server, ViaProxy, and an HTTPS capture tool.
+Use this guide to build the four projects and start a local Bedrock test server.
 
-## Prepare the tools
+## Build the stack
 
-Install Bun, Git, the GitHub CLI, and a JDK. Use JDK 25 for ViaFabricPlus and viafabricplus-bedrock. Use a compatible JDK for the other two projects.
-
-Download the [official Bedrock Dedicated Server](https://www.minecraft.net/en-us/download/server/bedrock) for your system. Extract it outside this repository. Install a Bedrock client on a supported device.
-
-Set these variables before you run the setup command:
+Install Bun, Git, JDK 17, and JDK 25. Set `STACKANVIL_JAVA_17` and `STACKANVIL_JAVA_25` if the JDKs are not in the standard paths. Install Xvfb, `xauth`, and `pactl` for focus free local tests. On Fedora, the packages include `xorg-x11-server-Xvfb`, `xorg-x11-xauth`, and `pulseaudio-utils`. Then run:
 
 ```bash
-export BEDROCK_SERVER_HOME=/path/to/bedrock-server
-export BEDROCK_DEVICE_HOST=192.0.2.10
-bun run dev:setup
+bun install --frozen-lockfile
+bun run build all
+bun run bundle
 ```
 
-Use `BEDROCK_CLIENT_COMMAND` instead of `BEDROCK_DEVICE_HOST` when the client runs on this computer. The setup command downloads ViaProxy from its official GitHub release. It installs mitmproxy in an ignored Python environment when `mitmdump` is not already present. It stops with a clear message if the server or client is missing.
+`targets.json` records the build graph. ViaBedrock uses the `vv-json` branch of `oryxel1/CubeConverter`, as its upstream build does. The build tool injects a private Gradle Maven repository and substitutes StackAnvil versions for downstream builds. It does not edit upstream build files for local dependency routing. Artifacts and manifests go to `dist/`. The PrismLauncher ZIP goes to `dist/prism/`.
 
-## Test a build
+The add-on build includes one downstream compatibility patch for the current ViaBedrock API. It is a custom patch, so it will not appear in the upstream PR branch.
 
-Run `bun run build <project>`. Start the Bedrock server from `BEDROCK_SERVER_HOME`. Start the patched mod or proxy with the JAR from `dist/<project>/`. Use a separate test account and world. Test the behavior changed by the patch, then test a nearby unchanged behavior.
+## Run a local server
 
-ViaProxy can bridge a Java client to Bedrock. Its [usage guide](https://github.com/ViaVersion/ViaProxy) lists the CLI and configuration modes. Some account or NetherNet paths still need live credentials and cannot be tested with offline mode.
+Download the [official Bedrock Dedicated Server](https://www.minecraft.net/en-us/download/server/bedrock), extract it outside this repository, and set `BEDROCK_SERVER_HOME` to that directory. Then run:
 
-## Capture traffic
+```bash
+bun run dev:setup
+bun run lab doctor
+bun run lab up
+```
 
-Start mitmweb from `.stackanvil/tools/mitmproxy/bin/mitmweb` or your system install. Route only the test client's HTTPS traffic through it. Trust the mitmproxy certificate on that test client when you need to inspect TLS traffic.
+The lab starts a separate Xvfb display, the Bedrock server, ViaProxy, and the PrismLauncher instance. Both game clients stay off your active desktop, so their input cannot interrupt another game. The lab routes their audio to a silent sink and sets each game's master volume to zero. It detects services that you already started and leaves them under your control. `bun run lab down` stops only lab managed processes. `bun run lab status` lists the current processes. By default, ViaProxy listens on `127.0.0.1:25568` and connects to the local Bedrock server on `127.0.0.1:19132`. Set `STACKANVIL_VIAPROXY_BIND` and `STACKANVIL_BEDROCK_TARGET` to change these addresses.
 
-Bedrock game packets use a separate UDP path. Use protocol logs or a packet capture tool for those packets. Never commit raw traffic captures or account credentials.
+PrismLauncher must be installed as a Flatpak for `bun run lab java start`. You can also import the ZIP from `dist/prism/` into another PrismLauncher installation. The ZIP contains Minecraft and Fabric version metadata plus the patched ViaFabricPlus and Bedrock add-on JARs. It does not contain the game itself or an account.
+
+For HTTPS capture, client control, credentials, and JVM diagnostics, see the [capture lab guide](capture-lab.md). Bedrock gameplay packets use UDP and are outside the HTTPS proxy capture.

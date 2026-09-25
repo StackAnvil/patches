@@ -4,11 +4,13 @@ import { join } from "node:path";
 export const root = join(import.meta.dir, "..");
 
 export interface Target {
+  dependsOn: string[];
   upstream: string;
   fork: string;
   baseBranch: string;
   baseSha: string;
   java: string;
+  publication: string;
   buildTask: string;
 }
 
@@ -24,15 +26,19 @@ export interface Series {
   custom: string[];
 }
 
+export async function getTargets(): Promise<Record<string, Target>> {
+  return JSON.parse(await readFile(join(root, "targets.json"), "utf8")) as Record<string, Target>;
+}
+
 export async function getTarget(id: string): Promise<Target> {
-  const targets = JSON.parse(await readFile(join(root, "targets.json"), "utf8")) as Record<string, Target>;
+  const targets = await getTargets();
   const target = targets[id];
   if (!target) throw new Error(`Unknown target ${id}. Choose: ${Object.keys(targets).join(", ")}`);
   return target;
 }
 
 export async function targetIds(): Promise<string[]> {
-  return Object.keys(JSON.parse(await readFile(join(root, "targets.json"), "utf8")) as Record<string, Target>);
+  return Object.keys(await getTargets());
 }
 
 export async function getSeries(id: string): Promise<Series> {
