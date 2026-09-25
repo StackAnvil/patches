@@ -14,7 +14,9 @@ async function run(program: string, args: string[], cwd: string, shouldFail = fa
     new Response(process.stderr).text(),
     process.exited,
   ]);
-  expect(code === 0).toBe(!shouldFail);
+  if ((code === 0) === shouldFail) {
+    throw new Error(`${program} ${args.join(" ")} exited ${code}:\n${output}${error}`);
+  }
   return `${output}${error}`;
 }
 
