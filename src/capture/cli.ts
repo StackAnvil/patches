@@ -361,6 +361,16 @@ async function screenshot(name: string, windowId?: string, client?: Client): Pro
   return imagePath;
 }
 
+async function pixel(x: number, y: number, windowId?: string, client?: Client): Promise<string> {
+  if (![x, y].every((value) => Number.isFinite(value) && value >= 0 && value <= 1)) {
+    throw new Error("Pixel coordinates must be ratios between 0 and 1.");
+  }
+  const window = await chosenWindow(windowId, client);
+  const localX = Math.floor(x * (window.width - 1));
+  const localY = Math.floor(y * (window.height - 1));
+  return run(nativeBinary, ["pixel", window.id, String(localX), String(localY)], root, await displayEnv() ?? process.env);
+}
+
 async function click(x: number, y: number, windowId?: string, client?: Client, allowFocus = false): Promise<void> {
   if (![x, y].every((value) => Number.isFinite(value) && value >= 0 && value <= 1)) {
     throw new Error("Click coordinates must be ratios between 0 and 1.");
@@ -541,12 +551,13 @@ async function main(): Promise<void> {
       switch (action) {
         case "list": console.log(JSON.stringify(await windows(), null, 2)); return;
         case "screenshot": if (!input[0]) throw new Error("Supply a screenshot name."); await screenshot(input[0], windowId, client); return;
+        case "pixel": console.log(await pixel(Number(input[0]), Number(input[1]), windowId, client)); return;
         case "click": await click(Number(input[0]), Number(input[1]), windowId, client, allowFocus); return;
         case "key": if (!input[0]) throw new Error("Supply a key name."); await key(input[0], windowId, client, allowFocus); return;
         case "type": if (!input[0]) throw new Error("Supply text."); await typeText(input[0], windowId, client, allowFocus); return;
         case "run": if (!input[0]) throw new Error("Supply a scenario JSON file."); await scenario(input[0], windowId, client, allowFocus); return;
       }
-      throw new Error("Usage: bun run capture ui <list|screenshot|click|key|run>");
+      throw new Error("Usage: bun run capture ui <list|screenshot|pixel|click|key|run>");
     }
     default: throw new Error("Usage: bun run capture <doctor|start|launch|game-stop|mark|stop|status|report|compare|video|ui>");
   }

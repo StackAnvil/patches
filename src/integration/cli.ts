@@ -2,21 +2,23 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createSocket } from "node:dgram";
 import { closeSync, existsSync, openSync } from "node:fs";
-import { copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { Effect } from "effect";
 import { activeDisplay, displayEnv, ensureDisplay, stopDisplay } from "../lab/display.ts";
 import { root } from "../model.ts";
 import { installPrism } from "../prism.ts";
 import { waitForJoin, type JoinRoute } from "./join.ts";
+import { installModpack } from "./modpack.ts";
 
 const execute = promisify(execFile);
 const privateRoot = join(root, ".stackanvil", "integration");
 const toolsRoot = join(root, ".stackanvil", "tools");
-const prismName = "StackAnvil Integration 26.3";
+const plainPrismName = "StackAnvil Integration 26.3";
+const modpackPrismName = "Fabulously Optimized StackAnvil Integration 26.3";
 const captureCli = join(root, "src", "capture", "cli.ts");
 const bdsSource = resolve(process.env.BEDROCK_SERVER_HOME ?? join(homedir(), "bedrock-server"));
 const proxyBdsSource = resolve(process.env.STACKANVIL_JAVA_BEDROCK_SERVER_HOME ?? bdsSource);
@@ -105,21 +107,6 @@ async function vanillaServer(): Promise<string> {
   return file;
 }
 
-async function modJar(project: "iris" | "sodium", version: string): Promise<string> {
-  const params = new URLSearchParams({ game_versions: JSON.stringify(["26.3"]), loaders: JSON.stringify(["fabric"]), include_changelog: "false" });
-  const response = await fetch(`https://api.modrinth.com/v2/project/${project}/version?${params}`, {
-    headers: { "User-Agent": "StackAnvil/integration-tests (https://github.com/StackAnvil/patches)" },
-  });
-  if (!response.ok) throw new Error(`Modrinth ${project} lookup failed: ${response.status}`);
-  const versions = await response.json() as { version_number: string; files: { filename: string; url: string; primary: boolean; hashes: { sha512: string } }[] }[];
-  const selected = versions.find((entry) => entry.version_number === version);
-  const file = selected?.files.find((entry) => entry.primary && entry.filename.endsWith(".jar"));
-  if (!file) throw new Error(`Modrinth has no ${project} ${version} Fabric JAR for Minecraft 26.3.`);
-  const destination = join(privateRoot, "cache", file.filename);
-  await download(file.url, destination, file.hashes.sha512, "sha512");
-  return destination;
-}
-
 async function javaServer(dir: string): Promise<{ child: ChildProcess; log: string; port: number }> {
   const port = await tcpPort();
   const jar = await vanillaServer();
@@ -171,37 +158,33 @@ async function viaProxy(dir: string, bedrockPort: number, version: string): Prom
   return { child, log, port };
 }
 
-async function preparePrism(iris: boolean): Promise<string> {
-  const instance = await installPrism(prismName);
-  const mods = join(instance, "minecraft", "mods");
-  const managed = new Set(["iris-fabric-1.11.6+mc26.3.jar", "sodium-fabric-0.9.2+mc26.3.jar"]);
-  for (const file of await readdir(mods)) {
-    if (/^(?:iris|sodium)-.*\.jar$/i.test(file) && !managed.has(file)) {
-      throw new Error(`The integration instance contains an unmanaged ${file}. Remove it before testing.`);
-    }
-    if (managed.has(file)) await rm(join(mods, file));
-  }
-  if (iris) {
-    for (const [project, version] of [["iris", "1.11.6+26.3-fabric"], ["sodium", "mc26.3-0.9.2-fabric"]] as const) {
-      const source = await modJar(project, version);
-      await copyFile(source, join(mods, basename(source)));
+async function preparePrism(modpack: boolean): Promise<{ instance: string; name: string }> {
+  const name = modpack ? modpackPrismName : plainPrismName;
+  const instance = await installPrism(name);
+  if (modpack) {
+    const version = await installModpack(instance);
+    console.log(`Testing Fabulously Optimized ${version} with StackAnvil.`);
+  } else {
+    const mods = join(instance, "minecraft", "mods");
+    for (const file of await readdir(mods)) {
+      if (/^(?:iris|sodium)-.*\.jar$/i.test(file)) await rm(join(mods, file));
     }
   }
-  return instance;
+  return { instance, name };
 }
 
-async function gameProcess(): Promise<number | undefined> {
+async function gameProcess(name: string): Promise<number | undefined> {
   const { stdout } = await execute("ps", ["-eo", "pid=,args="], { maxBuffer: 8 * 1024 * 1024 });
   for (const line of stdout.split("\n")) {
     const match = /^\s*(\d+)\s+(.+)$/.exec(line);
-    if (match?.[2]?.includes("org.prismlauncher.EntryPoint") && match[2].includes(prismName)) return Number(match[1]);
+    if (match?.[2]?.includes("org.prismlauncher.EntryPoint") && match[2].includes(name)) return Number(match[1]);
   }
   return undefined;
 }
 
-async function waitForGameProcess(launcher: ChildProcess, log: string): Promise<number> {
+async function waitForGameProcess(launcher: ChildProcess, log: string, name: string): Promise<number> {
   for (let attempt = 0; attempt < 120; attempt++) {
-    const pid = await gameProcess();
+    const pid = await gameProcess(name);
     if (pid) return pid;
     if (!alive(launcher.pid)) throw new Error(`Prism exited before Minecraft started. Read ${log}.`);
     await Bun.sleep(500);
@@ -209,23 +192,24 @@ async function waitForGameProcess(launcher: ChildProcess, log: string): Promise<
   throw new Error(`Minecraft did not start within 60s. Read ${log}.`);
 }
 
-async function javaJoin(route: "java-java" | "java-bedrock", iris: boolean, dir: string,
+async function javaJoin(route: "java-java" | "java-bedrock", modpack: boolean, dir: string,
   target: { port: number; log: string; child: ChildProcess }): Promise<void> {
-  if (await gameProcess()) throw new Error(`Prism instance ${prismName} is already running. Close it before the integration suite changes its mods.`);
-  const instance = await preparePrism(iris);
+  const name = modpack ? modpackPrismName : plainPrismName;
+  if (await gameProcess(name)) throw new Error(`Prism instance ${name} is already running. Close it before the integration suite changes its mods.`);
+  const { instance } = await preparePrism(modpack);
   const serverLogStart = (await textFile(target.log)).length;
   const clientLog = join(instance, "minecraft", "logs", "latest.log");
   await rm(clientLog, { force: true });
   const isolated = await displayEnv(true);
   if (!isolated) throw new Error("Integration tests require the private Xvfb display.");
-  const log = join(dir, `${route}-${iris ? "iris" : "plain"}-launcher.log`);
+  const log = join(dir, `${route}-${modpack ? "fabulously-optimized" : "plain"}-launcher.log`);
   const child = service("flatpak", ["run", `--filesystem=${join(root, ".stackanvil", "lab")}:ro`,
     `--env=DISPLAY=${isolated.DISPLAY}`, `--env=XAUTHORITY=${isolated.XAUTHORITY}`,
     "--env=WAYLAND_DISPLAY=", "--env=SDL_VIDEODRIVER=x11", "--env=SDL_VIDEO_FORCE_EGL=1",
     "--env=PULSE_SINK=stackanvil_silent", "org.prismlauncher.PrismLauncher",
-    "--launch", prismName, "--server", `127.0.0.1:${target.port}`], root, log, isolated);
+    "--launch", name, "--server", `127.0.0.1:${target.port}`], root, log, isolated);
   try {
-    const gamePid = await waitForGameProcess(child, log);
+    const gamePid = await waitForGameProcess(child, log, name);
     if (route === "java-bedrock") {
       await waitForLog(clientLog, /Connecting to 127\.0\.0\.1/, child, 120_000);
       await Bun.sleep(3500);
@@ -236,7 +220,7 @@ async function javaJoin(route: "java-java" | "java-bedrock", iris: boolean, dir:
       onJoin: route === "java-java" ? (name) => {
         target.child.stdin?.write(`execute at ${name} run summon minecraft:interaction ~ ~ ~\n`);
       } : undefined });
-    console.log(`PASS ${route}${iris ? "+iris" : ""}: ${player} joined and remained connected for 20s.`);
+    console.log(`PASS ${route}${modpack ? "+fabulously-optimized" : ""}: ${player} joined and remained connected for 20s.`);
   } catch (error) {
     throw new Error(`${String(error)} Read ${clientLog} and ${log}.`);
   } finally {
@@ -295,7 +279,14 @@ async function bedrockJoin(dir: string, target: { port: number; log: string }): 
     await capture(["ui", "click", "0.69", "0.57"]);
     await Bun.sleep(4000);
     await capture(["ui", "screenshot", "native-before-trust"]);
-    await capture(["ui", "click", "0.5", "0.59"]);
+    const trustPanelPixel = (await capture(["ui", "pixel", "0.36", "0.28"]))
+      .split(/\s+/).map(Number);
+    if (trustPanelPixel.length !== 3 || trustPanelPixel.some((value) => !Number.isFinite(value))) {
+      throw new Error("Could not read the Bedrock trust dialog state.");
+    }
+    if (trustPanelPixel.every((value) => value > 150)) {
+      await capture(["ui", "click", "0.5", "0.59"]);
+    }
     const player = await waitForJoin({ route: "bedrock-bedrock", serverLog: async () => (await textFile(target.log)).slice(serverLogStart),
       clientLog: () => textFile(join(root, ".stackanvil", "captures", session!, "game.log")),
       clientAlive: () => alive(gamePid), timeoutMs: 90_000, dwellMs: 20_000 });
@@ -357,10 +348,10 @@ async function main(): Promise<void> {
     const proxy = proxyBedrock ? await viaProxy(dir, proxyBedrock.port, proxyBedrock.version) : undefined;
     for (const route of routes) {
       if (route === "java-java" && java) {
-        if (!selected.includes("--iris-only")) await javaJoin(route, false, dir, java);
+        if (!selected.includes("--modpack-only")) await javaJoin(route, false, dir, java);
         await javaJoin(route, true, dir, java);
       } else if (route === "java-bedrock" && proxy && proxyBedrock) {
-        if (!selected.includes("--iris-only")) await javaJoin(route, false, dir, { ...proxy, log: proxyBedrock.log });
+        if (!selected.includes("--modpack-only")) await javaJoin(route, false, dir, { ...proxy, log: proxyBedrock.log });
         await javaJoin(route, true, dir, { ...proxy, log: proxyBedrock.log });
       } else if (route === "bedrock-bedrock" && nativeBedrock) {
         await bedrockJoin(dir, nativeBedrock);

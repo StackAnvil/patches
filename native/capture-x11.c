@@ -112,7 +112,18 @@ int main(int argc, char **argv) {
         Window window = (Window)strtoul(argv[2], NULL, 0);
         XWindowAttributes attributes;
         if (!XGetWindowAttributes(display, window, &attributes)) { fprintf(stderr, "Unknown window\n"); return 1; }
-        if (strcmp(argv[1], "screenshot") == 0 && argc == 4) {
+        if (strcmp(argv[1], "pixel") == 0 && argc == 5) {
+            int x = atoi(argv[3]), y = atoi(argv[4]);
+            if (x < 0 || y < 0 || x >= attributes.width || y >= attributes.height) {
+                fprintf(stderr, "Pixel is outside the window\n"); return 1;
+            }
+            XImage *image = XGetImage(display, window, x, y, 1, 1, AllPlanes, ZPixmap);
+            if (!image) { fprintf(stderr, "Cannot read pixel\n"); return 1; }
+            unsigned long pixel = XGetPixel(image, 0, 0);
+            printf("%lu %lu %lu\n", pixel_component(pixel, image->red_mask),
+                   pixel_component(pixel, image->green_mask), pixel_component(pixel, image->blue_mask));
+            XDestroyImage(image);
+        } else if (strcmp(argv[1], "screenshot") == 0 && argc == 4) {
             XImage *image = XGetImage(display, window, 0, 0, (unsigned)attributes.width, (unsigned)attributes.height, AllPlanes, ZPixmap);
             if (!image) { fprintf(stderr, "Cannot capture window\n"); return 1; }
             FILE *file = fopen(argv[3], "wb");
@@ -206,8 +217,8 @@ int main(int argc, char **argv) {
             for (int i = 0; i < length; i++) XTestFakeKeyEvent(display, codes[i], True, CurrentTime);
             for (int i = length - 1; i >= 0; i--) XTestFakeKeyEvent(display, codes[i], False, CurrentTime);
             XFlush(display);
-        } else { fprintf(stderr, "Usage: capture-x11 list|screenshot ID FILE|resize ID WIDTH HEIGHT|click ID X Y|key ID NAME\n"); return 2; }
-    } else { fprintf(stderr, "Usage: capture-x11 list|screenshot ID FILE|resize ID WIDTH HEIGHT|click ID X Y|key ID NAME\n"); return 2; }
+        } else { fprintf(stderr, "Usage: capture-x11 list|pixel ID X Y|screenshot ID FILE|resize ID WIDTH HEIGHT|click ID X Y|key ID NAME\n"); return 2; }
+    } else { fprintf(stderr, "Usage: capture-x11 list|pixel ID X Y|screenshot ID FILE|resize ID WIDTH HEIGHT|click ID X Y|key ID NAME\n"); return 2; }
     XCloseDisplay(display);
     return 0;
 }
