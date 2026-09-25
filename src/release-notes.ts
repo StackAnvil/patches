@@ -17,7 +17,7 @@ for (const id of await targetIds()) {
   lines.push(`## ${id}`, "", `Upstream base: [${target.baseSha.slice(0, 12)}](https://github.com/${target.upstream}/commit/${target.baseSha})`, "");
   if (series.features.length) {
     lines.push("Feature patches:");
-    for (const feature of series.features) lines.push(`- ${feature.title}${feature.sourcePr ? ` ([original PR](${feature.sourcePr}))` : ""}`);
+    for (const feature of series.features) lines.push(`- ${feature.title}`);
   } else {
     lines.push("No feature patches yet. This build contains the branding patch.");
   }

@@ -4,7 +4,7 @@ Thanks for helping. A clear bug report, a build result, or a small patch all hel
 
 ## Choose a patch group
 
-Add a change to `features` when it can become one focused upstream PR. Add it to `custom` when it is useful here but has no upstream PR planned. Keep branding limited to identifying our artifacts.
+Add a change to `features` when it can become one focused upstream PR. Add it to `custom` when it is useful here but has no upstream PR planned. Use branding for artifact identity and local dependency routing.
 
 Each feature patch must apply to clean upstream after the features before it. The first feature must apply without the branding patch. Do not put unrelated changes in one patch.
 
@@ -23,7 +23,7 @@ If `stack sync` stops during `git am`, resolve and stage the files in `.worktree
 
 ## Add a feature patch
 
-Apply the current series with `bun run stack sync <project>`. Make one commit in its detached source checkout. Use a Conventional Commit message. Then run `bun run stack add <project> features '<title>'`. Add `--source-pr <url>` when the feature came from a PR. The command updates the series and exports the patch.
+Apply the current series with `bun run stack sync <project>`. Make one commit in its detached source checkout. Use a Conventional Commit message. Then run `bun run stack add <project> features '<title>'`. The command updates the series and exports the patch.
 
 Only maintainers run `bun run pr sync <project>`. It force-updates the dedicated `stackanvil/north-star` branch with a lease, then opens or updates one draft upstream PR. Run `bun run pr body <project>` to inspect the proposed text first. Add `--run-id <id>` to link a relevant test artifact run.
 

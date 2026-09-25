@@ -38,7 +38,7 @@ async function main(): Promise<void> {
         if (extra !== "features" && extra !== "custom") throw new Error("Choose features or custom");
         const title = rest[0];
         if (!title) throw new Error("Supply a Conventional Commit title");
-        console.log(await Effect.runPromise(addPatch(id, extra, title, option("--source-pr"))));
+        console.log(await Effect.runPromise(addPatch(id, extra, title)));
         return;
       }
       case "status": {

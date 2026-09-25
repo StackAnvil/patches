@@ -240,7 +240,7 @@ export function rebuild(id: string) {
   });
 }
 
-export function addPatch(id: string, group: "features" | "custom", title: string, sourcePr?: string) {
+export function addPatch(id: string, group: "features" | "custom", title: string) {
   return Effect.gen(function* () {
     const target = yield* Effect.promise(() => getTarget(id));
     const series = yield* Effect.promise(() => getSeries(id));
@@ -255,7 +255,7 @@ export function addPatch(id: string, group: "features" | "custom", title: string
     if (!slug) return yield* Effect.fail(new Error("Patch title needs words for a filename"));
     const number = String((group === "features" ? series.features.length : series.custom.length) + 1).padStart(4, "0");
     const file = `${number}-${slug}.patch`;
-    if (group === "features") series.features.push({ file, title, ...(sourcePr ? { sourcePr } : {}) });
+    if (group === "features") series.features.push({ file, title });
     else series.custom.push(file);
     const path = join(root, "patches", id, group, file);
     yield* Effect.promise(() => writeFile(path, ""));
@@ -263,8 +263,4 @@ export function addPatch(id: string, group: "features" | "custom", title: string
     yield* rebuild(id);
     return path;
   });
-}
-
-export async function sourceSeries(id: string): Promise<{ target: Target; series: Series }> {
-  return { target: await getTarget(id), series: await getSeries(id) };
 }

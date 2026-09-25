@@ -18,7 +18,6 @@ export interface Target {
 export interface Feature {
   file: string;
   title: string;
-  sourcePr?: string;
 }
 
 export interface Series {

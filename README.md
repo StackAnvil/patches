@@ -8,7 +8,7 @@ We welcome bug reports, test results, and patches. You do not need to work on al
 
 Each project has three ordered groups in `patches/<project>/series.json`:
 
-1. **Branding** marks StackAnvil builds. We do not propose this patch upstream.
+1. **Branding** marks StackAnvil builds and routes full builds to local dependencies. We do not propose this patch upstream.
 2. **Features** contain changes intended for upstream. Each feature is one commit and one `.patch` file.
 3. **Custom** contains changes we plan to keep downstream.
 

@@ -55,7 +55,7 @@ export function assignPr(id: string, prUrl?: string) {
 
 export function renderPrBody(
   id: string,
-  feature: { title: string; sourcePr?: string },
+  feature: { title: string },
   artifact: ArtifactReference = {},
 ): string {
   if (artifact.artifactId && !artifact.runId) throw new Error("--artifact-id requires --run-id");
@@ -66,7 +66,6 @@ export function renderPrBody(
     "",
     `This is the current north-star feature from [StackAnvil's ${id} patch stack](https://github.com/StackAnvil/patches/tree/main/patches/${id}/features). The PR branch contains this feature alone, based on upstream.`,
   ];
-  if (feature.sourcePr) lines.push("", `Original proposal: ${feature.sourcePr}`);
   lines.push("", "## Testing", "", "- [ ] Patch applies to current upstream", "- [ ] Project build and relevant tests pass", "- [ ] Manual behavior checked where needed");
   if (artifact.runId || artifact.artifactId) {
     lines.push("", "## Test artifacts", "");
