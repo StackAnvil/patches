@@ -12,9 +12,49 @@ interface EditSession {
   backupRef: string;
 }
 
+interface ApplySession {
+  baseSha: string;
+  patches: string[];
+  nextIndex: number;
+}
+
 export const workdir = (id: string, mode = "full") => join(root, ".worktrees", mode === "full" ? id : `${id}-${mode}`);
 const sessionPath = (id: string) => join(root, ".stackanvil", `${id}.json`);
+const applySessionPath = (id: string, mode: "full" | "pr") => join(root, ".stackanvil", `${id}-${mode}-apply.json`);
 const syncedRef = (mode: string) => `refs/stackanvil/last-synced-${mode}`;
+
+function stablePatchText(patch: string): string {
+  return patch.trimEnd()
+    .replace(/^From [0-9a-f]{40} Mon Sep 17 00:00:00 2001$/m, "From <commit> Mon Sep 17 00:00:00 2001")
+    .replace(/\n-- \n[^\n]+$/, "\n-- \n<git-version>");
+}
+
+function seriesPaths(id: string, series: Series, mode: "full" | "pr") {
+  return mode === "pr"
+    ? series.features.slice(0, 1).map(({ file }) => join(root, "patches", id, "features", file))
+    : patchPaths(id, series);
+}
+
+function applyRemaining(id: string, dir: string, path: string, mode: "full" | "pr", session: ApplySession) {
+  return Effect.gen(function* () {
+    const recoveryCommand = `bun run stack continue ${id}${mode === "pr" ? " --pr" : ""}`;
+    for (let index = session.nextIndex; index < session.patches.length; index++) {
+      const patch = session.patches[index]!;
+      yield* git([
+        "-c", "user.name=StackAnvil Patch Bot",
+        "-c", "user.email=patches@stackanvil.invalid",
+        "am", "--3way", "--committer-date-is-author-date", patch,
+      ], dir).pipe(Effect.mapError((cause) => new Error(
+        `${cause.message}\nPatch apply stopped at ${patch}. Resolve the conflict in ${dir}, stage the result, then run ${recoveryCommand}.`,
+      )));
+      session.nextIndex = index + 1;
+      yield* Effect.promise(() => writeFile(path, JSON.stringify(session, null, 2)));
+    }
+    yield* git(["update-ref", syncedRef(mode), "HEAD"], dir);
+    yield* Effect.promise(() => rm(path));
+    return dir;
+  });
+}
 
 function cloneIfMissing(id: string, target: Target, mode: string) {
   return Effect.gen(function* () {
@@ -56,23 +96,69 @@ export function sync(id: string, mode: "full" | "pr" = "full") {
     if (mode === "full" && existsSync(sessionPath(id))) {
       return yield* Effect.fail(new Error(`Edit session active for ${id}; run stack rebuild first.`));
     }
+    const path = applySessionPath(id, mode);
+    if (existsSync(path)) {
+      return yield* Effect.fail(new Error(`Patch apply is unfinished for ${id}. Resolve the conflict and run bun run stack continue ${id}${mode === "pr" ? " --pr" : ""}.`));
+    }
     const dir = yield* cloneIfMissing(id, target, mode);
     yield* resetToBase(dir, target, mode);
-    const patches = mode === "pr"
-      ? series.features.slice(0, 1).map(({ file }) => join(root, "patches", id, "features", file))
-      : patchPaths(id, series);
+    const patches = seriesPaths(id, series, mode);
     if (mode === "pr" && patches.length !== 1) {
       return yield* Effect.fail(new Error(`No north-star feature patch for ${id}`));
     }
-    for (const patch of patches) {
-      yield* git([
-        "-c", "user.name=StackAnvil Patch Bot",
-        "-c", "user.email=patches@stackanvil.invalid",
-        "am", "--3way", "--committer-date-is-author-date", patch,
-      ], dir);
+    if (patches.length === 0) {
+      yield* git(["update-ref", syncedRef(mode), "HEAD"], dir);
+      return dir;
     }
+    yield* Effect.promise(() => mkdir(join(root, ".stackanvil"), { recursive: true }));
+    const session: ApplySession = { baseSha: target.baseSha, patches, nextIndex: 0 };
+    yield* Effect.promise(() => writeFile(path, JSON.stringify(session, null, 2)));
+    return yield* applyRemaining(id, dir, path, mode, session);
+  });
+}
+
+export function continueApply(id: string, mode: "full" | "pr" = "full") {
+  return Effect.gen(function* () {
+    const path = applySessionPath(id, mode);
+    if (!existsSync(path)) return yield* Effect.fail(new Error(`No unfinished ${mode} patch apply for ${id}.`));
+    const target = yield* Effect.promise(() => getTarget(id));
+    const series = yield* Effect.promise(() => getSeries(id));
+    const session = JSON.parse(yield* Effect.promise(() => readFile(path, "utf8"))) as ApplySession;
+    const patches = seriesPaths(id, series, mode);
+    if (session.baseSha !== target.baseSha || JSON.stringify(session.patches) !== JSON.stringify(patches)) {
+      return yield* Effect.fail(new Error("The base or patch series changed during conflict resolution. Restore them before continuing."));
+    }
+    const dir = workdir(id, mode);
+    if (!existsSync(join(dir, ".git", "rebase-apply"))) {
+      return yield* Effect.fail(new Error(`Git has no active am operation in ${dir}. Inspect it before removing ${path}.`));
+    }
+    const commits = yield* commitIds(dir, target.baseSha);
+    if (commits.length !== session.nextIndex) {
+      return yield* Effect.fail(new Error(`Expected ${session.nextIndex} applied patches, found ${commits.length}. Inspect ${dir} before continuing.`));
+    }
+    yield* git([
+      "-c", "user.name=StackAnvil Patch Bot",
+      "-c", "user.email=patches@stackanvil.invalid",
+      "am", "--continue",
+    ], dir);
+    session.nextIndex++;
+    yield* Effect.promise(() => writeFile(path, JSON.stringify(session, null, 2)));
+    return yield* applyRemaining(id, dir, path, mode, session);
+  });
+}
+
+export function abortApply(id: string, mode: "full" | "pr" = "full") {
+  return Effect.gen(function* () {
+    const path = applySessionPath(id, mode);
+    if (!existsSync(path)) return yield* Effect.fail(new Error(`No unfinished ${mode} patch apply for ${id}.`));
+    const dir = workdir(id, mode);
+    if (!existsSync(join(dir, ".git", "rebase-apply"))) {
+      return yield* Effect.fail(new Error(`Git has no active am operation in ${dir}. Inspect it before removing ${path}.`));
+    }
+    yield* git(["am", "--abort"], dir);
     yield* git(["update-ref", syncedRef(mode), "HEAD"], dir);
-    return dir;
+    yield* Effect.promise(() => rm(path));
+    return `Aborted the patch apply in ${dir}. Run bun run ${mode === "pr" ? "pr check" : "stack sync"} ${id} to start again.`;
   });
 }
 
@@ -139,7 +225,10 @@ export function rebuild(id: string) {
     }
     for (const [index, path] of paths.entries()) {
       const patch = yield* git(["format-patch", "--binary", "--stdout", "-1", commits[index]!], dir);
-      yield* Effect.promise(() => writeFile(path, `${patch}\n`));
+      const previous = yield* Effect.promise(() => readFile(path, "utf8"));
+      if (stablePatchText(previous) !== stablePatchText(patch)) {
+        yield* Effect.promise(() => writeFile(path, `${patch}\n`));
+      }
     }
     yield* git(["update-ref", syncedRef("full"), "HEAD"], dir);
     if (session) yield* Effect.promise(() => rm(sessionPath(id)));

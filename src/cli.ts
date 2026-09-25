@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { getSeries, getTarget, targetIds } from "./model.ts";
 import { build, buildPr } from "./build.ts";
-import { addPatch, edit, rebuild, sync, workdir } from "./stack.ts";
+import { abortApply, addPatch, continueApply, edit, rebuild, sync, workdir } from "./stack.ts";
 import { prBody, syncPr } from "./pr.ts";
 import { devSetup } from "./dev.ts";
 
@@ -25,6 +25,8 @@ async function main(): Promise<void> {
   if (area === "stack") {
     switch (action) {
       case "sync": console.log(await Effect.runPromise(sync(id))); return;
+      case "continue": console.log(await Effect.runPromise(continueApply(id, extra === "--pr" ? "pr" : "full"))); return;
+      case "abort": console.log(await Effect.runPromise(abortApply(id, extra === "--pr" ? "pr" : "full"))); return;
       case "edit":
         if (!extra) throw new Error("Supply a .patch filename to edit");
         console.log(`Edit ${workdir(id)}, stage changes, then run: bun run stack rebuild ${id}`);
@@ -49,6 +51,7 @@ async function main(): Promise<void> {
   }
   if (area === "pr") {
     switch (action) {
+      case "check": console.log(await Effect.runPromise(sync(id, "pr"))); return;
       case "body": console.log(await Effect.runPromise(prBody(id, artifact))); return;
       case "build": console.log(await Effect.runPromise(buildPr(id))); return;
       case "sync": console.log(await Effect.runPromise(syncPr(id, artifact))); return;

@@ -37,12 +37,13 @@ Use `bun run stack status <project>` to see its pinned upstream commit and featu
 
 ## Contribute a patch
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for the edit and conflict workflow. The common path is:
+Read [CONTRIBUTING.md](CONTRIBUTING.md) and the [patch workflow](docs/patch-workflow.md) for the edit and conflict workflow. The patch workflow also explains what StackAnvil takes from Paper's old scripts and current paperweight tooling. The common path is:
 
 ```bash
 bun run stack edit viabedrock 0001-cache-converted-resource-packs.patch
 # Edit files under .worktrees/viabedrock, then stage your changes there.
 bun run stack rebuild viabedrock
+bun run pr check viabedrock
 bun run stack sync viabedrock
 ```
 

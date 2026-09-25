@@ -19,11 +19,15 @@ Each feature patch must apply to clean upstream after the features before it. Th
 
 The edit command saves later commits under a local backup ref. Rebuild amends your chosen commit, replays later commits, and writes the `.patch` files. If Git reports a conflict, resolve it in the source tree, stage the result, and run `bun run stack rebuild <project>` again. Do not erase `.stackanvil/<project>.json` during a conflict.
 
+If `stack sync` stops during `git am`, resolve and stage the files in `.worktrees/<project>`, then run `bun run stack continue <project>`. To discard that apply, run `bun run stack abort <project>`. For a conflict in the PR-only checkout, add `--pr` to either command. The [patch workflow](docs/patch-workflow.md) explains how these sessions work.
+
 ## Add a feature patch
 
 Apply the current series with `bun run stack sync <project>`. Make one commit in its detached source checkout. Use a Conventional Commit message. Then run `bun run stack add <project> features '<title>'`. Add `--source-pr <url>` when the feature came from a PR. The command updates the series and exports the patch.
 
 Only maintainers run `bun run pr sync <project>`. It force-updates the dedicated `stackanvil/north-star` branch with a lease, then opens or updates one draft upstream PR. Run `bun run pr body <project>` to inspect the proposed text first. Add `--run-id <id>` to link a relevant test artifact run.
+
+Run `bun run pr check <project>` before proposing a first feature. It applies only that feature to the pinned upstream base and verifies that branding and custom patches are not needed for it to apply.
 
 ## Report a problem
 
