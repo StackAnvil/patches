@@ -42,6 +42,7 @@ interface Session {
   port: number;
   mode: "regular" | "local";
   gamePid?: number;
+  videos?: Partial<Record<Client, { pid: number; name: string; file: string; startedAt: string; stoppedAt?: string }>>;
   stoppedAt?: string;
 }
 
@@ -59,7 +60,9 @@ type Step =
   | { action: "wait"; ms: number }
   | { action: "screenshot"; name: string }
   | { action: "click"; x: number; y: number }
-  | { action: "key"; key: string };
+  | { action: "key"; key: string }
+  | { action: "videoStart"; name: string }
+  | { action: "videoStop" };
 type Client = "bedrock" | "java";
 
 const capturePath = (id: string) => join(captureRoot, id);
@@ -227,6 +230,10 @@ async function mark(label: string): Promise<void> {
 }
 
 async function stop(): Promise<void> {
+  const active = await load();
+  for (const client of ["bedrock", "java"] as const) {
+    if (active.videos?.[client] && !active.videos[client].stoppedAt) await stopVideo(client);
+  }
   const session = await load();
   if (session.stoppedAt) { console.log(`Capture ${session.id} is already stopped.`); return; }
   if (alive(session.proxyPid)) {
@@ -236,6 +243,68 @@ async function stop(): Promise<void> {
   session.stoppedAt = new Date().toISOString();
   await save(session);
   console.log(`Capture ${session.id} stopped. The game remains open.`);
+}
+
+async function startVideo(name: string, client: Client, windowId?: string): Promise<void> {
+  checkId(name);
+  const session = await load();
+  if (session.stoppedAt) throw new Error("Start a capture before recording video.");
+  const isolated = await displayEnv();
+  if (!isolated) throw new Error("Video recording requires the private display so your desktop is never captured.");
+  const previous = session.videos?.[client];
+  if (previous && !previous.stoppedAt && alive(previous.pid)) throw new Error(`${client} video is already recording.`);
+  const window = await chosenWindow(windowId, client);
+  const file = join(capturePath(session.id), `${name}-${client}.mp4`);
+  if (existsSync(file)) throw new Error(`Video ${name}-${client}.mp4 already exists. Choose another name.`);
+  const log = openSync(join(capturePath(session.id), `${name}-${client}.video.log`), "a", 0o600);
+  const child = spawn("ffmpeg", ["-nostdin", "-hide_banner", "-loglevel", "error", "-f", "x11grab",
+    "-window_id", String(Number(window.id)), "-video_size", `${window.width}x${window.height}`,
+    "-framerate", "15", "-draw_mouse", "1", "-i", isolated.DISPLAY!,
+    "-an", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "24", "-pix_fmt", "yuv420p",
+    "-movflags", "+faststart", file], {
+    cwd: root, detached: true, env: isolated, stdio: ["ignore", log, log],
+  });
+  closeSync(log);
+  child.unref();
+  if (!child.pid) throw new Error("Could not start ffmpeg.");
+  await Bun.sleep(500);
+  if (!alive(child.pid)) throw new Error(`ffmpeg stopped. Read the private ${name}-${client}.video.log.`);
+  session.videos ??= {};
+  session.videos[client] = { pid: child.pid, name, file, startedAt: new Date().toISOString() };
+  await save(session);
+  console.log(`Recording ${client}: ${file}`);
+}
+
+async function stopVideo(client: Client): Promise<void> {
+  const session = await load();
+  const video = session.videos?.[client];
+  if (!video || video.stoppedAt) { console.log(`No active ${client} video.`); return; }
+  if (alive(video.pid)) process.kill(video.pid, "SIGINT");
+  for (let attempt = 0; attempt < 40; attempt++) {
+    try {
+      await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video.file]);
+      video.stoppedAt = new Date().toISOString();
+      await save(session);
+      console.log(`Video saved: ${video.file}`);
+      return;
+    } catch { await Bun.sleep(250); }
+  }
+  throw new Error(`Video did not finalize. Read the private ${video.name}-${client}.video.log.`);
+}
+
+async function compareVideo(before: string, after: string, client: Client): Promise<void> {
+  checkId(before);
+  checkId(after);
+  const session = await load();
+  const dir = capturePath(session.id);
+  const first = join(dir, `${before}-${client}.mp4`);
+  const second = join(dir, `${after}-${client}.mp4`);
+  if (!existsSync(first) || !existsSync(second)) throw new Error("Both named recordings must exist in the current capture.");
+  const output = join(dir, `${before}-vs-${after}-${client}.mp4`);
+  await run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-i", first, "-i", second,
+    "-filter_complex", "[0:v]scale=-2:480,setsar=1[left];[1:v]scale=-2:480,setsar=1[right];[left][right]hstack=inputs=2[v]",
+    "-map", "[v]", "-an", "-c:v", "libx264", "-preset", "fast", "-crf", "24", "-pix_fmt", "yuv420p", output]);
+  console.log(`Before on the left, after on the right: ${output}`);
 }
 
 async function stopGame(): Promise<void> {
@@ -323,7 +392,7 @@ async function key(name: string, windowId?: string, client?: Client, allowFocus 
   }
 }
 
-async function scenario(file: string, windowId?: string, client?: Client, allowFocus = false): Promise<void> {
+async function scenario(file: string, windowId?: string, client: Client = "bedrock", allowFocus = false): Promise<void> {
   const path = resolve(root, file);
   const recipe = JSON.parse(await readFile(path, "utf8")) as { name: string; steps: Step[] };
   if (!Array.isArray(recipe.steps)) throw new Error("Scenario needs a steps array.");
@@ -338,6 +407,8 @@ async function scenario(file: string, windowId?: string, client?: Client, allowF
       case "screenshot": await screenshot(step.name, windowId, client); break;
       case "click": await click(step.x, step.y, windowId, client, allowFocus); break;
       case "key": await key(step.key, windowId, client, allowFocus); break;
+      case "videoStart": await startVideo(step.name, client, windowId); break;
+      case "videoStop": await stopVideo(client); break;
       default: throw new Error("Unknown scenario action.");
     }
   }
@@ -438,6 +509,17 @@ async function main(): Promise<void> {
     case "compare":
       if (!args[0] || !args[1]) throw new Error("Usage: bun run capture compare <first-id> <second-id>");
       return compare(args[0], args[1]);
+    case "video": {
+      const [action, ...input] = args;
+      const clientInput = input.indexOf("--client") >= 0 ? input[input.indexOf("--client") + 1] : "bedrock";
+      if (clientInput !== "bedrock" && clientInput !== "java") throw new Error("--client must be bedrock or java.");
+      const client: Client = clientInput;
+      const windowId = input.indexOf("--window-id") >= 0 ? input[input.indexOf("--window-id") + 1] : undefined;
+      if (action === "start" && input[0]) return startVideo(input[0], client, windowId);
+      if (action === "stop") return stopVideo(client);
+      if (action === "compare" && input[0] && input[1]) return compareVideo(input[0], input[1], client);
+      throw new Error("Usage: bun run capture video <start name|stop|compare before after> [--client bedrock|java]");
+    }
     case "ui": {
       const [action, ...input] = args;
       const windowId = input.indexOf("--window-id") >= 0 ? input[input.indexOf("--window-id") + 1] : undefined;
@@ -454,7 +536,7 @@ async function main(): Promise<void> {
       }
       throw new Error("Usage: bun run capture ui <list|screenshot|click|key|run>");
     }
-    default: throw new Error("Usage: bun run capture <doctor|start|launch|game-stop|mark|stop|status|report|compare|ui>");
+    default: throw new Error("Usage: bun run capture <doctor|start|launch|game-stop|mark|stop|status|report|compare|video|ui>");
   }
 }
 

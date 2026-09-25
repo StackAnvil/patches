@@ -39,7 +39,25 @@ bun run capture ui click 0.50 0.60 --client bedrock
 bun run capture ui screenshot java-connected --client java
 ```
 
-Click coordinates are fractions of the chosen client window, from 0 to 1. Use `--window-id` if more than one window matches. `ui key` accepts names such as `Escape`, `Return`, and `Control+b`. A scenario JSON file can combine `mark`, `wait`, `screenshot`, `key`, and `click` steps. Run the example with `bun run capture ui run scenarios/realm-hub-observe.json`.
+Click coordinates are fractions of the chosen client window, from 0 to 1. Use `--window-id` if more than one window matches. `ui key` accepts names such as `Escape`, `Return`, and `Control+b`. A scenario JSON file can combine `mark`, `wait`, `screenshot`, `key`, `click`, `videoStart`, and `videoStop` steps. Run the example with `bun run capture ui run scenarios/realm-hub-observe.json`.
+
+## Record before and after video
+
+Record a short private video around each action. Start a recording after its client window appears, mark the step, run the action, and stop the recording. The video contains no audio.
+
+```bash
+bun run capture video start before --client bedrock
+bun run capture mark "Before opening Realm Hub"
+# Run the action or a scenario here.
+bun run capture video stop --client bedrock
+bun run capture video start after --client bedrock
+bun run capture mark "After opening Realm Hub"
+# Repeat the same action after your change.
+bun run capture video stop --client bedrock
+bun run capture video compare before after --client bedrock
+```
+
+The comparison MP4 shows the before recording on the left and the after recording on the right. `videoStart` and `videoStop` are also scenario steps, so a JSON recipe can record exactly the same input sequence in both runs. Videos stay in the ignored capture directory. Review them before sharing because game menus can show account or player details.
 
 When finished, run:
 
