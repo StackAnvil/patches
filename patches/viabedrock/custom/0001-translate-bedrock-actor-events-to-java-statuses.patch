@@ -1,0 +1,132 @@
+From 08082869a503549542064905f84cbf052190e7e4 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sat, 26 Sep 2026 00:11:24 +0200
+Subject: [PATCH] feat(entity-events): translate Bedrock actor events to Java
+ statuses
+
+Forward supported actor feedback through the current Java 26.3 status packet so taming, shaking, breeding, and other entity effects appear in the client. Preserve damage and death handling, add the missing non-player death effect, and cancel events without a translated output. Keep the mapping in a switch so unsupported Bedrock events remain explicit.
+---
+ .../protocol/packet/EntityPackets.java        | 40 +++++++++++++++--
+ .../protocol/packet/EntityPacketsTest.java    | 43 +++++++++++++++++++
+ 2 files changed, 80 insertions(+), 3 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/EntityPacketsTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
+index a0d38d68..fdcbb6dd 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
+@@ -46,6 +46,7 @@ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.data.enums.Direction;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
+ import net.raphimc.viabedrock.protocol.data.enums.java.AnimateAction;
++import net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent;
+ import net.raphimc.viabedrock.protocol.data.enums.java.Relative;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.EquipmentSlot;
+ import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
+@@ -456,12 +457,17 @@ public final class EntityPackets {
+                     }
+                     if (entity != entityTracker.getClientPlayer()) {
+                         entity.playSound("death");
++                        PacketFactory.sendJavaEntityEvent(wrapper.user(), entity, EntityEvent.POOF);
+                     }
+                 }
+                 default -> {
+-                    wrapper.cancel();
+-                    // TODO: Handle remaining events
+-                    // throw new IllegalStateException("Unhandled ActorEvent: " + event);
++                    final EntityEvent javaEvent = javaEntityEvent(event, entity.javaType());
++                    if (javaEvent == null) {
++                        wrapper.cancel();
++                    } else {
++                        wrapper.write(Types.INT, entity.javaId()); // entity id
++                        wrapper.write(Types.BYTE, javaEvent.getValue()); // event
++                    }
+                 }
+             }
+         });
+@@ -644,6 +650,34 @@ public final class EntityPackets {
+         });
+     }
+ 
++    static EntityEvent javaEntityEvent(final ActorEvent event, final EntityTypes26_3 javaEntityType) {
++        return switch (event) {
++            case TAMING_FAILED -> EntityEvent.TAMING_FAILED;
++            case TAMING_SUCCEEDED -> EntityEvent.TAMING_SUCCEEDED;
++            case SHAKE_WETNESS -> EntityEvent.SHAKE_WETNESS;
++            case EAT_GRASS -> EntityEvent.EAT_GRASS;
++            case ZOMBIE_CONVERTING -> EntityEvent.ZOMBIE_CONVERTING;
++            case START_OFFER_FLOWER -> EntityEvent.OFFER_FLOWER;
++            case STOP_OFFER_FLOWER -> EntityEvent.STOP_OFFER_FLOWER;
++            case LOVE_HEARTS -> javaEntityType.is(EntityTypes26_3.VILLAGER) ? EntityEvent.LOVE_HEARTS : EntityEvent.IN_LOVE_HEARTS;
++            case VILLAGER_ANGRY -> EntityEvent.VILLAGER_ANGRY;
++            case VILLAGER_HAPPY -> EntityEvent.VILLAGER_HAPPY;
++            case WITCH_HAT_MAGIC -> EntityEvent.WITCH_HAT_MAGIC;
++            case FIREWORKS_EXPLODE -> EntityEvent.FIREWORKS_EXPLODE;
++            case SILVERFISH_MERGE_ANIM -> EntityEvent.SILVERFISH_MERGE_ANIM;
++            case GUARDIAN_ATTACK_SOUND -> EntityEvent.GUARDIAN_ATTACK_SOUND;
++            case AIR_SUPPLY -> EntityEvent.DROWN_PARTICLES;
++            case SHAKE -> EntityEvent.SHAKE;
++            case INSTANT_DEATH -> EntityEvent.POOF;
++            case TALISMAN_ACTIVATE -> EntityEvent.PROTECTED_FROM_DEATH;
++            case TREASURE_HUNT -> EntityEvent.DOLPHIN_LOOKING_FOR_TREASURE;
++            case VIBRATION_DETECTED -> EntityEvent.TENDRILS_SHIVER;
++            case START_ATTACKING -> EntityEvent.START_ATTACKING;
++            case SHAKE_WETNESS_STOP -> EntityEvent.CANCEL_SHAKE_WETNESS;
++            default -> null;
++        };
++    }
++
+     private EntityPackets() {
+     }
+ 
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/EntityPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/EntityPacketsTest.java
+new file mode 100644
+index 00000000..87fc4a59
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/EntityPacketsTest.java
+@@ -0,0 +1,43 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorEvent;
++import net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++class EntityPacketsTest {
++
++    @Test
++    void loveHeartsUsesTheJavaEntityType() {
++        assertEquals(EntityEvent.LOVE_HEARTS, EntityPackets.javaEntityEvent(ActorEvent.LOVE_HEARTS, EntityTypes26_3.VILLAGER));
++        assertEquals(EntityEvent.IN_LOVE_HEARTS, EntityPackets.javaEntityEvent(ActorEvent.LOVE_HEARTS, EntityTypes26_3.PIG));
++    }
++
++    @Test
++    void eventsWithoutImplementedOutputAreDiscarded() {
++        assertNull(EntityPackets.javaEntityEvent(ActorEvent.GUARDIAN_MINING_FATIGUE, EntityTypes26_3.ELDER_GUARDIAN));
++        assertNull(EntityPackets.javaEntityEvent(ActorEvent.DRAGON_START_DEATH_ANIM, EntityTypes26_3.ENDER_DRAGON));
++        assertNull(EntityPackets.javaEntityEvent(ActorEvent.IN_LOVE_HEARTS, EntityTypes26_3.PIG));
++    }
++
++}
+-- 
+2.55.0
