@@ -41,6 +41,19 @@ bun run build viabedrock
 
 When the first feature is ready for upstream, inspect the generated text with `bun run pr body <project>`. A maintainer uses `bun run pr sync <project>` to update the fork's north-star branch and its draft PR. Later feature patches stay in the full stack until earlier changes land upstream.
 
+## PR assignees
+
+`targets.json` sets the default assignees for each upstream PR. `bun run pr sync <project>` adds missing assignees when it creates or updates the north-star PR. Run `bun run pr assign <project>` to update an existing PR without pushing its branch. The tool keeps assignees that someone added manually.
+
+| Project | Default assignees |
+| --- | --- |
+| ViaBedrock | `RaphiMC` (RK_01), `Exterminate5573` |
+| viafabricplus-bedrock | `RaphiMC`, `Exterminate5573`, `florianreuth` |
+| ViaFabricPlus | `florianreuth` |
+| CubeConverter | `oryxel1` |
+
+These are PR assignees, not review requests. Draft PRs can carry them. GitHub requires upstream assignment access. If your account lacks that access, the command reports the missing assignment and leaves the PR in place. Ask an upstream maintainer to add the listed people. This applies to the ViaFabricPlus and CubeConverter upstream repositories with the current account permissions.
+
 ## Conflict recovery
 
 During `stack sync`, Git may stop in the middle of `git am`. Inspect `git status` in `.worktrees/<project>`, resolve the files, stage them, and run `bun run stack continue <project>`. The tool finishes the stopped patch, then applies the remaining entries. For a PR-only checkout, use `bun run stack continue <project> --pr`. If the attempt should be discarded, use `stack abort` with the same project and optional `--pr`, then run `stack sync` again. Do not delete the apply session by hand.

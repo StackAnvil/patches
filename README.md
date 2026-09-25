@@ -50,6 +50,7 @@ bun run stack sync viabedrock
 ```
 
 When an upstream PR is ready, `bun run pr body <project>` generates its body. A maintainer can use `bun run pr sync <project>` to update the StackAnvil fork branch and open or update the single draft PR.
+The sync command adds the project's default PR assignees when your GitHub account has access. Run `bun run pr assign <project>` to update assignees without pushing the branch.
 
 ## Builds and licenses
 

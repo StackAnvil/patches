@@ -20,6 +20,7 @@ bun run stack edit <project> <patch-file>
 # Edit and stage files in .worktrees/<project>.
 bun run stack rebuild <project>
 bun run pr check <project>
+bun run pr assign <project>
 bun run build <project>
 bun run build all
 bun run bundle

@@ -7,6 +7,7 @@ export interface Target {
   dependsOn: string[];
   upstream: string;
   fork: string;
+  prAssignees: string[];
   baseBranch: string;
   baseSha: string;
   java: string;

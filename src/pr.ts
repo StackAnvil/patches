@@ -1,13 +1,56 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect } from "effect";
-import { getSeries, getTarget, root } from "./model.ts";
+import { getSeries, getTarget, root, type Target } from "./model.ts";
 import { gh, git } from "./process.ts";
 import { sync } from "./stack.ts";
 
 export interface ArtifactReference {
   runId?: string;
   artifactId?: string;
+}
+
+function northStarPr(target: Target) {
+  return Effect.gen(function* () {
+    const existing = yield* gh(["api", "-X", "GET", `repos/${target.upstream}/pulls`, "-f", "state=open", "-f", "head=StackAnvil:stackanvil/north-star"], root);
+    const prs = (JSON.parse(existing) as { number: number; html_url: string }[])
+      .map(({ number, html_url }) => ({ number, url: html_url }));
+    if (prs.length > 1) return yield* Effect.fail(new Error(`Multiple open north-star PRs for ${target.upstream}`));
+    return prs[0];
+  });
+}
+
+export function assignPr(id: string, prUrl?: string) {
+  return Effect.gen(function* () {
+    const target = yield* Effect.promise(() => getTarget(id));
+    const url = prUrl ?? (yield* northStarPr(target))?.url;
+    if (!url) return yield* Effect.fail(new Error(`No open north-star PR for ${id}`));
+    const desired = [...new Set(target.prAssignees)];
+    if (!desired.length) return { url, desired, added: [] };
+
+    const repository = JSON.parse(yield* gh(["api", `repos/${target.upstream}`], root)) as {
+      permissions?: { admin?: boolean; maintain?: boolean; push?: boolean; triage?: boolean };
+    };
+    const permissions = repository.permissions;
+    if (!permissions || ![permissions.admin, permissions.maintain, permissions.push, permissions.triage].some(Boolean)) {
+      return {
+        url,
+        desired,
+        added: [],
+        skippedReason: `Cannot assign ${desired.join(", ")} on ${target.upstream}: this GitHub account lacks upstream triage or write access. Ask an upstream maintainer to assign them.`,
+      };
+    }
+
+    const pr = JSON.parse(yield* gh(["pr", "view", url, "--repo", target.upstream, "--json", "assignees"], root)) as {
+      assignees: { login: string }[];
+    };
+    const current = new Set(pr.assignees.map(({ login }) => login.toLowerCase()));
+    const missing = desired.filter((login) => !current.has(login.toLowerCase()));
+    if (missing.length) {
+      yield* gh(["pr", "edit", url, "--repo", target.upstream, ...missing.flatMap((login) => ["--add-assignee", login])], root);
+    }
+    return { url, desired, added: missing };
+  });
 }
 
 export function renderPrBody(
@@ -61,14 +104,16 @@ export function syncPr(id: string, artifact: ArtifactReference = {}) {
     const bodyFile = join(root, ".stackanvil", `${id}-pr-body.md`);
     yield* Effect.promise(() => mkdir(join(root, ".stackanvil"), { recursive: true }));
     yield* Effect.promise(() => writeFile(bodyFile, body));
-    const existing = yield* gh(["api", "-X", "GET", `repos/${target.upstream}/pulls`, "-f", "state=open", "-f", `head=StackAnvil:${head}`], root);
-    const prs = (JSON.parse(existing) as { number: number; html_url: string }[])
-      .map(({ number, html_url }) => ({ number, url: html_url }));
-    if (prs.length > 1) return yield* Effect.fail(new Error(`Multiple open north-star PRs for ${id}`));
-    if (prs[0]) {
-      yield* gh(["pr", "edit", String(prs[0].number), "--repo", target.upstream, "--title", feature.title, "--body-file", bodyFile], root);
-      return prs[0].url;
+    const existing = yield* northStarPr(target);
+    if (existing) {
+      yield* gh(["pr", "edit", String(existing.number), "--repo", target.upstream, "--title", feature.title, "--body-file", bodyFile], root);
+      const assignment = yield* assignPr(id, existing.url);
+      if (assignment.skippedReason) console.warn(assignment.skippedReason);
+      return existing.url;
     }
-    return yield* gh(["pr", "create", "--repo", target.upstream, "--head", `StackAnvil:${head}`, "--base", target.baseBranch, "--title", feature.title, "--body-file", bodyFile, "--draft"], root);
+    const url = yield* gh(["pr", "create", "--repo", target.upstream, "--head", `StackAnvil:${head}`, "--base", target.baseBranch, "--title", feature.title, "--body-file", bodyFile, "--draft"], root);
+    const assignment = yield* assignPr(id, url);
+    if (assignment.skippedReason) console.warn(assignment.skippedReason);
+    return url;
   });
 }

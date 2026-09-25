@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { getSeries, getTarget, targetIds } from "./model.ts";
 import { build, buildPr } from "./build.ts";
 import { abortApply, addPatch, continueApply, edit, rebuild, sync, workdir } from "./stack.ts";
-import { prBody, syncPr } from "./pr.ts";
+import { assignPr, prBody, syncPr } from "./pr.ts";
 import { devSetup } from "./dev.ts";
 
 const [area, action, id, extra, ...rest] = process.argv.slice(2);
@@ -54,6 +54,7 @@ async function main(): Promise<void> {
       case "check": console.log(await Effect.runPromise(sync(id, "pr"))); return;
       case "body": console.log(await Effect.runPromise(prBody(id, artifact))); return;
       case "build": console.log(await Effect.runPromise(buildPr(id))); return;
+      case "assign": console.log(JSON.stringify(await Effect.runPromise(assignPr(id)), null, 2)); return;
       case "sync": console.log(await Effect.runPromise(syncPr(id, artifact))); return;
     }
   }
