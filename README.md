@@ -33,7 +33,7 @@ bun run build viabedrock
 
 The tool clones upstream into `.worktrees/viabedrock`. The full source tree remains a normal Git repository. The build JAR and its SHA-256 manifest go to `dist/viabedrock/`. A target build also builds its dependencies. `bun run build all` follows CubeConverter → ViaBedrock → viafabricplus-bedrock and ViaFabricPlus → viafabricplus-bedrock. The local Maven repository in `.stackanvil/maven/` makes each downstream build use the patched dependency built in the same run.
 
-Run `bun run bundle` after `bun run build all` to make a PrismLauncher instance ZIP with the two Fabric mods. Import that ZIP in PrismLauncher to try the Java client. The add-on embeds the StackAnvil ViaBedrock and CubeConverter JARs. Our [capture lab guide](docs/capture-lab.md) explains the local server, ViaProxy, Bedrock client, Java client, screenshots, and private HTTPS capture workflow.
+Run `bun run bundle` after `bun run build all` to make a PrismLauncher instance ZIP with the two Fabric mods. Import that ZIP in PrismLauncher to try the Java client. The add-on embeds the StackAnvil ViaBedrock and CubeConverter JARs. Our [capture lab guide](docs/capture-lab.md) explains the local server, ViaProxy, Bedrock client, Java client, screenshots, and private HTTPS capture workflow. The lab keeps both game windows off your active desktop and sets their master volume to zero.
 
 Use `bun run stack status <project>` to see its pinned upstream commit and feature order. Use `bun run dev:setup` to prepare ViaProxy and mitmproxy, then check your Bedrock server and client paths. The [development guide](docs/development.md) explains traffic capture and manual tests.
 
