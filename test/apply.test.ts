@@ -65,7 +65,7 @@ test("an interrupted patch apply can continue or abort without losing the series
   await git(["reset", "--hard", baseSha], author);
   await writeFile(join(author, "note.txt"), "second\n");
   await git(["add", "note.txt"], author);
-  await git(["commit", "-m", "feat(test): second"], author);
+  await git(["commit", "-m", "feat(test): second", "-m", "Explain why the second patch changes this file."], author);
   const secondPatch = join(project, "patches", "fixture", "features", "0001-second.patch");
   const conflictingPatch = await git(["format-patch", "--stdout", "-1"], author);
   await writeFile(secondPatch, conflictingPatch);

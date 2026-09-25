@@ -36,9 +36,7 @@ async function main(): Promise<void> {
       case "build": console.log(await Effect.runPromise(build(id))); return;
       case "add": {
         if (extra !== "features" && extra !== "custom") throw new Error("Choose features or custom");
-        const title = rest[0];
-        if (!title) throw new Error("Supply a Conventional Commit title");
-        console.log(await Effect.runPromise(addPatch(id, extra, title)));
+        console.log(await Effect.runPromise(addPatch(id, extra, rest[0])));
         return;
       }
       case "status": {

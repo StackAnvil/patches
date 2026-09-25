@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { getSeries, getTarget, patchPaths, root, type Series, type Target } from "./model.ts";
+import { parsePatchMessage } from "./patch-message.ts";
 import { git } from "./process.ts";
 
 interface EditSession {
@@ -227,20 +228,31 @@ export function rebuild(id: string) {
     if (commits.length !== paths.length) {
       return yield* Effect.fail(new Error(`Expected ${paths.length} commits, found ${commits.length}. No patch files changed.`));
     }
+    let titleChanged = false;
     for (const [index, path] of paths.entries()) {
       const patch = yield* git(["format-patch", "--binary", "--stdout", "-1", commits[index]!], dir);
+      const feature = series.features[index - series.branding.length];
+      if (feature && index < series.branding.length + series.features.length) {
+        const message = parsePatchMessage(patch);
+        if (!message.description) return yield* Effect.fail(new Error(`${feature.file} needs a commit body describing the change`));
+        if (feature.title !== message.title) {
+          feature.title = message.title;
+          titleChanged = true;
+        }
+      }
       const previous = yield* Effect.promise(() => readFile(path, "utf8"));
       if (stablePatchText(previous) !== stablePatchText(patch)) {
         yield* Effect.promise(() => writeFile(path, `${patch}\n`));
       }
     }
+    if (titleChanged) yield* Effect.promise(() => writeFile(join(root, "patches", id, "series.json"), `${JSON.stringify(series, null, 2)}\n`));
     yield* git(["update-ref", syncedRef("full"), "HEAD"], dir);
     if (session) yield* Effect.promise(() => rm(sessionPath(id)));
     return paths.length;
   });
 }
 
-export function addPatch(id: string, group: "features" | "custom", title: string) {
+export function addPatch(id: string, group: "features" | "custom", expectedTitle?: string) {
   return Effect.gen(function* () {
     const target = yield* Effect.promise(() => getTarget(id));
     const series = yield* Effect.promise(() => getSeries(id));
@@ -251,6 +263,10 @@ export function addPatch(id: string, group: "features" | "custom", title: string
     if (commits.length !== previous + 1) {
       return yield* Effect.fail(new Error(`Commit one new change after the current stack before adding a patch. Expected ${previous + 1} commits, found ${commits.length}.`));
     }
+    const patch = yield* git(["format-patch", "--binary", "--stdout", "-1", commits.at(-1)!], dir);
+    const { title, description } = parsePatchMessage(patch);
+    if (expectedTitle && expectedTitle !== title) return yield* Effect.fail(new Error(`Supplied title differs from commit subject: ${title}`));
+    if (!description) return yield* Effect.fail(new Error("Add a commit body describing the patch before adding it"));
     const slug = title.toLowerCase().replace(/^[a-z]+(?:\([^)]*\))?:\s*/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
     if (!slug) return yield* Effect.fail(new Error("Patch title needs words for a filename"));
     const number = String((group === "features" ? series.features.length : series.custom.length) + 1).padStart(4, "0");
@@ -258,7 +274,7 @@ export function addPatch(id: string, group: "features" | "custom", title: string
     if (group === "features") series.features.push({ file, title });
     else series.custom.push(file);
     const path = join(root, "patches", id, group, file);
-    yield* Effect.promise(() => writeFile(path, ""));
+    yield* Effect.promise(() => writeFile(path, `${patch}\n`));
     yield* Effect.promise(() => writeFile(join(root, "patches", id, "series.json"), `${JSON.stringify(series, null, 2)}\n`));
     yield* rebuild(id);
     return path;

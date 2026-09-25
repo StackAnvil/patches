@@ -1,5 +1,6 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { parsePatchMessage } from "./patch-message.ts";
 
 export const root = join(import.meta.dir, "..");
 
@@ -51,7 +52,13 @@ export async function getSeries(id: string): Promise<Series> {
   if (new Set(files).size !== files.length) throw new Error(`Duplicate patch in ${id}/series.json`);
   for (const file of files) {
     if (!file.endsWith(".patch")) throw new Error(`Invalid patch name: ${file}`);
-    await readFile(join(root, "patches", id, file));
+    const patch = await readFile(join(root, "patches", id, file), "utf8");
+    const feature = series.features.find(({ file: name }) => file === join("features", name));
+    if (feature) {
+      const message = parsePatchMessage(patch);
+      if (feature.title !== message.title) throw new Error(`${file} subject differs from its title in ${id}/series.json`);
+      if (!message.description) throw new Error(`${file} needs a commit body describing the change`);
+    }
   }
   return series;
 }

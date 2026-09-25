@@ -7,6 +7,7 @@ This repository stores patch files and the tools that apply them. The generated 
 - Read `patches/<project>/series.json` before changing a stack. Apply `branding`, then `features`, then `custom` in that order.
 - Keep branding limited to artifact identity. Never include it in an upstream PR.
 - Give each upstream-sized feature one commit and one `.patch` file. Only the first feature in the series is the north-star PR. It must apply to the pinned upstream base without branding.
+- Keep each feature's purpose in its commit body. Before creating or updating its upstream PR, add a non-empty `.pr.md` file beside the patch with the same base filename for PR-specific context and testing.
 - Keep downstream-only work in `custom`. Do not include custom patches in upstream PR branches.
 - Explain non-obvious choices in the feature commit body. The commit body becomes part of the exported patch and helps reviewers maintain it later.
 - Do not change an existing patch filename just because its commit hash changes. Its place in `series.json` is the ordering source of truth.

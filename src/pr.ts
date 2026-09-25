@@ -1,7 +1,8 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { getSeries, getTarget, root, type Target } from "./model.ts";
+import { parsePatchMessage } from "./patch-message.ts";
 import { gh, git } from "./process.ts";
 import { sync } from "./stack.ts";
 
@@ -55,18 +56,22 @@ export function assignPr(id: string, prUrl?: string) {
 
 export function renderPrBody(
   id: string,
-  feature: { title: string },
+  description: string,
+  extraBody: string,
   artifact: ArtifactReference = {},
 ): string {
   if (artifact.artifactId && !artifact.runId) throw new Error("--artifact-id requires --run-id");
+  if (!description.trim()) throw new Error(`The first ${id} feature patch needs a commit body describing the change`);
+  if (!extraBody.trim()) throw new Error(`The first ${id} feature needs a non-empty PR extra body`);
   const lines = [
     `## What this changes`,
     "",
-    feature.title,
+    description.trim(),
     "",
     `This is the current north-star feature from [StackAnvil's ${id} patch stack](https://github.com/StackAnvil/patches/tree/main/patches/${id}/features). The PR branch contains this feature alone, based on upstream.`,
+    "",
+    extraBody.trim(),
   ];
-  lines.push("", "## Testing", "", "- [ ] Patch applies to current upstream", "- [ ] Project build and relevant tests pass", "- [ ] Manual behavior checked where needed");
   if (artifact.runId || artifact.artifactId) {
     lines.push("", "## Test artifacts", "");
     if (artifact.runId) lines.push(`- [Build run](https://github.com/StackAnvil/patches/actions/runs/${artifact.runId})`);
@@ -81,7 +86,15 @@ export function prBody(id: string, artifact: ArtifactReference = {}) {
     const series = yield* Effect.promise(() => getSeries(id));
     const feature = series.features[0];
     if (!feature) return yield* Effect.fail(new Error(`No pending feature for ${id}`));
-    return renderPrBody(id, feature, artifact);
+    const featureDir = join(root, "patches", id, "features");
+    const patch = yield* Effect.promise(() => readFile(join(featureDir, feature.file), "utf8"));
+    const message = parsePatchMessage(patch);
+    const extraBodyFile = join(featureDir, feature.file.replace(/\.patch$/, ".pr.md"));
+    const extraBody = yield* Effect.tryPromise({
+      try: () => readFile(extraBodyFile, "utf8"),
+      catch: () => new Error(`Add a PR extra body at ${extraBodyFile} before creating or updating the PR`),
+    });
+    return renderPrBody(id, message.description, extraBody, artifact);
   });
 }
 
@@ -91,6 +104,10 @@ export function syncPr(id: string, artifact: ArtifactReference = {}) {
     const series = yield* Effect.promise(() => getSeries(id));
     const feature = series.features[0];
     if (!feature) return yield* Effect.fail(new Error(`No pending feature for ${id}`));
+    const body = yield* prBody(id, artifact);
+    const bodyFile = join(root, ".stackanvil", `${id}-pr-body.md`);
+    yield* Effect.promise(() => mkdir(join(root, ".stackanvil"), { recursive: true }));
+    yield* Effect.promise(() => writeFile(bodyFile, body));
     const dir = yield* sync(id, "pr");
     const count = yield* git(["rev-list", "--count", `${target.baseSha}..HEAD`], dir);
     if (count !== "1") return yield* Effect.fail(new Error(`Expected exactly one PR commit, found ${count}`));
@@ -99,10 +116,6 @@ export function syncPr(id: string, artifact: ArtifactReference = {}) {
     const remoteHead = yield* git(["ls-remote", remote, `refs/heads/${head}`], dir);
     const expected = remoteHead.split("\t")[0] ?? "";
     yield* git(["push", `--force-with-lease=refs/heads/${head}:${expected}`, remote, `HEAD:refs/heads/${head}`], dir);
-    const body = yield* prBody(id, artifact);
-    const bodyFile = join(root, ".stackanvil", `${id}-pr-body.md`);
-    yield* Effect.promise(() => mkdir(join(root, ".stackanvil"), { recursive: true }));
-    yield* Effect.promise(() => writeFile(bodyFile, body));
     const existing = yield* northStarPr(target);
     if (existing) {
       yield* gh(["pr", "edit", String(existing.number), "--repo", target.upstream, "--title", feature.title, "--body-file", bodyFile], root);
