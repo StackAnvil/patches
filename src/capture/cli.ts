@@ -242,7 +242,7 @@ async function stop(): Promise<void> {
   }
   session.stoppedAt = new Date().toISOString();
   await save(session);
-  console.log(`Capture ${session.id} stopped. The game remains open.`);
+  console.log(`Capture ${session.id} stopped.${session.gamePid && alive(session.gamePid) ? " The game remains open." : ""}`);
 }
 
 async function startVideo(name: string, client: Client, windowId?: string): Promise<void> {
@@ -489,7 +489,8 @@ async function doctor(): Promise<void> {
 async function status(): Promise<void> {
   const session = await load();
   const events = await records<EventSummary>(join(capturePath(session.id), "events.jsonl"));
-  console.log(JSON.stringify({ ...session, proxyAlive: alive(session.proxyPid), redactedResponses: events.length }, null, 2));
+  console.log(JSON.stringify({ ...session, proxyAlive: alive(session.proxyPid),
+    gameAlive: session.gamePid ? alive(session.gamePid) : false, redactedResponses: events.length }, null, 2));
 }
 
 async function main(): Promise<void> {
