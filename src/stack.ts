@@ -64,7 +64,13 @@ export function sync(id: string, mode: "full" | "pr" = "full") {
     if (mode === "pr" && patches.length !== 1) {
       return yield* Effect.fail(new Error(`No north-star feature patch for ${id}`));
     }
-    for (const patch of patches) yield* git(["am", "--3way", "--committer-date-is-author-date", patch], dir);
+    for (const patch of patches) {
+      yield* git([
+        "-c", "user.name=StackAnvil Patch Bot",
+        "-c", "user.email=patches@stackanvil.invalid",
+        "am", "--3way", "--committer-date-is-author-date", patch,
+      ], dir);
+    }
     yield* git(["update-ref", syncedRef(mode), "HEAD"], dir);
     return dir;
   });
