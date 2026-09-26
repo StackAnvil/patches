@@ -1,40 +1,46 @@
-From 1776839d827a7584bdb71e7a7eb6de7767e5ea4d Mon Sep 17 00:00:00 2001
+From 1978120aada49abff10f30d39924acd362707592 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:52:24 +0200
 Subject: [PATCH] perf(resource-packs): cache converted packs by content
 
 Converting a resource-pack stack on every join repeats expensive ZIP work and can advertise stale output when the pack content changes. Cache conversions by the effective pack stack and content hash, and verify cached ZIPs before reuse.
 
-Write converted packs and their index atomically, give identical content a stable advertised hash and ID, and make ZIP entry order deterministic. Add focused cache and load-state tests. Based on ViaBedrock PR #420.
+Write converted packs and their index atomically, give identical content a stable advertised hash and ID, and make ZIP entry order deterministic. Encode ResourcePackClientResponse with the current varint pack-list count; the old 16-bit count breaks game-protocol downloads. Add focused cache, load-state, and packet-layout tests. Based on ViaBedrock PR #420.
 ---
- build.gradle                                  |   8 +
+ build.gradle                                  |  10 +
  .../api/resourcepack/content/Content.java     |   2 +-
  .../http/ConvertedResourcePackCache.java      | 180 +++++++++++
  .../http/ResourcePackHttpServer.java          | 145 ++++-----
  .../viabedrock/api/util/FileSystemUtil.java   |  14 +
- .../protocol/packet/ResourcePackPackets.java  | 293 ++++++++++--------
+ .../packet/ResourcePackClientResponse.java    |  52 +++
+ .../protocol/packet/ResourcePackPackets.java  | 295 ++++++++++--------
  .../provider/ResourcePackProvider.java        |   8 +-
  .../impl/DiskResourcePackProvider.java        |  47 ++-
  .../impl/InMemoryResourcePackProvider.java    |  34 +-
  .../impl/NoOpResourcePackProvider.java        |  11 +-
- .../storage/ResourcePackLoadStateTracker.java |  55 +++-
+ .../storage/ResourcePackLoadStateTracker.java |  62 ++--
  .../http/ConvertedResourcePackCacheTest.java  |  93 ++++++
+ .../ResourcePackClientResponseTest.java       |  74 +++++
  .../ResourcePackLoadStateTrackerTest.java     |  43 +++
- 13 files changed, 696 insertions(+), 237 deletions(-)
+ 15 files changed, 824 insertions(+), 246 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackClientResponse.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/ResourcePackClientResponseTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTrackerTest.java
 
 diff --git a/build.gradle b/build.gradle
-index c064146a..77cea002 100644
+index c064146a..4cc0760e 100644
 --- a/build.gradle
 +++ b/build.gradle
-@@ -116,6 +116,14 @@ dependencies {
+@@ -116,6 +116,16 @@ dependencies {
      toolImplementation "org.jsoup:jsoup:1.23.2"
      toolImplementation "org.ow2.asm:asm-tree:9.10.1"
      toolImplementation "net.lenni0451.commons:asm:1.9.2"
 +
 +    testImplementation "com.viaversion:viaversion-common:5.12.0"
++    testImplementation "com.google.guava:guava:33.7.1-jre"
++    testImplementation "io.netty:netty-handler:4.2.18.Final"
 +    testImplementation "org.junit.jupiter:junit-jupiter:6.1.3"
 +    testRuntimeOnly "org.junit.platform:junit-platform-launcher:6.1.3"
 +}
@@ -452,8 +458,66 @@ index ac3b469c..27dcc68f 100644
      public static Map<Path, byte[]> getFilesInDirectory(final String assetPath) throws IOException, URISyntaxException {
          final Path path = getPath(FileSystemUtil.class.getClassLoader().getResource(assetPath).toURI());
          return getFilesInPath(path);
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackClientResponse.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackClientResponse.java
+new file mode 100644
+index 00000000..d6ef914b
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackClientResponse.java
+@@ -0,0 +1,52 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ResourcePackResponse;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++public final class ResourcePackClientResponse {
++
++    private ResourcePackClientResponse() {
++    }
++
++    public static void write(final PacketWrapper wrapper, final ResourcePackResponse status) {
++        if (status == ResourcePackResponse.Downloading) {
++            throw new IllegalArgumentException("Downloading requires a pack list");
++        }
++        writeStatus(wrapper, status);
++    }
++
++    public static void writeDownloading(final PacketWrapper wrapper, final String[] packIds) {
++        writeStatus(wrapper, ResourcePackResponse.Downloading);
++        wrapper.write(BedrockTypes.STRING_ARRAY, packIds);
++    }
++
++    private static void writeStatus(final PacketWrapper wrapper, final ResourcePackResponse status) {
++        final String name = switch (status) {
++            case Cancel -> "cancel";
++            case Downloading -> "downloading";
++            case DownloadingFinished -> "downloadingfinished";
++            case ResourcePackStackFinished -> "resourcepackstackfinished";
++        };
++        wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, status.getValue());
++        wrapper.write(BedrockTypes.STRING, name);
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
-index 1d51a616..a9523e6b 100644
+index 1d51a616..983fa938 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
 @@ -19,13 +19,13 @@ package net.raphimc.viabedrock.protocol.packet;
@@ -472,7 +536,7 @@ index 1d51a616..a9523e6b 100644
  import net.raphimc.viabedrock.api.util.TextUtil;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
  import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
-@@ -50,114 +50,115 @@ import java.util.logging.Level;
+@@ -50,114 +50,113 @@ import java.util.logging.Level;
  
  public final class ResourcePackPackets {
  
@@ -540,7 +604,8 @@ index 1d51a616..a9523e6b 100644
 +                        cdnUrl = new URL(cdnUrlString);
                      }
 -                    infos[i] = new ResourcePackLoadStateTracker.Info(new ResourcePack.Key(id, version), contentKey, contentId, cdnUrl);
--                }
++                } catch (final MalformedURLException ignored) {
+                 }
 -                wrapper.user().put(new ResourcePackLoadStateTracker(wrapper.user(), infos));
 -
 -                if (ViaBedrock.getConfig().shouldTranslateResourcePacks() && wrapper.user().getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolConstants.JAVA_VERSION)) {
@@ -562,8 +627,7 @@ index 1d51a616..a9523e6b 100644
 -                    resourcePack.write(Types.UUID, UUID.randomUUID()); // id
 -                    resourcePack.write(Types.VAR_INT, ResourcePackAction.DECLINED.ordinal()); // action
 -                    resourcePack.sendToServer(BedrockProtocol.class, false);
-+                } catch (final MalformedURLException ignored) {
-                 }
+-                }
 -            }, State.PLAY, (PacketHandler) PacketWrapper::cancel // Bedrock client ignores resource packs after the initial info packet
 -        );
 +                infos[i] = new ResourcePackLoadStateTracker.Info(new ResourcePack.Key(id, version), contentKey, contentId, cdnUrl);
@@ -579,8 +643,7 @@ index 1d51a616..a9523e6b 100644
 +                            return;
 +                        }
 +                        final PacketWrapper response = PacketWrapper.create(ServerboundBedrockPackets.RESOURCE_PACK_CLIENT_RESPONSE, user);
-+                        response.write(BedrockTypes.UNSIGNED_VAR_INT, ResourcePackResponse.DownloadingFinished.getValue()); // status
-+                        response.write(BedrockTypes.STRING, "downloadingfinished"); // #blameMojang
++                        ResourcePackClientResponse.write(response, ResourcePackResponse.DownloadingFinished);
 +                        response.sendToServer(BedrockProtocol.class);
 +                    });
 +                }).exceptionally(e -> {
@@ -589,8 +652,7 @@ index 1d51a616..a9523e6b 100644
 +                });
 +            } else {
 +                final PacketWrapper response = PacketWrapper.create(ServerboundBedrockPackets.RESOURCE_PACK_CLIENT_RESPONSE, wrapper.user());
-+                response.write(BedrockTypes.UNSIGNED_VAR_INT, ResourcePackResponse.DownloadingFinished.getValue()); // status
-+                response.write(BedrockTypes.STRING, "downloadingfinished"); // #blameMojang
++                ResourcePackClientResponse.write(response, ResourcePackResponse.DownloadingFinished);
 +                response.sendToServer(BedrockProtocol.class);
 +            }
 +        });
@@ -686,8 +748,19 @@ index 1d51a616..a9523e6b 100644
              }
          });
          protocol.registerClientbound(ClientboundBedrockPackets.RESOURCE_PACK_DATA_INFO, null, wrapper -> {
-@@ -221,35 +222,81 @@ public final class ResourcePackPackets {
-                     wrapper.write(BedrockTypes.STRING, "resourcepackstackfinished"); // #blameMojang
+@@ -212,44 +211,86 @@ public final class ResourcePackPackets {
+                     if (resourcePackStorage != null) {
+                         resourcePackStorage.setLoadedOnJavaClient();
+                     }
+-                    wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, ResourcePackResponse.ResourcePackStackFinished.getValue()); // status
+-                    wrapper.write(BedrockTypes.STRING, "resourcepackstackfinished"); // #blameMojang
++                    ResourcePackClientResponse.write(wrapper, ResourcePackResponse.ResourcePackStackFinished);
+                 }
+                 case FAILED_DOWNLOAD, FAILED_RELOAD, DISCARDED -> {
+                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Client resource pack download/load failed");
+-                    wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, ResourcePackResponse.ResourcePackStackFinished.getValue()); // status
+-                    wrapper.write(BedrockTypes.STRING, "resourcepackstackfinished"); // #blameMojang
++                    ResourcePackClientResponse.write(wrapper, ResourcePackResponse.ResourcePackStackFinished);
                  }
                  case DECLINED, INVALID_URL -> {
 -                    wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, ResourcePackResponse.DownloadingFinished.getValue()); // status
@@ -711,8 +784,7 @@ index 1d51a616..a9523e6b 100644
 -                        wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, ResourcePackResponse.DownloadingFinished.getValue()); // status
 -                        wrapper.write(BedrockTypes.STRING, "downloadingfinished"); // #blameMojang
 -                    }
-+                    wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, ResourcePackResponse.ResourcePackStackFinished.getValue()); // status
-+                    wrapper.write(BedrockTypes.STRING, "resourcepackstackfinished"); // #blameMojang
++                    ResourcePackClientResponse.write(wrapper, ResourcePackResponse.ResourcePackStackFinished);
                  }
 -                case DOWNLOADED -> wrapper.cancel();
 +                case ACCEPTED, DOWNLOADED -> wrapper.cancel();
@@ -768,8 +840,7 @@ index 1d51a616..a9523e6b 100644
 +
 +    private static void sendStackFinished(final UserConnection user) {
 +        final PacketWrapper response = PacketWrapper.create(ServerboundBedrockPackets.RESOURCE_PACK_CLIENT_RESPONSE, user);
-+        response.write(BedrockTypes.UNSIGNED_VAR_INT, ResourcePackResponse.ResourcePackStackFinished.getValue()); // status
-+        response.write(BedrockTypes.STRING, "resourcepackstackfinished"); // #blameMojang
++        ResourcePackClientResponse.write(response, ResourcePackResponse.ResourcePackStackFinished);
 +        response.scheduleSendToServer(BedrockProtocol.class);
 +    }
 +
@@ -974,11 +1045,17 @@ index d24a4154..e466df71 100644
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java
-index f7f55094..99b83b64 100644
+index f7f55094..47cf78ae 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java
-@@ -32,6 +32,8 @@ import net.raphimc.viabedrock.protocol.provider.ResourcePackProvider;
- import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+@@ -27,11 +27,12 @@ import net.raphimc.viabedrock.api.resourcepack.content.ZipContent;
+ import net.raphimc.viabedrock.api.resourcepack.http.BedrockPackDownloader;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+-import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ResourcePackResponse;
++import net.raphimc.viabedrock.protocol.packet.ResourcePackClientResponse;
+ import net.raphimc.viabedrock.protocol.provider.ResourcePackProvider;
+-import net.raphimc.viabedrock.protocol.types.BedrockTypes;
  
  import java.net.URL;
 +import java.security.MessageDigest;
@@ -986,7 +1063,7 @@ index f7f55094..99b83b64 100644
  import java.util.*;
  import java.util.concurrent.*;
  import java.util.concurrent.atomic.AtomicInteger;
-@@ -48,7 +50,7 @@ public class ResourcePackLoadStateTracker extends StoredObject {
+@@ -48,7 +49,7 @@ public class ResourcePackLoadStateTracker extends StoredObject {
          return thread;
      }, null, true);
      private final CompletableFuture<Void> loadFuture = new CompletableFuture<>();
@@ -995,7 +1072,7 @@ index f7f55094..99b83b64 100644
  
      public ResourcePackLoadStateTracker(final UserConnection user, final ResourcePackLoadStateTracker.Info[] infos) {
          super(user);
-@@ -64,7 +66,8 @@ public class ResourcePackLoadStateTracker extends StoredObject {
+@@ -64,7 +65,8 @@ public class ResourcePackLoadStateTracker extends StoredObject {
  
      public void addRemoteResourcePack(final ResourcePack resourcePack) {
          try {
@@ -1005,7 +1082,7 @@ index f7f55094..99b83b64 100644
          } catch (final Throwable e) {
              ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to save resource pack: " + resourcePack.key(), e);
          }
-@@ -84,15 +87,19 @@ public class ResourcePackLoadStateTracker extends StoredObject {
+@@ -84,15 +86,19 @@ public class ResourcePackLoadStateTracker extends StoredObject {
      }
  
      public CompletableFuture<Void> loadRequestedResourcePacks() {
@@ -1027,7 +1104,18 @@ index f7f55094..99b83b64 100644
                      } catch (final Throwable e) {
                          if (!(e.getCause() instanceof InterruptedException)) {
                              ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to load resource pack: " + info.key(), e);
-@@ -148,32 +155,52 @@ public class ResourcePackLoadStateTracker extends StoredObject {
+@@ -132,9 +138,7 @@ public class ResourcePackLoadStateTracker extends StoredObject {
+             if (!downloadList.isEmpty()) {
+                 ViaBedrock.getPlatform().getLogger().log(Level.INFO, "Downloading " + downloadList.size() + " resource packs over the game protocol");
+                 final PacketWrapper resourcePackClientResponse = PacketWrapper.create(ServerboundBedrockPackets.RESOURCE_PACK_CLIENT_RESPONSE, this.user());
+-                resourcePackClientResponse.write(BedrockTypes.UNSIGNED_VAR_INT, ResourcePackResponse.Downloading.getValue()); // status
+-                resourcePackClientResponse.write(BedrockTypes.STRING, "downloading"); // #blameMojang
+-                resourcePackClientResponse.write(BedrockTypes.SHORT_LE_STRING_ARRAY, downloadList.stream().map(ResourcePack.Key::toString).toArray(String[]::new)); // downloading packs
++                ResourcePackClientResponse.writeDownloading(resourcePackClientResponse, downloadList.stream().map(ResourcePack.Key::toString).toArray(String[]::new));
+                 resourcePackClientResponse.scheduleSendToServer(BedrockProtocol.class);
+             } else {
+                 this.loadFuture.complete(null);
+@@ -148,32 +152,52 @@ public class ResourcePackLoadStateTracker extends StoredObject {
  
      public void loadUnrequestedResourcePacks(final ResourcePack.Key[] keys) {
          for (ResourcePack.Key key : keys) {
@@ -1186,6 +1274,86 @@ index 00000000..1d6e4090
 +        content.putString("manifest.json", "{\"format_version\":3,\"header\":{\"uuid\":\"" + id + "\",\"version\":\"1.0.0\",\"name\":\"test\"}}");
 +        content.put("assets/example", data);
 +        return new ResourcePack(content);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ResourcePackClientResponseTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ResourcePackClientResponseTest.java
+new file mode 100644
+index 00000000..f3351181
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/ResourcePackClientResponseTest.java
+@@ -0,0 +1,74 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ResourcePackResponse;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class ResourcePackClientResponseTest {
++
++    @Test
++    void downloadingUsesTheStringDiscriminatorAndVarintPackCount() throws Exception {
++        final String[] packIds = {"97e3f100-930a-4b47-b7ae-b8bbd38b1c19_1.0.0"};
++        final PacketWrapper wrapper = new PacketWrapperImpl(ServerboundBedrockPackets.RESOURCE_PACK_CLIENT_RESPONSE, null, null);
++        ResourcePackClientResponse.writeDownloading(wrapper, packIds);
++
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            wrapper.writeToBuffer(buffer);
++            assertEquals(ServerboundBedrockPackets.RESOURCE_PACK_CLIENT_RESPONSE.getId(), BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
++            assertEquals(ResourcePackResponse.Downloading.getValue(), BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
++            assertEquals("downloading", BedrockTypes.STRING.read(buffer));
++            assertArrayEquals(packIds, BedrockTypes.STRING_ARRAY.read(buffer));
++            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void finishedResponsesContainTheStatusAndStringDiscriminator() throws Exception {
++        for (final ResourcePackResponse status : new ResourcePackResponse[]{
++            ResourcePackResponse.DownloadingFinished, ResourcePackResponse.ResourcePackStackFinished}) {
++            final PacketWrapper wrapper = new PacketWrapperImpl(ServerboundBedrockPackets.RESOURCE_PACK_CLIENT_RESPONSE, null, null);
++            ResourcePackClientResponse.write(wrapper, status);
++
++            final ByteBuf buffer = Unpooled.buffer();
++            try {
++                wrapper.writeToBuffer(buffer);
++                assertEquals(ServerboundBedrockPackets.RESOURCE_PACK_CLIENT_RESPONSE.getId(), BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
++                assertEquals(status.getValue(), BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
++                assertEquals(status == ResourcePackResponse.DownloadingFinished
++                    ? "downloadingfinished" : "resourcepackstackfinished", BedrockTypes.STRING.read(buffer));
++                assertEquals(0, buffer.readableBytes());
++            } finally {
++                buffer.release();
++            }
++        }
 +    }
 +
 +}

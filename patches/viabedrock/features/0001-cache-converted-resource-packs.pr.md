@@ -4,6 +4,9 @@ Please check that a changed source pack cannot reuse an older conversion, and th
 
 ## Testing
 
-- [ ] Run the ViaBedrock tests, including the new resource-pack cache and load-state tests.
-- [ ] Join a server with resource packs, reconnect, and confirm the converted pack is reused.
-- [ ] Change a pack's content and confirm the client receives a fresh conversion.
+- [x] Run `./gradlew test checkstyleMain checkstyleTest` on the feature-only checkout.
+- [x] Join Bedrock Dedicated Server 1.26.51.1 with a resource pack, reconnect, and confirm the converted pack is reused.
+- [x] Change the pack texture and version, then confirm a new conversion contains the changed bytes and the Java client loads it.
+- [x] Join the same server with Fabulously Optimized after the cache checks.
+
+The live joins used the full StackAnvil patch stack and a local ViaProxy build compatible with the current ViaBedrock API.
