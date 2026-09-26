@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { expect, test } from "bun:test";
 import { prepareReleaseAssets } from "../src/release-assets.ts";
 
-test("release selects verified project JARs and the Prism config", async () => {
+test("release selects verified JARs, the add-on manifest, and the Prism config", async () => {
   const directory = await mkdtemp(join(tmpdir(), "stackanvil-release-"));
   try {
     const artifacts = join(directory, "artifacts");
@@ -28,9 +28,12 @@ test("release selects verified project JARs and the Prism config", async () => {
     await writeFile(join(artifacts, "prism", prism), "Prism config");
 
     const released = await prepareReleaseAssets(artifacts, output, projects);
-    expect(new Set(released)).toEqual(new Set([prism, ...projects.map((project) => `${project}-1-StackAnvil.jar`)]));
+    expect(new Set(released)).toEqual(new Set([prism, "viafabricplus-bedrock-manifest.json", ...projects.map((project) => `${project}-1-StackAnvil.jar`)]));
     expect(new Set(await readdir(output))).toEqual(new Set(released));
     expect(await readFile(join(output, prism), "utf8")).toBe("Prism config");
+    expect(JSON.parse(await readFile(join(output, "viafabricplus-bedrock-manifest.json"), "utf8"))).toEqual(
+      JSON.parse(await readFile(join(artifacts, "viafabricplus-bedrock", "manifest.json"), "utf8")),
+    );
 
     const manifestFile = join(artifacts, projects[0]!, "manifest.json");
     const manifest = JSON.parse(await readFile(manifestFile, "utf8")) as { artifacts: { sha256: string }[] };

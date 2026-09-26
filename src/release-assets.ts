@@ -29,6 +29,11 @@ export async function prepareReleaseAssets(artifactsDir: string, outputDir: stri
     if (names.has(artifact.file)) throw new Error(`Duplicate release asset: ${artifact.file}`);
     names.add(artifact.file);
     await copyFile(join(projectDir, artifact.file), join(outputDir, artifact.file));
+    if (project === "viafabricplus-bedrock") {
+      const manifestName = "viafabricplus-bedrock-manifest.json";
+      names.add(manifestName);
+      await copyFile(join(projectDir, "manifest.json"), join(outputDir, manifestName));
+    }
   }
 
   const prismDir = join(artifactsDir, "prism");
