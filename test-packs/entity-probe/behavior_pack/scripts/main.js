@@ -10,7 +10,7 @@ const scenarios = [
   { name: "tame", group: "status", type: "minecraft:wolf", run: (entity) => entity.triggerEvent("minecraft:on_tame") },
   { name: "sheep-eat", group: "status", type: "minecraft:sheep", run: (entity) => entity.triggerEvent("minecraft:on_eat_block") },
   { name: "creeper-prime", group: "status", type: "minecraft:creeper", run: (entity) => entity.triggerEvent("minecraft:start_exploding_forced") },
-  { name: "zombie-convert", group: "status", type: "minecraft:zombie", run: (entity) => entity.triggerEvent("minecraft:start_transforming") },
+  { name: "zombie-convert", group: "status", type: "minecraft:zombie", run: (entity) => entity.triggerEvent("minecraft:start_transforming_into_drowned") },
   { name: "ravager-roar", group: "status", type: "minecraft:ravager", run: (entity) => entity.triggerEvent("minecraft:start_roar") },
   { name: "name", group: "metadata", type: "minecraft:cow", run: (entity) => { entity.nameTag = "ViaBedrock metadata probe"; },
     verify: (entity) => entity.nameTag === "ViaBedrock metadata probe" },
