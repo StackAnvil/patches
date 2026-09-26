@@ -407,6 +407,9 @@ async function cleanup(): Promise<void> {
 
 async function main(): Promise<void> {
   const selected = Bun.argv.slice(2);
+  const plainOnly = selected.includes("--plain-only");
+  const modpackOnly = selected.includes("--modpack-only");
+  if (plainOnly && modpackOnly) throw new Error("Choose --plain-only or --modpack-only, not both.");
   const entityProbe = selected.includes("--entity-probe");
   const resourceProbe = selected.includes("--resource-pack-probe");
   const resourceRun = Date.now().toString(36);
@@ -424,7 +427,7 @@ async function main(): Promise<void> {
     throw new Error("Use --route java-java, java-bedrock, or bedrock-bedrock.");
   }
   if ((entityProbe || gameplayCases.length || resourceProbe) && !routes.includes("java-bedrock")) throw new Error("Probe cases require the java-bedrock route.");
-  if ((entityProbe || gameplayCases.length || resourceProbe) && selected.includes("--modpack-only")) throw new Error("Probe cases require the plain Java client run.");
+  if ((entityProbe || gameplayCases.length || resourceProbe) && modpackOnly) throw new Error("Probe cases require the plain Java client run.");
   if (process.env.STACKANVIL_USE_DESKTOP === "1") throw new Error("Integration tests require a private display and never take desktop focus.");
   if (await activeDisplay()) throw new Error("The StackAnvil private display is already running. Stop the lab or capture session before integration tests.");
   if (!selected.includes("--reuse-build")) await command(process.execPath, [join(root, "src", "cli.ts"), "stack", "build", "viafabricplus-bedrock"]);
@@ -441,13 +444,13 @@ async function main(): Promise<void> {
     const proxy = proxyBedrock ? await viaProxy(dir, proxyBedrock.port, proxyBedrock.version, proxyBedrock.transport) : undefined;
     for (const route of routes) {
       if (route === "java-java" && java) {
-        if (!selected.includes("--modpack-only")) await javaJoin(route, false, dir, java);
-        await javaJoin(route, true, dir, java);
+        if (!modpackOnly) await javaJoin(route, false, dir, java);
+        if (!plainOnly) await javaJoin(route, true, dir, java);
       } else if (route === "java-bedrock" && proxy && proxyBedrock) {
         let modpackProxy = proxy;
         let modpackBedrock = proxyBedrock;
         const proxyLogStart = (await textFile(proxy.log)).length;
-        const firstClientLog = !selected.includes("--modpack-only") ? await javaJoin(route, false, dir, { ...proxy, log: proxyBedrock.log, proxyLog: proxy.log },
+        const firstClientLog = !modpackOnly ? await javaJoin(route, false, dir, { ...proxy, log: proxyBedrock.log, proxyLog: proxy.log },
           entityProbe || gameplayCases.length || resourceProbe ? proxyBedrock : undefined, entityProbe, gameplayCases,
           resourceProbe ? { variant: "a", label: "a-first" } : undefined, probeFailures) : "";
         if (resourceProbe) {
@@ -482,7 +485,7 @@ async function main(): Promise<void> {
           await javaJoin(route, false, dir, { ...proxy, log: proxyBedrock.log, proxyLog: proxy.log });
           console.log("PASS gameplay reconnect: the Java client rejoined the same Bedrock world.");
         }
-        await javaJoin(route, true, dir, { ...modpackProxy, log: modpackBedrock.log, proxyLog: modpackProxy.log });
+        if (!plainOnly) await javaJoin(route, true, dir, { ...modpackProxy, log: modpackBedrock.log, proxyLog: modpackProxy.log });
       } else if (route === "bedrock-bedrock" && nativeBedrock) {
         await bedrockJoin(dir, nativeBedrock);
       }

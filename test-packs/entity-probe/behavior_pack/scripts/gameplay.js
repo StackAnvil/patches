@@ -167,7 +167,7 @@ define("creative-select", "creative", async (player) => {
   return {};
 }, (player) => {
   const stars = countItem(inventory(player), "minecraft:nether_star");
-  return { passed: stars > 0, observed: { stars }, expected: "At least one nether star selected from the Java creative menu." };
+  return { passed: stars > 0, observed: { stars, gameMode: player.getGameMode() }, expected: "At least one nether star selected from the Java creative menu." };
 });
 
 define("equip-helmet", "equipment", async (player) => {

@@ -102,10 +102,10 @@ async function chestTransfer(ui: Ui): Promise<void> {
   if (!opened) {
     throw new Error("The Java chest screen did not open after right click.");
   }
-  for (const y of [27, 151]) {
-    await clickGui(ui, window, 176, 168, 17, y);
-    await Bun.sleep(200);
-  }
+  await Promise.all([
+    ui(["ui", "key-hold", "Shift_L", "1000", "--client", "java"]),
+    (async () => { await Bun.sleep(200); await clickGui(ui, window, 176, 168, 17, 27); })(),
+  ]);
   await uiKey(ui, "Escape");
 }
 
