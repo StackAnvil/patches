@@ -1,0 +1,198 @@
+From bccf9b0baaecd3324bd3be7d2f31a6a986e954a4 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sat, 26 Sep 2026 23:59:03 +0200
+Subject: [PATCH] fix(chunks): ignore overlapping subchunk responses
+
+LevelChunk packets can already contain serialized sections while also
+requesting additional subchunks. Request only the missing sections, and
+keep queued and in-flight requests distinct so each pending section
+receives one request.
+
+Ignore repeated subchunk replies once the section is complete, clear
+request state on unload, and discard delayed data for replaced chunks.
+This prevents a second merge from disconnecting the Java client.
+---
+ .../protocol/packet/WorldPackets.java         | 14 +++---
+ .../protocol/storage/ChunkTracker.java        | 44 +++++++++++++++++--
+ .../protocol/storage/ChunkTrackerTest.java    | 43 ++++++++++++++++++
+ 3 files changed, 93 insertions(+), 8 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+index bfc8d13f..01706422 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+@@ -30,7 +30,6 @@ import com.viaversion.viaversion.api.type.Types;
+ import com.viaversion.viaversion.libs.fastutil.ints.IntObjectPair;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
+-import com.viaversion.viaversion.util.MathUtil;
+ import io.netty.buffer.ByteBuf;
+ import io.netty.buffer.Unpooled;
+ import net.raphimc.viabedrock.ViaBedrock;
+@@ -227,7 +226,8 @@ public final class WorldPackets {
+                 }
+             }
+ 
+-            final BedrockChunk chunk = chunkTracker.createChunk(chunkX, chunkZ, requestSubChunks ? requestSectionCount : sectionCount);
++            final BedrockChunk chunk = chunkTracker.createChunk(chunkX, chunkZ,
++                requestSubChunks ? Math.max(requestSectionCount, sectionCount) : sectionCount);
+             if (chunk == null) {
+                 return;
+             }
+@@ -236,8 +236,12 @@ public final class WorldPackets {
+             final int fRequestSectionCount = requestSectionCount;
+             final Consumer<byte[]> dataConsumer = combinedData -> {
+                 try {
+-                    if (fRequestSectionCount > 0) {
+-                        chunkTracker.requestSubChunks(chunkX, chunkZ, startY, MathUtil.clamp(startY + fRequestSectionCount, startY + 1, endY));
++                    if (chunkTracker.getChunk(chunkX, chunkZ) != chunk) {
++                        return; // Data from a chunk that has since been replaced
++                    }
++                    if (fRequestSectionCount > sectionCount) {
++                        chunkTracker.requestSubChunks(chunkX, chunkZ, startY + sectionCount,
++                            Math.min(startY + fRequestSectionCount, endY));
+                     }
+                     final ByteBuf dataBuf = Unpooled.wrappedBuffer(combinedData);
+ 
+@@ -368,7 +372,7 @@ public final class WorldPackets {
+                             }
+                         } else {
+                             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received sub chunk with result " + result);
+-                            chunkTracker.requestSubChunk(absolute.x(), absolute.y(), absolute.z());
++                            chunkTracker.retrySubChunk(absolute.x(), absolute.y(), absolute.z());
+                         }
+                     } catch (final Throwable e) {
+                         throw new RuntimeException("Error handling sub chunk data", e);
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+index b456c195..835ba830 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+@@ -172,6 +172,12 @@ public class ChunkTracker extends StoredObject {
+     public void unloadChunk(final ChunkPosition chunkPos) {
+         final long chunkKey = chunkPos.chunkKey();
+         this.chunks.remove(chunkKey);
++        this.subChunkRequests.removeIf(position -> position.chunkX == chunkPos.chunkX()
++            && position.chunkZ == chunkPos.chunkZ());
++        this.queuedSubChunkRequests.removeIf(position -> position.chunkX == chunkPos.chunkX()
++            && position.chunkZ == chunkPos.chunkZ());
++        this.pendingSubChunks.removeIf(position -> position.chunkX == chunkPos.chunkX()
++            && position.chunkZ == chunkPos.chunkZ());
+         this.dirtyChunks.remove(chunkKey);
+         this.javaBlockStateCache.remove(chunkKey);
+         this.chunkLight.remove(chunkKey);
+@@ -382,11 +388,25 @@ public class ChunkTracker extends StoredObject {
+             return;
+         }
+         final SubChunkPosition position = new SubChunkPosition(chunkX, subChunkY, chunkZ);
++        if (this.pendingSubChunks.contains(position)) {
++            return;
++        }
++        final BedrockChunk chunk = this.getChunk(chunkX, chunkZ);
++        final int sectionIndex = subChunkY - (this.minY >> 4);
++        if (chunk == null || sectionIndex < 0 || sectionIndex >= chunk.getSections().length
++            || !chunk.getSections()[sectionIndex].hasPendingBlockUpdates()) {
++            return;
++        }
+         if (this.queuedSubChunkRequests.add(position)) {
+             this.subChunkRequests.add(position);
+         }
+     }
+ 
++    public void retrySubChunk(final int chunkX, final int subChunkY, final int chunkZ) {
++        this.pendingSubChunks.remove(new SubChunkPosition(chunkX, subChunkY, chunkZ));
++        this.requestSubChunk(chunkX, subChunkY, chunkZ);
++    }
++
+     public boolean mergeSubChunk(final int chunkX, final int subChunkY, final int chunkZ, final BedrockChunkSection other, final List<BedrockBlockEntity> blockEntities) {
+         if (!this.isInLoadDistance(chunkX, chunkZ)) {
+             return false;
+@@ -405,15 +425,33 @@ public class ChunkTracker extends StoredObject {
+             return false;
+         }
+ 
+-        final BedrockChunkSection section = chunk.getSections()[subChunkY + Math.abs(this.minY >> 4)];
+-        section.mergeWith(this.handleBlockPalette(other));
+-        section.applyPendingBlockUpdates(this.bedrockAirId());
++        final int sectionIndex = subChunkY - (this.minY >> 4);
++        if (sectionIndex < 0 || sectionIndex >= chunk.getSections().length) {
++            return false;
++        }
++        final BedrockChunkSection section = chunk.getSections()[sectionIndex];
++        if (!section.hasPendingBlockUpdates()) {
++            return false;
++        }
++        if (!mergeSectionIfPending(section, this.handleBlockPalette(other), this.bedrockAirId())) {
++            return false;
++        }
+         this.invalidateJavaBlockStates(chunkX, subChunkY, chunkZ);
+         blockEntities.forEach(blockEntity -> chunk.removeBlockEntityAt(blockEntity.position()));
+         chunk.blockEntities().addAll(blockEntities);
+         return true;
+     }
+ 
++    static boolean mergeSectionIfPending(final BedrockChunkSection section,
++                                         final BedrockChunkSection other, final int airId) {
++        if (!section.hasPendingBlockUpdates()) {
++            return false;
++        }
++        section.mergeWith(other);
++        section.applyPendingBlockUpdates(airId);
++        return true;
++    }
++
+     public IntObjectPair<BlockEntity> handleBlockChange(final BlockPosition blockPosition, final int layer, final int blockState) {
+         final BedrockChunkSection section = this.getChunkSection(blockPosition);
+         if (section == null) {
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
+new file mode 100644
+index 00000000..130e48f5
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
+@@ -0,0 +1,43 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.minecraft.chunks.PaletteType;
++import net.raphimc.viabedrock.api.chunk.datapalette.BedrockDataPalette;
++import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSectionImpl;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class ChunkTrackerTest {
++
++    @Test
++    void ignoresRepeatedSubChunkAfterApplyingPendingUpdates() {
++        final BedrockChunkSectionImpl section = new BedrockChunkSectionImpl();
++        section.addPendingBlockUpdate(0, 0, 0, 0, 3);
++
++        assertTrue(ChunkTracker.mergeSectionIfPending(section, sectionWithBlock(1), 0));
++        assertEquals(3, section.palette(PaletteType.BLOCKS).idAt(0));
++
++        assertFalse(ChunkTracker.mergeSectionIfPending(section, sectionWithBlock(2), 0));
++        assertEquals(3, section.palette(PaletteType.BLOCKS).idAt(0));
++    }
++
++    private static BedrockChunkSectionImpl sectionWithBlock(final int blockId) {
++        final BedrockChunkSectionImpl section = new BedrockChunkSectionImpl();
++        final BedrockDataPalette palette = new BedrockDataPalette();
++        palette.addId(blockId);
++        section.addPalette(PaletteType.BLOCKS, palette);
++        return section;
++    }
++
++}
+-- 
+2.55.0
+

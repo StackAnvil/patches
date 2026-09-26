@@ -1,0 +1,154 @@
+From 1d59fba916dda677c0cad538111392c9ebbbf2ce Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sat, 26 Sep 2026 22:28:27 +0200
+Subject: [PATCH] fix(inventory): align container slot IDs with stable Bedrock
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The protocol 2193 beta metadata inserts three recipe categories ahead of the inventory and cursor containers, shifting every later ID. Stable codecs append those categories at IDs 64-66. Teach the enum generator to correct only that known metadata layout and regenerate the container IDs so stack requests address the server’s actual slots.
+---
+ .../bedrock/generated/ContainerEnumName.java  |  6 +--
+ .../model/FullContainerNameTypeTest.java      | 49 +++++++++++++++++++
+ .../generator/BedrockDataEnumGenerator.java   | 31 +++++++++++-
+ 3 files changed, 81 insertions(+), 5 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/model/FullContainerNameTypeTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/ContainerEnumName.java b/src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/ContainerEnumName.java
+index 0ffc10f6..bbfe0d98 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/ContainerEnumName.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/ContainerEnumName.java
+@@ -24,9 +24,6 @@ public enum ContainerEnumName {
+     RecipeConstructionContainer(15),
+     RecipeNatureContainer(16),
+     RecipeItemsContainer(17),
+-    RecipeFoodContainer(64),
+-    RecipeBlocksContainer(65),
+-    RecipeFurnaceItemsContainer(66),
+     RecipeSearchContainer(18),
+     RecipeSearchBarContainer(19),
+     RecipeEquipmentContainer(20),
+@@ -73,6 +70,9 @@ public enum ContainerEnumName {
+     SmithingTableTemplateContainer(61),
+     CrafterLevelEntityContainer(62),
+     DynamicContainer(63),
++    RecipeFoodContainer(64),
++    RecipeBlocksContainer(65),
++    RecipeFurnaceItemsContainer(66),
+     ;
+ 
+     private static final Int2ObjectMap<ContainerEnumName> BY_VALUE = new Int2ObjectOpenHashMap<>();
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/types/model/FullContainerNameTypeTest.java b/src/test/java/net/raphimc/viabedrock/protocol/types/model/FullContainerNameTypeTest.java
+new file mode 100644
+index 00000000..6f35155c
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/types/model/FullContainerNameTypeTest.java
+@@ -0,0 +1,49 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.types.model;
++
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.ByteBufUtil;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
++import net.raphimc.viabedrock.protocol.model.FullContainerName;
++import org.junit.jupiter.api.Test;
++
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
++import static org.junit.jupiter.api.Assertions.assertSame;
++
++class FullContainerNameTypeTest {
++
++    @Test
++    void stableContainerNamesUseProtocol2193SlotIds() {
++        final FullContainerNameType type = new FullContainerNameType();
++        final Map<ContainerEnumName, Integer> ids = Map.of(
++                ContainerEnumName.InventoryContainer, 29,
++                ContainerEnumName.CursorContainer, 59,
++                ContainerEnumName.CreatedOutputContainer, 60,
++                ContainerEnumName.RecipeFoodContainer, 64,
++                ContainerEnumName.RecipeBlocksContainer, 65,
++                ContainerEnumName.RecipeFurnaceItemsContainer, 66);
++
++        ids.forEach((name, id) -> {
++            final ByteBuf buffer = Unpooled.buffer();
++            try {
++                type.write(buffer, new FullContainerName(name, null));
++                assertArrayEquals(new byte[] {id.byteValue(), 0}, ByteBufUtil.getBytes(buffer));
++                assertSame(name, ContainerEnumName.getByValue(id));
++            } finally {
++                buffer.release();
++            }
++        });
++    }
++
++}
+diff --git a/src/tool/java/net/raphimc/viabedrock/tool/generator/BedrockDataEnumGenerator.java b/src/tool/java/net/raphimc/viabedrock/tool/generator/BedrockDataEnumGenerator.java
+index 8a0954a1..3295226f 100644
+--- a/src/tool/java/net/raphimc/viabedrock/tool/generator/BedrockDataEnumGenerator.java
++++ b/src/tool/java/net/raphimc/viabedrock/tool/generator/BedrockDataEnumGenerator.java
+@@ -30,6 +30,7 @@ import net.raphimc.viabedrock.tool.ToolPaths;
+ 
+ import java.nio.file.Files;
+ import java.nio.file.Path;
++import java.util.ArrayList;
+ import java.util.List;
+ import java.util.stream.Stream;
+ 
+@@ -122,8 +123,31 @@ public final class BedrockDataEnumGenerator {
+             genEnum.members().addMethod("public", "int", "getValue", method -> method.code().add("return this.value;"));
+ 
+             final JsonArray enumFields = jsonObject.getAsJsonArray("enum");
+-            for (int i = 0; i < enumFields.size(); i++) {
+-                final JsonElement enumFieldElement = enumFields.get(i);
++            final List<JsonElement> orderedFields = new ArrayList<>(enumFields.asList());
++            if (enumName.equals("ContainerEnumName") && jsonObject.has("x-protocol-version")
++                && jsonObject.get("x-protocol-version").getAsInt() == 2193) {
++                // The 2193 beta metadata inserted these names at 18-20, but the stable
++                // codec adds them at 64-66. Earlier container IDs must not shift.
++                final List<String> recipeCategories = List.of(
++                    "RecipeFoodContainer", "RecipeBlocksContainer", "RecipeFurnaceItemsContainer");
++                if (orderedFields.size() != 67) {
++                    throw new IllegalStateException("Unexpected 2193 ContainerEnumName metadata layout");
++                }
++                if (orderedFields.subList(18, 21).stream().map(JsonElement::getAsString).toList()
++                    .equals(recipeCategories)) {
++                    if (jsonObject.has("x-enum-binary-value")) {
++                        throw new IllegalStateException("Cannot reorder explicit container enum values");
++                    }
++                    final List<JsonElement> addedCategories = new ArrayList<>(orderedFields.subList(18, 21));
++                    orderedFields.subList(18, 21).clear();
++                    orderedFields.addAll(addedCategories);
++                } else if (!orderedFields.subList(64, 67).stream().map(JsonElement::getAsString)
++                    .toList().equals(recipeCategories)) {
++                    throw new IllegalStateException("Unexpected 2193 ContainerEnumName metadata layout");
++                }
++            }
++            for (int i = 0; i < orderedFields.size(); i++) {
++                final JsonElement enumFieldElement = orderedFields.get(i);
+                 final String name = enumFieldElement.getAsString().replace(" ", "_");
+                 String value = null;
+                 if (jsonObject.has("x-enum-binary-value")) {
+@@ -132,6 +156,9 @@ public final class BedrockDataEnumGenerator {
+                         value = binaryValues.get(i).getAsString();
+                     }
+                 }
++                if (enumName.equals("ContainerEnumName") && value == null) {
++                    value = Integer.toString(i);
++                }
+ 
+                 genEnum.enumFields().add(new Field(name, null, null, value, new Javadoc()));
+             }
+-- 
+2.55.0
+

@@ -1,4 +1,4 @@
-From 191eee76202a2a4caba2138860cb4485fbdc8e4b Mon Sep 17 00:00:00 2001
+From dc3ad58f5e398fdbd64843cec594cd5b2d22f555 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 21:09:29 +0200
 Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
@@ -6,16 +6,23 @@ Subject: [PATCH] feat(crafting): expose Bedrock recipes and place ingredients
 Display representable crafting-table recipes from Bedrock data with stable Java IDs and honor unlock events. Place ingredients through server-authoritative item stack requests, using tracked network IDs and recipe counts. Show a ghost recipe when ingredients are unavailable.
 
 Manual crafting now resolves overlapping shapeless ingredients and recipe priority. Molang descriptors remain hidden because this translator does not evaluate their expressions; the server remains authoritative for the final craft.
+
+Treat wildcard ingredient metadata as a wildcard when building Java recipe displays. Interpreting it as literal item metadata hid otherwise valid recipes.
 ---
- .../block/CraftingTableContainer.java         | 215 ++++++++++-
- .../protocol/packet/InventoryPackets.java     |  41 +++
+ .../block/CraftingTableContainer.java         | 215 +++++++++-
+ .../protocol/model/recipe/ItemDescriptor.java |  13 +-
+ .../protocol/model/recipe/MolangTagQuery.java |  64 +++
+ .../protocol/packet/InventoryPackets.java     |  41 ++
  .../protocol/storage/CraftingDataStorage.java |   3 +-
- .../protocol/storage/CraftingDataTracker.java | 342 +++++++++++++++---
+ .../protocol/storage/CraftingDataTracker.java | 369 +++++++++++++++---
  .../types/recipe/CraftingDataReader.java      |  20 +-
  .../block/CraftingTableContainerTest.java     |  72 ++++
- .../storage/CraftingDataTrackerTest.java      | 136 +++++++
- 7 files changed, 762 insertions(+), 67 deletions(-)
+ .../model/recipe/MolangTagQueryTest.java      |  53 +++
+ .../storage/CraftingDataTrackerTest.java      | 143 +++++++
+ 10 files changed, 916 insertions(+), 77 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/recipe/MolangTagQuery.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/block/CraftingTableContainerTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/recipe/MolangTagQueryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTrackerTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/CraftingTableContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/CraftingTableContainer.java
@@ -295,11 +302,105 @@ index 901a4691..29888cdf 100644
 +    record PlacementPlan(int[] sources, int[] amounts) { }
 +
  }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemDescriptor.java b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemDescriptor.java
+index eb263ea7..e7ea85b1 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemDescriptor.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemDescriptor.java
+@@ -133,8 +133,17 @@ public interface ItemDescriptor {
+ 
+         @Override
+         public boolean matchesItem(final UserConnection user, final BedrockItem item) {
+-            // TODO
+-            return false;
++            if (item.isEmpty()) {
++                return false;
++            }
++            final MolangTagQuery query = MolangTagQuery.parse(this.tagExpression).orElse(null);
++            if (query == null) {
++                return false;
++            }
++            final ItemRewriter itemRewriter = user.get(ItemRewriter.class);
++            final String itemName = itemRewriter.getItems().inverse().get(item.identifier());
++            final Set<String> tags = BedrockProtocol.MAPPINGS.getBedrockItemTags().get(itemName);
++            return tags != null && query.matches(tags);
+         }
+ 
+         @Override
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/MolangTagQuery.java b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/MolangTagQuery.java
+new file mode 100644
+index 00000000..974a5873
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/MolangTagQuery.java
+@@ -0,0 +1,64 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.model.recipe;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Optional;
++import java.util.Set;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
++
++/** A deliberately small subset of Molang recipe predicates backed by Bedrock item tags. */
++public final class MolangTagQuery {
++
++    private static final int MAX_EXPRESSION_LENGTH = 512;
++    private static final int MAX_TAGS = 16;
++    private static final Pattern CALL = Pattern.compile("^\\s*(?:query|q)\\.(any_tag|all_tags)\\s*\\((.*)\\)\\s*$",
++            Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
++    private static final Pattern TAG = Pattern.compile("^\\s*'([a-zA-Z0-9_:.\\-/]+)'\\s*$");
++
++    private final boolean all;
++    private final List<String> tags;
++
++    private MolangTagQuery(final boolean all, final List<String> tags) {
++        this.all = all;
++        this.tags = List.copyOf(tags);
++    }
++
++    public static Optional<MolangTagQuery> parse(final String expression) {
++        if (expression == null || expression.length() > MAX_EXPRESSION_LENGTH) {
++            return Optional.empty();
++        }
++        final Matcher call = CALL.matcher(expression);
++        if (!call.matches()) {
++            return Optional.empty();
++        }
++        final String[] arguments = call.group(2).split(",", -1);
++        if (arguments.length == 0 || arguments.length > MAX_TAGS) {
++            return Optional.empty();
++        }
++        final List<String> tags = new ArrayList<>(arguments.length);
++        for (final String argument : arguments) {
++            final Matcher tag = TAG.matcher(argument);
++            if (!tag.matches()) {
++                return Optional.empty();
++            }
++            tags.add(tag.group(1));
++        }
++        return Optional.of(new MolangTagQuery("all_tags".equalsIgnoreCase(call.group(1)), tags));
++    }
++
++    public boolean matches(final Set<String> itemTags) {
++        return this.all ? itemTags.containsAll(this.tags)
++                : this.tags.stream().anyMatch(itemTags::contains);
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index 50eb9ec8..ad1f203b 100644
+index f888cf93..a70cbb17 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-@@ -785,6 +785,22 @@ public final class InventoryPackets {
+@@ -796,6 +796,22 @@ public final class InventoryPackets {
                      tracker.updateCraftingDataList(data.recipes(), data.clearRecipes());
                      tracker.sendJavaUpdateRecipes(wrapper.user());
                  });
@@ -322,7 +423,7 @@ index 50eb9ec8..ad1f203b 100644
          protocol.registerClientbound(
                  ClientboundBedrockPackets.CONTAINER_SET_DATA,
                  ClientboundPackets26_3.CONTAINER_SET_DATA,
-@@ -984,6 +1000,31 @@ public final class InventoryPackets {
+@@ -985,6 +1001,31 @@ public final class InventoryPackets {
                          PacketFactory.sendJavaContainerSetContent(wrapper.user(), container);
                      }
                  });
@@ -369,7 +470,7 @@ index 4506fe07..2b1c6b93 100644
      @Override
      public @NonNull String toString() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
-index c035b91f..f1fafec9 100644
+index c035b91f..fd43778f 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
 @@ -11,6 +11,7 @@ package net.raphimc.viabedrock.protocol.storage;
@@ -380,7 +481,7 @@ index c035b91f..f1fafec9 100644
  import com.viaversion.viaversion.api.minecraft.item.Item;
  import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
  import com.viaversion.viaversion.api.type.Types;
-@@ -24,11 +25,24 @@ import net.raphimc.viabedrock.protocol.model.recipe.*;
+@@ -24,11 +25,25 @@ import net.raphimc.viabedrock.protocol.model.recipe.*;
  import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
  
  import java.util.ArrayList;
@@ -392,6 +493,7 @@ index c035b91f..f1fafec9 100644
 +import java.util.Set;
 +import java.util.UUID;
 +import java.util.function.BiPredicate;
++import java.util.function.Predicate;
  
  public final class CraftingDataTracker extends StoredObject {
  
@@ -405,7 +507,7 @@ index c035b91f..f1fafec9 100644
  
      public CraftingDataTracker(final UserConnection user) {
          super(user);
-@@ -38,6 +52,24 @@ public final class CraftingDataTracker extends StoredObject {
+@@ -38,6 +53,24 @@ public final class CraftingDataTracker extends StoredObject {
          return this.recipes;
      }
  
@@ -430,7 +532,7 @@ index c035b91f..f1fafec9 100644
      public void updateCraftingDataList(final List<CraftingDataStorage> recipes, final boolean clear) {
          if (clear) {
              this.recipes = List.copyOf(recipes);
-@@ -48,25 +80,69 @@ public final class CraftingDataTracker extends StoredObject {
+@@ -48,25 +81,69 @@ public final class CraftingDataTracker extends StoredObject {
          }
      }
  
@@ -512,7 +614,7 @@ index c035b91f..f1fafec9 100644
      }
  
      private boolean matchesSmithing(final Container container, final SmithingRecipe recipe) {
-@@ -75,76 +151,98 @@ public final class CraftingDataTracker extends StoredObject {
+@@ -75,76 +152,98 @@ public final class CraftingDataTracker extends StoredObject {
                  && this.matches(recipe.getAdditionIngredient(), container.getItem(52));
      }
  
@@ -644,7 +746,33 @@ index c035b91f..f1fafec9 100644
      }
  
      private BedrockItem input(final Container container, final int index) {
-@@ -195,8 +293,162 @@ public final class CraftingDataTracker extends StoredObject {
+@@ -167,19 +266,17 @@ public final class CraftingDataTracker extends StoredObject {
+                 continue;
+             }
+             final ItemDescriptor descriptor = recipe.getIngredients().get(0);
+-            if (!(descriptor instanceof ItemDescriptor.ItemNameDescriptor ingredient)) {
+-                continue;
+-            }
+-            final Integer bedrockId = rewriter.getItems().get(ingredient.fullName());
+-            if (bedrockId == null) {
++            final HolderSet inputs = this.javaIngredient(rewriter, descriptor);
++            if (inputs == null || inputs.ids().length == 0) {
+                 continue;
+             }
+-            final Item javaInput = rewriter.javaItem(new BedrockItem(bedrockId));
+             final Item javaOutput = rewriter.javaItem(recipe.getResults().get(0));
+-            if (javaInput.isEmpty() || javaOutput.isEmpty()) {
++            if (javaOutput.isEmpty()) {
+                 continue;
+             }
+-            entries.add(new StonecutterEntry(javaInput.identifier(), javaOutput));
++            for (final int inputId : inputs.ids()) {
++                entries.add(new StonecutterEntry(inputId, javaOutput));
++            }
+         }
+ 
+         final PacketWrapper packet =
+@@ -195,8 +292,174 @@ public final class CraftingDataTracker extends StoredObject {
              packet.write(VersionedTypes.V26_3.itemTemplate, entry.output());
          }
          packet.send(BedrockProtocol.class);
@@ -748,6 +876,10 @@ index c035b91f..f1fafec9 100644
 +        packet.write(Types.VAR_INT, display.craftingStationId());
 +    }
 +
++    static short javaDisplayAuxValue(final int auxValue) {
++        return auxValue >= 0 && auxValue < Short.MAX_VALUE ? (short) auxValue : 0;
++    }
++
 +    private HolderSet javaIngredient(final ItemRewriter rewriter,
 +            final ItemDescriptor ingredient) {
 +        if (ingredient instanceof ItemDescriptor.InvalidDescriptor) {
@@ -758,27 +890,35 @@ index c035b91f..f1fafec9 100644
 +            if (id == null) {
 +                return null;
 +            }
-+            final short data = named.auxValue() >= 0 && named.auxValue() <= Short.MAX_VALUE
-+                    ? (short) named.auxValue() : 0;
++            final short data = javaDisplayAuxValue(named.auxValue());
 +            final Item javaItem = rewriter.javaItem(new BedrockItem(id, data, (byte) 1));
 +            return javaItem.isEmpty() ? null : HolderSet.of(new int[] {javaItem.identifier()});
 +        }
++        final Predicate<Set<String>> tagMatcher;
 +        if (ingredient instanceof ItemDescriptor.ItemTagDescriptor tagged) {
-+            final int[] ids = rewriter.getItems().entrySet().stream()
-+                    .filter(entry -> {
-+                        final Set<String> tags = BedrockProtocol.MAPPINGS
-+                                .getBedrockItemTags().get(entry.getKey());
-+                        return tags != null && tags.contains(tagged.itemTag());
-+                    })
-+                    .map(Map.Entry::getValue)
-+                    .mapToInt(id -> rewriter.javaItem(new BedrockItem(id)).identifier())
-+                    .filter(id -> id > 0)
-+                    .distinct()
-+                    .sorted()
-+                    .toArray();
-+            return ids.length == 0 ? null : HolderSet.of(ids);
++            tagMatcher = tags -> tags.contains(tagged.itemTag());
++        } else if (ingredient instanceof ItemDescriptor.MolangDescriptor molang) {
++            final MolangTagQuery query = MolangTagQuery.parse(molang.tagExpression()).orElse(null);
++            if (query == null) {
++                return null;
++            }
++            tagMatcher = query::matches;
++        } else {
++            return null;
 +        }
-+        return null;
++        final int[] ids = rewriter.getItems().entrySet().stream()
++                .filter(entry -> {
++                    final Set<String> tags = BedrockProtocol.MAPPINGS
++                            .getBedrockItemTags().get(entry.getKey());
++                    return tags != null && tagMatcher.test(tags);
++                })
++                .map(Map.Entry::getValue)
++                .mapToInt(id -> rewriter.javaItem(new BedrockItem(id)).identifier())
++                .filter(id -> id > 0)
++                .distinct()
++                .sorted()
++                .toArray();
++        return ids.length == 0 ? null : HolderSet.of(ids);
 +    }
 +
 +    private void writeIngredientDisplay(final PacketWrapper packet, final HolderSet ingredient) {
@@ -952,12 +1092,71 @@ index 00000000..820c181a
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/recipe/MolangTagQueryTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/recipe/MolangTagQueryTest.java
+new file mode 100644
+index 00000000..284e0878
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/recipe/MolangTagQueryTest.java
+@@ -0,0 +1,53 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.model.recipe;
++
++import org.junit.jupiter.api.Test;
++
++import java.util.Set;
++
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class MolangTagQueryTest {
++
++    @Test
++    void matchesOnlyKnownItemTagsWithTheRequestedAnyOrAllSemantics() {
++        final Set<String> itemTags = Set.of("minecraft:logs", "minecraft:logs_that_burn");
++        assertTrue(MolangTagQuery.parse("query.any_tag('minecraft:planks', 'minecraft:logs')")
++                .orElseThrow().matches(itemTags));
++        assertFalse(MolangTagQuery.parse("query.any_tag('minecraft:planks')")
++                .orElseThrow().matches(itemTags));
++        assertTrue(MolangTagQuery.parse("query.all_tags('minecraft:logs', 'minecraft:logs_that_burn')")
++                .orElseThrow().matches(itemTags));
++        assertFalse(MolangTagQuery.parse("query.all_tags('minecraft:logs', 'minecraft:planks')")
++                .orElseThrow().matches(itemTags));
++    }
++
++    @Test
++    void ignoresFunctionCaseButPreservesQuotedTagCase() {
++        final MolangTagQuery query = MolangTagQuery.parse("QUERY.ALL_TAGS('example:MixedCase')")
++                .orElseThrow();
++        assertTrue(query.matches(Set.of("example:MixedCase")));
++        assertFalse(query.matches(Set.of("example:mixedcase")));
++        assertTrue(MolangTagQuery.parse("Q.AnY_tAg('example:MixedCase')")
++                .orElseThrow().matches(Set.of("example:MixedCase")));
++    }
++
++    @Test
++    void rejectsExpressionsOutsideTheLiteralTagSubset() {
++        assertTrue(MolangTagQuery.parse("query.any_tag('minecraft:logs') || 1").isEmpty());
++        assertTrue(MolangTagQuery.parse("query.any_tag(variable.tag)").isEmpty());
++        assertTrue(MolangTagQuery.parse("query.any_tag()").isEmpty());
++        assertTrue(MolangTagQuery.parse("query.all_tags('minecraft:logs',)").isEmpty());
++        assertTrue(MolangTagQuery.parse("query.is_item_name_any('minecraft:oak_log')").isEmpty());
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTrackerTest.java
 new file mode 100644
-index 00000000..d1ae6e74
+index 00000000..c664b104
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTrackerTest.java
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,143 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1061,6 +1260,13 @@ index 00000000..d1ae6e74
 +        assertFalse(tracker.isRecipeUnlocked(locked));
 +    }
 +
++    @Test
++    void recipeDisplayUsesDefaultMetadataForWildcardIngredients() {
++        assertEquals(0, CraftingDataTracker.javaDisplayAuxValue(-1));
++        assertEquals(0, CraftingDataTracker.javaDisplayAuxValue(Short.MAX_VALUE));
++        assertEquals(7, CraftingDataTracker.javaDisplayAuxValue(7));
++    }
++
 +    private static CraftingDataStorage recipe(final String name, final UUID id,
 +            final int networkId, final boolean alwaysUnlocked) {
 +        return new CraftingDataStorage(RecipeType.SHAPELESS, networkId,
@@ -1096,4 +1302,3 @@ index 00000000..d1ae6e74
 +}
 -- 
 2.55.0
-
