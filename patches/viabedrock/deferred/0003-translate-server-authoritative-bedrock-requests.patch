@@ -1,4 +1,4 @@
-From 6e1bd11c677051555e6b49e53eaa9bef73ae9872 Mon Sep 17 00:00:00 2001
+From d9a05e8e679e06784b3ab436ab065a76bf753c72 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 09:49:38 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -35,7 +35,7 @@ Write both the Cereal union variant and its embedded item descriptor type. Omitt
 
 Classify actor-backed container opens using the target entity ID. Bedrock uses generic CONTAINER for storage vehicles; checking its reported position as a chest block closed the Java screen on the next inventory tick.
 
-Let the Bedrock enchant recipe consume lapis itself. The native request contains the crafted result, input consume, and output placement but no explicit material consume; adding one led Bedrock to reject the request as an unconsumed slot.
+Match the native enchant request with result item data, input and material consumption, and output placement. Use the effective Java game mode when deciding whether to consume lapis: Bedrock Default can inherit survival from the level, and omitting lapis then makes the server reject the request.
 ---
  build.gradle                                  |    3 +-
  .../api/model/container/ChestContainer.java   |   52 +-
@@ -46,7 +46,7 @@ Let the Bedrock enchant recipe consume lapis itself. The native request contains
  .../block/BrewingStandContainer.java          |   98 +
  .../container/block/CrafterContainer.java     |   88 +
  .../block/CraftingTableContainer.java         |  224 +++
- .../container/block/EnchantmentContainer.java |  284 +++
+ .../container/block/EnchantmentContainer.java |  256 +++
  .../container/block/FurnaceContainer.java     |   77 +
  .../container/block/Generic3x3Container.java  |   54 +
  .../container/block/GrindstoneContainer.java  |   93 +
@@ -104,7 +104,7 @@ Let the Bedrock enchant recipe consume lapis itself. The native request contains
  .../data/bedrock/item_stack_sizes.json        |  267 +++
  .../viabedrock/data/custom/block_tags.json    |   16 +-
  .../api/model/container/ContainerTest.java    |   58 +
- .../block/EnchantmentContainerTest.java       |   69 +
+ .../block/EnchantmentContainerTest.java       |  120 ++
  .../protocol/packet/InventoryPacketsTest.java |  117 ++
  .../storage/InventoryRequestRecoveryTest.java |   68 +
  .../InventoryRequestTrackerQueueTest.java     |  104 ++
@@ -112,7 +112,7 @@ Let the Bedrock enchant recipe consume lapis itself. The native request contains
  .../types/inventory/ItemStackCodecTest.java   |  201 +++
  .../ItemStackRequestResultTypeTest.java       |   55 +
  .../recipe/NetworkItemDescriptorTypeTest.java |   98 +
- 75 files changed, 8891 insertions(+), 832 deletions(-)
+ 75 files changed, 8914 insertions(+), 832 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/AnvilContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/BeaconContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/BlastFurnaceContainer.java
@@ -2199,10 +2199,10 @@ index 00000000..901a4691
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/EnchantmentContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/EnchantmentContainer.java
 new file mode 100644
-index 00000000..517d0f66
+index 00000000..0ebde9b5
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/block/EnchantmentContainer.java
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,256 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2025 RK_01/RaphiMC and contributors
@@ -2234,6 +2234,7 @@ index 00000000..517d0f66
 +import net.raphimc.viabedrock.api.util.RegistryUtil;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
++import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
 +import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
 +import net.raphimc.viabedrock.protocol.model.BedrockItem;
 +import net.raphimc.viabedrock.protocol.model.FullContainerName;
@@ -2322,8 +2323,8 @@ index 00000000..517d0f66
 +        final InventoryTracker inventoryTracker = user.get(InventoryTracker.class);
 +        final InventoryRequestTracker inventoryRequestTracker = user.get(InventoryRequestTracker.class);
 +        final EntityTracker entityTracker = user.get(EntityTracker.class);
-+        final boolean consumesLapis = entityTracker.getClientPlayer().gameType() == GameType.Survival
-+                || entityTracker.getClientPlayer().gameType() == GameType.Adventure;
++        final GameMode gameMode = entityTracker.getClientPlayer().javaGameMode();
++        final boolean consumesLapis = gameMode == GameMode.SURVIVAL || gameMode == GameMode.ADVENTURE;
 +        if (inventoryRequestTracker.hasPending()
 +                || !canEnchant(this.data.get(button), this.getItem(14), this.getItem(15),
 +                        button + 1, consumesLapis)) {
@@ -2337,34 +2338,8 @@ index 00000000..517d0f66
 +
 +        final int reqId = inventoryRequestTracker.nextRequestId();
 +
-+        final List<ItemStackRequestAction> actions = new ArrayList<>();
-+
-+        final ItemStackRequestAction craftAction =
-+                new ItemStackRequestAction.CraftRecipeAction(this.data.get(button).netId(), 1);
-+        final ItemStackRequestAction resultsAction =
-+                new ItemStackRequestAction.CraftResultsDeprecatedAction(
-+                        List.of(resultItem(this.getItem(14), this.data.get(button))), 1);
-+        final ItemStackRequestAction consumeAction =
-+                new ItemStackRequestAction.ConsumeAction(
-+                        1,
-+                        new ItemStackRequestSlotInfo(
-+                                this.getFullContainerName(14),
-+                                (byte) 14,
-+                                this.getItem(14).netId()));
-+        final ItemStackRequestAction placeAction =
-+                new ItemStackRequestAction.PlaceAction(
-+                        1,
-+                        new ItemStackRequestSlotInfo(
-+                                new FullContainerName(
-+                                        ContainerEnumName.CreatedOutputContainer, null),
-+                                (byte) 50,
-+                                reqId),
-+                        new ItemStackRequestSlotInfo(
-+                                this.getFullContainerName(14), (byte) 14, reqId));
-+        actions.add(craftAction);
-+        actions.add(resultsAction);
-+        actions.add(consumeAction);
-+        actions.add(placeAction);
++        final List<ItemStackRequestAction> actions = this.requestActions(
++                this.data.get(button), button + 1, consumesLapis, reqId);
 +
 +        final ItemStackRequestInfo request =
 +                new ItemStackRequestInfo(
@@ -2435,6 +2410,9 @@ index 00000000..517d0f66
 +        final BedrockItem result = input.copy();
 +        result.setNetId(null);
 +        final CompoundTag tag = result.tag() == null ? new CompoundTag() : result.tag();
++        if (tag.get("Damage") == null) {
++            tag.putInt("Damage", 0);
++        }
 +        ListTag<CompoundTag> enchantments = tag.getListTag("ench", CompoundTag.class);
 +        if (enchantments == null) {
 +            enchantments = new ListTag<>(CompoundTag.class);
@@ -2450,6 +2428,28 @@ index 00000000..517d0f66
 +        return result;
 +    }
 +
++    List<ItemStackRequestAction> requestActions(final EnchantData option, final int lapisCost,
++            final boolean consumesLapis, final int requestId) {
++        final List<ItemStackRequestAction> actions = new ArrayList<>();
++        actions.add(new ItemStackRequestAction.CraftRecipeAction(option.netId(), 1));
++        actions.add(new ItemStackRequestAction.CraftResultsDeprecatedAction(
++                List.of(resultItem(this.getItem(14), option)), 1));
++        actions.add(new ItemStackRequestAction.ConsumeAction(1,
++                new ItemStackRequestSlotInfo(this.getFullContainerName(14), (byte) 14,
++                        this.getItem(14).netId())));
++        actions.add(new ItemStackRequestAction.PlaceAction(1,
++                new ItemStackRequestSlotInfo(
++                        new FullContainerName(ContainerEnumName.CreatedOutputContainer, null),
++                        (byte) 50, requestId),
++                new ItemStackRequestSlotInfo(this.getFullContainerName(14), (byte) 14, requestId)));
++        if (consumesLapis) {
++            actions.add(new ItemStackRequestAction.ConsumeAction(lapisCost,
++                    new ItemStackRequestSlotInfo(this.getFullContainerName(15), (byte) 15,
++                            this.getItem(15).netId())));
++        }
++        return actions;
++    }
++
 +    static boolean canEnchant(final EnchantData option, final BedrockItem input,
 +            final BedrockItem material, final int requiredLapis, final boolean consumesLapis) {
 +        return option.netId() > 0
@@ -2459,34 +2459,6 @@ index 00000000..517d0f66
 +    }
 +
 +}
-+
-+// [13:32:53:879] [CLIENT BOUND] - PlayerEnchantOptionsPacket(options=[EnchantOptionData(cost=2,
-+// primarySlot=16, enchants0=[], enchants1=[EnchantData(type=9, level=1)], enchants2=[],
-+// enchantName=dry physical enchant , enchantNetId=3407), EnchantOptionData(cost=5, primarySlot=16,
-+// enchants0=[], enchants1=[EnchantData(type=10, level=1)], enchants2=[], enchantName=destroy beast
-+// enchant spirit , enchantNetId=3408), EnchantOptionData(cost=7, primarySlot=16, enchants0=[],
-+// enchants1=[], enchants2=[EnchantData(type=12, level=1)], enchantName=enchant towards snuff cube ,
-+// enchantNetId=3409)])
-+
-+// [13:33:59:981] [SERVER BOUND] - ItemStackRequestPacket(requests=[ItemStackRequest(requestId=-109,
-+// actions=[CraftRecipeAction(recipeNetworkId=3409, numberOfRequestedCrafts=1),
-+// CraftResultsDeprecatedAction(resultItems=[BaseItemData(definition=SimpleItemDefinition(identifier=minecraft:diamond_sword, runtimeId=347, version=LEGACY, componentBased=false, componentData=null), damage=0, count=1, tag={
-+//        "Damage": 0i,
-+//        "ench": [
-+//        {
-+//        "id": 12s,
-+//        "lvl": 1s
-+//    }
-+//            ]
-+//            }, canPlace=[], canBreak=[], blockingTicks=0,
-+// blockDefinition=UnknownDefinition[runtimeId=0], usingNetId=false, netId=0)], timesCrafted=1),
-+// ConsumeAction(count=1, source=ItemStackRequestSlotData(container=ENCHANTING_INPUT, slot=14,
-+// stackNetworkId=37, containerName=FullContainerName(container=ENCHANTING_INPUT, dynamicId=null))),
-+// PlaceAction(count=1, source=ItemStackRequestSlotData(container=CREATED_OUTPUT, slot=50,
-+// stackNetworkId=-109, containerName=FullContainerName(container=CREATED_OUTPUT, dynamicId=null)),
-+// destination=ItemStackRequestSlotData(container=ENCHANTING_INPUT, slot=14, stackNetworkId=-109,
-+// containerName=FullContainerName(container=ENCHANTING_INPUT, dynamicId=null)))], filterStrings=[],
-+// textProcessingEventOrigin=null)])
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/FurnaceContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/FurnaceContainer.java
 new file mode 100644
 index 00000000..09fb1435
@@ -11087,10 +11059,10 @@ index 00000000..40e60410
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/block/EnchantmentContainerTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/block/EnchantmentContainerTest.java
 new file mode 100644
-index 00000000..fc2b925c
+index 00000000..50c8d5c0
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/container/block/EnchantmentContainerTest.java
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,120 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -11104,19 +11076,65 @@ index 00000000..fc2b925c
 +
 +import com.viaversion.nbt.tag.CompoundTag;
 +import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.viaversion.api.connection.UserConnection;
 +import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
 +import net.raphimc.viabedrock.protocol.model.recipe.EnchantData;
 +
 +import org.junit.jupiter.api.Test;
 +
 +import java.util.List;
++import java.lang.reflect.Proxy;
 +
 +import static org.junit.jupiter.api.Assertions.assertEquals;
 +import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 +import static org.junit.jupiter.api.Assertions.assertNull;
 +import static org.junit.jupiter.api.Assertions.assertTrue;
 +
 +class EnchantmentContainerTest {
++
++    @Test
++    void enchantRequestPlacesTheResultBeforeConsumingLapis() {
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(
++                UserConnection.class.getClassLoader(), new Class<?>[]{UserConnection.class},
++                (proxy, method, args) -> null);
++        final EnchantmentContainer table = new EnchantmentContainer(user, (byte) 3, null, null);
++        final BedrockItem sword = new BedrockItem(1);
++        sword.setNetId(11);
++        final BedrockItem lapis = new BedrockItem(2, (short) 0, (byte) 3);
++        lapis.setNetId(12);
++        table.setItem(14, sword);
++        table.setItem(15, lapis);
++        final EnchantData option = new EnchantData(7,
++                List.of(new EnchantData.Enchantment(9, 1)), 42);
++
++        final List<ItemStackRequestAction> actions = table.requestActions(option, 2, true, -15);
++        assertEquals(5, actions.size());
++        assertInstanceOf(ItemStackRequestAction.CraftRecipeAction.class, actions.get(0));
++        final ItemStackRequestAction.CraftResultsDeprecatedAction results =
++                assertInstanceOf(ItemStackRequestAction.CraftResultsDeprecatedAction.class, actions.get(1));
++        assertEquals(0, results.resultItems().get(0).tag().getInt("Damage", -1));
++        assertNull(results.resultItems().get(0).netId());
++        final ItemStackRequestAction.ConsumeAction swordConsume =
++                assertInstanceOf(ItemStackRequestAction.ConsumeAction.class, actions.get(2));
++        final ItemStackRequestAction.PlaceAction place =
++                assertInstanceOf(ItemStackRequestAction.PlaceAction.class, actions.get(3));
++        final ItemStackRequestAction.ConsumeAction lapisConsume =
++                assertInstanceOf(ItemStackRequestAction.ConsumeAction.class, actions.get(4));
++        assertEquals(ContainerEnumName.EnchantingInputContainer, swordConsume.item().container().name());
++        assertEquals(11, swordConsume.item().stackNetworkId());
++        assertEquals(ContainerEnumName.CreatedOutputContainer, place.source().container().name());
++        assertEquals(50, place.source().slot());
++        assertEquals(-15, place.source().stackNetworkId());
++        assertEquals(ContainerEnumName.EnchantingInputContainer, place.destination().container().name());
++        assertEquals(-15, place.destination().stackNetworkId());
++        assertEquals(ContainerEnumName.EnchantingMaterialContainer, lapisConsume.item().container().name());
++        assertEquals(12, lapisConsume.item().stackNetworkId());
++        assertEquals(2, lapisConsume.count());
++        assertEquals(4, table.requestActions(option, 2, false, -15).size());
++    }
 +
 +    @Test
 +    void survivalEnchantRequiresCurrentNetworkIdsAndEnoughLapis() {
@@ -11157,6 +11175,11 @@ index 00000000..fc2b925c
 +        assertNull(result.netId());
 +        assertNull(input.tag().get("ench"));
 +        assertEquals(42, input.netId());
++
++        final BedrockItem pristine = new BedrockItem(1);
++        final BedrockItem pristineResult = EnchantmentContainer.resultItem(pristine, option);
++        assertEquals(0, pristineResult.tag().getInt("Damage", -1));
++        assertNull(pristine.tag());
 +    }
 +
 +}

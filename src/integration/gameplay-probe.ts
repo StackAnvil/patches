@@ -256,6 +256,10 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
       await Bun.sleep(500);
       await clickGui(ui, window, 176, 166, 16, 150);
       await Bun.sleep(500);
+      await clickGui(ui, window, 176, 166, 43, 55);
+      await Bun.sleep(500);
+      await clickGui(ui, window, 176, 166, 34, 150);
+      await Bun.sleep(500);
       await uiKey(ui, "Escape");
       return;
     }
