@@ -5,12 +5,15 @@ test("gameplay events match their case, run, and phase", async () => {
   const log = [
     '[ViaBedrock Gameplay Probe] {"id":"block-break","run":"old","phase":"verify","status":"pass","tick":1}',
     '[ViaBedrock Gameplay Probe] {"id":"block-break","run":"new","phase":"prepare","status":"ready","tick":2}',
-    '[ViaBedrock Gameplay Probe] {"id":"block-break","run":"new","phase":"verify","status":"fail","tick":3,"observed":{"typeId":"minecraft:dirt"},"expected":"minecraft:air"}',
+    '[ViaBedrock Gameplay Probe] {"id":"block-break","run":"new","phase":"start","status":"ready","tick":3}',
+    '[ViaBedrock Gameplay Probe] {"id":"block-break","run":"new","phase":"verify","status":"fail","tick":4,"observed":{"typeId":"minecraft:dirt"},"expected":"minecraft:air"}',
   ].join("\n");
 
-  expect(gameplayEvents(log)).toHaveLength(3);
+  expect(gameplayEvents(log)).toHaveLength(4);
   await expect(waitForGameplayEvent("block-break", "new", "prepare", async () => log, () => true, 10, 1))
     .resolves.toMatchObject({ status: "ready", tick: 2 });
+  await expect(waitForGameplayEvent("block-break", "new", "start", async () => log, () => true, 10, 1))
+    .resolves.toMatchObject({ status: "ready", tick: 3 });
   await expect(waitForGameplayEvent("block-break", "new", "verify", async () => log, () => true, 10, 1))
     .rejects.toThrow("minecraft:dirt");
 });

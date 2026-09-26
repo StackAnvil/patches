@@ -174,7 +174,8 @@ int main(int argc, char **argv) {
             usleep((useconds_t)duration_ms * 1000);
             XTestFakeButtonEvent(display, button, False, CurrentTime);
             XFlush(display);
-        } else if ((strcmp(argv[1], "click") == 0 && (argc == 5 || argc == 6))
+        } else if (((strcmp(argv[1], "click") == 0 || strcmp(argv[1], "double-click") == 0)
+                    && (argc == 5 || argc == 6))
                    || (strcmp(argv[1], "mouse-hold") == 0 && argc == 7)) {
             int x = atoi(argv[3]), y = atoi(argv[4]);
             if (x < 0 || y < 0 || x >= attributes.width || y >= attributes.height) {
@@ -193,11 +194,15 @@ int main(int argc, char **argv) {
             XTestFakeMotionEvent(display, DefaultScreen(display), root_x, root_y, CurrentTime);
             XFlush(display);
             usleep(50000);
-            XTestFakeButtonEvent(display, button, True, CurrentTime);
-            XFlush(display);
-            usleep((useconds_t)duration_ms * 1000);
-            XTestFakeButtonEvent(display, button, False, CurrentTime);
-            XFlush(display);
+            int clicks = strcmp(argv[1], "double-click") == 0 ? 2 : 1;
+            for (int i = 0; i < clicks; i++) {
+                XTestFakeButtonEvent(display, button, True, CurrentTime);
+                XFlush(display);
+                usleep((useconds_t)duration_ms * 1000);
+                XTestFakeButtonEvent(display, button, False, CurrentTime);
+                XFlush(display);
+                if (i + 1 < clicks) usleep(50000);
+            }
         } else if (strcmp(argv[1], "type") == 0 && argc == 4) {
             XRaiseWindow(display, window);
             XSetInputFocus(display, window, RevertToParent, CurrentTime);
@@ -241,8 +246,8 @@ int main(int argc, char **argv) {
             usleep((useconds_t)duration_ms * 1000);
             for (int i = length - 1; i >= 0; i--) XTestFakeKeyEvent(display, codes[i], False, CurrentTime);
             XFlush(display);
-        } else { fprintf(stderr, "Usage: capture-x11 list|pixel ID X Y|screenshot ID FILE|resize ID WIDTH HEIGHT|click ID X Y [left|right]|mouse-hold ID X Y BUTTON MS|button-hold ID BUTTON MS|key ID NAME|key-hold ID NAME MS\n"); return 2; }
-    } else { fprintf(stderr, "Usage: capture-x11 list|pixel ID X Y|screenshot ID FILE|resize ID WIDTH HEIGHT|click ID X Y [left|right]|mouse-hold ID X Y BUTTON MS|button-hold ID BUTTON MS|key ID NAME|key-hold ID NAME MS\n"); return 2; }
+        } else { fprintf(stderr, "Usage: capture-x11 list|pixel ID X Y|screenshot ID FILE|resize ID WIDTH HEIGHT|click|double-click ID X Y [left|right]|mouse-hold ID X Y BUTTON MS|button-hold ID BUTTON MS|key ID NAME|key-hold ID NAME MS\n"); return 2; }
+    } else { fprintf(stderr, "Usage: capture-x11 list|pixel ID X Y|screenshot ID FILE|resize ID WIDTH HEIGHT|click|double-click ID X Y [left|right]|mouse-hold ID X Y BUTTON MS|button-hold ID BUTTON MS|key ID NAME|key-hold ID NAME MS\n"); return 2; }
     XCloseDisplay(display);
     return 0;
 }

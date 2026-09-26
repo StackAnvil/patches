@@ -7,13 +7,16 @@ const prefix = "[ViaBedrock Gameplay Probe] ";
 
 export const gameplayCaseIds = [
   "movement-left", "movement-right", "block-break", "block-place", "drop-item", "inventory-script-slot",
-  "creative-select", "creative-replace", "equip-helmet", "equip-offhand", "eat-golden-apple", "entity-attack", "entity-name",
+  "creative-select", "creative-replace", "creative-replace-main", "equip-helmet", "equip-offhand", "eat-golden-apple", "entity-attack", "entity-name",
   "map-hold", "command-time", "command-completion", "command-denied", "respawn", "dimension-change",
-  "chest-transfer", "lab-table-then-chest", "chest-boat-transfer", "chest-minecart-transfer",
+  "chest-transfer", "chest-rapid-transfer", "chest-pickup-all", "lab-table-then-chest", "chest-boat-transfer", "chest-minecart-transfer", "enchant-basic",
+  "offhand-block-place", "offhand-shield-use", "offhand-elytra-rocket", "boat-forward",
+  "shield-projectile-baseline", "shield-projectile-block",
+  "crafting-manual-sticks", "crafting-book-sticks",
 ] as const;
 
 export type GameplayCaseId = typeof gameplayCaseIds[number];
-export type GameplayPhase = "prepare" | "verify";
+export type GameplayPhase = "prepare" | "start" | "verify";
 
 export interface GameplayEvent {
   id: string;
@@ -34,7 +37,7 @@ export function gameplayEvents(log: string): GameplayEvent[] {
     try {
       const value = JSON.parse(line.slice(marker + prefix.length)) as GameplayEvent;
       return typeof value.id === "string" && typeof value.run === "string"
-        && (value.phase === "prepare" || value.phase === "verify") ? [value] : [];
+        && (value.phase === "prepare" || value.phase === "start" || value.phase === "verify") ? [value] : [];
     } catch {
       return [];
     }
@@ -50,7 +53,7 @@ export async function waitForGameplayEvent(id: GameplayCaseId, run: string, phas
       if (event.status === "error" || event.status === "fail") {
         throw new Error(`${id} ${phase} ${event.status}: ${event.error ?? JSON.stringify({ observed: event.observed, expected: event.expected })}`);
       }
-      if (event.status !== (phase === "prepare" ? "ready" : "pass")) {
+      if (event.status !== (phase === "verify" ? "pass" : "ready")) {
         throw new Error(`${id} ${phase} returned unexpected status ${event.status}.`);
       }
       return event;
@@ -78,16 +81,56 @@ async function javaWindow(ui: Ui): Promise<{ width: number; height: number }> {
   return window;
 }
 
+async function javaDeathScreenVisible(ui: Ui): Promise<boolean> {
+  const pixel = async (x: number, y: number) => (await ui([
+    "ui", "pixel", String(x), String(y), "--client", "java",
+  ])).trim().split(/\s+/).map(Number);
+  const heading = await pixel(0.5, 0.275);
+  const button = await pixel(0.5, 0.59);
+  return heading.length === 3 && heading.every((channel) => channel >= 240)
+    && button.length === 3 && button.every((channel) => channel >= 40 && channel <= 130)
+    && Math.max(...button) - Math.min(...button) <= 4;
+}
+
+async function respawnJavaClient(ui: Ui): Promise<void> {
+  if (!await javaDeathScreenVisible(ui)) return;
+  await ui(["ui", "click", "0.5", "0.59", "left", "--client", "java"]);
+  for (let attempt = 0; attempt < 10; attempt++) {
+    await Bun.sleep(500);
+    if (!await javaDeathScreenVisible(ui)) return;
+  }
+  throw new Error("Java client remained on the death screen after clicking Respawn.");
+}
+
 async function clickGui(ui: Ui, window: { width: number; height: number }, imageWidth: number, imageHeight: number,
-  offsetX: number, offsetY: number): Promise<void> {
+  offsetX: number, offsetY: number, button: "left" | "right" = "left", doubleClick = false): Promise<void> {
   const scale = 2;
   const left = (window.width - imageWidth * scale) / 2;
   const top = (window.height - imageHeight * scale) / 2;
-  await ui(["ui", "click", String((left + offsetX * scale) / window.width),
-    String((top + offsetY * scale) / window.height), "--client", "java"]);
+  await ui(["ui", doubleClick ? "double-click" : "click", String((left + offsetX * scale) / window.width),
+    String((top + offsetY * scale) / window.height), button, "--client", "java"]);
 }
 
-async function chestTransfer(ui: Ui, sneak = false): Promise<void> {
+async function craftSticksManually(ui: Ui): Promise<void> {
+  await uiMouse(ui, "right");
+  await Bun.sleep(500);
+  await ui(["ui", "screenshot", "crafting-manual-open", "--client", "java", "--output-dir", join(root, ".stackanvil", "integration")]);
+  const window = await javaWindow(ui);
+  await clickGui(ui, window, 176, 166, 16, 150);
+  await Bun.sleep(500);
+  await ui(["ui", "screenshot", "crafting-manual-picked", "--client", "java", "--output-dir", join(root, ".stackanvil", "integration")]);
+  await clickGui(ui, window, 176, 166, 38, 26, "right");
+  await Bun.sleep(500);
+  await clickGui(ui, window, 176, 166, 38, 44, "right");
+  await ui(["ui", "screenshot", "crafting-manual-grid", "--client", "java", "--output-dir", join(root, ".stackanvil", "integration")]);
+  await Bun.sleep(300);
+  await clickGui(ui, window, 176, 166, 132, 44);
+  await ui(["ui", "screenshot", "crafting-manual-output", "--client", "java", "--output-dir", join(root, ".stackanvil", "integration")]);
+  await clickGui(ui, window, 176, 166, 34, 150);
+  await uiKey(ui, "Escape");
+}
+
+async function openChest(ui: Ui, sneak = false): Promise<{ width: number; height: number }> {
   const window = await javaWindow(ui);
   const guiX = (window.width - 176 * 2) / 2 + 20;
   const guiY = (window.height - 168 * 2) / 2 + 20;
@@ -109,14 +152,35 @@ async function chestTransfer(ui: Ui, sneak = false): Promise<void> {
   if (!opened) {
     throw new Error("The Java chest screen did not open after right click.");
   }
+  return window;
+}
+
+async function chestTransfer(ui: Ui, sneak = false, slots: readonly number[] = [0]): Promise<void> {
+  const window = await openChest(ui, sneak);
   await Promise.all([
-    ui(["ui", "key-hold", "Shift_L", "1000", "--client", "java"]),
-    (async () => { await Bun.sleep(200); await clickGui(ui, window, 176, 168, 17, 27); })(),
+    ui(["ui", "key-hold", "Shift_L", "1500", "--client", "java"]),
+    (async () => {
+      await Bun.sleep(200);
+      for (const slot of slots) {
+        await clickGui(ui, window, 176, 168, 17 + slot * 18, 27);
+      }
+    })(),
   ]);
+  await Bun.sleep(500);
   await uiKey(ui, "Escape");
 }
 
-async function creativeSelect(ui: Ui): Promise<void> {
+async function chestPickupAll(ui: Ui): Promise<void> {
+  const window = await openChest(ui);
+  await clickGui(ui, window, 176, 168, 17, 27, "left", true);
+  await Bun.sleep(600);
+  await ui(["ui", "screenshot", "chest-pickup-all-collected", "--client", "java", "--output-dir", join(root, ".stackanvil", "integration")]);
+  await clickGui(ui, window, 176, 168, 17, 150);
+  await Bun.sleep(500);
+  await uiKey(ui, "Escape");
+}
+
+async function creativeSelect(ui: Ui, mainInventory = false): Promise<void> {
   await uiKey(ui, "e");
   await Bun.sleep(350);
   const window = await javaWindow(ui);
@@ -124,11 +188,17 @@ async function creativeSelect(ui: Ui): Promise<void> {
   await ui(["ui", "type", "nether star", "--client", "java"]);
   await Bun.sleep(350);
   await clickGui(ui, window, 195, 136, 18, 27);
-  await clickGui(ui, window, 195, 136, 18, 121);
+  if (mainInventory) {
+    await clickGui(ui, window, 195, 136, 182, 150);
+    await Bun.sleep(250);
+    await clickGui(ui, window, 195, 136, 17, 62);
+  } else {
+    await clickGui(ui, window, 195, 136, 18, 121);
+  }
   await uiKey(ui, "Escape");
 }
 
-export async function driveGameplay(id: GameplayCaseId, ui: Ui): Promise<void> {
+export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Promise<void>): Promise<void> {
   switch (id) {
     case "movement-left":
     case "movement-right":
@@ -138,6 +208,7 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui): Promise<void> {
       await uiMouse(ui, "left", 1200);
       return;
     case "block-place":
+    case "offhand-block-place":
     case "equip-helmet":
     case "entity-name":
     case "map-hold":
@@ -145,6 +216,12 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui): Promise<void> {
       return;
     case "chest-transfer":
       await chestTransfer(ui);
+      return;
+    case "chest-rapid-transfer":
+      await chestTransfer(ui, false, [0, 1]);
+      return;
+    case "chest-pickup-all":
+      await chestPickupAll(ui);
       return;
     case "lab-table-then-chest":
       await uiMouse(ui, "right");
@@ -157,12 +234,95 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui): Promise<void> {
     case "chest-minecart-transfer":
       await chestTransfer(ui);
       return;
+    case "enchant-basic": {
+      await uiMouse(ui, "right");
+      await Bun.sleep(600);
+      await ui(["ui", "screenshot", "enchant-open", "--client", "java", "--output-dir", join(root, ".stackanvil", "integration")]);
+      const window = await javaWindow(ui);
+      await clickGui(ui, window, 176, 166, 16, 150);
+      await Bun.sleep(500);
+      await clickGui(ui, window, 176, 166, 23, 55);
+      await Bun.sleep(500);
+      await ui(["ui", "screenshot", "enchant-sword", "--client", "java", "--output-dir", join(root, ".stackanvil", "integration")]);
+      await clickGui(ui, window, 176, 166, 34, 150);
+      await Bun.sleep(500);
+      await clickGui(ui, window, 176, 166, 43, 55);
+      await Bun.sleep(800);
+      await ui(["ui", "screenshot", "enchant-material", "--client", "java", "--output-dir", join(root, ".stackanvil", "integration")]);
+      await clickGui(ui, window, 176, 166, 72, 23);
+      await Bun.sleep(900);
+      await ui(["ui", "screenshot", "enchant-chosen", "--client", "java", "--output-dir", join(root, ".stackanvil", "integration")]);
+      await clickGui(ui, window, 176, 166, 23, 55);
+      await Bun.sleep(500);
+      await clickGui(ui, window, 176, 166, 16, 150);
+      await Bun.sleep(500);
+      await uiKey(ui, "Escape");
+      return;
+    }
+    case "crafting-manual-sticks":
+      await craftSticksManually(ui);
+      return;
+    case "crafting-book-sticks":
+      await uiMouse(ui, "right");
+      await Bun.sleep(500);
+      {
+        const window = await javaWindow(ui);
+        await clickGui(ui, window, 176, 166, 12, 40);
+        await Bun.sleep(300);
+        await ui(["ui", "click", String((window.width / 2 - 188) / window.width),
+          String((window.height / 2 - 126) / window.height), "left", "--client", "java"]);
+        await ui(["ui", "type", "stick", "--client", "java"]);
+        await Bun.sleep(300);
+        await ui(["ui", "screenshot", "crafting-book-filtered", "--client", "java", "--output-dir", join(root, ".stackanvil", "integration")]);
+        await ui(["ui", "click", String((window.width / 2 - 273) / window.width),
+          String((window.height / 2 - 80) / window.height), "left", "--client", "java"]);
+        await Bun.sleep(350);
+        await ui(["ui", "screenshot", "crafting-book-selected", "--client", "java", "--output-dir", join(root, ".stackanvil", "integration")]);
+        await ui(["ui", "click", String((window.width / 2 + 241) / window.width),
+          String((window.height / 2 - 80) / window.height), "left", "--client", "java"]);
+        await Bun.sleep(500);
+        await ui(["ui", "screenshot", "crafting-book-output", "--client", "java", "--output-dir", join(root, ".stackanvil", "integration")]);
+        await ui(["ui", "click", String((window.width / 2 + 45) / window.width),
+          String((window.height / 2 + 134) / window.height), "left", "--client", "java"]);
+        await uiKey(ui, "Escape");
+      }
+      return;
     case "creative-select":
     case "creative-replace":
       await creativeSelect(ui);
       return;
+    case "creative-replace-main":
+      await creativeSelect(ui, true);
+      return;
     case "eat-golden-apple":
       await uiMouse(ui, "right", 2300);
+      return;
+    case "offhand-shield-use":
+      await uiMouse(ui, "right", 1000);
+      return;
+    case "shield-projectile-baseline":
+      await Bun.sleep(11000);
+      return;
+    case "shield-projectile-block":
+      await uiMouse(ui, "right", 9500);
+      return;
+    case "offhand-elytra-rocket":
+      await uiKey(ui, "e");
+      await Bun.sleep(300);
+      await ui(["ui", "screenshot", "elytra-equipped-before-flight", "--client", "java", "--output-dir", join(root, ".stackanvil", "integration")]);
+      await uiKey(ui, "Escape");
+      if (!start) throw new Error("The elytra flight start event is unavailable.");
+      await start();
+      await Bun.sleep(700);
+      await uiKey(ui, "space");
+      await Bun.sleep(300);
+      await uiKey(ui, "space");
+      await Bun.sleep(350);
+      await uiMouse(ui, "right");
+      await Bun.sleep(450);
+      return;
+    case "boat-forward":
+      await ui(["ui", "key-hold", "w", "1800", "--client", "java"]);
       return;
     case "equip-offhand":
       await uiKey(ui, "f");
@@ -214,12 +374,16 @@ export async function runGameplayCases(ids: readonly GameplayCaseId[], options: 
     const screenshots: string[] = [];
     let stopped = false;
     try {
+      await respawnJavaClient(options.ui);
       options.server.stdin?.write(`scriptevent vbprobe:prepare ${id} ${run}\n`);
       await waitForGameplayEvent(id, run, "prepare", log, alive);
       await Bun.sleep(500);
       screenshots.push(await options.ui(["ui", "screenshot", `gameplay-${id}-${run}-before`, "--client", "java",
         "--output-dir", options.artifactDir]));
-      await driveGameplay(id, options.ui);
+      await driveGameplay(id, options.ui, async () => {
+        options.server.stdin?.write(`scriptevent vbprobe:start ${id} ${run}\n`);
+        await waitForGameplayEvent(id, run, "start", log, alive);
+      });
       await Bun.sleep(350);
       screenshots.push(await options.ui(["ui", "screenshot", `gameplay-${id}-${run}-after`, "--client", "java",
         "--output-dir", options.artifactDir]));

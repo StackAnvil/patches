@@ -60,6 +60,7 @@ type Step =
   | { action: "wait"; ms: number }
   | { action: "screenshot"; name: string }
   | { action: "click"; x: number; y: number; button?: "left" | "right" }
+  | { action: "doubleClick"; x: number; y: number; button?: "left" | "right" }
   | { action: "mouseHold"; x: number; y: number; button: "left" | "right"; ms: number }
   | { action: "buttonHold"; button: "left" | "right"; ms: number }
   | { action: "type"; text: string }
@@ -376,7 +377,7 @@ async function pixel(x: number, y: number, windowId?: string, client?: Client): 
 }
 
 async function click(x: number, y: number, windowId?: string, client?: Client, allowFocus = false,
-  button: "left" | "right" = "left", durationMs?: number): Promise<void> {
+  button: "left" | "right" = "left", durationMs?: number, doubleClick = false): Promise<void> {
   if (![x, y].every((value) => Number.isFinite(value) && value >= 0 && value <= 1)) {
     throw new Error("Click coordinates must be ratios between 0 and 1.");
   }
@@ -388,11 +389,13 @@ async function click(x: number, y: number, windowId?: string, client?: Client, a
   const env = isolated ?? process.env;
   await run(nativeBinary, ["focus", window.id], root, env);
   if (!isolated && process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes("gnome")) {
-    if (button !== "left" || durationMs !== undefined) throw new Error("Right clicks and mouse holds require the private display on GNOME Wayland.");
+    if (button !== "left" || durationMs !== undefined || doubleClick) {
+      throw new Error("Right clicks, double clicks, and mouse holds require the private display on GNOME Wayland.");
+    }
     await run("python3", [gnomeRemote, nativeBinary, "click", String(window.x + localX), String(window.y + localY)]);
   } else {
     await run(nativeBinary, durationMs === undefined
-      ? ["click", window.id, String(localX), String(localY), button]
+      ? [doubleClick ? "double-click" : "click", window.id, String(localX), String(localY), button]
       : ["mouse-hold", window.id, String(localX), String(localY), button, String(durationMs)], root, env);
   }
 }
@@ -449,6 +452,7 @@ async function scenario(file: string, windowId?: string, client: Client = "bedro
         break;
       case "screenshot": await screenshot(step.name, windowId, client); break;
       case "click": await click(step.x, step.y, windowId, client, allowFocus, step.button); break;
+      case "doubleClick": await click(step.x, step.y, windowId, client, allowFocus, step.button, undefined, true); break;
       case "mouseHold": await click(step.x, step.y, windowId, client, allowFocus, step.button, step.ms); break;
       case "buttonHold": await buttonHold(step.button, step.ms, windowId, client, allowFocus); break;
       case "key": await key(step.key, windowId, client, allowFocus); break;
@@ -581,12 +585,13 @@ async function main(): Promise<void> {
         case "list": console.log(JSON.stringify(await windows(), null, 2)); return;
         case "screenshot": if (!input[0]) throw new Error("Supply a screenshot name."); await screenshot(input[0], windowId, client, outputDir); return;
         case "pixel": console.log(await pixel(Number(input[0]), Number(input[1]), windowId, client)); return;
-        case "click": {
+        case "click":
+        case "double-click": {
           if (input[2] && !input[2].startsWith("--") && input[2] !== "left" && input[2] !== "right") {
             throw new Error("Use left or right mouse button.");
           }
           await click(Number(input[0]), Number(input[1]), windowId, client, allowFocus,
-            input[2] === "right" ? "right" : "left");
+            input[2] === "right" ? "right" : "left", undefined, action === "double-click");
           return;
         }
         case "mouse-hold": {
@@ -606,7 +611,7 @@ async function main(): Promise<void> {
         case "type": if (!input[0]) throw new Error("Supply text."); await typeText(input[0], windowId, client, allowFocus); return;
         case "run": if (!input[0]) throw new Error("Supply a scenario JSON file."); await scenario(input[0], windowId, client, allowFocus); return;
       }
-      throw new Error("Usage: bun run capture ui <list|screenshot|pixel|click|mouse-hold|button-hold|key|key-hold|run>");
+      throw new Error("Usage: bun run capture ui <list|screenshot|pixel|click|double-click|mouse-hold|button-hold|key|key-hold|run>");
     }
     default: throw new Error("Usage: bun run capture <doctor|start|launch|game-stop|mark|stop|status|report|compare|video|ui>");
   }
