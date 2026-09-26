@@ -91,14 +91,14 @@ export function renderPrBody(
   artifact: ArtifactReference = {},
 ): string {
   if (artifact.artifactId && !artifact.runId) throw new Error("--artifact-id requires --run-id");
-  if (!description.trim()) throw new Error(`The first ${id} feature patch needs a commit body describing the change`);
-  if (!extraBody.trim()) throw new Error(`The first ${id} feature needs a non-empty PR extra body`);
+  if (!description.trim()) throw new Error(`The first ${id} upstreamable patch needs a commit body describing the change`);
+  if (!extraBody.trim()) throw new Error(`The first ${id} upstreamable patch needs a non-empty PR extra body`);
   const lines = [
     `## What this changes`,
     "",
     description.trim(),
     "",
-    `This is the current north-star feature from [StackAnvil's ${id} patch stack](https://github.com/StackAnvil/patches/tree/main/patches/${id}/features). The PR branch contains this feature alone, based on upstream.`,
+    `This is the first upstreamable change from [StackAnvil's ${id} patch stack](https://github.com/StackAnvil/patches/tree/main/patches/${id}/upstreamable). The PR branch contains this patch alone, based on upstream.`,
     "",
     extraBody.trim(),
   ];
@@ -114,12 +114,12 @@ export function renderPrBody(
 export function prBody(id: string, artifact: ArtifactReference = {}) {
   return Effect.gen(function* () {
     const series = yield* Effect.promise(() => getSeries(id));
-    const feature = series.features[0];
-    if (!feature) return yield* Effect.fail(new Error(`No pending feature for ${id}`));
-    const featureDir = join(root, "patches", id, "features");
-    const patch = yield* Effect.promise(() => readFile(join(featureDir, feature.file), "utf8"));
+    const upstreamable = series.upstreamable[0];
+    if (!upstreamable) return yield* Effect.fail(new Error(`No pending upstreamable patch for ${id}`));
+    const upstreamableDir = join(root, "patches", id, "upstreamable");
+    const patch = yield* Effect.promise(() => readFile(join(upstreamableDir, upstreamable.file), "utf8"));
     const message = parsePatchMessage(patch);
-    const extraBodyFile = join(featureDir, feature.file.replace(/\.patch$/, ".pr.md"));
+    const extraBodyFile = join(upstreamableDir, upstreamable.file.replace(/\.patch$/, ".pr.md"));
     const extraBody = yield* Effect.tryPromise({
       try: () => readFile(extraBodyFile, "utf8"),
       catch: () => new Error(`Add a PR extra body at ${extraBodyFile} before creating or updating the PR`),
@@ -132,8 +132,8 @@ export function syncPr(id: string, artifact: ArtifactReference = {}) {
   return Effect.gen(function* () {
     const target = yield* Effect.promise(() => getTarget(id));
     const series = yield* Effect.promise(() => getSeries(id));
-    const feature = series.features[0];
-    if (!feature) return yield* Effect.fail(new Error(`No pending feature for ${id}`));
+    const upstreamable = series.upstreamable[0];
+    if (!upstreamable) return yield* Effect.fail(new Error(`No pending upstreamable patch for ${id}`));
     const body = yield* prBody(id, artifact);
     const bodyFile = join(root, ".stackanvil", `${id}-pr-body.md`);
     yield* Effect.promise(() => mkdir(join(root, ".stackanvil"), { recursive: true }));
@@ -148,12 +148,12 @@ export function syncPr(id: string, artifact: ArtifactReference = {}) {
     yield* git(["push", `--force-with-lease=refs/heads/${head}:${expected}`, remote, `HEAD:refs/heads/${head}`], dir);
     const existing = yield* northStarPr(target);
     if (existing) {
-      yield* gh(["pr", "edit", String(existing.number), "--repo", target.upstream, "--title", feature.title, "--body-file", bodyFile], root);
+      yield* gh(["pr", "edit", String(existing.number), "--repo", target.upstream, "--title", upstreamable.title, "--body-file", bodyFile], root);
       const assignment = yield* updatePrParticipants(id, existing.url);
       if (assignment.skippedReason) console.warn(assignment.skippedReason);
       return existing.url;
     }
-    const url = yield* gh(["pr", "create", "--repo", target.upstream, "--head", `StackAnvil:${head}`, "--base", target.baseBranch, "--title", feature.title, "--body-file", bodyFile, "--draft"], root);
+    const url = yield* gh(["pr", "create", "--repo", target.upstream, "--head", `StackAnvil:${head}`, "--base", target.baseBranch, "--title", upstreamable.title, "--body-file", bodyFile, "--draft"], root);
     const assignment = yield* updatePrParticipants(id, url);
     if (assignment.skippedReason) console.warn(assignment.skippedReason);
     return url;

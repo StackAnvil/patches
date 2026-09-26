@@ -16,15 +16,20 @@ export interface Target {
   buildTask: string;
 }
 
-export interface Feature {
+export interface UpstreamablePatch {
   file: string;
   title: string;
 }
 
+export interface DeferredPatch {
+  file: string;
+  reason: string;
+}
+
 export interface Series {
-  branding: string[];
-  features: Feature[];
-  custom: string[];
+  setup: string[];
+  upstreamable: UpstreamablePatch[];
+  deferred: DeferredPatch[];
 }
 
 export async function getTargets(): Promise<Record<string, Target>> {
@@ -45,19 +50,24 @@ export async function targetIds(): Promise<string[]> {
 export async function getSeries(id: string): Promise<Series> {
   const series = JSON.parse(await readFile(join(root, "patches", id, "series.json"), "utf8")) as Series;
   const files = [
-    ...series.branding.map((file) => join("branding", file)),
-    ...series.features.map(({ file }) => join("features", file)),
-    ...series.custom.map((file) => join("custom", file)),
+    ...series.setup.map((file) => join("setup", file)),
+    ...series.upstreamable.map(({ file }) => join("upstreamable", file)),
+    ...series.deferred.map(({ file }) => join("deferred", file)),
   ];
   if (new Set(files).size !== files.length) throw new Error(`Duplicate patch in ${id}/series.json`);
   for (const file of files) {
     if (!file.endsWith(".patch")) throw new Error(`Invalid patch name: ${file}`);
     const patch = await readFile(join(root, "patches", id, file), "utf8");
-    const feature = series.features.find(({ file: name }) => file === join("features", name));
-    if (feature) {
+    const upstreamable = series.upstreamable.find(({ file: name }) => file === join("upstreamable", name));
+    if (upstreamable) {
       const message = parsePatchMessage(patch);
-      if (feature.title !== message.title) throw new Error(`${file} subject differs from its title in ${id}/series.json`);
+      if (upstreamable.title !== message.title) throw new Error(`${file} subject differs from its title in ${id}/series.json`);
       if (!message.description) throw new Error(`${file} needs a commit body describing the change`);
+    }
+  }
+  for (const deferred of series.deferred) {
+    if (typeof deferred.reason !== "string" || !deferred.reason.trim()) {
+      throw new Error(`${id}/deferred/${deferred.file} needs a reason in series.json`);
     }
   }
   return series;
@@ -65,9 +75,9 @@ export async function getSeries(id: string): Promise<Series> {
 
 export function patchPaths(id: string, series: Series): string[] {
   return [
-    ...series.branding.map((file) => join(root, "patches", id, "branding", file)),
-    ...series.features.map(({ file }) => join(root, "patches", id, "features", file)),
-    ...series.custom.map((file) => join(root, "patches", id, "custom", file)),
+    ...series.setup.map((file) => join(root, "patches", id, "setup", file)),
+    ...series.upstreamable.map(({ file }) => join(root, "patches", id, "upstreamable", file)),
+    ...series.deferred.map(({ file }) => join(root, "patches", id, "deferred", file)),
   ];
 }
 

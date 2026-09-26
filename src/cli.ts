@@ -35,14 +35,15 @@ async function main(): Promise<void> {
       case "rebuild": console.log(`Rebuilt ${await Effect.runPromise(rebuild(id))} patches`); return;
       case "build": console.log(await Effect.runPromise(build(id))); return;
       case "add": {
-        if (extra !== "features" && extra !== "custom") throw new Error("Choose features or custom");
-        console.log(await Effect.runPromise(addPatch(id, extra, rest[0])));
+        if (extra !== "upstreamable" && extra !== "deferred") throw new Error("Choose upstreamable or deferred");
+        const expectedTitle = rest[0]?.startsWith("--") ? undefined : rest[0];
+        console.log(await Effect.runPromise(addPatch(id, extra, expectedTitle, option("--reason"))));
         return;
       }
       case "status": {
         const target = await getTarget(id);
         const series = await getSeries(id);
-        console.log(JSON.stringify({ target, branding: series.branding.length, features: series.features, custom: series.custom.length }, null, 2));
+        console.log(JSON.stringify({ target, setup: series.setup.length, upstreamable: series.upstreamable, deferred: series.deferred }, null, 2));
         return;
       }
     }

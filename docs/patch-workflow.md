@@ -22,9 +22,9 @@ The [PaperSpigot 1.8.8 apply script](https://github.com/PaperMC/Paper-archive/bl
 | Keep generated headers out of review noise | `stack rebuild` leaves a patch file alone when only its generated commit ID or Git version footer changed. |
 | Keep failed apply state for repair | `stack sync` saves an apply session. Resolve and stage a conflict, then run `stack continue`. Run `stack abort` to discard the failed apply. |
 | Patch notes in commit messages | Put the purpose and maintenance details in the commit body. They remain in the exported patch and become the PR change summary. `stack add` requires a body, and `stack rebuild` keeps the series title aligned with the commit subject. |
-| Independently test a feature | `bun run pr check <project>` applies only the first feature to clean upstream. CI checks that path for projects with a north-star patch. |
+| Independently test an upstreamable patch | `bun run pr check <project>` applies only the first upstreamable patch to clean upstream. CI checks that path for projects with a north-star patch. |
 
-StackAnvil keeps `branding`, `features`, and `custom` separate in `series.json`. Full builds apply all three groups. The PR checkout applies the first feature directly to the pinned upstream base, so a branding or downstream-only change cannot leak into the upstream PR. The exact patch filenames and order come from `series.json`; rebuilding does not renumber them.
+StackAnvil keeps `setup`, `upstreamable`, and `deferred` separate in `series.json`. Full builds apply them in that order. Setup prepares StackAnvil builds. Upstreamable patches can become focused PRs. Deferred patches track work that another contributor already owns upstream, with a reason and PR link for each entry. The PR checkout applies only the first upstreamable patch to the pinned upstream base. The exact patch filenames and order come from `series.json`; rebuilding does not renumber them.
 
 Paper's per-file source and resource patches solve the problem of editing decompiled Minecraft code. Our four targets are existing Git repositories, so they do not need that layer. We also apply patches one at a time instead of building a large `git am` argument list. This keeps conflict recovery tied to one explicit `series.json` entry and avoids the older Windows command-length issue. We do not add Paper-specific source markers to upstream code.
 
@@ -39,7 +39,7 @@ bun run pr check viabedrock
 bun run build viabedrock
 ```
 
-When the first feature is ready for upstream, add a non-empty `features/<patch-name>.pr.md` beside its `.patch` file. Use it for PR context, review guidance, and testing steps that do not belong in the commit message. Inspect the combined text with `bun run pr body <project>`. A maintainer uses `bun run pr sync <project>` to update the fork's north-star branch and its draft PR. The command checks the commit description and PR extra body before pushing. Later feature patches stay in the full stack until earlier changes land upstream.
+When the first upstreamable patch is ready for upstream, add a non-empty `upstreamable/<patch-name>.pr.md` beside its `.patch` file. Use it for PR context, review guidance, and testing steps that do not belong in the commit message. Inspect the combined text with `bun run pr body <project>`. A maintainer uses `bun run pr sync <project>` to update the fork's north-star branch and its draft PR. The command checks the commit description and PR extra body before pushing. Later upstreamable patches stay in the full stack until earlier changes land upstream.
 
 ## PR assignees and reviewers
 

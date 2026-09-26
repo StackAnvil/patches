@@ -12,9 +12,9 @@ bun run build all
 bun run bundle
 ```
 
-`targets.json` records the build order. ViaBedrock uses the `vv-json` branch of `oryxel1/CubeConverter`, as its upstream build does. The build tool publishes each JAR and POM to `.stackanvil/maven/` and passes that path to Gradle. The downstream branding patches use the local artifacts when the path is present. Direct Gradle builds use the upstream dependencies. Artifacts and manifests go to `dist/`. The PrismLauncher ZIP goes to `dist/prism/`.
+`targets.json` records the build order. ViaBedrock uses the `vv-json` branch of `oryxel1/CubeConverter`, as its upstream build does. The build tool publishes each JAR and POM to `.stackanvil/maven/` and passes that path to Gradle. The setup patches use the local artifacts when the path is present. Direct Gradle builds use the upstream dependencies. Artifacts and manifests go to `dist/`. The PrismLauncher ZIP goes to `dist/prism/`.
 
-The add-on build includes one downstream compatibility patch for the current ViaBedrock API. It is a custom patch, so it will not appear in the upstream PR branch.
+The add-on setup includes one compatibility patch for the current ViaBedrock API. The upstream PR branch does not include setup patches.
 
 ## Run a local server
 

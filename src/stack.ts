@@ -32,7 +32,7 @@ function stablePatchText(patch: string): string {
 
 function seriesPaths(id: string, series: Series, mode: "full" | "pr") {
   return mode === "pr"
-    ? series.features.slice(0, 1).map(({ file }) => join(root, "patches", id, "features", file))
+    ? series.upstreamable.slice(0, 1).map(({ file }) => join(root, "patches", id, "upstreamable", file))
     : patchPaths(id, series);
 }
 
@@ -117,7 +117,7 @@ export function sync(id: string, mode: "full" | "pr" = "full") {
     yield* resetToBase(dir, target, mode);
     const patches = seriesPaths(id, series, mode);
     if (mode === "pr" && patches.length !== 1) {
-      return yield* Effect.fail(new Error(`No north-star feature patch for ${id}`));
+      return yield* Effect.fail(new Error(`No first upstreamable patch for ${id}`));
     }
     if (patches.length === 0) {
       yield* git(["update-ref", syncedRef(mode), "HEAD"], dir);
@@ -235,12 +235,12 @@ export function rebuild(id: string) {
     let titleChanged = false;
     for (const [index, path] of paths.entries()) {
       const patch = yield* git(["format-patch", "--binary", "--stdout", "-1", commits[index]!], dir);
-      const feature = series.features[index - series.branding.length];
-      if (feature && index < series.branding.length + series.features.length) {
+      const upstreamable = series.upstreamable[index - series.setup.length];
+      if (upstreamable && index < series.setup.length + series.upstreamable.length) {
         const message = parsePatchMessage(patch);
-        if (!message.description) return yield* Effect.fail(new Error(`${feature.file} needs a commit body describing the change`));
-        if (feature.title !== message.title) {
-          feature.title = message.title;
+        if (!message.description) return yield* Effect.fail(new Error(`${upstreamable.file} needs a commit body describing the change`));
+        if (upstreamable.title !== message.title) {
+          upstreamable.title = message.title;
           titleChanged = true;
         }
       }
@@ -256,10 +256,16 @@ export function rebuild(id: string) {
   });
 }
 
-export function addPatch(id: string, group: "features" | "custom", expectedTitle?: string) {
+export function addPatch(id: string, group: "upstreamable" | "deferred", expectedTitle?: string, reason?: string) {
   return Effect.gen(function* () {
+    if (group === "deferred" && !reason?.trim()) {
+      return yield* Effect.fail(new Error("A deferred patch needs a reason. Pass --reason <text>."));
+    }
     const target = yield* Effect.promise(() => getTarget(id));
     const series = yield* Effect.promise(() => getSeries(id));
+    if (group === "upstreamable" && series.deferred.length) {
+      return yield* Effect.fail(new Error(`Cannot append an upstreamable patch after deferred patches in ${id}. Insert its commit before the deferred commits, then export the reordered series.`));
+    }
     const dir = workdir(id);
     yield* ensureClean(dir);
     const commits = yield* commitIds(dir, target.baseSha);
@@ -273,10 +279,10 @@ export function addPatch(id: string, group: "features" | "custom", expectedTitle
     if (!description) return yield* Effect.fail(new Error("Add a commit body describing the patch before adding it"));
     const slug = title.toLowerCase().replace(/^[a-z]+(?:\([^)]*\))?:\s*/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
     if (!slug) return yield* Effect.fail(new Error("Patch title needs words for a filename"));
-    const number = String((group === "features" ? series.features.length : series.custom.length) + 1).padStart(4, "0");
+    const number = String((group === "upstreamable" ? series.upstreamable.length : series.deferred.length) + 1).padStart(4, "0");
     const file = `${number}-${slug}.patch`;
-    if (group === "features") series.features.push({ file, title });
-    else series.custom.push(file);
+    if (group === "upstreamable") series.upstreamable.push({ file, title });
+    else series.deferred.push({ file, reason: reason!.trim() });
     const path = join(root, "patches", id, group, file);
     yield* Effect.promise(() => writeFile(path, `${patch}\n`));
     yield* Effect.promise(() => writeFile(join(root, "patches", id, "series.json"), `${JSON.stringify(series, null, 2)}\n`));

@@ -8,13 +8,13 @@ We welcome bug reports, test results, and patches. You do not need to work on al
 
 Each project has three ordered groups in `patches/<project>/series.json`:
 
-1. **Branding** marks StackAnvil builds and routes full builds to local dependencies. We do not propose this patch upstream.
-2. **Features** contain changes intended for upstream. Each feature is one commit and one `.patch` file.
-3. **Custom** contains changes we plan to keep downstream.
+1. **Setup** prepares builds for StackAnvil. It marks artifacts, routes local dependencies, and fixes build compatibility.
+2. **Upstreamable** contains changes that can become focused upstream PRs. Each patch has one commit and one `.patch` file.
+3. **Deferred** contains changes that another contributor is already taking upstream. Each entry records a reason and a link to that PR.
 
-The full build applies every group. The upstream PR branch starts at clean upstream and applies only the first feature patch. It never includes branding or custom changes.
+The full build applies every group in that order. Our upstream PR branch starts at clean upstream and applies only the first upstreamable patch. It excludes setup and deferred changes.
 
-| Project | Upstream | Initial feature patches |
+| Project | Upstream | Initial upstreamable patches |
 | --- | --- | --- |
 | ViaBedrock | [ViaVersionAddons/ViaBedrock](https://github.com/ViaVersionAddons/ViaBedrock) | [#420](https://github.com/ViaVersionAddons/ViaBedrock/pull/420), [#425](https://github.com/ViaVersionAddons/ViaBedrock/pull/425), [#427](https://github.com/ViaVersionAddons/ViaBedrock/pull/427), [#429](https://github.com/ViaVersionAddons/ViaBedrock/pull/429) |
 | viafabricplus-bedrock | [ViaVersionAddons/viafabricplus-bedrock](https://github.com/ViaVersionAddons/viafabricplus-bedrock) | [#7](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/7), [#9](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/9), [#11](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/11) |
@@ -35,7 +35,7 @@ The tool clones upstream into `.worktrees/viabedrock`. The full source tree rema
 
 Run `bun run bundle` after `bun run build all` to make a PrismLauncher instance ZIP with the two Fabric mods. Import that ZIP in PrismLauncher to try the Java client. The add-on embeds the StackAnvil ViaBedrock and CubeConverter JARs. Our [capture lab guide](docs/capture-lab.md) explains the local server, ViaProxy, Bedrock client, Java client, screenshots, and private HTTPS capture workflow. The lab keeps both game windows off your active desktop and sets their master volume to zero.
 
-Use `bun run stack status <project>` to see its pinned upstream commit and feature order. Use `bun run dev:setup` to prepare ViaProxy and mitmproxy, then check your Bedrock server and client paths. The [development guide](docs/development.md) explains traffic capture and manual tests.
+Use `bun run stack status <project>` to see its pinned upstream commit and patch order. Use `bun run dev:setup` to prepare ViaProxy and mitmproxy, then check your Bedrock server and client paths. The [development guide](docs/development.md) explains traffic capture and manual tests.
 
 ## Contribute a patch
 
@@ -49,7 +49,7 @@ bun run pr check viabedrock
 bun run stack sync viabedrock
 ```
 
-When an upstream PR is ready, add a non-empty `.pr.md` file beside the first feature patch, using the same base filename. `bun run pr body <project>` combines that file with the patch commit description. A maintainer can use `bun run pr sync <project>` to update the StackAnvil fork branch and open or update the single draft PR. It checks both descriptions before pushing.
+When an upstream PR is ready, add a non-empty `.pr.md` file beside the first upstreamable patch, using the same base filename. `bun run pr body <project>` combines that file with the patch commit description. A maintainer can use `bun run pr sync <project>` to update the StackAnvil fork branch and open or update the single draft PR. It checks both descriptions before pushing.
 The sync command adds the project's default PR assignees when your GitHub account has access. Run `bun run pr assign <project>` to update assignees without pushing the branch.
 
 ## Builds and licenses
