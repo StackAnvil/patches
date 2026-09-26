@@ -6,14 +6,13 @@ import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { Effect } from "effect";
 import { root } from "../model.ts";
-import { installPrism } from "../prism.ts";
+import { artifact, installPrism } from "../prism.ts";
 import { activeDisplay, displayEnv, ensureDisplay, stopDisplay } from "./display.ts";
 
 const execute = promisify(execFile);
 const privateRoot = join(root, ".stackanvil", "lab");
 const processFile = join(privateRoot, "processes.json");
 const serverHome = resolve(process.env.BEDROCK_SERVER_HOME ?? join(homedir(), "bedrock-server"));
-const viaProxyJar = resolve(process.env.VIAPROXY_JAR ?? join(root, ".stackanvil", "tools", "ViaProxy.jar"));
 const bedrockHome = resolve(process.env.BEDROCK_ON_LINUX_HOME ?? join(homedir(), ".local", "share", "bedrock-on-linux"));
 const prismHome = join(homedir(), ".var", "app", "org.prismlauncher.PrismLauncher", "data", "PrismLauncher", "instances");
 const javaInstance = process.env.STACKANVIL_JAVA_INSTANCE ?? "StackAnvil 26.3";
@@ -50,17 +49,22 @@ async function matchingProcesses(service: Service): Promise<number[]> {
   });
 }
 
-function serviceCommand(service: Service): { program: string; args: string[]; cwd: string; env?: NodeJS.ProcessEnv } {
+async function viaProxyJar(): Promise<string> {
+  return process.env.VIAPROXY_JAR ? resolve(process.env.VIAPROXY_JAR) : artifact("viaproxy");
+}
+
+async function serviceCommand(service: Service): Promise<{ program: string; args: string[]; cwd: string; env?: NodeJS.ProcessEnv }> {
   if (service === "server") {
     const program = join(serverHome, "bedrock_server");
     if (!existsSync(program)) throw new Error(`Bedrock server missing: ${program}`);
     return { program, args: [], cwd: serverHome, env: { ...process.env, LD_LIBRARY_PATH: serverHome } };
   }
   if (service === "viaproxy") {
-    if (!existsSync(viaProxyJar)) throw new Error(`ViaProxy JAR missing: ${viaProxyJar}. Run bun run dev:setup.`);
+    const jar = await viaProxyJar();
+    if (!existsSync(jar)) throw new Error(`ViaProxy JAR missing: ${jar}. Run bun run build viaproxy.`);
     return {
       program: Bun.which("java") ?? "java",
-      args: ["-DskipUpdateCheck", "-jar", viaProxyJar, "cli", "--bind-address", process.env.STACKANVIL_VIAPROXY_BIND ?? "127.0.0.1:25568",
+      args: ["-DskipUpdateCheck", "-jar", jar, "cli", "--bind-address", process.env.STACKANVIL_VIAPROXY_BIND ?? "127.0.0.1:25568",
         "--target-address", process.env.STACKANVIL_BEDROCK_TARGET ?? "127.0.0.1:19132", "--target-version",
         process.env.STACKANVIL_BEDROCK_VERSION ?? "Bedrock 1.26.51", "--auth-method", process.env.STACKANVIL_VIAPROXY_AUTH ?? "NONE", "--log-ips", "false"],
       cwd: root,
@@ -86,7 +90,7 @@ async function start(service: Service): Promise<void> {
     return;
   }
   if (service === "java") console.log(`Prepared Prism instance: ${await installPrism()}`);
-  const command = serviceCommand(service);
+  const command = await serviceCommand(service);
   const isolated = service === "java" ? await displayEnv(true) : undefined;
   if (service === "java" && isolated) {
     command.args.splice(1, 0, `--filesystem=${join(privateRoot)}:ro`, `--env=DISPLAY=${isolated.DISPLAY}`,
@@ -197,8 +201,9 @@ async function jvm(args: string[]): Promise<void> {
 }
 
 async function doctor(): Promise<void> {
+  const viaProxy = await viaProxyJar().catch(() => "missing");
   console.log(JSON.stringify({ server: existsSync(join(serverHome, "bedrock_server")) ? serverHome : "missing",
-    viaProxy: existsSync(viaProxyJar) ? viaProxyJar : "missing",
+    viaProxy: existsSync(viaProxy) ? viaProxy : "missing",
     bedrockOnLinux: existsSync(bedrockHome) ? bedrockHome : "missing",
     prismInstance: existsSync(join(prismHome, javaInstance, "instance.cfg")) ? javaInstance : "missing",
     jcmd: Bun.which("jcmd") ?? "missing", xauth: Bun.which("xauth") ?? "missing",

@@ -5,7 +5,7 @@ import { closeSync, existsSync, openSync } from "node:fs";
 import { chmod, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { Effect } from "effect";
 import { activeDisplay, displayEnv, ensureDisplay, stopDisplay } from "../lab/display.ts";
@@ -19,14 +19,12 @@ import { installModpack } from "./modpack.ts";
 
 const execute = promisify(execFile);
 const privateRoot = join(root, ".stackanvil", "integration");
-const toolsRoot = join(root, ".stackanvil", "tools");
 const plainPrismName = "StackAnvil Integration 26.3";
 const modpackPrismName = "Fabulously Optimized StackAnvil Integration 26.3";
 const captureCli = join(root, "src", "capture", "cli.ts");
 const prismData = join(homedir(), ".var", "app", "org.prismlauncher.PrismLauncher", "data", "PrismLauncher");
 const bdsSource = resolve(process.env.BEDROCK_SERVER_HOME ?? join(homedir(), "bedrock-server"));
 const proxyBdsSource = resolve(process.env.STACKANVIL_JAVA_BEDROCK_SERVER_HOME ?? bdsSource);
-const viaProxyJar = resolve(process.env.VIAPROXY_JAR ?? join(toolsRoot, "ViaProxy.jar"));
 const started: ChildProcess[] = [];
 
 async function textFile(path: string): Promise<string> {
@@ -166,13 +164,13 @@ async function bedrockServer(dir: string, source: string, name: string, entityPr
 }
 
 async function viaProxy(dir: string, bedrockPort: number, version: string, transport: string, name = "viaproxy", homeName = name): Promise<{ child: ChildProcess; log: string; port: number }> {
-  if (!existsSync(viaProxyJar)) throw new Error(`ViaProxy missing: ${viaProxyJar}. Run bun run dev:setup.`);
-  const classpath = [await artifact("viabedrock"), await artifact("cubeconverter"), viaProxyJar].join(delimiter);
+  const jar = process.env.VIAPROXY_JAR ? resolve(process.env.VIAPROXY_JAR) : await artifact("viaproxy");
+  if (!existsSync(jar)) throw new Error(`ViaProxy missing: ${jar}. Run bun run build viaproxy.`);
   const port = await tcpPort();
   const log = join(dir, `${name}.log`);
   const home = join(dir, homeName);
   await mkdir(home, { recursive: true, mode: 0o700 });
-  const child = service(Bun.which("java") ?? "java", ["-DskipUpdateCheck", "-cp", classpath, "net.raphimc.viaproxy.ViaProxy", "cli",
+  const child = service(Bun.which("java") ?? "java", ["-DskipUpdateCheck", "-jar", jar, "cli",
     "--bind-address", `127.0.0.1:${port}`, "--target-address", transport === "nethernet" ? "nethernet://127.0.0.1" : `127.0.0.1:${bedrockPort}`,
     "--target-version", `Bedrock ${version}`, "--auth-method", "NONE", "--log-ips", "false"], home, log);
   await waitForLog(log, /Binding proxy server/, child);
@@ -430,7 +428,7 @@ async function main(): Promise<void> {
   if ((entityProbe || gameplayCases.length || resourceProbe) && modpackOnly) throw new Error("Probe cases require the plain Java client run.");
   if (process.env.STACKANVIL_USE_DESKTOP === "1") throw new Error("Integration tests require a private display and never take desktop focus.");
   if (await activeDisplay()) throw new Error("The StackAnvil private display is already running. Stop the lab or capture session before integration tests.");
-  if (!selected.includes("--reuse-build")) await command(process.execPath, [join(root, "src", "cli.ts"), "stack", "build", "viafabricplus-bedrock"]);
+  if (!selected.includes("--reuse-build")) await command(process.execPath, [join(root, "src", "cli.ts"), "stack", "build", "all"]);
   const dir = join(privateRoot, "runs", new Date().toISOString().replace(/[:.]/g, "-"));
   await mkdir(dir, { recursive: true, mode: 0o700 });
   console.log(`Private logs: ${dir}`);

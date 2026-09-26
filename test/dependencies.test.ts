@@ -8,6 +8,9 @@ test("dependent targets build after their patched dependencies", async () => {
   expect(order.indexOf("cubeconverter")).toBeLessThan(order.indexOf("viabedrock"));
   expect(order.indexOf("viabedrock")).toBeLessThan(order.indexOf("viafabricplus-bedrock"));
   expect(order.indexOf("viafabricplus")).toBeLessThan(order.indexOf("viafabricplus-bedrock"));
+  const proxyOrder = buildOrder(await getTargets(), "viaproxy");
+  expect(proxyOrder.at(-1)).toBe("viaproxy");
+  expect(proxyOrder.indexOf("viabedrock")).toBeLessThan(proxyOrder.indexOf("viaproxy"));
 });
 
 test("dependency cycles and unknown targets stop the build", async () => {

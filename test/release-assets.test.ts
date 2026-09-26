@@ -10,7 +10,7 @@ test("release selects verified JARs, the add-on manifest, and the Prism config",
   try {
     const artifacts = join(directory, "artifacts");
     const output = join(directory, "release");
-    const projects = ["cubeconverter", "viabedrock", "viafabricplus", "viafabricplus-bedrock"];
+    const projects = ["cubeconverter", "viabedrock", "viafabricplus", "viafabricplus-bedrock", "viaproxy"];
     for (const project of projects) {
       const projectDir = join(artifacts, project);
       await mkdir(projectDir, { recursive: true });

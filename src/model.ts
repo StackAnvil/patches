@@ -87,5 +87,5 @@ export async function listArtifacts(dir: string): Promise<string[]> {
   return entries
     .filter((entry) => entry.isFile() && entry.name.endsWith(".jar"))
     .map((entry) => join(libs, entry.name))
-    .filter((path) => !/-(?:dev|sources|javadoc)\.jar$/i.test(path));
+    .filter((path) => !/-(?:dev|sources|javadoc)\.jar$|\+java8\.jar$/i.test(path));
 }
