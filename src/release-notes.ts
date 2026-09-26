@@ -1,6 +1,22 @@
-import { writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getSeries, getTarget, root, targetIds } from "./model.ts";
+import { parsePatchMessage } from "./patch-message.ts";
+
+const repository = process.env.GITHUB_REPOSITORY ?? "StackAnvil/patches";
+const commit = process.env.GITHUB_SHA ?? execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+const groupTitles = { branding: "Branding", features: "Features", custom: "Custom" } as const;
+
+function patchUrl(id: string, group: string, file: string): string {
+  const path = ["patches", id, group, file].map(encodeURIComponent).join("/");
+  return `https://github.com/${repository}/blob/${commit}/${path}`;
+}
+
+async function patchTitle(id: string, group: string, file: string): Promise<string> {
+  const patch = await readFile(join(root, "patches", id, group, file), "utf8");
+  return parsePatchMessage(patch).title;
+}
 
 const lines = [
   "# StackAnvil builds", "",
@@ -15,12 +31,15 @@ for (const id of await targetIds()) {
   const target = await getTarget(id);
   const series = await getSeries(id);
   lines.push(`## ${id}`, "", `Upstream base: [${target.baseSha.slice(0, 12)}](https://github.com/${target.upstream}/commit/${target.baseSha})`, "");
-  if (series.features.length) {
-    lines.push("Feature patches:");
-    for (const feature of series.features) lines.push(`- ${feature.title}`);
-  } else {
-    lines.push("No feature patches yet. This build contains the branding patch.");
+  for (const group of ["branding", "features", "custom"] as const) {
+    const patches = group === "features" ? series.features : series[group].map((file) => ({ file }));
+    if (!patches.length) continue;
+    lines.push(`### ${groupTitles[group]}`, "");
+    for (const patch of patches) {
+      const title = "title" in patch ? patch.title : await patchTitle(id, group, patch.file);
+      lines.push(`- ${title} ([read file at commit](${patchUrl(id, group, patch.file)}))`);
+    }
+    lines.push("");
   }
-  lines.push("");
 }
 await writeFile(join(root, "release-notes.md"), `${lines.join("\n")}\n`);
