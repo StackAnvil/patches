@@ -2,9 +2,9 @@
 
 This guide is for StackAnvil maintainers who publish the patched ViaFabricPlus Bedrock add-on. The listing text is in [`publishing/vfp-vb-addon-description.md`](../publishing/vfp-vb-addon-description.md). The release workflow uploads only the add-on JAR.
 
-The [private Modrinth draft](https://modrinth.com/mod/stackanvil-bedrock-addon) is owned by `pistonmaster`. Its project ID is `opL7gK2I`. It has a beta version of the verified `stack-v0.1.4` add-on JAR, with Fabric 26.3 and ViaFabricPlus marked as a required dependency. Its AI-assisted text, fork, and local skin import disclosures are saved. It has no icon and has not been submitted for review.
+The [private Modrinth draft](https://modrinth.com/mod/stackanvil-bedrock-addon) is owned by `pistonmaster`. Its project ID is `opL7gK2I`. It has a beta version of the verified `stack-v0.1.4` add-on JAR, with Fabric 26.3 and ViaFabricPlus marked as a required dependency. Its AI-assisted text, fork, and local skin import disclosures are saved. It uses the maintainer's hand-drawn icon and has not been submitted for review.
 
-The [unlisted CurseForge project](https://authors.curseforge.com/#/projects/1713307/files) is owned by `pistonmaster`. Its project ID is `1713307`. Its description, GPLv3 license, GitHub source link, and required ViaFabricPlus relation are saved. It has no file yet, so it remains unavailable to other users until moderation. Both project IDs are stored as GitHub Actions repository variables.
+The [unlisted CurseForge project](https://authors.curseforge.com/#/projects/1713307/files) is owned by `pistonmaster`. Its project ID is `1713307`. Its description, hand-drawn logo, GPLv3 license, GitHub source link, and required ViaFabricPlus relation are saved. It has no file yet, so it remains unavailable to other users until moderation. Both project IDs are stored as GitHub Actions repository variables.
 
 ## Listing fields
 
@@ -29,7 +29,7 @@ Both platforms may install upstream ViaFabricPlus automatically from that relati
 
 Credit the original creators and keep the StackAnvil fork label visible. [Modrinth's rules](https://modrinth.com/legal/rules) require meaningful credit and substantial changes for a fork. [CurseForge's moderation policy](https://support.curseforge.com/support/solutions/articles/9000197279) also requires credit and distinct project content.
 
-The listing description was drafted with AI assistance, and Modrinth's **AI-generated text** disclosure is enabled. The icon in [`assets/publishing/vfp-vb.png`](../assets/publishing/vfp-vb.png) was rendered from an AI-authored SVG with Inkscape and is used only on CurseForge. The matching [`vfp.svg`](../assets/publishing/vfp.svg) and [`vfp-vb.svg`](../assets/publishing/vfp-vb.svg) files are editable sources. None of these images, or the existing AI-assisted StackAnvil logo, can be uploaded to Modrinth under [its image rule](https://support.modrinth.com/en/articles/16551575-disclosure-and-usage-of-ai). A Modrinth icon must be created independently by a human, without deriving it from AI output. An icon is optional there.
+The listing description was drafted with AI assistance, and Modrinth's **AI-generated text** disclosure is enabled. The maintainer drew the [`VFP VB icon`](../assets/publishing/vfp-vb.png) in GIMP. Its editable source is [`VFP VB.xcf`](../assets/publishing/handdrawn/VFP%20VB.xcf). The [`VFP icon`](../assets/publishing/vfp.png) uses the same drawing with the VB letters covered in the canvas blue; its editable source is [`VFP.xcf`](../assets/publishing/handdrawn/VFP.xcf). These icons replace the earlier AI-assisted drafts. [Modrinth's image rule](https://support.modrinth.com/en/articles/16551575-disclosure-and-usage-of-ai) prohibits AI-generated project images.
 
 ## Configure GitHub
 

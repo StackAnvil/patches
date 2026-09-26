@@ -19,4 +19,4 @@ Some Bedrock behavior remains experimental. Test this build before you rely on i
 
 This fork builds on the work of [Florian Reuth and ViaFabricPlus Bedrock contributors](https://github.com/ViaVersionAddons/viafabricplus-bedrock), [ViaBedrock contributors](https://github.com/ViaVersionAddons/ViaBedrock), [ViaFabricPlus contributors](https://github.com/ViaVersion/ViaFabricPlus), and [CubeConverter contributors](https://github.com/oryxel1/CubeConverter). See the [StackAnvil source and patch series](https://github.com/StackAnvil/patches) for the changes in this build. Report StackAnvil build issues in the [StackAnvil issue tracker](https://github.com/StackAnvil/patches/issues).
 
-ViaFabricPlus Bedrock is licensed under GPLv3. The project page text was drafted with AI assistance.
+ViaFabricPlus Bedrock is licensed under GPLv3. The project page text was drafted with AI assistance. The icon was hand-drawn in GIMP by the StackAnvil maintainer.
