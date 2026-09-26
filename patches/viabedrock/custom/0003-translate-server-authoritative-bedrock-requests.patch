@@ -1,12 +1,14 @@
-From e3e336b857447846643cc9a0db7bb0a082d1ec67 Mon Sep 17 00:00:00 2001
+From 299f05b957dd8b46bc6b5e149ea28a6e461b2360 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 09:49:38 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
  requests
 
 Port inventory actions and crafting data onto the existing container tracker instead of the parallel PR 276 container hierarchy. Track predicted changes by request ID, apply server responses to the owning container, and restore snapshots after rejected requests. Include protocol 2193 codecs and focused response and routing tests.
+
+Decode recipe ingredients with the Cereal variant and name discriminator used by protocol 2193. Read the optional recipe unlocking context and ingredients for both shaped and shapeless recipes so vanilla crafting data does not desynchronize during login.
 ---
- build.gradle                                  |    3 +
+ build.gradle                                  |    3 +-
  .../api/model/container/ChestContainer.java   |   41 +-
  .../api/model/container/Container.java        |  779 ++++++++-
  .../model/container/block/AnvilContainer.java |  192 +++
@@ -41,7 +43,7 @@ Port inventory actions and crafting data onto the existing container tracker ins
  .../inventory/ItemStackResponseSlotInfo.java  |   27 +
  .../protocol/model/recipe/EnchantData.java    |   22 +
  .../protocol/model/recipe/ItemDescriptor.java |  146 ++
- .../model/recipe/ItemDescriptorType.java      |   83 +
+ .../model/recipe/ItemDescriptorType.java      |   81 +
  .../protocol/model/recipe/Recipe.java         |   68 +
  .../protocol/model/recipe/RecipeType.java     |   85 +
  .../protocol/model/recipe/ShapedRecipe.java   |   71 +
@@ -62,13 +64,14 @@ Port inventory actions and crafting data onto the existing container tracker ins
  .../inventory/ItemStackResponseType.java      |   75 +
  .../inventory/ItemStackSlotRequestType.java   |   50 +
  .../inventory/ItemStackSlotResponseType.java  |   65 +
- .../types/recipe/CraftingDataReader.java      |  170 ++
- .../recipe/NetworkItemDescriptorType.java     |   87 +
+ .../types/recipe/CraftingDataReader.java      |  174 ++
+ .../recipe/NetworkItemDescriptorType.java     |   89 +
  .../data/bedrock/item_stack_sizes.json        |  267 +++
  .../viabedrock/data/custom/block_tags.json    |   16 +-
  .../storage/InventoryTrackerTest.java         |   41 +
  .../types/inventory/ItemStackCodecTest.java   |   85 +
- 62 files changed, 7324 insertions(+), 808 deletions(-)
+ .../recipe/NetworkItemDescriptorTypeTest.java |   66 +
+ 63 files changed, 7393 insertions(+), 809 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/AnvilContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/BeaconContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/BlastFurnaceContainer.java
@@ -113,16 +116,17 @@ Port inventory actions and crafting data onto the existing container tracker ins
  create mode 100644 src/main/resources/assets/viabedrock/data/bedrock/item_stack_sizes.json
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryTrackerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackCodecTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/recipe/NetworkItemDescriptorTypeTest.java
 
 diff --git a/build.gradle b/build.gradle
-index 77cea002..4dc057a0 100644
+index 4cc0760e..4dc057a0 100644
 --- a/build.gradle
 +++ b/build.gradle
-@@ -118,6 +118,9 @@ dependencies {
-     toolImplementation "net.lenni0451.commons:asm:1.9.2"
+@@ -119,7 +119,8 @@ dependencies {
  
      testImplementation "com.viaversion:viaversion-common:5.12.0"
-+    testImplementation "com.google.guava:guava:33.7.1-jre"
+     testImplementation "com.google.guava:guava:33.7.1-jre"
+-    testImplementation "io.netty:netty-handler:4.2.18.Final"
 +    testImplementation "io.netty:netty-buffer:4.2.18.Final"
 +    testImplementation "io.netty:netty-transport:4.2.18.Final"
      testImplementation "org.junit.jupiter:junit-jupiter:6.1.3"
@@ -5681,7 +5685,7 @@ index 00000000..47337df9
 +public record EnchantData(int cost, Enchant_Type type, int level, int netId) { }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemDescriptor.java b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemDescriptor.java
 new file mode 100644
-index 00000000..3f8981d2
+index 00000000..eb263ea7
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemDescriptor.java
 @@ -0,0 +1,146 @@
@@ -5728,15 +5732,15 @@ index 00000000..3f8981d2
 +        return auxValue == -1 || auxValue == Short.MAX_VALUE || auxValue == item.data();
 +    }
 +
-+    record DeferredDescriptor(String fullName, int auxValue, int amount) implements ItemDescriptor {
++    record ItemNameDescriptor(String fullName, int auxValue, int amount) implements ItemDescriptor {
 +
-+        public DeferredDescriptor(final String fullName, final int auxValue) {
++        public ItemNameDescriptor(final String fullName, final int auxValue) {
 +            this(fullName, auxValue, 1);
 +        }
 +
 +        @Override
 +        public ItemDescriptorType getType() {
-+            return ItemDescriptorType.DEFERRED;
++            return ItemDescriptorType.ITEM_NAME;
 +        }
 +
 +        @Override
@@ -5752,7 +5756,7 @@ index 00000000..3f8981d2
 +
 +        @Override
 +        public ItemDescriptor withAmount(final int amount) {
-+            return new DeferredDescriptor(this.fullName, this.auxValue, amount);
++            return new ItemNameDescriptor(this.fullName, this.auxValue, amount);
 +        }
 +    }
 +
@@ -5833,10 +5837,10 @@ index 00000000..3f8981d2
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemDescriptorType.java b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemDescriptorType.java
 new file mode 100644
-index 00000000..a36423a1
+index 00000000..bb6b046d
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemDescriptorType.java
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,81 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2025 RK_01/RaphiMC and contributors
@@ -5862,11 +5866,9 @@ index 00000000..a36423a1
 +public enum ItemDescriptorType {
 +
 +    INVALID(0),
-+    DEFAULT(4),
++    ITEM_NAME(1),
 +    MOLANG(2),
-+    ITEM_TAG(3),
-+    DEFERRED(1),
-+    COMPLEX_ALIAS(5);
++    ITEM_TAG(3);
 +
 +    private static final Int2ObjectMap<ItemDescriptorType> BY_VALUE = new Int2ObjectOpenHashMap<>();
 +    private final int value;
@@ -8364,7 +8366,7 @@ index 00000000..4506fe07
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
 new file mode 100644
-index 00000000..753b3712
+index 00000000..c035b91f
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
 @@ -0,0 +1,202 @@
@@ -8537,7 +8539,7 @@ index 00000000..753b3712
 +                continue;
 +            }
 +            final ItemDescriptor descriptor = recipe.getIngredients().get(0);
-+            if (!(descriptor instanceof ItemDescriptor.DeferredDescriptor ingredient)) {
++            if (!(descriptor instanceof ItemDescriptor.ItemNameDescriptor ingredient)) {
 +                continue;
 +            }
 +            final Integer bedrockId = rewriter.getItems().get(ingredient.fullName());
@@ -9387,10 +9389,10 @@ index 00000000..66596f9d
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReader.java b/src/main/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReader.java
 new file mode 100644
-index 00000000..425c5243
+index 00000000..47636b45
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReader.java
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,174 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -9551,7 +9553,11 @@ index 00000000..425c5243
 +    }
 +
 +    private static void readUnlocking(final PacketWrapper packet) {
-+        if (packet.read(BedrockTypes.VAR_INT) == 0) {
++        if (!packet.read(Types.BOOLEAN)) {
++            return;
++        }
++        packet.read(BedrockTypes.VAR_INT); // unlock context
++        if (packet.read(Types.BOOLEAN)) {
 +            packet.read(INGREDIENTS);
 +        }
 +    }
@@ -9563,10 +9569,10 @@ index 00000000..425c5243
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/recipe/NetworkItemDescriptorType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/recipe/NetworkItemDescriptorType.java
 new file mode 100644
-index 00000000..10fb30ff
+index 00000000..e2eb99cb
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/types/recipe/NetworkItemDescriptorType.java
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,89 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2025 RK_01/RaphiMC and contributors
@@ -9602,55 +9608,57 @@ index 00000000..10fb30ff
 +
 +    @Override
 +    public ItemDescriptor read(final ByteBuf buffer) {
-+        final ItemDescriptorType type = ItemDescriptorType.getByValue(buffer.readUnsignedByte());
-+        if (type == null
-+                || type == ItemDescriptorType.DEFAULT
-+                || type == ItemDescriptorType.COMPLEX_ALIAS) {
-+            throw new IllegalArgumentException("Unknown recipe ingredient descriptor: " + type);
-+        }
-+        final ItemDescriptor descriptor =
-+            switch (type) {
-+                case INVALID -> new ItemDescriptor.InvalidDescriptor();
-+                case DEFERRED ->
-+                    new ItemDescriptor.DeferredDescriptor(
-+                                    BedrockTypes.STRING.read(buffer),
-+                                    BedrockTypes.VAR_INT.read(buffer));
-+                case MOLANG ->
-+                    new ItemDescriptor.MolangDescriptor(
-+                                    BedrockTypes.STRING.read(buffer), buffer.readShortLE());
-+                case ITEM_TAG ->
-+                    new ItemDescriptor.ItemTagDescriptor(BedrockTypes.STRING.read(buffer));
-+                default -> throw new IllegalStateException("Unexpected descriptor: " + type);
++        final int variant = BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
++        final ItemDescriptor descriptor;
++        if (variant == 0) {
++            BedrockTypes.VAR_INT.read(buffer); // empty descriptor metadata
++            descriptor = new ItemDescriptor.InvalidDescriptor();
++        } else if (variant == 1) {
++            final String type = BedrockTypes.STRING.read(buffer);
++            descriptor = switch (type) {
++                case "name" -> new ItemDescriptor.ItemNameDescriptor(
++                    BedrockTypes.STRING.read(buffer), BedrockTypes.VAR_INT.read(buffer));
++                case "molang" -> new ItemDescriptor.MolangDescriptor(
++                    BedrockTypes.STRING.read(buffer), buffer.readShortLE());
++                case "item_tag" -> {
++                    final String itemTag = BedrockTypes.STRING.read(buffer);
++                    BedrockTypes.VAR_INT.read(buffer); // tag descriptor metadata
++                    yield new ItemDescriptor.ItemTagDescriptor(itemTag);
++                }
++                default -> throw new IllegalArgumentException("Unknown recipe ingredient descriptor: " + type);
 +            };
-+        return descriptor.withAmount(buffer.readUnsignedShortLE());
++        } else {
++            throw new IllegalArgumentException("Unknown recipe ingredient variant: " + variant);
++        }
++        return descriptor.withAmount(BedrockTypes.VAR_INT.read(buffer));
 +    }
 +
 +    @Override
 +    public void write(final ByteBuf buffer, final ItemDescriptor value) {
 +        final ItemDescriptorType type = value.getType();
-+        if (type == ItemDescriptorType.DEFAULT || type == ItemDescriptorType.COMPLEX_ALIAS) {
-+            throw new IllegalArgumentException(
-+                    "Descriptor cannot be encoded in protocol 2193: " + type);
-+        }
-+        buffer.writeByte(type.getValue());
++        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, type == ItemDescriptorType.INVALID ? 0 : 1);
 +        switch (type) {
-+            case DEFERRED -> {
-+                final var descriptor = (ItemDescriptor.DeferredDescriptor) value;
++            case ITEM_NAME -> {
++                BedrockTypes.STRING.write(buffer, "name");
++                final var descriptor = (ItemDescriptor.ItemNameDescriptor) value;
 +                BedrockTypes.STRING.write(buffer, descriptor.fullName());
 +                BedrockTypes.VAR_INT.write(buffer, descriptor.auxValue());
 +            }
 +            case MOLANG -> {
++                BedrockTypes.STRING.write(buffer, "molang");
 +                final var descriptor = (ItemDescriptor.MolangDescriptor) value;
 +                BedrockTypes.STRING.write(buffer, descriptor.tagExpression());
 +                buffer.writeShortLE(descriptor.molangVersion());
 +            }
-+            case ITEM_TAG ->
++            case ITEM_TAG -> {
++                BedrockTypes.STRING.write(buffer, "item_tag");
 +                BedrockTypes.STRING.write(
-+                            buffer, ((ItemDescriptor.ItemTagDescriptor) value).itemTag());
-+            case INVALID -> { }
-+            default -> throw new IllegalStateException("Unexpected descriptor: " + type);
++                    buffer, ((ItemDescriptor.ItemTagDescriptor) value).itemTag());
++                BedrockTypes.VAR_INT.write(buffer, (int) Short.MAX_VALUE);
++            }
++            case INVALID -> BedrockTypes.VAR_INT.write(buffer, (int) Short.MAX_VALUE);
 +        }
-+        buffer.writeShortLE(value.amount());
++        BedrockTypes.VAR_INT.write(buffer, value.amount());
 +    }
 +
 +}
@@ -10107,6 +10115,78 @@ index 00000000..8f087bcc
 +        final byte[] bytes = new byte[buffer.readableBytes()];
 +        buffer.getBytes(buffer.readerIndex(), bytes);
 +        return bytes;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/types/recipe/NetworkItemDescriptorTypeTest.java b/src/test/java/net/raphimc/viabedrock/protocol/types/recipe/NetworkItemDescriptorTypeTest.java
+new file mode 100644
+index 00000000..3876821c
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/types/recipe/NetworkItemDescriptorTypeTest.java
+@@ -0,0 +1,66 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.types.recipe;
++
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptor;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class NetworkItemDescriptorTypeTest {
++
++    private final NetworkItemDescriptorType type = new NetworkItemDescriptorType();
++
++    @Test
++    void readsNamedIngredientWithVarintCount() {
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 1);
++            BedrockTypes.STRING.write(buffer, "name");
++            BedrockTypes.STRING.write(buffer, "minecraft:stone");
++            BedrockTypes.VAR_INT.write(buffer, -1);
++            BedrockTypes.VAR_INT.write(buffer, 2);
++
++            assertEquals(new ItemDescriptor.ItemNameDescriptor("minecraft:stone", -1, 2), this.type.read(buffer));
++            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void readsTagIngredientMetadataBeforeCount() {
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 1);
++            BedrockTypes.STRING.write(buffer, "item_tag");
++            BedrockTypes.STRING.write(buffer, "minecraft:planks");
++            BedrockTypes.VAR_INT.write(buffer, (int) Short.MAX_VALUE);
++            BedrockTypes.VAR_INT.write(buffer, 3);
++
++            assertEquals(new ItemDescriptor.ItemTagDescriptor("minecraft:planks", 3), this.type.read(buffer));
++            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
++        }
 +    }
 +
 +}
