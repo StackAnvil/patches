@@ -1,6 +1,6 @@
 import { system, world } from "@minecraft/server";
-import { catalog } from "./catalog.js";
-import { gameplayIds, prepareGameplay, resetGameplay, verifyGameplay } from "./gameplay.js";
+import { catalog } from "./catalog.ts";
+import { gameplayIds, prepareGameplay, resetGameplay, verifyGameplay } from "./gameplay.ts";
 
 const TAG = "viabedrock_entity_probe";
 const entries = new Map(catalog.map((entry) => [entry.type, entry]));

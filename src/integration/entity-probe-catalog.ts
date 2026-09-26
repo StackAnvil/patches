@@ -4,7 +4,7 @@ import { Effect } from "effect";
 import JSON5 from "json5";
 import { root } from "../model.ts";
 
-const catalogPath = join(root, "test-packs", "entity-probe", "behavior_pack", "scripts", "catalog.js");
+const catalogPath = join(root, "test-packs", "entity-probe", "src", "catalog.ts");
 
 interface PropertyDefinition {
   client_sync?: boolean;

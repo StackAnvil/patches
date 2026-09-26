@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { installEntityProbe, probeResult, waitForProbe } from "../src/integration/entity-probe.ts";
@@ -11,6 +11,9 @@ test("install entity probe into an isolated Bedrock world", async () => {
     const manifest = JSON.parse(await readFile(join(home, "behavior_packs", "stackanvil-entity-probe", "manifest.json"), "utf8"));
     const active = JSON.parse(await readFile(join(home, "worlds", "integration-world", "world_behavior_packs.json"), "utf8"));
     expect(active).toEqual([{ pack_id: manifest.header.uuid, version: manifest.header.version }]);
+    const scripts = join(home, "behavior_packs", "stackanvil-entity-probe", "scripts");
+    expect(await readdir(scripts)).toEqual(["main.js"]);
+    expect((await stat(join(scripts, "main.js"))).size).toBeGreaterThan(0);
   } finally {
     await rm(home, { recursive: true, force: true });
   }

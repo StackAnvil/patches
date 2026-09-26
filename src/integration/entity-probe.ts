@@ -1,13 +1,30 @@
-import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { root } from "../model.ts";
 
-const packSource = join(root, "test-packs", "entity-probe", "behavior_pack");
+const packRoot = join(root, "test-packs", "entity-probe");
+const packSource = join(packRoot, "behavior_pack");
 const packName = "stackanvil-entity-probe";
 const prefix = "[ViaBedrock Entity Probe]";
 
 interface PackManifest {
   header: { uuid: string; version: number[] };
+}
+
+export async function buildEntityProbe(destination: string): Promise<void> {
+  const result = await Bun.build({
+    entrypoints: [join(packRoot, "src", "main.ts")],
+    target: "browser",
+    format: "esm",
+    external: ["@minecraft/server"],
+  });
+  if (!result.success || result.outputs.length !== 1) {
+    throw new Error(`Entity probe build failed: ${result.logs.map(String).join("\n")}`);
+  }
+  await rm(destination, { recursive: true, force: true });
+  await cp(packSource, destination, { recursive: true });
+  await mkdir(join(destination, "scripts"), { recursive: true });
+  await writeFile(join(destination, "scripts", "main.js"), await result.outputs[0].text());
 }
 
 export async function installEntityProbe(serverHome: string, worldName: string): Promise<void> {
@@ -16,7 +33,7 @@ export async function installEntityProbe(serverHome: string, worldName: string):
     throw new Error("Entity probe pack has an invalid manifest.");
   }
   await mkdir(join(serverHome, "behavior_packs"), { recursive: true });
-  await cp(packSource, join(serverHome, "behavior_packs", packName), { recursive: true });
+  await buildEntityProbe(join(serverHome, "behavior_packs", packName));
   const world = join(serverHome, "worlds", worldName);
   await mkdir(world, { recursive: true });
   await writeFile(join(world, "world_behavior_packs.json"), JSON.stringify([
@@ -53,4 +70,12 @@ export async function waitForProbe(group: "status" | "metadata", log: () => Prom
     await Bun.sleep(pollMs);
   }
   throw new Error(`${group} entity probe did not finish in ${timeoutMs / 1000}s. Check pack loading and the Bedrock server log.`);
+}
+
+if (import.meta.main) {
+  const destination = join(root, "dist", "test-packs", "entity-probe", "behavior_pack");
+  buildEntityProbe(destination).then(() => console.log(destination)).catch((error: unknown) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
 }

@@ -8,11 +8,15 @@ The pack cannot send an arbitrary `ActorEvent` number or `ActorDataIDs` field. B
 
 ## Install and run
 
-1. Open the probe `.mcpack` with Minecraft Bedrock 1.26.40 or newer.
-2. Create a disposable world and turn on cheats.
-3. Activate **ViaBedrock Test Probe** in the world's Behavior Packs.
-4. Join through the ViaBedrock build that you want to test.
-5. Run `/scriptevent vbprobe:help` in Bedrock chat.
+1. Run `bun run test-pack:build` from the StackAnvil repository.
+2. Zip the contents of `dist/test-packs/entity-probe/behavior_pack`. Rename the zip file to `.mcpack`.
+3. Open the `.mcpack` with Minecraft Bedrock 1.26.40 or newer.
+4. Create a disposable world and turn on cheats.
+5. Activate **ViaBedrock Test Probe** in the world's Behavior Packs.
+6. Join through the ViaBedrock build that you want to test.
+7. Run `/scriptevent vbprobe:help` in Bedrock chat.
+
+The build bundles `src/main.ts`, `src/gameplay.ts`, and the generated catalog into `scripts/main.js`. Bedrock supplies `@minecraft/server` at runtime.
 
 StackAnvil can install the pack in an isolated Bedrock Dedicated Server. The runner can run the entity sweeps and gameplay cases through a Java client:
 
@@ -62,9 +66,9 @@ The default gameplay run includes the creative case. It currently fails because 
 
 ## Update the catalog
 
-The generated catalog is in `behavior_pack/scripts/catalog.js`. The source is the `behavior_pack/entities` directory from [Mojang's Bedrock samples](https://github.com/Mojang/bedrock-samples/tree/v1.26.40.05/behavior_pack/entities).
+The generated catalog is in `src/catalog.ts`. The source is the `behavior_pack/entities` directory from [Mojang's Bedrock samples](https://github.com/Mojang/bedrock-samples/tree/v1.26.40.05/behavior_pack/entities).
 
 1. Check out the desired Bedrock samples tag.
 2. From the StackAnvil repository, run `bun run integration:entity-probe:generate -- /path/to/bedrock-samples/behavior_pack/entities v1.26.40.05`. Use the tag you checked out as the final argument.
 3. Run `bun test test/integration-entity-probe-catalog.test.ts` and review the generated catalog diff.
-4. If you need a standalone pack, zip the contents of `behavior_pack` with `manifest.json` at the archive root and rename the zip file to `.mcpack`.
+4. Run `bun run test-pack:build` to update the standalone pack in `dist/test-packs/entity-probe/behavior_pack`.

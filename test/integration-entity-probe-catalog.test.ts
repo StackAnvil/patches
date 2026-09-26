@@ -22,7 +22,7 @@ test("generate a deterministic catalog from Bedrock entity JSON5", async () => {
       },
     }`);
     await writeFile(join(home, "empty.json"), "{'minecraft:entity': {description: {}}}");
-    const output = join(home, "catalog.js");
+    const output = join(home, "catalog.ts");
     const catalog = await generateCatalog(home, "v1.26.40.05", output);
     expect(catalog).toEqual([{
       type: "minecraft:zombie",
