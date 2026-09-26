@@ -48,8 +48,7 @@ The curated status cases try hurt, death, taming, sheep eating, creeper priming,
 
 The generated catalog is in `behavior_pack/scripts/catalog.js`. The source is the `behavior_pack/entities` directory from [Mojang's Bedrock samples](https://github.com/Mojang/bedrock-samples/tree/v1.26.40.05/behavior_pack/entities).
 
-1. Install Python and `json5` with `python -m pip install json5`.
-2. Check out the desired Bedrock samples tag.
-3. Run `python generate-catalog.py /path/to/bedrock-samples/behavior_pack/entities`.
-4. Zip the contents of `behavior_pack` with `manifest.json` at the archive root.
-5. Rename the zip file to `.mcpack`.
+1. Check out the desired Bedrock samples tag.
+2. From the StackAnvil repository, run `bun run integration:entity-probe:generate -- /path/to/bedrock-samples/behavior_pack/entities v1.26.40.05`. Use the tag you checked out as the final argument.
+3. Run `bun test test/integration-entity-probe-catalog.test.ts` and review the generated catalog diff.
+4. If you need a standalone pack, zip the contents of `behavior_pack` with `manifest.json` at the archive root and rename the zip file to `.mcpack`.
