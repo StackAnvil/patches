@@ -37,7 +37,7 @@ for (const id of await targetIds()) {
     lines.push(`### ${groupTitles[group]}`, "");
     for (const patch of patches) {
       const title = "title" in patch ? patch.title : await patchTitle(id, group, patch.file);
-      lines.push(`- ${title} ([read file at commit](${patchUrl(id, group, patch.file)}))`);
+      lines.push(`- ${title} ([view patch](${patchUrl(id, group, patch.file)}))`);
     }
     lines.push("");
   }
