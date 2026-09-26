@@ -41,11 +41,7 @@ function applyRemaining(id: string, dir: string, path: string, mode: "full" | "p
     const recoveryCommand = `bun run stack continue ${id}${mode === "pr" ? " --pr" : ""}`;
     for (let index = session.nextIndex; index < session.patches.length; index++) {
       const patch = session.patches[index]!;
-      yield* git([
-        "-c", "user.name=StackAnvil Patch Bot",
-        "-c", "user.email=patches@stackanvil.invalid",
-        "am", "--3way", "--committer-date-is-author-date", patch,
-      ], dir).pipe(Effect.mapError((cause) => new Error(
+      yield* git(["am", "--3way", "--committer-date-is-author-date", patch], dir).pipe(Effect.mapError((cause) => new Error(
         `${cause.message}\nPatch apply stopped at ${patch}. Resolve the conflict in ${dir}, stage the result, then run ${recoveryCommand}.`,
       )));
       session.nextIndex = index + 1;
@@ -137,11 +133,7 @@ export function continueApply(id: string, mode: "full" | "pr" = "full") {
     if (commits.length !== session.nextIndex) {
       return yield* Effect.fail(new Error(`Expected ${session.nextIndex} applied patches, found ${commits.length}. Inspect ${dir} before continuing.`));
     }
-    yield* git([
-      "-c", "user.name=StackAnvil Patch Bot",
-      "-c", "user.email=patches@stackanvil.invalid",
-      "am", "--continue",
-    ], dir);
+    yield* git(["am", "--continue"], dir);
     session.nextIndex++;
     yield* Effect.promise(() => writeFile(path, JSON.stringify(session, null, 2)));
     return yield* applyRemaining(id, dir, path, mode, session);
@@ -156,11 +148,7 @@ export function abortApply(id: string, mode: "full" | "pr" = "full") {
     if (!existsSync(join(dir, ".git", "rebase-apply"))) {
       return yield* Effect.fail(new Error(`Git has no active am operation in ${dir}. Inspect it before removing ${path}.`));
     }
-    yield* git([
-      "-c", "user.name=StackAnvil Patch Bot",
-      "-c", "user.email=patches@stackanvil.invalid",
-      "am", "--abort",
-    ], dir);
+    yield* git(["am", "--abort"], dir);
     yield* git(["update-ref", syncedRef(mode), "HEAD"], dir);
     yield* Effect.promise(() => rm(path));
     return `Aborted the patch apply in ${dir}. Run bun run ${mode === "pr" ? "pr check" : "stack sync"} ${id} to start again.`;

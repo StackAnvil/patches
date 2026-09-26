@@ -72,12 +72,17 @@ test("an interrupted patch apply can continue or abort without losing the series
   await mkdir(join(project, ".worktrees"));
   const checkout = join(project, ".worktrees", "fixture");
   await git(["clone", upstream, checkout], fixture);
+  await git(["config", "user.name", "Patch Test"], checkout);
+  await git(["config", "user.email", "test@example.invalid"], checkout);
   const prCheckout = join(project, ".worktrees", "fixture-pr");
   await git(["clone", upstream, prCheckout], fixture);
+  await git(["config", "user.name", "Patch Test"], prCheckout);
+  await git(["config", "user.email", "test@example.invalid"], prCheckout);
 
   const cli = join(project, "src", "cli.ts");
   await run("bun", [cli, "pr", "check", "fixture"], project);
   expect(await git(["rev-list", "--count", `${baseSha}..HEAD`], prCheckout)).toBe("1");
+  expect(await git(["show", "-s", "--format=%ce", "HEAD"], prCheckout)).toBe("test@example.invalid");
   expect(await readFile(join(prCheckout, "note.txt"), "utf8")).toBe("second\n");
   await run("bun", [cli, "stack", "sync", "fixture"], project, true);
   expect((await readFile(join(project, ".stackanvil", "fixture-full-apply.json"), "utf8")).length).toBeGreaterThan(0);
@@ -85,6 +90,7 @@ test("an interrupted patch apply can continue or abort without losing the series
   await git(["add", "note.txt"], checkout);
   await run("bun", [cli, "stack", "continue", "fixture"], project);
   expect(await git(["rev-list", "--count", `${baseSha}..HEAD`], checkout)).toBe("2");
+  expect(await git(["show", "-s", "--format=%ce", "HEAD"], checkout)).toBe("test@example.invalid");
   expect(await readFile(join(checkout, "note.txt"), "utf8")).toBe("resolved\n");
   await expect(readFile(join(project, ".stackanvil", "fixture-full-apply.json"), "utf8")).rejects.toThrow();
 
