@@ -31,6 +31,8 @@ The default gameplay run includes movement, block actions, inventory, creative s
 | `block-break`, `block-place` | Break or place a block | The target block has the expected type and the placed item count changes. |
 | `drop-item`, `inventory-script-slot` | Drop one emerald | The server inventory count decreases by one, including when the pack sets the slot through Script API. |
 | `chest-transfer` | Move emeralds from a chest into the hotbar | The chest is empty and the player has four emeralds. |
+| `lab-table-then-chest` | Use a lab table, then transfer emeralds from a nearby chest | The chest opens while the lab table remains in place, and the emeralds reach the player. |
+| `chest-boat-transfer`, `chest-minecart-transfer` | Open vehicle storage and shift-click emeralds | The vehicle storage is empty and the player has four emeralds. |
 | `creative-select` | Search for a nether star and place it in the hotbar | The server sees a nether star in the player inventory. |
 | `creative-replace` | Replace an emerald in the first hotbar slot with a nether star | The server sees the nether star in that slot. |
 | `equip-helmet`, `equip-offhand`, `eat-golden-apple` | Use or swap the held item | The equipment slot or effect state changes. |

@@ -9,7 +9,7 @@ export const gameplayCaseIds = [
   "movement-left", "movement-right", "block-break", "block-place", "drop-item", "inventory-script-slot",
   "creative-select", "creative-replace", "equip-helmet", "equip-offhand", "eat-golden-apple", "entity-attack", "entity-name",
   "map-hold", "command-time", "command-completion", "command-denied", "respawn", "dimension-change",
-  "chest-transfer",
+  "chest-transfer", "lab-table-then-chest", "chest-boat-transfer", "chest-minecart-transfer",
 ] as const;
 
 export type GameplayCaseId = typeof gameplayCaseIds[number];
@@ -87,14 +87,21 @@ async function clickGui(ui: Ui, window: { width: number; height: number }, image
     String((top + offsetY * scale) / window.height), "--client", "java"]);
 }
 
-async function chestTransfer(ui: Ui): Promise<void> {
+async function chestTransfer(ui: Ui, sneak = false): Promise<void> {
   const window = await javaWindow(ui);
   const guiX = (window.width - 176 * 2) / 2 + 20;
   const guiY = (window.height - 168 * 2) / 2 + 20;
   const pixel = async () => (await ui(["ui", "pixel", String(guiX / window.width), String(guiY / window.height), "--client", "java"]))
     .trim().split(/\s+/).map(Number);
   const before = await pixel();
-  await uiMouse(ui, "right");
+  if (sneak) {
+    await Promise.all([
+      ui(["ui", "key-hold", "Shift_L", "1000", "--client", "java"]),
+      (async () => { await Bun.sleep(200); await uiMouse(ui, "right"); })(),
+    ]);
+  } else {
+    await uiMouse(ui, "right");
+  }
   await Bun.sleep(500);
   const after = await pixel();
   const opened = before.length === 3 && after.length === 3
@@ -137,6 +144,17 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui): Promise<void> {
       await uiMouse(ui, "right");
       return;
     case "chest-transfer":
+      await chestTransfer(ui);
+      return;
+    case "lab-table-then-chest":
+      await uiMouse(ui, "right");
+      await Bun.sleep(750);
+      await chestTransfer(ui);
+      return;
+    case "chest-boat-transfer":
+      await chestTransfer(ui, true);
+      return;
+    case "chest-minecart-transfer":
       await chestTransfer(ui);
       return;
     case "creative-select":

@@ -162,6 +162,60 @@ define("chest-transfer", "inventory", async (player) => {
   return { passed: observed.chest === 0 && observed.player === 4, observed, expected: { chest: 0, player: 4 } };
 });
 
+define("lab-table-then-chest", "inventory", async (player) => {
+  await prepareArena(player);
+  blockAt(player.dimension, 0, 1, 2).setType("minecraft:lab_table");
+  blockAt(player.dimension, 2, 1, 2).setType("minecraft:chest");
+  await nextTick();
+  const chest = blockAt(player.dimension, 2, 1, 2).getComponent("minecraft:inventory")?.container;
+  if (!chest) throw new Error("Chest inventory is unavailable.");
+  chest.setItem(0, new ItemStack("minecraft:emerald", 4));
+  return { labInteracted: false };
+}, (player, fixture) => {
+  const chest = blockAt(player.dimension, 2, 1, 2).getComponent("minecraft:inventory")?.container;
+  const observed = {
+    labInteracted: fixture.labInteracted,
+    chest: chest ? countItem(chest, "minecraft:emerald") : null,
+    player: countItem(inventory(player), "minecraft:emerald"),
+  };
+  return { passed: observed.labInteracted && observed.chest === 0 && observed.player === 4,
+    observed, expected: { labInteracted: true, chest: 0, player: 4 } };
+});
+
+for (const [id, typeId] of [["chest-boat-transfer", "minecraft:chest_boat"],
+  ["chest-minecart-transfer", "minecraft:chest_minecart"]]) {
+  define(id, "inventory", async (player) => {
+    await prepareArena(player);
+    if (typeId === "minecraft:chest_minecart") {
+      blockAt(player.dimension, 0, 0, 2).setType("minecraft:rail");
+    }
+    const entity = player.dimension.spawnEntity(typeId, position(0.5, 1, 2.5));
+    entity.addTag(ENTITY_TAG);
+    const storage = entity.getComponent("minecraft:inventory")?.container;
+    if (!storage) throw new Error(`${typeId} inventory is unavailable.`);
+    storage.setItem(0, new ItemStack("minecraft:emerald", 4));
+    player.teleport(position(), { dimension: arena.dimension, facingLocation: position(0.5, 0.6, 2.5) });
+    return { entity };
+  }, (player, fixture) => {
+    const storage = fixture.entity.getComponent("minecraft:inventory")?.container;
+    if (!storage) throw new Error(`${typeId} inventory is unavailable.`);
+    const observed = { storage: countItem(storage, "minecraft:emerald"),
+      player: countItem(inventory(player), "minecraft:emerald") };
+    return { passed: observed.storage === 0 && observed.player === 4,
+      observed, expected: { storage: 0, player: 4 } };
+  });
+}
+
+world.afterEvents.playerInteractWithBlock.subscribe((event) => {
+  if (active?.scenario.id !== "lab-table-then-chest" || event.player.name !== active.playerName
+      || event.block.typeId !== "minecraft:lab_table") return;
+  active.fixture.labInteracted = true;
+  system.runTimeout(() => {
+    if (active?.scenario.id !== "lab-table-then-chest") return;
+    event.player.setRotation({ x: 0, y: -45 });
+  }, 4);
+});
+
 define("creative-select", "creative", async (player) => {
   await prepareArena(player, GameMode.Creative);
   return {};
