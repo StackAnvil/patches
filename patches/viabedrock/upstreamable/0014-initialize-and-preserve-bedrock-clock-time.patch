@@ -1,0 +1,158 @@
+From 14c5b420f0fde235fdc6e4d01fb15624f25d3e81 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sat, 26 Sep 2026 19:39:20 +0200
+Subject: [PATCH] fix(world): initialize and preserve Bedrock clock time
+
+StartGame carries the day-cycle stop time, which is -1 while the cycle runs.
+Using it as the initial clock position shows the wrong time until Bedrock sends
+SetTime. Fall back to the level time for that initial packet and use the stop
+time only when present.
+
+Keep the full SetTime tick count in the Java world clock instead of reducing it
+to one day, preserving day count and moon phase across sleep and time commands.
+---
+ .../protocol/packet/JoinPackets.java          | 16 ++++++---
+ .../protocol/packet/WorldPackets.java         | 17 ++++++----
+ .../protocol/storage/JoinGameStorage.java     |  2 +-
+ .../protocol/packet/WorldPacketsTest.java     | 33 +++++++++++++++++++
+ 4 files changed, 56 insertions(+), 12 deletions(-)
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+index 6e99cdeb..3f385268 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+@@ -230,7 +230,7 @@ public final class JoinPackets {
+                 final EditorWorldType editorWorldType = EditorWorldType.getByValue(wrapper.read(BedrockTypes.VAR_INT)); // world editor type
+                 wrapper.read(Types.BOOLEAN); // created in world editor
+                 wrapper.read(Types.BOOLEAN); // exported from world editor
+-                final int currentTime = wrapper.read(BedrockTypes.VAR_INT); // day cycle stop time
++                final int dayCycleStopTime = wrapper.read(BedrockTypes.VAR_INT); // day cycle stop time
+                 wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // education edition offers
+                 wrapper.read(Types.BOOLEAN); // education features enabled
+                 wrapper.read(BedrockTypes.STRING); // education product id
+@@ -381,7 +381,7 @@ public final class JoinPackets {
+                 clientPlayer.setGameType(playerGameType);
+                 clientPlayer.setName(wrapper.user().getProtocolInfo().getUsername());
+ 
+-                wrapper.user().put(new JoinGameStorage(levelName, difficulty, rainLevel, lightningLevel, currentTime, chunkTickRange));
++                wrapper.user().put(new JoinGameStorage(levelName, difficulty, rainLevel, lightningLevel, dayCycleStopTime, chunkTickRange));
+                 wrapper.user().put(new GameRulesStorage(wrapper.user(), gameRules));
+                 wrapper.user().put(new BlockStateRewriter(blockProperties, hashedRuntimeBlockIds));
+                 wrapper.user().put(new ItemRewriter(wrapper.user(), new ItemEntry[0]));
+@@ -628,9 +628,15 @@ public final class JoinPackets {
+             }
+         }
+ 
+-        final PacketWrapper setTime = PacketWrapper.create(ClientboundBedrockPackets.SET_TIME, user);
+-        setTime.write(BedrockTypes.VAR_INT, joinGameStorage.currentTime()); // time of day
+-        setTime.send(BedrockProtocol.class, false);
++        final PacketWrapper setTime = PacketWrapper.create(ClientboundPackets26_3.SET_TIME, user);
++        WorldPackets.writeJavaTime(setTime, gameSession.getLevelTime(),
++            initialDayTime(joinGameStorage.dayCycleStopTime(), gameSession.getLevelTime()),
++            gameRulesStorage.getGameRule("doDayLightCycle"));
++        setTime.send(BedrockProtocol.class);
++    }
++
++    static long initialDayTime(final int dayCycleStopTime, final long levelTime) {
++        return dayCycleStopTime >= 0 ? dayCycleStopTime : levelTime;
+     }
+ 
+     private JoinPackets() {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+index fbab221a..bfc8d13f 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+@@ -530,12 +530,8 @@ public final class WorldPackets {
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.SET_TIME, ClientboundPackets26_3.SET_TIME, wrapper -> {
+             final long bedrockTime = wrapper.read(BedrockTypes.VAR_INT); // time
+-            wrapper.write(Types.LONG, wrapper.user().get(GameSessionStorage.class).getLevelTime()); // game time
+-            wrapper.write(Types.VAR_INT, 1); // clock update count
+-            wrapper.write(Types.VAR_INT, 0); // registry id (overworld clock)
+-            wrapper.write(Types.VAR_LONG, bedrockTime >= 0L ? bedrockTime % 24000L : 24000L + (bedrockTime % 24000L)); // total ticks
+-            wrapper.write(Types.FLOAT, 0F); // partial tick
+-            wrapper.write(Types.FLOAT, wrapper.user().get(GameRulesStorage.class).getGameRule("doDayLightCycle") ? 1F : 0F); // rate
++            writeJavaTime(wrapper, wrapper.user().get(GameSessionStorage.class).getLevelTime(), bedrockTime,
++                wrapper.user().get(GameRulesStorage.class).getGameRule("doDayLightCycle"));
+         });
+ 
+         protocol.registerServerbound(ServerboundPackets26_3.SIGN_UPDATE, ServerboundBedrockPackets.BLOCK_ENTITY_DATA, wrapper -> {
+@@ -573,6 +569,15 @@ public final class WorldPackets {
+         });
+     }
+ 
++    static void writeJavaTime(final PacketWrapper wrapper, final long gameTime, final long bedrockTime, final boolean dayCycleEnabled) {
++        wrapper.write(Types.LONG, gameTime); // game time
++        wrapper.write(Types.VAR_INT, 1); // clock update count
++        wrapper.write(Types.VAR_INT, 0); // registry id (overworld clock)
++        wrapper.write(Types.VAR_LONG, bedrockTime); // total ticks
++        wrapper.write(Types.FLOAT, 0F); // partial tick
++        wrapper.write(Types.FLOAT, dayCycleEnabled ? 1F : 0F); // rate
++    }
++
+     static long packSectionPosition(final BlockPosition section) {
+         return (section.x() & 0x3FFFFFL) << 42 | (section.z() & 0x3FFFFFL) << 20 | (section.y() & 0xFFFFFL);
+     }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/JoinGameStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/JoinGameStorage.java
+index 85bfa586..cdad57cf 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/JoinGameStorage.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/JoinGameStorage.java
+@@ -20,5 +20,5 @@ package net.raphimc.viabedrock.protocol.storage;
+ import com.viaversion.viaversion.api.connection.StorableObject;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Difficulty;
+ 
+-public record JoinGameStorage(String levelName, Difficulty difficulty, float rainLevel, float lightningLevel, int currentTime, int chunkTickRange) implements StorableObject {
++public record JoinGameStorage(String levelName, Difficulty difficulty, float rainLevel, float lightningLevel, int dayCycleStopTime, int chunkTickRange) implements StorableObject {
+ }
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/WorldPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/WorldPacketsTest.java
+index cc042372..62fb7773 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/packet/WorldPacketsTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/WorldPacketsTest.java
+@@ -10,6 +10,12 @@
+ package net.raphimc.viabedrock.protocol.packet;
+ 
+ import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
+ import org.junit.jupiter.api.Test;
+ 
+ import static org.junit.jupiter.api.Assertions.assertEquals;
+@@ -25,4 +31,31 @@ class WorldPacketsTest {
+         assertEquals(34, (int) (packed << 22 >> 42));
+     }
+ 
++    @Test
++    void keepsCompleteBedrockTimeInJavaClockUpdate() throws Exception {
++        final PacketWrapper wrapper = new PacketWrapperImpl(ClientboundPackets26_3.SET_TIME, null, null);
++        WorldPackets.writeJavaTime(wrapper, 120L, 48_001L, true);
++
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            wrapper.writeToBuffer(buffer);
++            assertEquals(ClientboundPackets26_3.SET_TIME.getId(), Types.VAR_INT.read(buffer));
++            assertEquals(120L, Types.LONG.read(buffer));
++            assertEquals(1, Types.VAR_INT.read(buffer));
++            assertEquals(0, Types.VAR_INT.read(buffer));
++            assertEquals(48_001L, Types.VAR_LONG.read(buffer));
++            assertEquals(0F, Types.FLOAT.read(buffer));
++            assertEquals(1F, Types.FLOAT.read(buffer));
++            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void usesLevelTimeWhenDayCycleIsRunningAtJoin() {
++        assertEquals(37_250L, JoinPackets.initialDayTime(-1, 37_250L));
++        assertEquals(6_000L, JoinPackets.initialDayTime(6_000, 37_250L));
++    }
++
+ }
+-- 
+2.55.0
+

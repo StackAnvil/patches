@@ -1,0 +1,249 @@
+From 53c8eeb729d5ed9f52d9251e856fb8c262c36230 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sat, 26 Sep 2026 19:18:15 +0200
+Subject: [PATCH] fix(entities): discard stale passenger links
+
+A remove-entity packet can arrive before the related link update. Keep vehicle passenger lists in sync when actors despawn, and prune unknown passengers before encoding Java passenger packets so bulk removals do not disconnect the client. Also clear the local mount state when its vehicle disappears.
+---
+ .../protocol/PlayerActionPacketFactory.java   |  9 ++-
+ .../protocol/packet/InteractionPackets.java   | 33 ++++----
+ .../protocol/storage/EntityTracker.java       | 23 +++++-
+ .../protocol/storage/EntityTrackerTest.java   | 77 +++++++++++++++++++
+ 4 files changed, 125 insertions(+), 17 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/PlayerActionPacketFactory.java b/src/main/java/net/raphimc/viabedrock/protocol/PlayerActionPacketFactory.java
+index 0ae576c6..9909bd21 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/PlayerActionPacketFactory.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/PlayerActionPacketFactory.java
+@@ -28,6 +28,8 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAction
+ import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
++import java.util.List;
++
+ public final class PlayerActionPacketFactory {
+ 
+     public static void sendBedrockPlayerAction(final UserConnection user, final long entityId, final PlayerActionType actionType, final BlockPosition position, final BlockPosition resultPosition, final int face) {
+@@ -50,11 +52,12 @@ public final class PlayerActionPacketFactory {
+ 
+     public static void sendJavaSetPassengers(final UserConnection user, final Entity vehicle) {
+         final EntityTracker entityTracker = user.get(EntityTracker.class);
++        final List<Entity> passengers = entityTracker.getTrackedPassengers(vehicle);
+         final PacketWrapper setPassengersPacket = PacketWrapper.create(ClientboundPackets1_21_11.SET_PASSENGERS, user);
+         setPassengersPacket.write(Types.VAR_INT, vehicle.javaId()); // vehicle
+-        setPassengersPacket.write(Types.VAR_INT, vehicle.passengers().size()); // number of passengers
+-        for (long passengerUid : vehicle.passengers()) {
+-            setPassengersPacket.write(Types.VAR_INT, entityTracker.getEntityByUid(passengerUid).javaId()); // passenger id
++        setPassengersPacket.write(Types.VAR_INT, passengers.size()); // number of passengers
++        for (Entity passenger : passengers) {
++            setPassengersPacket.write(Types.VAR_INT, passenger.javaId()); // passenger id
+         }
+         setPassengersPacket.send(BedrockProtocol.class);
+     }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
+index 4a412097..ea648dc1 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
+@@ -41,6 +41,7 @@ import net.raphimc.viabedrock.protocol.PlayerActionPacketFactory;
+ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.data.enums.Direction;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ComplexInventoryTransaction_Type;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ActorLinkType;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
+@@ -322,33 +323,29 @@ public final class InteractionPackets {
+             }
+ 
+             final Entity passenger = entityTracker.getEntityByUid(linkType.toEntityUniqueId());
++            if (passenger == null && linkType.type() != ActorLinkType.None) {
++                wrapper.cancel();
++                return;
++            }
+ 
+             // TODO: Handle Passenger type if needed
+             switch (linkType.type()) {
+                 case Riding, Passenger -> { // TODO: This needs to be ordered properly based on the link types (rider first, then passengers)
+                     vehicle.addPassenger(passenger.uniqueId());
+ 
+-                    wrapper.write(Types.VAR_INT, entityTracker.getEntityByUid(linkType.fromEntityUniqueId()).javaId()); // vehicle
+-                    wrapper.write(Types.VAR_INT, vehicle.passengers().size()); // number of passengers
+-                    for (long passengerUid : vehicle.passengers()) {
+-                        wrapper.write(Types.VAR_INT, entityTracker.getEntityByUid(passengerUid).javaId()); // passenger id
+-                    }
++                    writeJavaPassengers(wrapper, entityTracker, vehicle);
+ 
+                     if (passenger.uniqueId() == entityTracker.getClientPlayer().uniqueId()) { // TODO: This could be applied to all passengers not just players
+                         // The player is now riding an entity, update the state
+-                        entityTracker.getClientPlayer().setMountEntityRuntimeId(entityTracker.getEntityByUid(linkType.fromEntityUniqueId()).runtimeId());
++                        entityTracker.getClientPlayer().setMountEntityRuntimeId(vehicle.runtimeId());
+                     }
+                 }
+                 case None -> { // Remove
+-                    vehicle.removePassenger(passenger.uniqueId());
++                    vehicle.removePassenger(linkType.toEntityUniqueId());
+ 
+-                    wrapper.write(Types.VAR_INT, vehicle.javaId()); // vehicle
+-                    wrapper.write(Types.VAR_INT, vehicle.passengers().size()); // number of passengers
+-                    for (long passengerUid : vehicle.passengers()) {
+-                        wrapper.write(Types.VAR_INT, entityTracker.getEntityByUid(passengerUid).javaId()); // passenger id
+-                    }
++                    writeJavaPassengers(wrapper, entityTracker, vehicle);
+ 
+-                    if (passenger.uniqueId() == entityTracker.getClientPlayer().uniqueId()) { // TODO: This could be applied to all passengers not just players
++                    if (linkType.toEntityUniqueId() == entityTracker.getClientPlayer().uniqueId()) { // TODO: This could be applied to all passengers not just players
+                         // The player is no longer riding an entity, update the state
+                         entityTracker.getClientPlayer().setMountEntityRuntimeId(-1);
+                         entityTracker.getClientPlayer().setRequestedDismount(false);
+@@ -359,4 +356,14 @@ public final class InteractionPackets {
+ 
+     }
+ 
++    private static void writeJavaPassengers(final PacketWrapper wrapper,
++                                            final EntityTracker entityTracker, final Entity vehicle) {
++        final List<Entity> passengers = entityTracker.getTrackedPassengers(vehicle);
++        wrapper.write(Types.VAR_INT, vehicle.javaId()); // vehicle
++        wrapper.write(Types.VAR_INT, passengers.size()); // number of passengers
++        for (Entity passenger : passengers) {
++            wrapper.write(Types.VAR_INT, passenger.javaId()); // passenger id
++        }
++    }
++
+ }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
+index aebd19b6..221b3c7d 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
+@@ -89,7 +89,7 @@ public class EntityTracker extends StoredObject {
+             this.clientPlayerEntity = playerEntity;
+         }
+ 
+-        final Entity prevEntity = this.entities.put(entity.uniqueId(), entity);
++        final Entity prevEntity = this.entities.get(entity.uniqueId());
+         if (prevEntity != null) {
+             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Duplicate entity unique ID: " + entity.uniqueId());
+             this.removeEntity(prevEntity);
+@@ -97,6 +97,7 @@ public class EntityTracker extends StoredObject {
+             removeEntities.write(Types.VAR_INT_ARRAY_PRIMITIVE, new int[]{prevEntity.javaId()}); // entity ids
+             removeEntities.send(BedrockProtocol.class);
+         }
++        this.entities.put(entity.uniqueId(), entity);
+         if (this.javaIdToUniqueId.put(entity.javaId(), (Long) entity.uniqueId()) != null) {
+             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Duplicate Java entity ID: " + entity.javaId());
+         }
+@@ -119,9 +120,29 @@ public class EntityTracker extends StoredObject {
+         this.entities.remove(entity.uniqueId());
+         this.runtimeIdToUniqueId.remove(entity.runtimeId());
+         this.javaIdToUniqueId.remove(entity.javaId());
++        for (Entity trackedEntity : this.entities.values()) {
++            trackedEntity.removePassenger(entity.uniqueId());
++        }
++        if (this.clientPlayerEntity != null && this.clientPlayerEntity.mountEntityRuntimeId() == entity.runtimeId()) {
++            this.clientPlayerEntity.setMountEntityRuntimeId(-1);
++            this.clientPlayerEntity.setRequestedDismount(false);
++        }
+         entity.remove();
+     }
+ 
++    public List<Entity> getTrackedPassengers(final Entity vehicle) {
++        final List<Entity> passengers = new ArrayList<>();
++        for (long passengerUid : List.copyOf(vehicle.passengers())) {
++            final Entity passenger = this.getEntityByUid(passengerUid);
++            if (passenger == null) {
++                vehicle.removePassenger(passengerUid);
++            } else {
++                passengers.add(passenger);
++            }
++        }
++        return passengers;
++    }
++
+     public void spawnItemFrame(final BlockPosition position, final BlockState blockState) {
+         this.removeItemFrame(position);
+ 
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
+new file mode 100644
+index 00000000..23575461
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/EntityTrackerTest.java
+@@ -0,0 +1,77 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Proxy;
++import java.util.List;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertSame;
++
++class EntityTrackerTest {
++
++    @Test
++    void removesDespawnedPassengersFromVehicles() {
++        final UserConnection user = user();
++        final EntityTracker tracker = new EntityTracker(user);
++        final Entity vehicle = tracker.addEntity(10, 100, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
++        final Entity removed = tracker.addEntity(11, 101, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
++        final Entity remaining = tracker.addEntity(12, 102, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
++        vehicle.addPassenger(removed.uniqueId());
++        vehicle.addPassenger(remaining.uniqueId());
++
++        tracker.removeEntity(removed);
++
++        assertEquals(List.of(remaining.uniqueId()), vehicle.passengers());
++        assertEquals(List.of(remaining), tracker.getTrackedPassengers(vehicle));
++    }
++
++    @Test
++    void prunesUnknownPassengersBeforeEncodingPassengers() {
++        final EntityTracker tracker = new EntityTracker(user());
++        final Entity vehicle = tracker.addEntity(10, 100, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
++        final Entity passenger = tracker.addEntity(11, 101, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
++        vehicle.addPassenger(99);
++        vehicle.addPassenger(passenger.uniqueId());
++
++        assertEquals(List.of(passenger), tracker.getTrackedPassengers(vehicle));
++        assertEquals(List.of(passenger.uniqueId()), vehicle.passengers());
++    }
++
++    @Test
++    void removingVehicleClearsLocalMountState() {
++        final UserConnection user = user();
++        final EntityTracker tracker = new EntityTracker(user);
++        final ClientPlayerEntity player = new ClientPlayerEntity(user, 1, UUID.randomUUID(), new PlayerAbilities(1, (byte) 0, (byte) 0));
++        tracker.addEntity(player, false);
++        final Entity vehicle = tracker.addEntity(10, 100, EntityTypes26_3.PIG.identifier(), EntityTypes26_3.PIG);
++        player.setMountEntityRuntimeId(vehicle.runtimeId());
++        vehicle.addPassenger(player.uniqueId());
++
++        tracker.removeEntity(vehicle);
++
++        assertEquals(-1, player.mountEntityRuntimeId());
++        assertSame(player, tracker.getEntityByUid(player.uniqueId()));
++    }
++
++    private static UserConnection user() {
++        return (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, args) -> null);
++    }
++
++}
+-- 
+2.55.0

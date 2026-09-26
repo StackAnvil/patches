@@ -1,0 +1,460 @@
+From 2a89b8c754c68fc1286c4f46dca7bd60abb8ca88 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sat, 26 Sep 2026 19:22:23 +0200
+Subject: [PATCH] fix(world): render connected redstone wire shapes
+
+Bedrock sends redstone wire power without its horizontal shape, while Java requires connection states for rendering. Derive those states from neighboring blocks when chunks are encoded and after live block updates. Refresh already sent borders when adjacent chunks appear or unload so wires remain connected across chunk boundaries.
+---
+ .../protocol/packet/WorldPackets.java         |  17 +++
+ .../protocol/storage/ChunkTracker.java        | 105 +++++++++++++-
+ .../storage/RedstoneWireConnections.java      | 134 ++++++++++++++++++
+ .../storage/RedstoneWireConnectionsTest.java  |  76 ++++++++++
+ 4 files changed, 329 insertions(+), 3 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/RedstoneWireConnections.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/RedstoneWireConnectionsTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+index 42330365..b41bb14a 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+@@ -90,6 +90,7 @@ public final class WorldPackets {
+         }
+ 
+         wrapper.write(Types.VAR_INT, remappedBlock.keyInt()); // block state
++        chunkTracker.sendNearbyRedstoneUpdates(List.of(position));
+ 
+         if (remappedBlock.value() != null) {
+             wrapper.send(BedrockProtocol.class);
+@@ -422,12 +423,14 @@ public final class WorldPackets {
+ 
+             final Map<BlockPosition, List<BlockChangeRecord>> blockChanges = new HashMap<>();
+             final Map<BlockPosition, BlockEntity> blockEntities = new HashMap<>();
++            final List<BlockPosition> changedPositions = new ArrayList<>();
+             for (int layer = 0; layer < blockUpdatesArray.length; layer++) {
+                 for (BlockChangeEntry entry : blockUpdatesArray[layer]) {
+                     final IntObjectPair<BlockEntity> remappedBlock = chunkTracker.handleBlockChange(entry.position(), layer, entry.blockState());
+                     if (remappedBlock == null) {
+                         continue;
+                     }
++                    changedPositions.add(entry.position());
+                     if (remappedBlock.value() != null) {
+                         blockEntities.put(entry.position(), remappedBlock.value());
+                     }
+@@ -438,6 +441,19 @@ public final class WorldPackets {
+                 }
+             }
+ 
++            // A single packet may replace several neighboring wires. Resolve their shapes after all changes are stored.
++            for (Map.Entry<BlockPosition, List<BlockChangeRecord>> entry : blockChanges.entrySet()) {
++                final BlockPosition section = entry.getKey();
++                final List<BlockChangeRecord> changes = entry.getValue();
++                for (BlockChangeRecord change : changes) {
++                    final BlockPosition position = new BlockPosition((section.x() << 4) + change.getSectionX(),
++                            (section.y() << 4) + change.getSectionY(), (section.z() << 4) + change.getSectionZ());
++                    if (chunkTracker.isRedstoneWire(position)) {
++                        change.setBlockId(chunkTracker.getJavaBlockState(position));
++                    }
++                }
++            }
++
+             for (Map.Entry<BlockPosition, List<BlockChangeRecord>> entry : blockChanges.entrySet()) {
+                 final BlockPosition chunkPosition = entry.getKey();
+                 final List<BlockChangeRecord> changes = entry.getValue();
+@@ -451,6 +467,7 @@ public final class WorldPackets {
+             for (Map.Entry<BlockPosition, BlockEntity> entry : blockEntities.entrySet()) {
+                 PacketFactory.sendJavaBlockEntityData(wrapper.user(), entry.getKey(), entry.getValue());
+             }
++            chunkTracker.sendNearbyRedstoneUpdates(changedPositions);
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.BLOCK_ENTITY_DATA, ClientboundPackets26_3.BLOCK_ENTITY_DATA, new PacketHandlers() {
+             @Override
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+index 10b5d189..b456c195 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+@@ -50,6 +50,7 @@ import net.raphimc.viabedrock.api.chunk.light.LightEngine;
+ import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSection;
+ import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSectionImpl;
+ import net.raphimc.viabedrock.api.model.BedrockBlockState;
++import net.raphimc.viabedrock.api.model.BlockState;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+@@ -68,7 +69,6 @@ import java.util.concurrent.Executors;
+ import java.util.concurrent.Semaphore;
+ import java.util.logging.Level;
+ 
+-// TODO: Feature: Block connections
+ // TODO: Feature: Incremental light updates instead of whole section recomputations
+ public class ChunkTracker extends StoredObject {
+ 
+@@ -183,6 +183,7 @@ public class ChunkTracker extends StoredObject {
+         final PacketWrapper unloadChunk = PacketWrapper.create(ClientboundPackets26_3.FORGET_LEVEL_CHUNK, this.user());
+         unloadChunk.write(Types.CHUNK_POSITION, chunkPos); // chunk position
+         unloadChunk.send(BedrockProtocol.class);
++        this.refreshNeighboringRedstoneBorders(chunkPos.chunkX(), chunkPos.chunkZ());
+     }
+ 
+     public BedrockChunk getChunk(final int chunkX, final int chunkZ) {
+@@ -226,8 +227,24 @@ public class ChunkTracker extends StoredObject {
+     }
+ 
+     public int getJavaBlockState(final BlockPosition blockPosition) {
++        final int javaId = this.getUnconnectedJavaBlockState(blockPosition);
++        final BlockState state = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(javaId);
++        if (!RedstoneWireConnections.isWire(state)) {
++            return javaId;
++        }
++
++        final BlockState connected = RedstoneWireConnections.shape(blockPosition, state,
++                this::getUnconnectedJavaBlockStateModel, this::isRedstoneConductor);
++        return BedrockProtocol.MAPPINGS.getJavaBlockStates().get(connected);
++    }
++
++    public boolean isRedstoneWire(final BlockPosition position) {
++        return RedstoneWireConnections.isWire(this.getUnconnectedJavaBlockStateModel(position));
++    }
++
++    private int getUnconnectedJavaBlockState(final BlockPosition blockPosition) {
+         final BedrockChunkSection chunkSection = this.getChunkSection(blockPosition);
+-        if (chunkSection == null) {
++        if (chunkSection == null || chunkSection.palettesCount(PaletteType.BLOCKS) == 0) {
+             return ProtocolConstants.JAVA_AIR_ID;
+         }
+ 
+@@ -238,6 +255,18 @@ public class ChunkTracker extends StoredObject {
+         return this.getJavaBlockState(chunkSection, sectionX, sectionY, sectionZ);
+     }
+ 
++    private BlockState getUnconnectedJavaBlockStateModel(final BlockPosition position) {
++        return BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(this.getUnconnectedJavaBlockState(position));
++    }
++
++    private boolean isRedstoneConductor(final BlockState state) {
++        if (state == null) {
++            return false;
++        }
++        final Integer javaId = BedrockProtocol.MAPPINGS.getJavaBlockStates().get(state);
++        return javaId != null && BedrockProtocol.MAPPINGS.getJavaBlockOpacity()[javaId] == 15;
++    }
++
+     public int getJavaBlockState(final BedrockChunkSection section, final int sectionX, final int sectionY, final int sectionZ) {
+         final BlockStateRewriter blockStateRewriter = this.user().get(BlockStateRewriter.class);
+         final List<DataPalette> blockPalettes = section.palettes(PaletteType.BLOCKS);
+@@ -413,7 +442,7 @@ public class ChunkTracker extends StoredObject {
+         palette.setIdAt(sectionX, sectionY, sectionZ, blockState);
+         final String tag = blockStateRewriter.tag(blockState);
+ 
+-        int remappedBlockState = this.getJavaBlockState(section, sectionX, sectionY, sectionZ);
++        int remappedBlockState = this.getJavaBlockState(blockPosition);
+         if (!Objects.equals(prevTag, tag)) {
+             this.getChunk(blockPosition.x() >> 4, blockPosition.z() >> 4).removeBlockEntityAt(blockPosition);
+             entityTracker.removeItemFrame(blockPosition);
+@@ -487,6 +516,62 @@ public class ChunkTracker extends StoredObject {
+         // Initial lighting uses this chunk alone. Refresh its borders with any loaded neighbors.
+         this.lightDirtyChunks.add(chunkKey);
+         this.invalidateNearbyLight(chunkX, chunkZ);
++        this.refreshNeighboringRedstoneBorders(chunkX, chunkZ);
++    }
++
++    public void sendNearbyRedstoneUpdates(final Collection<BlockPosition> changedPositions) {
++        final Set<BlockPosition> candidates = new HashSet<>();
++        for (BlockPosition changed : changedPositions) {
++            for (int y = -1; y <= 1; y++) {
++                for (int z = -1; z <= 1; z++) {
++                    for (int x = -1; x <= 1; x++) {
++                        if (Math.abs(x) + Math.abs(z) > 1) {
++                            continue;
++                        }
++                        candidates.add(new BlockPosition(changed.x() + x, changed.y() + y, changed.z() + z));
++                    }
++                }
++            }
++        }
++        candidates.removeAll(changedPositions);
++        candidates.forEach(this::sendRedstoneUpdate);
++    }
++
++    private void refreshNeighboringRedstoneBorders(final int chunkX, final int chunkZ) {
++        final boolean westLoaded = this.chunkLight.containsKey(ChunkPosition.chunkKey(chunkX - 1, chunkZ));
++        final boolean eastLoaded = this.chunkLight.containsKey(ChunkPosition.chunkKey(chunkX + 1, chunkZ));
++        final boolean northLoaded = this.chunkLight.containsKey(ChunkPosition.chunkKey(chunkX, chunkZ - 1));
++        final boolean southLoaded = this.chunkLight.containsKey(ChunkPosition.chunkKey(chunkX, chunkZ + 1));
++        if (!westLoaded && !eastLoaded && !northLoaded && !southLoaded) {
++            return;
++        }
++        for (int offset = 0; offset < 16; offset++) {
++            for (int y = this.minY; y < this.minY + this.worldHeight; y++) {
++                if (westLoaded) {
++                    this.sendRedstoneUpdate(new BlockPosition((chunkX << 4) - 1, y, (chunkZ << 4) + offset));
++                }
++                if (eastLoaded) {
++                    this.sendRedstoneUpdate(new BlockPosition((chunkX << 4) + 16, y, (chunkZ << 4) + offset));
++                }
++                if (northLoaded) {
++                    this.sendRedstoneUpdate(new BlockPosition((chunkX << 4) + offset, y, (chunkZ << 4) - 1));
++                }
++                if (southLoaded) {
++                    this.sendRedstoneUpdate(new BlockPosition((chunkX << 4) + offset, y, (chunkZ << 4) + 16));
++                }
++            }
++        }
++    }
++
++    private void sendRedstoneUpdate(final BlockPosition position) {
++        if (!this.chunkLight.containsKey(ChunkPosition.chunkKey(position.x() >> 4, position.z() >> 4))
++                || !RedstoneWireConnections.isWire(this.getUnconnectedJavaBlockStateModel(position))) {
++            return;
++        }
++        final PacketWrapper update = PacketWrapper.create(ClientboundPackets26_3.BLOCK_UPDATE, this.user());
++        update.write(Types.BLOCK_POSITION1_14, position);
++        update.write(Types.VAR_INT, this.getJavaBlockState(position));
++        update.send(BedrockProtocol.class);
+     }
+ 
+     private static LightPacketData buildFullLightPacketData(final ChunkLight light) {
+@@ -952,6 +1037,20 @@ public class ChunkTracker extends StoredObject {
+                     }
+                 }
+ 
++                for (int y = 0; y < 16; y++) {
++                    for (int z = 0; z < 16; z++) {
++                        for (int x = 0; x < 16; x++) {
++                            final int javaId = remappedBlockPalette.idAt(x, y, z);
++                            final BlockState state = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(javaId);
++                            if (RedstoneWireConnections.isWire(state)) {
++                                final BlockPosition position = new BlockPosition((chunk.getX() << 4) + x,
++                                        this.minY + (idx << 4) + y, (chunk.getZ() << 4) + z);
++                                remappedBlockPalette.setIdAt(x, y, z, this.getJavaBlockState(position));
++                            }
++                        }
++                    }
++                }
++
+                 int nonAirBlockCount = 0;
+                 int fluidCount = 0;
+                 for (int i = 0; i < ChunkSection.SIZE; i++) {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/RedstoneWireConnections.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/RedstoneWireConnections.java
+new file mode 100644
+index 00000000..c45ebcd8
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/RedstoneWireConnections.java
+@@ -0,0 +1,134 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import net.raphimc.viabedrock.api.model.BlockState;
++
++import java.util.Map;
++import java.util.function.Function;
++import java.util.function.Predicate;
++
++final class RedstoneWireConnections {
++
++    private RedstoneWireConnections() {
++    }
++
++    static boolean isWire(final BlockState state) {
++        return state != null && state.namespacedIdentifier().equals("minecraft:redstone_wire");
++    }
++
++    static BlockState shape(final BlockPosition position, final BlockState wire,
++                            final Function<BlockPosition, BlockState> blockAt,
++                            final Predicate<BlockState> conductor) {
++        if (!isWire(wire)) {
++            return wire;
++        }
++
++        final Connections connections = connections(position, blockAt, conductor);
++        return wire.withProperties(Map.of("north", connections.north().property(),
++                "east", connections.east().property(), "south", connections.south().property(),
++                "west", connections.west().property()));
++    }
++
++    static Connections connections(final BlockPosition position, final Function<BlockPosition, BlockState> blockAt,
++                                   final Predicate<BlockState> conductor) {
++        Connection north = connection(position, 0, -1, "north", blockAt, conductor);
++        Connection east = connection(position, 1, 0, "east", blockAt, conductor);
++        Connection south = connection(position, 0, 1, "south", blockAt, conductor);
++        Connection west = connection(position, -1, 0, "west", blockAt, conductor);
++
++        // Java extends a lone connection into a straight line and renders an isolated wire as a cross.
++        if (north == Connection.NONE && south == Connection.NONE) {
++            if (east == Connection.NONE && west == Connection.NONE) {
++                north = Connection.SIDE;
++                south = Connection.SIDE;
++            }
++            if (east == Connection.NONE) {
++                east = Connection.SIDE;
++            }
++            if (west == Connection.NONE) {
++                west = Connection.SIDE;
++            }
++        } else if (east == Connection.NONE && west == Connection.NONE) {
++            if (north == Connection.NONE) {
++                north = Connection.SIDE;
++            }
++            if (south == Connection.NONE) {
++                south = Connection.SIDE;
++            }
++        }
++
++        return new Connections(north, east, south, west);
++    }
++
++    private static Connection connection(final BlockPosition position, final int x, final int z, final String direction,
++                                     final Function<BlockPosition, BlockState> blockAt,
++                                     final Predicate<BlockState> conductor) {
++        final BlockPosition adjacentPosition = new BlockPosition(position.x() + x, position.y(), position.z() + z);
++        final BlockState adjacent = blockAt.apply(adjacentPosition);
++        if (!conductor.test(blockAt.apply(new BlockPosition(position.x(), position.y() + 1, position.z())))
++                && conductor.test(adjacent)
++                && isWire(blockAt.apply(new BlockPosition(adjacentPosition.x(), adjacentPosition.y() + 1, adjacentPosition.z())))) {
++            return Connection.UP;
++        }
++        if (connectsTo(adjacent, direction)) {
++            return Connection.SIDE;
++        }
++        if (!conductor.test(adjacent)
++                && isWire(blockAt.apply(new BlockPosition(adjacentPosition.x(), adjacentPosition.y() - 1, adjacentPosition.z())))) {
++            return Connection.SIDE;
++        }
++        return Connection.NONE;
++    }
++
++    private static boolean connectsTo(final BlockState state, final String direction) {
++        if (state == null) {
++            return false;
++        }
++        final String identifier = state.identifier();
++        if (identifier.equals("redstone_wire")) {
++            return true;
++        }
++        if (identifier.equals("repeater") || identifier.equals("comparator")) {
++            final String facing = state.properties().get("facing");
++            return direction.equals("north") || direction.equals("south")
++                    ? "north".equals(facing) || "south".equals(facing)
++                    : "east".equals(facing) || "west".equals(facing);
++        }
++        if (identifier.equals("observer")) {
++            return direction.equals(state.properties().get("facing"));
++        }
++        return switch (identifier) {
++            case "redstone_block", "redstone_torch", "redstone_wall_torch", "lever", "daylight_detector",
++                 "target", "tripwire_hook", "trapped_chest", "lectern", "sculk_sensor", "calibrated_sculk_sensor",
++                 "lightning_rod", "detector_rail", "pressure_plate", "button" -> true;
++            default -> identifier.endsWith("_button") || identifier.endsWith("_pressure_plate");
++        };
++    }
++
++    record Connections(Connection north, Connection east, Connection south, Connection west) {
++    }
++
++    enum Connection {
++        NONE("none"), SIDE("side"), UP("up");
++
++        private final String property;
++
++        Connection(final String property) {
++            this.property = property;
++        }
++
++        String property() {
++            return this.property;
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/RedstoneWireConnectionsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/RedstoneWireConnectionsTest.java
+new file mode 100644
+index 00000000..61b02ae1
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/RedstoneWireConnectionsTest.java
+@@ -0,0 +1,76 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import net.raphimc.viabedrock.api.model.BlockState;
++import org.junit.jupiter.api.Test;
++
++import java.util.HashMap;
++import java.util.Map;
++
++import static net.raphimc.viabedrock.protocol.storage.RedstoneWireConnections.Connection.*;
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class RedstoneWireConnectionsTest {
++
++    private static final BlockPosition CENTER = new BlockPosition(0, 64, 0);
++    private static final BlockState AIR = BlockState.fromString("minecraft:air");
++    private static final BlockState WIRE = BlockState.fromString("minecraft:redstone_wire[power=7]");
++    private static final BlockState STONE = BlockState.fromString("minecraft:stone");
++
++    private final Map<BlockPosition, BlockState> blocks = new HashMap<>();
++
++    @Test
++    void isolatedWireRendersAsCrossAndKeepsItsPower() {
++        assertEquals(new RedstoneWireConnections.Connections(SIDE, SIDE, SIDE, SIDE), this.connections());
++        assertEquals(WIRE.withProperties(Map.of("north", "side", "east", "side", "south", "side", "west", "side")),
++                RedstoneWireConnections.shape(CENTER, WIRE, this::blockAt, this::conductor));
++    }
++
++    @Test
++    void horizontalWiresFormStraightLinesAndCorners() {
++        this.blocks.put(new BlockPosition(1, 64, 0), WIRE);
++        assertEquals(new RedstoneWireConnections.Connections(NONE, SIDE, NONE, SIDE), this.connections());
++
++        this.blocks.put(new BlockPosition(0, 64, -1), WIRE);
++        assertEquals(new RedstoneWireConnections.Connections(SIDE, SIDE, NONE, NONE), this.connections());
++    }
++
++    @Test
++    void wireClimbsConductorOnlyWhenSpaceAboveIsOpen() {
++        this.blocks.put(new BlockPosition(1, 64, 0), STONE);
++        this.blocks.put(new BlockPosition(1, 65, 0), WIRE);
++        assertEquals(new RedstoneWireConnections.Connections(NONE, UP, NONE, SIDE), this.connections());
++
++        this.blocks.put(new BlockPosition(0, 65, 0), STONE);
++        assertEquals(new RedstoneWireConnections.Connections(SIDE, SIDE, SIDE, SIDE), this.connections());
++    }
++
++    @Test
++    void wireConnectsDownNonConductorAndAlongRepeaterAxis() {
++        this.blocks.put(new BlockPosition(1, 63, 0), WIRE);
++        this.blocks.put(new BlockPosition(0, 64, -1), BlockState.fromString("minecraft:repeater[facing=south]"));
++        assertEquals(new RedstoneWireConnections.Connections(SIDE, SIDE, NONE, NONE), this.connections());
++    }
++
++    private RedstoneWireConnections.Connections connections() {
++        return RedstoneWireConnections.connections(CENTER, this::blockAt, this::conductor);
++    }
++
++    private BlockState blockAt(final BlockPosition position) {
++        return this.blocks.getOrDefault(position, AIR);
++    }
++
++    private boolean conductor(final BlockState state) {
++        return STONE.equals(state);
++    }
++
++}
+-- 
+2.55.0

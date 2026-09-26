@@ -1,0 +1,127 @@
+From 9ef99b8eceadfa08dcfa8e4a7b1a5c848eff12a9 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sat, 26 Sep 2026 19:19:25 +0200
+Subject: [PATCH] fix(mining): handle destroy direction changes
+
+Java 26.3 can change the targeted face while a block break is in progress. Update the tracked face, and forward a continue action for server-authoritative breaking so that the Bedrock server receives the new direction instead of disconnecting on an unhandled action.
+---
+ .../protocol/packet/ClientPlayerPackets.java  | 14 ++++
+ .../packet/ClientPlayerPacketsTest.java       | 74 +++++++++++++++++++
+ 2 files changed, 88 insertions(+)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+index e3813201..cb049b27 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+@@ -75,6 +75,19 @@ public final class ClientPlayerPackets {
+         PacketFactory.sendJavaGameEvent(wrapper.user(), GameEventType.CHANGE_GAME_MODE, clientPlayer.javaGameMode().ordinal());
+     };
+ 
++    static void updateDestroyDirection(final ClientPlayerEntity clientPlayer, final BlockPosition position,
++                                       final Direction direction, final boolean serverAuthoritative) {
++        final ClientPlayerEntity.BlockBreakingInfo breakingInfo = clientPlayer.blockBreakingInfo();
++        if (breakingInfo == null || !breakingInfo.position().equals(position)) {
++            return;
++        }
++
++        clientPlayer.setBlockBreakingInfo(new ClientPlayerEntity.BlockBreakingInfo(position, direction));
++        if (serverAuthoritative) {
++            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.ContinueDestroyBlock, position, direction.ordinal()));
++        }
++    }
++
+     public static void register(final BedrockProtocol protocol) {
+         protocol.registerClientbound(ClientboundBedrockPackets.RESPAWN, ClientboundPackets26_3.RESPAWN, wrapper -> {
+             final Position3f position = wrapper.read(BedrockTypes.POSITION_3F); // position
+@@ -336,6 +349,7 @@ public final class ClientPlayerPackets {
+ 
+                     clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.StartDestroyBlock, position, direction.ordinal()));
+                 }
++                case CHANGE_DESTROY_DIRECTION -> updateDestroyDirection(clientPlayer, position, direction, gameSession.isBlockBreakingServerAuthoritative());
+                 case ABORT_DESTROY_BLOCK -> {
+                     clientPlayer.setBlockBreakingInfo(null);
+                     clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, 0/*TODO: Figure this value out*/));
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
+new file mode 100644
+index 00000000..2f5d6a6b
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
+@@ -0,0 +1,74 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.protocol.data.enums.Direction;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerActionType;
++import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Proxy;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class ClientPlayerPacketsTest {
++
++    @Test
++    void changingDestroyFaceUpdatesActiveMiningAndForwardsServerAuthoritativeInput() {
++        final ClientPlayerEntity player = player();
++        final BlockPosition position = new BlockPosition(3, 64, 5);
++        player.setBlockBreakingInfo(new ClientPlayerEntity.BlockBreakingInfo(position, Direction.NORTH));
++
++        ClientPlayerPackets.updateDestroyDirection(player, position, Direction.EAST, true);
++
++        assertEquals(Direction.EAST, player.blockBreakingInfo().direction());
++        assertEquals(1, player.authInputBlockActions().size());
++        final ClientPlayerEntity.AuthInputBlockAction action = player.authInputBlockActions().get(0);
++        assertEquals(PlayerActionType.ContinueDestroyBlock, action.action());
++        assertEquals(position, action.position());
++        assertEquals(Direction.EAST.ordinal(), action.direction());
++    }
++
++    @Test
++    void changingDestroyFaceKeepsClientAuthoritativeMiningForNextSwing() {
++        final ClientPlayerEntity player = player();
++        final BlockPosition position = new BlockPosition(3, 64, 5);
++        player.setBlockBreakingInfo(new ClientPlayerEntity.BlockBreakingInfo(position, Direction.NORTH));
++
++        ClientPlayerPackets.updateDestroyDirection(player, position, Direction.EAST, false);
++
++        assertEquals(Direction.EAST, player.blockBreakingInfo().direction());
++        assertTrue(player.authInputBlockActions().isEmpty());
++    }
++
++    @Test
++    void staleDestroyFaceDoesNotStartAnotherBlock() {
++        final ClientPlayerEntity player = player();
++        final BlockPosition position = new BlockPosition(3, 64, 5);
++        player.setBlockBreakingInfo(new ClientPlayerEntity.BlockBreakingInfo(position, Direction.NORTH));
++
++        ClientPlayerPackets.updateDestroyDirection(player, new BlockPosition(4, 64, 5), Direction.EAST, true);
++
++        assertEquals(Direction.NORTH, player.blockBreakingInfo().direction());
++        assertTrue(player.authInputBlockActions().isEmpty());
++    }
++
++    private static ClientPlayerEntity player() {
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, args) -> null);
++        return new ClientPlayerEntity(user, 1, UUID.randomUUID(), new PlayerAbilities(1, (byte) 0, (byte) 0));
++    }
++
++}
+-- 
+2.55.0
+

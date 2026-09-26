@@ -1,0 +1,265 @@
+From dde9af1c4860c406d324fe9a317034105fd908e8 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sat, 26 Sep 2026 19:50:34 +0200
+Subject: [PATCH] fix(interaction): mirror shield use into Bedrock sneak input
+
+Bedrock shields block while sneaking, but Java raises a shield with the use key. Track shield use separately from physical crouch and carry its effective sneak state through each auth input frame. Preserve physical crouch for dismount handling, and stop the synthetic state when use ends or the held shield changes.
+---
+ .../api/model/entity/ClientPlayerEntity.java  | 32 +++++++++++++
+ .../protocol/packet/ClientPlayerPackets.java  | 20 +++++---
+ .../protocol/packet/InteractionPackets.java   | 17 ++++++-
+ .../packet/ClientPlayerPacketsTest.java       | 47 +++++++++++++++++++
+ 4 files changed, 108 insertions(+), 8 deletions(-)
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
+index 57e75bd5..66d0e076 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
+@@ -35,6 +35,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.AbilitiesIndex;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
+ import net.raphimc.viabedrock.protocol.data.enums.java.*;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
++import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
+ import net.raphimc.viabedrock.protocol.model.EntityAttribute;
+ import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
+ import net.raphimc.viabedrock.protocol.model.Position3f;
+@@ -73,6 +74,8 @@ public class ClientPlayerEntity extends PlayerEntity {
+     private Set<InputFlag> prevInputFlags = EnumSet.noneOf(InputFlag.class);
+     private boolean horizontalCollision;
+     private boolean sneaking;
++    private boolean bedrockSneaking;
++    private InteractionHand shieldBlockingHand;
+     private boolean sprinting;
+     private boolean gliding;
+ 
+@@ -364,6 +367,35 @@ public class ClientPlayerEntity extends PlayerEntity {
+         this.sneaking = sneaking;
+     }
+ 
++    public boolean isShieldBlocking() {
++        return this.shieldBlockingHand != null;
++    }
++
++    public InteractionHand shieldBlockingHand() {
++        return this.shieldBlockingHand;
++    }
++
++    public void setShieldBlockingHand(final InteractionHand hand) {
++        this.shieldBlockingHand = hand;
++    }
++
++    public boolean isBedrockSneaking() {
++        return this.bedrockSneaking;
++    }
++
++    public void updateBedrockSneakingInput() {
++        final boolean shouldSneak = this.sneaking || this.isShieldBlocking();
++        if (shouldSneak) {
++            this.addAuthInputData(PlayerAuthInputData.SneakDown, PlayerAuthInputData.Sneaking,
++                    PlayerAuthInputData.WantDown, PlayerAuthInputData.SneakCurrentRaw);
++        }
++        if (shouldSneak != this.bedrockSneaking) {
++            this.addAuthInputData(shouldSneak ? PlayerAuthInputData.SneakPressedRaw : PlayerAuthInputData.SneakReleasedRaw,
++                    shouldSneak ? PlayerAuthInputData.StartSneaking : PlayerAuthInputData.StopSneaking);
++            this.bedrockSneaking = shouldSneak;
++        }
++    }
++
+     public boolean isSprinting() {
+         return this.sprinting;
+     }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+index 3333eafa..a0691c29 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+@@ -103,6 +103,7 @@ public final class ClientPlayerPackets {
+             switch (state) {
+                 case ReadyToSpawn -> {
+                     final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
++                    clientPlayer.setShieldBlockingHand(null);
+                     clientPlayer.setPosition(position);
+ 
+                     if (clientPlayer.isInitiallySpawned()) {
+@@ -501,6 +502,7 @@ public final class ClientPlayerPackets {
+             }
+ 
+             if (!clientPlayer.isInitiallySpawned() || clientPlayer.isDead()) {
++                clientPlayer.setShieldBlockingHand(null);
+                 wrapper.cancel();
+                 return;
+             }
+@@ -527,9 +529,6 @@ public final class ClientPlayerPackets {
+             if (clientPlayer.inputFlags().contains(InputFlag.JUMP)) {
+                 clientPlayer.addAuthInputData(PlayerAuthInputData.JumpDown, PlayerAuthInputData.Jumping, PlayerAuthInputData.WantUp, PlayerAuthInputData.JumpCurrentRaw);
+             }
+-            if (clientPlayer.inputFlags().contains(InputFlag.SHIFT)) {
+-                clientPlayer.addAuthInputData(PlayerAuthInputData.SneakDown, PlayerAuthInputData.Sneaking, PlayerAuthInputData.WantDown, PlayerAuthInputData.SneakCurrentRaw);
+-            }
+             if (clientPlayer.inputFlags().contains(InputFlag.SPRINT)) {
+                 clientPlayer.addAuthInputData(PlayerAuthInputData.SprintDown, PlayerAuthInputData.Sprinting);
+             }
+@@ -541,13 +540,22 @@ public final class ClientPlayerPackets {
+             }
+             if (clientPlayer.inputFlags().contains(InputFlag.SHIFT) && !prevInputFlags.contains(InputFlag.SHIFT)) {
+                 clientPlayer.setSneaking(true);
+-                clientPlayer.addAuthInputData(PlayerAuthInputData.SneakPressedRaw, PlayerAuthInputData.StartSneaking);
+             }
+             if (prevInputFlags.contains(InputFlag.SHIFT) && !clientPlayer.inputFlags().contains(InputFlag.SHIFT)) {
+                 clientPlayer.setSneaking(false);
+-                clientPlayer.addAuthInputData(PlayerAuthInputData.SneakReleasedRaw, PlayerAuthInputData.StopSneaking);
+             }
+ 
++            if (clientPlayer.isShieldBlocking()) {
++                final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
++                final BedrockItem usedItem = clientPlayer.shieldBlockingHand() == InteractionHand.OFF_HAND
++                        ? inventoryTracker.getOffhandContainer().getItem(0)
++                        : inventoryTracker.getInventoryContainer().getSelectedHotbarItem();
++                if (usedItem.identifier() != wrapper.user().get(ItemRewriter.class).getItems().getOrDefault("minecraft:shield", -1)) {
++                    clientPlayer.setShieldBlockingHand(null);
++                }
++            }
++            clientPlayer.updateBedrockSneakingInput();
++
+             final Position3f positionDelta = clientPlayer.position().subtract(prevPosition);
+             final Position3f velocity;
+             if (!clientPlayer.isInitiallySpawned() || clientPlayer.dimensionChangeInfo() != null || clientPlayer.abilities().getBooleanValue(AbilitiesIndex.Flying)) {
+@@ -573,7 +581,7 @@ public final class ClientPlayerPackets {
+             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().x()); // pitch
+             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().y()); // yaw
+             wrapper.write(BedrockTypes.POSITION_3F, clientPlayer.position()); // position
+-            wrapper.write(BedrockTypes.POSITION_2F, MathUtil.calculateMovementDirections(clientPlayer.authInputData(), clientPlayer.isSneaking())); // move vector
++            wrapper.write(BedrockTypes.POSITION_2F, MathUtil.calculateMovementDirections(clientPlayer.authInputData(), clientPlayer.isBedrockSneaking())); // move vector
+             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().z()); // head yaw
+             wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, clientPlayer.authInputData().size()); // input flags count
+             for (PlayerAuthInputData inputData : PlayerAuthInputData.values()) {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
+index d5bc5f4a..4a69f711 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
+@@ -35,6 +35,7 @@ import net.raphimc.viabedrock.protocol.model.inventory.InventoryActionData;
+ import net.raphimc.viabedrock.protocol.model.inventory.InventorySource;
+ import net.raphimc.viabedrock.protocol.model.inventory.InventoryTransactionData;
+ import net.raphimc.viabedrock.protocol.rewriter.InventoryTransactionRewriter;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.PlayerActionPacketFactory;
+@@ -67,6 +68,11 @@ public final class InteractionPackets {
+         final InventoryContainer inventory = wrapper.user().get(InventoryTracker.class).getInventoryContainer();
+ 
+         if (action == PlayerActionAction.RELEASE_USE_ITEM) {
++            final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
++            if (clientPlayer.isShieldBlocking()) {
++                clientPlayer.setShieldBlockingHand(null);
++                return true;
++            }
+             final BedrockInventoryTransaction transaction = new BedrockInventoryTransaction(
+                     0,
+                     null,
+@@ -76,7 +82,7 @@ public final class InteractionPackets {
+                             ItemReleaseActionType.Release,
+                             inventory.getSelectedHotbarSlot(),
+                             inventory.getSelectedHotbarItem(),
+-                            wrapper.user().get(EntityTracker.class).getClientPlayer().position()
++                            clientPlayer.position()
+                     )
+             );
+             final PacketWrapper transactionPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper.user());
+@@ -221,7 +227,6 @@ public final class InteractionPackets {
+     }
+ 
+     public static void register(final BedrockProtocol protocol) {
+-        // TODO: Track when the player start using item and send the StartUsingItem input data to the server.
+         protocol.registerServerbound(ServerboundPackets26_3.USE_ITEM, ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper -> {
+             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+             final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
+@@ -249,6 +254,14 @@ public final class InteractionPackets {
+                 return;
+             }
+ 
++            final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
++            final int shieldId = wrapper.user().get(ItemRewriter.class).getItems().getOrDefault("minecraft:shield", -1);
++            if (usedItem.identifier() == shieldId) {
++                clientPlayer.setShieldBlockingHand(hand);
++            } else {
++                clientPlayer.setShieldBlockingHand(null);
++            }
++
+             final BedrockInventoryTransaction inventoryTransaction = new BedrockInventoryTransaction(
+                     0, // legacy request id
+                     null,
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
+index 2f5d6a6b..19032ac2 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
+@@ -14,6 +14,8 @@ import com.viaversion.viaversion.api.minecraft.BlockPosition;
+ import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
+ import net.raphimc.viabedrock.protocol.data.enums.Direction;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerActionType;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputData;
++import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
+ import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
+ import org.junit.jupiter.api.Test;
+ 
+@@ -21,6 +23,7 @@ import java.lang.reflect.Proxy;
+ import java.util.UUID;
+ 
+ import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
+ import static org.junit.jupiter.api.Assertions.assertTrue;
+ 
+ class ClientPlayerPacketsTest {
+@@ -65,6 +68,50 @@ class ClientPlayerPacketsTest {
+         assertTrue(player.authInputBlockActions().isEmpty());
+     }
+ 
++    @Test
++    void shieldUseKeepsBedrockSneakActiveAcrossPhysicalSneakChanges() {
++        final ClientPlayerEntity player = player();
++        player.setShieldBlockingHand(InteractionHand.OFF_HAND);
++        player.updateBedrockSneakingInput();
++        assertTrue(player.isBedrockSneaking());
++        assertTrue(player.authInputData().contains(PlayerAuthInputData.StartSneaking));
++        assertTrue(player.authInputData().contains(PlayerAuthInputData.Sneaking));
++
++        player.authInputData().clear();
++        player.setSneaking(true);
++        player.updateBedrockSneakingInput();
++        assertTrue(player.authInputData().contains(PlayerAuthInputData.Sneaking));
++        assertFalse(player.authInputData().contains(PlayerAuthInputData.StartSneaking));
++        assertFalse(player.authInputData().contains(PlayerAuthInputData.StopSneaking));
++
++        player.authInputData().clear();
++        player.setShieldBlockingHand(null);
++        player.updateBedrockSneakingInput();
++        assertTrue(player.isBedrockSneaking());
++        assertFalse(player.authInputData().contains(PlayerAuthInputData.StopSneaking));
++
++        player.authInputData().clear();
++        player.setSneaking(false);
++        player.updateBedrockSneakingInput();
++        assertFalse(player.isBedrockSneaking());
++        assertTrue(player.authInputData().contains(PlayerAuthInputData.StopSneaking));
++    }
++
++    @Test
++    void releasingShieldUseStopsBedrockSneakWithoutPhysicalCrouch() {
++        final ClientPlayerEntity player = player();
++        player.setShieldBlockingHand(InteractionHand.MAIN_HAND);
++        player.updateBedrockSneakingInput();
++        player.authInputData().clear();
++
++        player.setShieldBlockingHand(null);
++        player.updateBedrockSneakingInput();
++
++        assertFalse(player.isBedrockSneaking());
++        assertTrue(player.authInputData().contains(PlayerAuthInputData.StopSneaking));
++        assertFalse(player.isSneaking());
++    }
++
+     private static ClientPlayerEntity player() {
+         final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
+                 new Class<?>[]{UserConnection.class}, (proxy, method, args) -> null);
+-- 
+2.55.0
+

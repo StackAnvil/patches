@@ -1,0 +1,373 @@
+From 603c17a4588cf4952ab465f40fa850c90f1331de Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sat, 26 Sep 2026 19:36:04 +0200
+Subject: [PATCH] fix(hud): translate remote player locations into waypoints
+
+Bedrock sends locator positions for players outside simulation distance through
+PlayerLocation. Translate those updates into Java tracked waypoints and remove
+them when Bedrock hides a player, the player leaves, or the dimension changes.
+
+The protocol 2193 packet carries both a variant index and a location
+discriminator; consume both fields before reading coordinates.
+---
+ .../viabedrock/protocol/BedrockProtocol.java  |  1 +
+ .../protocol/packet/HudPackets.java           |  1 +
+ .../protocol/packet/OtherPlayerPackets.java   | 35 +++++++
+ .../protocol/packet/WorldPackets.java         |  2 +
+ .../storage/PlayerWaypointTracker.java        | 93 +++++++++++++++++++
+ .../packet/PlayerLocationPacketTest.java      | 66 +++++++++++++
+ .../storage/PlayerWaypointTrackerTest.java    | 64 +++++++++++++
+ 7 files changed, 262 insertions(+)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerWaypointTracker.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerLocationPacketTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/PlayerWaypointTrackerTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+index 6e12a597..2cd6622a 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+@@ -148,6 +148,7 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
+         user.put(new PacketSyncStorage(user));
+         user.put(new ChannelStorage());
+         user.put(new PlayerListStorage());
++        user.put(new PlayerWaypointTracker(user));
+         user.put(new ScoreboardTracker());
+         user.put(new InventoryTracker(user));
+         user.put(new BreakingTracker(user));
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
+index 07b8856c..0f5050c3 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
+@@ -127,6 +127,7 @@ public final class HudPackets {
+                     for (UUID uuid : uuidsToRemove) {
+                         final Pair<Long, String> entry = playerListStorage.removePlayer(uuid);
+                         if (entry != null) {
++                            wrapper.user().get(PlayerWaypointTracker.class).remove(uuid);
+                             removeNames.add(entry.value());
+                             final Pair<ScoreboardObjective, ScoreboardEntry> scoreboardEntry = scoreboardTracker.getEntryForPlayer(entry.key());
+                             if (scoreboardEntry != null) {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
+index a906dcd8..cf7c90d0 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
+@@ -38,6 +38,7 @@ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.GameType;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PositionMode;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerLocationPacketType;
+ import net.raphimc.viabedrock.protocol.data.enums.java.Relative;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.EquipmentSlot;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerInfoUpdateAction;
+@@ -50,6 +51,8 @@ import net.raphimc.viabedrock.protocol.rewriter.GameTypeRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+ import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+ import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
++import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
++import net.raphimc.viabedrock.protocol.storage.PlayerWaypointTracker;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
+ import java.util.UUID;
+@@ -58,6 +61,24 @@ import java.util.logging.Level;
+ public final class OtherPlayerPackets {
+ 
+     public static void register(final BedrockProtocol protocol) {
++        protocol.registerClientbound(ClientboundBedrockPackets.PLAYER_LOCATION, null, wrapper -> {
++            wrapper.cancel();
++            final PlayerLocation location = readPlayerLocation(wrapper);
++            if (location == null) {
++                return;
++            }
++            final var player = wrapper.user().get(PlayerListStorage.class).getPlayer(location.uniqueId());
++            if (player == null) {
++                return;
++            }
++
++            final PlayerWaypointTracker waypoints = wrapper.user().get(PlayerWaypointTracker.class);
++            if (location.position() != null) {
++                waypoints.update(player.key(), location.position());
++            } else {
++                waypoints.remove(player.key());
++            }
++        });
+         protocol.registerClientbound(ClientboundBedrockPackets.ADD_PLAYER, ClientboundPackets26_3.ADD_ENTITY, wrapper -> {
+             final GameSessionStorage gameSession = wrapper.user().get(GameSessionStorage.class);
+             final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
+@@ -200,7 +221,21 @@ public final class OtherPlayerPackets {
+         });
+     }
+ 
++    static PlayerLocation readPlayerLocation(final PacketWrapper wrapper) {
++        final long uniqueId = wrapper.read(BedrockTypes.VAR_LONG); // target actor unique id
++        final int variant = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
++        final PlayerLocationPacketType type = PlayerLocationPacketType.getByValue(wrapper.read(BedrockTypes.VAR_INT));
++        if (type == null || variant != type.getValue()) {
++            return null;
++        }
++        return new PlayerLocation(uniqueId, type == PlayerLocationPacketType.PLAYER_LOCATION_COORDINATES
++            ? wrapper.read(BedrockTypes.POSITION_3F) : null);
++    }
++
+     private OtherPlayerPackets() {
+     }
+ 
++    record PlayerLocation(long uniqueId, Position3f position) {
++    }
++
+ }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+index d8061a7b..fbab221a 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+@@ -145,6 +145,8 @@ public final class WorldPackets {
+                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received CHANGE_DIMENSION packet for the same dimension");
+             }
+ 
++            wrapper.user().get(PlayerWaypointTracker.class).clear();
++
+             wrapper.user().put(new ChunkTracker(wrapper.user(), dimension));
+             final EntityTracker oldEntityTracker = wrapper.user().get(EntityTracker.class);
+             final ClientPlayerEntity clientPlayer = oldEntityTracker.getClientPlayer();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerWaypointTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerWaypointTracker.java
+new file mode 100644
+index 00000000..9bf7bbbc
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerWaypointTracker.java
+@@ -0,0 +1,93 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.StoredObject;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++
++import java.util.HashMap;
++import java.util.Map;
++import java.util.UUID;
++
++public final class PlayerWaypointTracker extends StoredObject {
++
++    private static final int TRACK = 0;
++    private static final int UNTRACK = 1;
++    private static final int UPDATE = 2;
++    private static final int EMPTY = 0;
++    private static final int VEC3I = 1;
++
++    private final Map<UUID, BlockPosition> positions = new HashMap<>();
++
++    public PlayerWaypointTracker(final UserConnection user) {
++        super(user);
++    }
++
++    public void update(final UUID uuid, final Position3f position) {
++        final BlockPosition blockPosition = new BlockPosition(
++            (int) Math.floor(position.x()),
++            (int) Math.floor(position.y()),
++            (int) Math.floor(position.z())
++        );
++        final BlockPosition previous = this.positions.put(uuid, blockPosition);
++        if (blockPosition.equals(previous)) {
++            return;
++        }
++
++        final PacketWrapper waypoint = PacketWrapper.create(ClientboundPackets26_3.TRACKED_WAYPOINT, this.user());
++        writeWaypoint(waypoint, previous == null ? TRACK : UPDATE, uuid, blockPosition);
++        waypoint.send(BedrockProtocol.class);
++    }
++
++    public void remove(final UUID uuid) {
++        if (this.positions.remove(uuid) == null) {
++            return;
++        }
++
++        final PacketWrapper waypoint = PacketWrapper.create(ClientboundPackets26_3.TRACKED_WAYPOINT, this.user());
++        writeWaypoint(waypoint, UNTRACK, uuid, null);
++        waypoint.send(BedrockProtocol.class);
++    }
++
++    public void clear() {
++        for (UUID uuid : this.positions.keySet().toArray(new UUID[0])) {
++            this.remove(uuid);
++        }
++    }
++
++    static void writeWaypoint(final PacketWrapper wrapper, final int operation, final UUID uuid, final BlockPosition position) {
++        wrapper.write(Types.VAR_INT, operation);
++        wrapper.write(Types.BOOLEAN, true); // UUID identifier, not a string
++        wrapper.write(Types.UUID, uuid);
++        wrapper.write(Types.STRING, "minecraft:default"); // icon style
++        wrapper.write(Types.BOOLEAN, false); // no icon color
++        wrapper.write(Types.VAR_INT, position == null ? EMPTY : VEC3I);
++        if (position != null) {
++            wrapper.write(Types.VAR_INT, position.x());
++            wrapper.write(Types.VAR_INT, position.y());
++            wrapper.write(Types.VAR_INT, position.z());
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerLocationPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerLocationPacketTest.java
+new file mode 100644
+index 00000000..1d0a1c37
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerLocationPacketTest.java
+@@ -0,0 +1,66 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++class PlayerLocationPacketTest {
++
++    @Test
++    void readsBothVariantAndLocationDiscriminators() throws Exception {
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            BedrockTypes.VAR_LONG.write(buffer, 42L);
++            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 0);
++            BedrockTypes.VAR_INT.write(buffer, 0);
++            BedrockTypes.POSITION_3F.write(buffer, new Position3f(-8.5F, 64F, 200.25F));
++
++            final var location = OtherPlayerPackets.readPlayerLocation(
++                new PacketWrapperImpl(ClientboundBedrockPackets.PLAYER_LOCATION, buffer, null));
++            assertNotNull(location);
++            assertEquals(42L, location.uniqueId());
++            assertEquals(-8.5F, location.position().x());
++            assertEquals(64F, location.position().y());
++            assertEquals(200.25F, location.position().z());
++            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void hidesWithoutReadingCoordinates() throws Exception {
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            BedrockTypes.VAR_LONG.write(buffer, 42L);
++            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 1);
++            BedrockTypes.VAR_INT.write(buffer, 1);
++
++            final var location = OtherPlayerPackets.readPlayerLocation(
++                new PacketWrapperImpl(ClientboundBedrockPackets.PLAYER_LOCATION, buffer, null));
++            assertNotNull(location);
++            assertNull(location.position());
++            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/PlayerWaypointTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/PlayerWaypointTrackerTest.java
+new file mode 100644
+index 00000000..f86ae586
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/PlayerWaypointTrackerTest.java
+@@ -0,0 +1,64 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import org.junit.jupiter.api.Test;
++
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class PlayerWaypointTrackerTest {
++
++    @Test
++    void encodesPlayerPositionAndHideAsJavaWaypoints() throws Exception {
++        final UUID uuid = UUID.randomUUID();
++        final BlockPosition position = new BlockPosition(-8, 64, 200);
++
++        assertWaypoint(uuid, position, 0, 1);
++        assertWaypoint(uuid, position, 2, 1);
++        assertWaypoint(uuid, null, 1, 0);
++    }
++
++    private static void assertWaypoint(final UUID uuid, final BlockPosition position, final int operation, final int type) throws Exception {
++        final PacketWrapper wrapper = new PacketWrapperImpl(ClientboundPackets26_3.TRACKED_WAYPOINT, null, null);
++        PlayerWaypointTracker.writeWaypoint(wrapper, operation, uuid, position);
++
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            wrapper.writeToBuffer(buffer);
++            assertEquals(ClientboundPackets26_3.TRACKED_WAYPOINT.getId(), Types.VAR_INT.read(buffer));
++            assertEquals(operation, Types.VAR_INT.read(buffer));
++            assertTrue(Types.BOOLEAN.read(buffer));
++            assertEquals(uuid, Types.UUID.read(buffer));
++            Types.STRING.read(buffer);
++            assertFalse(Types.BOOLEAN.read(buffer));
++            assertEquals(type, Types.VAR_INT.read(buffer));
++            if (position != null) {
++                assertEquals(position.x(), Types.VAR_INT.read(buffer));
++                assertEquals(position.y(), Types.VAR_INT.read(buffer));
++                assertEquals(position.z(), Types.VAR_INT.read(buffer));
++            }
++            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
++        }
++    }
++
++}
+-- 
+2.55.0
+

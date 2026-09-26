@@ -1,0 +1,162 @@
+From b01f0f72f8417e27ec85b16a97c16a54c9b06f4e Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sat, 26 Sep 2026 19:34:15 +0200
+Subject: [PATCH] fix(interaction): forward offhand item use to Bedrock
+
+Bedrock protocol 2193 identifies the used hand in item-use transactions. Route Java offhand use and block interactions with the offhand slot and item so supported offhand tools and blocks reach the server.
+---
+ .../protocol/packet/ClientPlayerPackets.java  | 12 ++--
+ .../protocol/packet/InteractionPackets.java   | 58 ++++++++++++-------
+ 2 files changed, 42 insertions(+), 28 deletions(-)
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+index cb049b27..3333eafa 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+@@ -414,13 +414,11 @@ public final class ClientPlayerPackets {
+                 final InteractionHand hand = InteractionHand.values()[wrapper.read(Types.VAR_INT)];
+                 final Vector3d location = wrapper.read(Types.LOW_PRECISION_VECTOR);
+                 wrapper.read(Types.BOOLEAN); // using secondary action
+-                if (hand == InteractionHand.MAIN_HAND) {
+-                    InteractionPackets.sendUseItemOnBlock(
+-                            wrapper.user(), itemFrame.position(), itemFrame.facing(),
+-                            new Position3f((float) location.x() + 0.5F, (float) location.y() + 0.5F, (float) location.z() + 0.5F),
+-                            false
+-                    );
+-                }
++                InteractionPackets.sendUseItemOnBlock(
++                        wrapper.user(), hand, itemFrame.position(), itemFrame.facing(),
++                        new Position3f((float) location.x() + 0.5F, (float) location.y() + 0.5F, (float) location.z() + 0.5F),
++                        false
++                );
+                 return;
+             }
+             final Entity entity = entityTracker.getEntityByJid(entityId);
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
+index ea648dc1..d5bc5f4a 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
+@@ -132,7 +132,7 @@ public final class InteractionPackets {
+         return true;
+     }
+ 
+-    public static void sendUseItemOnBlock(final UserConnection user, final BlockPosition position, final int faceInt,
++    public static void sendUseItemOnBlock(final UserConnection user, final InteractionHand hand, final BlockPosition position, final int faceInt,
+                                           final Position3f clickPosition, final boolean insideBlock) {
+         final Direction direction = Direction.getFromVerticalId(faceInt);
+         if (direction == null) {
+@@ -144,6 +144,17 @@ public final class InteractionPackets {
+         final InventoryTracker inventoryTracker = user.get(InventoryTracker.class);
+         final ChunkTracker chunkTracker = user.get(ChunkTracker.class);
+         final InventoryTransactionRewriter inventoryTransactionRewriter = user.get(InventoryTransactionRewriter.class);
++        final HandSlot bedrockHand = hand == InteractionHand.OFF_HAND ? HandSlot.Offhand : HandSlot.Mainhand;
++        final int slot = hand == InteractionHand.OFF_HAND ? 0 : inventoryTracker.getInventoryContainer().getSelectedHotbarSlot();
++        final int containerId = hand == InteractionHand.OFF_HAND
++                ? ContainerID.CONTAINER_ID_OFFHAND.getValue()
++                : ContainerID.CONTAINER_ID_INVENTORY.getValue();
++        final BedrockItem usedItem = hand == InteractionHand.OFF_HAND
++                ? inventoryTracker.getOffhandContainer().getItem(0)
++                : inventoryTracker.getInventoryContainer().getSelectedHotbarItem();
++        if (hand == InteractionHand.OFF_HAND && usedItem.isEmpty()) {
++            return;
++        }
+ 
+         // The bedrock client will send a start item use on action to the server first.
+         PlayerActionPacketFactory.sendBedrockPlayerAction(
+@@ -158,7 +169,7 @@ public final class InteractionPackets {
+         // This is the main packet that the bedrock client use to interact with block.The rest of the
+         final PacketWrapper transactionPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, user);
+ 
+-        BedrockItem predictedToItem = inventoryTracker.getInventoryContainer().getSelectedHotbarItem().copy();
++        BedrockItem predictedToItem = usedItem.copy();
+         // This is not entirely correct, but at least it's more accurate than not sending actions or sending the original item data.
+         if (predictedToItem.blockRuntimeId() != 0 && clientPlayer.javaGameMode() != GameMode.CREATIVE) {
+             predictedToItem.setAmount(predictedToItem.amount() - 1);
+@@ -172,9 +183,9 @@ public final class InteractionPackets {
+                 null,
+                 List.of(
+                         new InventoryActionData(
+-                                new InventorySource(InventorySourceType.Container_Inventory, ContainerID.CONTAINER_ID_INVENTORY.getValue(), InventorySourceFlags.No_Flag),
+-                                inventoryTracker.getInventoryContainer().getSelectedHotbarSlot(),
+-                                inventoryTracker.getInventoryContainer().getSelectedHotbarItem(),
++                                new InventorySource(InventorySourceType.Container_Inventory, containerId, InventorySourceFlags.No_Flag),
++                                slot,
++                                usedItem,
+                                 predictedToItem
+                         )
+                 ),
+@@ -184,9 +195,9 @@ public final class InteractionPackets {
+                         ItemUseTriggerType.Player_Input,
+                         position,
+                         faceInt,
+-                        inventoryTracker.getInventoryContainer().getSelectedHotbarSlot(),
+-                        HandSlot.Mainhand,
+-                        inventoryTracker.getInventoryContainer().getSelectedHotbarItem(),
++                        slot,
++                        bedrockHand,
++                        usedItem,
+                         clientPlayer.position(),
+                         clickPosition,
+                         chunkTracker.getBlockState(position),
+@@ -213,17 +224,27 @@ public final class InteractionPackets {
+         // TODO: Track when the player start using item and send the StartUsingItem input data to the server.
+         protocol.registerServerbound(ServerboundPackets26_3.USE_ITEM, ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper -> {
+             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+-            final InventoryContainer inventoryContainer = wrapper.user().get(InventoryTracker.class).getInventoryContainer();
++            final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
++            final InventoryContainer inventoryContainer = inventoryTracker.getInventoryContainer();
+             final InventoryTransactionRewriter inventoryTransactionRewriter = wrapper.user().get(InventoryTransactionRewriter.class);
+ 
+-            final int hand = wrapper.read(Types.VAR_INT); // hand
++            final int javaHand = wrapper.read(Types.VAR_INT); // hand
+             wrapper.read(Types.VAR_INT); // sequence
+             wrapper.read(Types.FLOAT); // yaw
+             wrapper.read(Types.FLOAT); // pitch
+ 
+-            // Bedrock can't hold the majority of item in offhand and can't use any either.
+             // TODO: We need to handle cases where the item changes, or it affect player movement (eg: eating/blocking/etc)
+-            if (hand != InteractionHand.MAIN_HAND.ordinal()) {
++            if (javaHand < 0 || javaHand >= InteractionHand.values().length) {
++                wrapper.cancel();
++                return;
++            }
++            final InteractionHand hand = InteractionHand.values()[javaHand];
++            final HandSlot bedrockHand = hand == InteractionHand.OFF_HAND ? HandSlot.Offhand : HandSlot.Mainhand;
++            final int slot = hand == InteractionHand.OFF_HAND ? 0 : inventoryContainer.getSelectedHotbarSlot();
++            final BedrockItem usedItem = hand == InteractionHand.OFF_HAND
++                    ? inventoryTracker.getOffhandContainer().getItem(0)
++                    : inventoryContainer.getSelectedHotbarItem();
++            if (hand == InteractionHand.OFF_HAND && usedItem.isEmpty()) {
+                 wrapper.cancel();
+                 return;
+             }
+@@ -238,9 +259,9 @@ public final class InteractionPackets {
+                             ItemUseTriggerType.Unknown,
+                             new BlockPosition(0, 0, 0), // block position
+                             255, // block face
+-                            inventoryContainer.getSelectedHotbarSlot(),
+-                            HandSlot.Mainhand,
+-                            inventoryContainer.getSelectedHotbarItem(),
++                            slot,
++                            bedrockHand,
++                            usedItem,
+                             entityTracker.getClientPlayer().position(),
+                             Position3f.ZERO, // click position
+                             0, // block runtime id
+@@ -269,12 +290,7 @@ public final class InteractionPackets {
+             // Send back block changed ack with the sequence, this will help with ghost blocks.
+             PacketFactory.sendJavaBlockChangedAck(wrapper.user(), wrapper.read(Types.VAR_INT));
+ 
+-            // The player can only interact using the main hand on Bedrock!
+-            if (hand != InteractionHand.MAIN_HAND) {
+-                return;
+-            }
+-
+-            sendUseItemOnBlock(wrapper.user(), position, faceInt, clickPosition, insideBlock);
++            sendUseItemOnBlock(wrapper.user(), hand, position, faceInt, clickPosition, insideBlock);
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.INVENTORY_TRANSACTION, null, wrapper -> {
+             final InventoryTransactionRewriter inventoryTransactionRewriter = wrapper.user().get(InventoryTransactionRewriter.class);
+-- 
+2.55.0
+
