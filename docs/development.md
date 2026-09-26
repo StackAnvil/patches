@@ -50,6 +50,8 @@ bun run test:integration
 
 Use `--modpack-only` to skip the plain Java cases. To update the pinned modpack, run `bun run integration:modpack:update`. You can select a specific 26.3 release with `bun run integration:modpack:update --version VERSION`. Commit both the `.mrpack` and its JSON lock file. Run the join suite after an update.
 
+Use `--entity-probe`, `--gameplay-probe`, or `--resource-pack-probe` with `--route java-bedrock` to run the Bedrock probes. Select individual gameplay cases with `--gameplay-cases case-one,case-two`. See [the Bedrock probe guide](bedrock-test-packs.md) for case IDs, assertions, and known limits.
+
 The suite creates managed Prism instances named `StackAnvil Integration 26.3` and `Fabulously Optimized StackAnvil Integration 26.3`. It leaves your other instances alone. Server data and logs stay under `.stackanvil/integration/`. Native screenshots and HTTPS flows stay under `.stackanvil/captures/`. The test removes its temporary Bedrock server entry and stops only processes it started. The full join suite needs signed-in game clients. GitHub hosted CI runs the tooling tests and build, but does not run account-based game joins.
 
 The renderer regression from [this client log](https://mclo.gs/r01cqUJ) was a cast from a vanilla entity render state to the Bedrock renderer's state. The feature patch now selects its renderer only for tracked Bedrock actors and accepts a vanilla state safely. A focused Java test calls that failure path directly. The Java server join case also runs with Fabulously Optimized and a vanilla interaction entity in view. The local lab sets SDL3 to use EGL so Iris can start with OpenGL on the private display.

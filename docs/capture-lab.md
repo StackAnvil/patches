@@ -37,10 +37,16 @@ bun run capture ui screenshot realms-before --client bedrock
 bun run capture ui pixel 0.36 0.28 --client bedrock
 bun run capture ui key Return --client bedrock
 bun run capture ui click 0.50 0.60 --client bedrock
+bun run capture ui click 0.50 0.50 right --client java
+bun run capture ui key-hold a 1400 --client java
+bun run capture ui mouse-hold 0.50 0.50 left 1200 --client java
+bun run capture ui button-hold right 150 --client java
 bun run capture ui screenshot java-connected --client java
 ```
 
-Click and pixel coordinates are fractions of the chosen client window, from 0 to 1. `ui pixel` prints the red, green, and blue values at one point without changing focus. Use `--window-id` if more than one window matches. `ui key` accepts names such as `Escape`, `Return`, and `Control+b`. Use `bun run capture ui type "127.0.0.1"` to enter lowercase ASCII text, digits, spaces, periods, or hyphens in a focused field. A scenario JSON file can combine `mark`, `wait`, `screenshot`, `key`, `type`, `click`, `videoStart`, and `videoStop` steps. Run the example with `bun run capture ui run scenarios/realm-hub-observe.json`.
+Click and pixel coordinates are fractions of the chosen client window, from 0 to 1. `ui pixel` prints the red, green, and blue values at one point without changing focus. Use `--window-id` if more than one window matches. `ui key` accepts names such as `Escape`, `Return`, and `Control+b`. `ui key-hold`, `ui mouse-hold`, and `ui button-hold` hold input for 1 to 10000 ms on the private display. `button-hold` leaves the cursor in place. Use `bun run capture ui type "127.0.0.1"` to enter lowercase ASCII text, digits, spaces, periods, or hyphens in a focused field. A scenario JSON file can combine `mark`, `wait`, `screenshot`, `key`, `keyHold`, `type`, `click`, `mouseHold`, `buttonHold`, `videoStart`, and `videoStop` steps. Run the example with `bun run capture ui run scenarios/realm-hub-observe.json`.
+
+For an integration run without a capture session, pass `--output-dir` to `ui screenshot`. The gameplay probe saves its screenshots under `.stackanvil/integration/runs/`.
 
 ## Record before and after video
 

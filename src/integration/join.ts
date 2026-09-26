@@ -4,6 +4,7 @@ export interface JoinProbe {
   route: JoinRoute;
   serverLog(): Promise<string>;
   clientLog(): Promise<string>;
+  connectionLog?(): Promise<string>;
   clientAlive(): boolean;
   onJoin?(player: string): void | Promise<void>;
   timeoutMs: number;
@@ -23,11 +24,16 @@ export async function waitForJoin(probe: JoinProbe): Promise<string> {
   let joinedAt: number | undefined;
   let player: string | undefined;
   while (Date.now() - started < probe.timeoutMs) {
-    const [server, client] = await Promise.all([probe.serverLog(), probe.clientLog()]);
+    const [server, client, connection] = await Promise.all([
+      probe.serverLog(), probe.clientLog(), probe.connectionLog?.() ?? Promise.resolve(""),
+    ]);
     if (/\b(?:ReportedException|ClassCastException|Crash report saved to|Exception in thread)\b/.test(client)) {
       throw new Error(`Client crashed on ${probe.route}.`);
     }
     if (!probe.clientAlive()) throw new Error(`Client exited before the ${probe.route} stability check finished.`);
+    const disconnect = connection.replace(/\x1b\[[0-9;]*m/g, "").split("\n")
+      .find((line) => line.includes("[SERVER DISCONNECT]") || line.includes("[PROXY KICK]"));
+    if (disconnect) throw new Error(`Proxy closed the ${probe.route} connection: ${disconnect.slice(disconnect.indexOf("["))}`);
     const current = joinedPlayer(probe.route, server);
     if (current && !joinedAt) {
       joinedAt = Date.now();

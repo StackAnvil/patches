@@ -1,5 +1,6 @@
 import { system, world } from "@minecraft/server";
 import { catalog } from "./catalog.js";
+import { gameplayIds, prepareGameplay, resetGameplay, verifyGameplay } from "./gameplay.js";
 
 const TAG = "viabedrock_entity_probe";
 const entries = new Map(catalog.map((entry) => [entry.type, entry]));
@@ -11,14 +12,20 @@ const scenarios = [
   { name: "creeper-prime", group: "status", type: "minecraft:creeper", run: (entity) => entity.triggerEvent("minecraft:start_exploding_forced") },
   { name: "zombie-convert", group: "status", type: "minecraft:zombie", run: (entity) => entity.triggerEvent("minecraft:start_transforming") },
   { name: "ravager-roar", group: "status", type: "minecraft:ravager", run: (entity) => entity.triggerEvent("minecraft:start_roar") },
-  { name: "name", group: "metadata", type: "minecraft:cow", run: (entity) => { entity.nameTag = "ViaBedrock metadata probe"; } },
+  { name: "name", group: "metadata", type: "minecraft:cow", run: (entity) => { entity.nameTag = "ViaBedrock metadata probe"; },
+    verify: (entity) => entity.nameTag === "ViaBedrock metadata probe" },
   { name: "fire", group: "metadata", type: "minecraft:cow", run: (entity) => entity.setOnFire(8, false) },
-  { name: "invisible", group: "metadata", type: "minecraft:cow", run: (entity) => entity.addEffect("invisibility", 160) },
-  { name: "effect", group: "metadata", type: "minecraft:cow", run: (entity) => entity.addEffect("speed", 160, { amplifier: 1 }) },
+  { name: "invisible", group: "metadata", type: "minecraft:cow", run: (entity) => entity.addEffect("invisibility", 160),
+    verify: (entity) => Boolean(entity.getEffect("invisibility")) },
+  { name: "effect", group: "metadata", type: "minecraft:cow", run: (entity) => entity.addEffect("speed", 160, { amplifier: 1 }),
+    verify: (entity) => entity.getEffect("speed")?.amplifier === 1 },
   { name: "sheared", group: "metadata", type: "minecraft:sheep", run: (entity) => entity.triggerEvent("minecraft:on_sheared") },
-  { name: "wolf-variant", group: "metadata", type: "minecraft:wolf", run: (entity) => entity.setProperty("minecraft:sound_variant", "grumpy") },
-  { name: "bee-nectar", group: "metadata", type: "minecraft:bee", run: (entity) => entity.setProperty("minecraft:has_nectar", true) },
-  { name: "copper-oxidation", group: "metadata", type: "minecraft:copper_golem", run: (entity) => entity.setProperty("minecraft:oxidation_level", "oxidized") },
+  { name: "wolf-variant", group: "metadata", type: "minecraft:wolf", run: (entity) => entity.setProperty("minecraft:sound_variant", "grumpy"),
+    verify: (entity) => entity.getProperty("minecraft:sound_variant") === "grumpy" },
+  { name: "bee-nectar", group: "metadata", type: "minecraft:bee", run: (entity) => entity.setProperty("minecraft:has_nectar", true),
+    verify: (entity) => entity.getProperty("minecraft:has_nectar") === true },
+  { name: "copper-oxidation", group: "metadata", type: "minecraft:copper_golem", run: (entity) => entity.setProperty("minecraft:oxidation_level", "oxidized"),
+    verify: (entity) => entity.getProperty("minecraft:oxidation_level") === "oxidized" },
 ];
 
 let queue = [];
@@ -53,7 +60,7 @@ function clearProbeEntities() {
   }
 }
 
-function execute(test, source, quiet = false) {
+async function execute(test, source, quiet = false) {
   const player = currentPlayer(source);
   if (!player) {
     say("A player must be online to locate the probe.");
@@ -75,7 +82,15 @@ function execute(test, source, quiet = false) {
     if (test.kind === "property") entity.setProperty(test.property, test.value);
     if (test.kind === "scenario") test.run(entity);
 
-    say(`${test.label}: script accepted the action. Inspect the Bedrock packet trace.`, quiet);
+    await new Promise((resolve) => system.runTimeout(() => resolve(), 1));
+    const verified = test.kind === "property" ? entity.getProperty(test.property) === test.value
+      : test.verify ? test.verify(entity) : true;
+    if (!verified) {
+      say(`${test.label}: server state did not match the requested value.`, quiet);
+      return false;
+    }
+
+    say(`${test.label}: script action accepted${test.verify || test.kind === "property" ? " and server state verified" : ""}. Inspect the Bedrock packet trace.`, quiet);
     return true;
   } catch (error) {
     say(`${test.label}: failed: ${error}`, quiet);
@@ -115,7 +130,7 @@ function stop() {
   interval = undefined;
 }
 
-function next() {
+async function next() {
   if (position >= queue.length) {
     stop();
     say(`${queueGroup} sweep complete: ${queue.length} attempted, ${passed} passed, ${failed} failed.`);
@@ -123,7 +138,7 @@ function next() {
   }
   const test = queue[position++];
   say(`Case ${position}/${queue.length}: ${test.label}`, interval !== undefined && position % 25 !== 1);
-  if (execute(test, operator, interval !== undefined)) passed++;
+  if (await execute(test, operator, interval !== undefined)) passed++;
   else failed++;
 }
 
@@ -141,9 +156,9 @@ function begin(cases, source, automatic, group) {
   operator = currentPlayer(source);
   say(`${cases.length} cases queued. Use /scriptevent vbprobe:next or /scriptevent vbprobe:auto.`);
   if (automatic) {
-    interval = system.runInterval(next, 40);
+    interval = system.runInterval(() => { void next(); }, 40);
   } else if (cases.length > 0) {
-    next();
+    void next();
   }
 }
 
@@ -163,7 +178,16 @@ function handle(event) {
 
   switch (action) {
     case "help":
-      say("Commands: status, metadata, all, events <type|all>, properties <type|all>, event <type> <name>, property <type> <name> <value>, next, auto, stop, clear.");
+      say("Commands: status, metadata, all, events, properties, event, property, prepare <case> <run>, verify <case> <run>, cases, next, auto, stop, clear.");
+      return;
+    case "cases":
+      say(`Gameplay cases: ${gameplayIds().join(", ")}`);
+      return;
+    case "prepare":
+      void prepareGameplay(args[0], args[1], currentPlayer(source));
+      return;
+    case "verify":
+      verifyGameplay(args[0], args[1], currentPlayer(source));
       return;
     case "status":
     case "metadata":
@@ -185,7 +209,7 @@ function handle(event) {
         say("Unknown type or event in the vanilla catalog.");
         return;
       }
-      execute({ kind: "event", type: entry.type, event: name, label: `${entry.type} ${name}` }, source);
+      void execute({ kind: "event", type: entry.type, event: name, label: `${entry.type} ${name}` }, source);
       return;
     }
     case "property": {
@@ -201,14 +225,14 @@ function handle(event) {
         say(`Invalid value. Use one of: ${definition.values.join(", ")}`);
         return;
       }
-      execute({ kind: "property", type: entry.type, property: name, value, label: `${entry.type} ${name}=${value}` }, source);
+      void execute({ kind: "property", type: entry.type, property: name, value, label: `${entry.type} ${name}=${value}` }, source);
       return;
     }
     case "next":
-      next();
+      void next();
       return;
     case "auto":
-      if (interval === undefined && position < queue.length) interval = system.runInterval(next, 40);
+      if (interval === undefined && position < queue.length) interval = system.runInterval(() => { void next(); }, 40);
       say("Automatic sweep started. Each case runs 40 ticks apart.");
       return;
     case "stop":
@@ -220,6 +244,7 @@ function handle(event) {
       queue = [];
       position = 0;
       clearProbeEntities();
+      resetGameplay();
       say("Probe entities removed.");
       return;
     default:

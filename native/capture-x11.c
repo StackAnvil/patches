@@ -161,11 +161,30 @@ int main(int argc, char **argv) {
             }
             XResizeWindow(display, window, (unsigned)width, (unsigned)height);
             XFlush(display);
-        } else if (strcmp(argv[1], "click") == 0 && argc == 5) {
+        } else if (strcmp(argv[1], "button-hold") == 0 && argc == 5) {
+            int button = strcmp(argv[3], "left") == 0 ? 1 : strcmp(argv[3], "right") == 0 ? 3 : 0;
+            int duration_ms = atoi(argv[4]);
+            if (!button || duration_ms < 1 || duration_ms > 10000) {
+                fprintf(stderr, "Use left or right and a hold of 1 to 10000 ms\n"); return 1;
+            }
+            XRaiseWindow(display, window);
+            XSetInputFocus(display, window, RevertToParent, CurrentTime);
+            XTestFakeButtonEvent(display, button, True, CurrentTime);
+            XFlush(display);
+            usleep((useconds_t)duration_ms * 1000);
+            XTestFakeButtonEvent(display, button, False, CurrentTime);
+            XFlush(display);
+        } else if ((strcmp(argv[1], "click") == 0 && (argc == 5 || argc == 6))
+                   || (strcmp(argv[1], "mouse-hold") == 0 && argc == 7)) {
             int x = atoi(argv[3]), y = atoi(argv[4]);
             if (x < 0 || y < 0 || x >= attributes.width || y >= attributes.height) {
                 fprintf(stderr, "Click is outside the window\n"); return 1;
             }
+            const char *button_name = argc >= 6 ? argv[5] : "left";
+            int button = strcmp(button_name, "left") == 0 ? 1 : strcmp(button_name, "right") == 0 ? 3 : 0;
+            if (!button) { fprintf(stderr, "Use left or right mouse button\n"); return 1; }
+            int duration_ms = strcmp(argv[1], "mouse-hold") == 0 ? atoi(argv[6]) : 50;
+            if (duration_ms < 1 || duration_ms > 10000) { fprintf(stderr, "Mouse hold must be 1 to 10000 ms\n"); return 1; }
             int root_x, root_y;
             Window child;
             XTranslateCoordinates(display, window, root, x, y, &root_x, &root_y, &child);
@@ -174,10 +193,10 @@ int main(int argc, char **argv) {
             XTestFakeMotionEvent(display, DefaultScreen(display), root_x, root_y, CurrentTime);
             XFlush(display);
             usleep(50000);
-            XTestFakeButtonEvent(display, 1, True, CurrentTime);
+            XTestFakeButtonEvent(display, button, True, CurrentTime);
             XFlush(display);
-            usleep(50000);
-            XTestFakeButtonEvent(display, 1, False, CurrentTime);
+            usleep((useconds_t)duration_ms * 1000);
+            XTestFakeButtonEvent(display, button, False, CurrentTime);
             XFlush(display);
         } else if (strcmp(argv[1], "type") == 0 && argc == 4) {
             XRaiseWindow(display, window);
@@ -197,7 +216,8 @@ int main(int argc, char **argv) {
                 XFlush(display);
                 usleep(30000);
             }
-        } else if (strcmp(argv[1], "key") == 0 && argc == 4) {
+        } else if ((strcmp(argv[1], "key") == 0 && argc == 4)
+                   || (strcmp(argv[1], "key-hold") == 0 && argc == 5)) {
             char *sequence = strdup(argv[3]);
             char *position = NULL;
             KeyCode codes[8];
@@ -212,13 +232,17 @@ int main(int argc, char **argv) {
             }
             free(sequence);
             if (!length) { fprintf(stderr, "No key specified\n"); return 1; }
+            int duration_ms = strcmp(argv[1], "key-hold") == 0 ? atoi(argv[4]) : 1;
+            if (duration_ms < 1 || duration_ms > 10000) { fprintf(stderr, "Key hold must be 1 to 10000 ms\n"); return 1; }
             XRaiseWindow(display, window);
             XSetInputFocus(display, window, RevertToParent, CurrentTime);
             for (int i = 0; i < length; i++) XTestFakeKeyEvent(display, codes[i], True, CurrentTime);
+            XFlush(display);
+            usleep((useconds_t)duration_ms * 1000);
             for (int i = length - 1; i >= 0; i--) XTestFakeKeyEvent(display, codes[i], False, CurrentTime);
             XFlush(display);
-        } else { fprintf(stderr, "Usage: capture-x11 list|pixel ID X Y|screenshot ID FILE|resize ID WIDTH HEIGHT|click ID X Y|key ID NAME\n"); return 2; }
-    } else { fprintf(stderr, "Usage: capture-x11 list|pixel ID X Y|screenshot ID FILE|resize ID WIDTH HEIGHT|click ID X Y|key ID NAME\n"); return 2; }
+        } else { fprintf(stderr, "Usage: capture-x11 list|pixel ID X Y|screenshot ID FILE|resize ID WIDTH HEIGHT|click ID X Y [left|right]|mouse-hold ID X Y BUTTON MS|button-hold ID BUTTON MS|key ID NAME|key-hold ID NAME MS\n"); return 2; }
+    } else { fprintf(stderr, "Usage: capture-x11 list|pixel ID X Y|screenshot ID FILE|resize ID WIDTH HEIGHT|click ID X Y [left|right]|mouse-hold ID X Y BUTTON MS|button-hold ID BUTTON MS|key ID NAME|key-hold ID NAME MS\n"); return 2; }
     XCloseDisplay(display);
     return 0;
 }

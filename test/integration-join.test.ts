@@ -34,3 +34,12 @@ test("a Bedrock disconnect before the dwell period fails", async () => {
   })).rejects.toThrow();
   expect(joined).toBe(true);
 });
+
+test("a proxy disconnect during pack negotiation fails before the join timeout", async () => {
+  await expect(waitForJoin({
+    route: "java-bedrock", timeoutMs: 1000, dwellMs: 100, pollMs: 1,
+    serverLog: async () => "Player connected: AlexProgrammerDE",
+    clientLog: async () => "", connectionLog: async () => "[SERVER DISCONNECT] Packet violation warning: PacketMalformed",
+    clientAlive: () => true,
+  })).rejects.toThrow("PacketMalformed");
+});
