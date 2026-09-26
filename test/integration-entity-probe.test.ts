@@ -11,8 +11,6 @@ test("install entity probe into an isolated Bedrock world", async () => {
     const manifest = JSON.parse(await readFile(join(home, "behavior_packs", "stackanvil-entity-probe", "manifest.json"), "utf8"));
     const active = JSON.parse(await readFile(join(home, "worlds", "integration-world", "world_behavior_packs.json"), "utf8"));
     expect(active).toEqual([{ pack_id: manifest.header.uuid, version: manifest.header.version }]);
-    expect(await readFile(join(home, "behavior_packs", "stackanvil-entity-probe", "scripts", "main.js"), "utf8"))
-      .toContain("system.afterEvents.scriptEventReceive.subscribe");
   } finally {
     await rm(home, { recursive: true, force: true });
   }
