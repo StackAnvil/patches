@@ -11,6 +11,7 @@ import { Effect } from "effect";
 import { activeDisplay, displayEnv, ensureDisplay, stopDisplay } from "../lab/display.ts";
 import { root } from "../model.ts";
 import { installPrism } from "../prism.ts";
+import { installEntityProbe, waitForProbe } from "./entity-probe.ts";
 import { waitForJoin, type JoinRoute } from "./join.ts";
 import { installModpack } from "./modpack.ts";
 
@@ -120,7 +121,7 @@ async function javaServer(dir: string): Promise<{ child: ChildProcess; log: stri
   return { child, log, port };
 }
 
-async function bedrockServer(dir: string, source: string, name: string): Promise<{ child: ChildProcess; log: string; port: number; version: string }> {
+async function bedrockServer(dir: string, source: string, name: string, entityProbe = false): Promise<{ child: ChildProcess; log: string; port: number; version: string }> {
   if (!existsSync(join(source, "bedrock_server"))) throw new Error(`Bedrock server missing in ${source}. Set BEDROCK_SERVER_HOME or STACKANVIL_JAVA_BEDROCK_SERVER_HOME.`);
   const home = join(dir, name);
   await mkdir(home, { recursive: true, mode: 0o700 });
@@ -136,10 +137,16 @@ async function bedrockServer(dir: string, source: string, name: string): Promise
     "server-portv6": String(port + 1), "level-name": "integration-world", "online-mode": "false", "allow-cheats": "true" })) {
     changed = set(changed, key, value);
   }
+  if (entityProbe) {
+    changed = set(changed, "content-log-console-output-enabled", "true");
+    changed = set(changed, "content-log-level", "info");
+    await installEntityProbe(home, "integration-world");
+  }
   await writeFile(join(home, "server.properties"), changed, { mode: 0o600 });
   const log = join(dir, `${name}.log`);
   const child = service(join(home, "bedrock_server"), [], home, log, { ...process.env, LD_LIBRARY_PATH: home }, true);
   const output = await waitForLog(log, /Server started\./, child);
+  if (entityProbe) await waitForLog(log, /\[ViaBedrock Entity Probe\] ready/, child, 30_000);
   const version = /Version:\s*(\d+\.\d+\.\d+)/.exec(output)?.[1];
   if (!version) throw new Error(`Could not read Bedrock server version. Read ${log}.`);
   return { child, log, port, version };
@@ -193,7 +200,7 @@ async function waitForGameProcess(launcher: ChildProcess, log: string, name: str
 }
 
 async function javaJoin(route: "java-java" | "java-bedrock", modpack: boolean, dir: string,
-  target: { port: number; log: string; child: ChildProcess }): Promise<void> {
+  target: { port: number; log: string; child: ChildProcess }, entityProbe?: { child: ChildProcess; log: string }): Promise<void> {
   const name = modpack ? modpackPrismName : plainPrismName;
   if (await gameProcess(name)) throw new Error(`Prism instance ${name} is already running. Close it before the integration suite changes its mods.`);
   const { instance } = await preparePrism(modpack);
@@ -221,6 +228,15 @@ async function javaJoin(route: "java-java" | "java-bedrock", modpack: boolean, d
         target.child.stdin?.write(`execute at ${name} run summon minecraft:interaction ~ ~ ~\n`);
       } : undefined });
     console.log(`PASS ${route}${modpack ? "+fabulously-optimized" : ""}: ${player} joined and remained connected for 20s.`);
+    if (entityProbe) {
+      for (const group of ["status", "metadata"] as const) {
+        const logStart = (await textFile(entityProbe.log)).length;
+        entityProbe.child.stdin?.write(`scriptevent vbprobe:${group} auto\n`);
+        const result = await waitForProbe(group, async () => (await textFile(entityProbe.log)).slice(logStart),
+          () => alive(gamePid) && alive(entityProbe.child.pid));
+        console.log(`PASS ${group} entity probe: ${result.passed} script actions accepted.`);
+      }
+    }
   } catch (error) {
     throw new Error(`${String(error)} Read ${clientLog} and ${log}.`);
   } finally {
@@ -329,11 +345,14 @@ async function cleanup(): Promise<void> {
 
 async function main(): Promise<void> {
   const selected = Bun.argv.slice(2);
+  const entityProbe = selected.includes("--entity-probe");
   const routes: JoinRoute[] = selected.includes("--route") ? [selected[selected.indexOf("--route") + 1] as JoinRoute]
     : ["java-java", "java-bedrock", "bedrock-bedrock"];
   if (routes.some((route) => !["java-java", "java-bedrock", "bedrock-bedrock"].includes(route))) {
     throw new Error("Use --route java-java, java-bedrock, or bedrock-bedrock.");
   }
+  if (entityProbe && !routes.includes("java-bedrock")) throw new Error("--entity-probe requires the java-bedrock route.");
+  if (entityProbe && selected.includes("--modpack-only")) throw new Error("--entity-probe requires the plain Java client run.");
   if (process.env.STACKANVIL_USE_DESKTOP === "1") throw new Error("Integration tests require a private display and never take desktop focus.");
   if (await activeDisplay()) throw new Error("The StackAnvil private display is already running. Stop the lab or capture session before integration tests.");
   if (!selected.includes("--reuse-build")) await command(process.execPath, [join(root, "src", "cli.ts"), "stack", "build", "viafabricplus-bedrock"]);
@@ -344,14 +363,15 @@ async function main(): Promise<void> {
   try {
     const java = routes.includes("java-java") ? await javaServer(dir) : undefined;
     const nativeBedrock = routes.includes("bedrock-bedrock") ? await bedrockServer(dir, bdsSource, "bedrock-native-server") : undefined;
-    const proxyBedrock = routes.includes("java-bedrock") ? await bedrockServer(dir, proxyBdsSource, "bedrock-proxy-server") : undefined;
+    const proxyBedrock = routes.includes("java-bedrock") ? await bedrockServer(dir, proxyBdsSource, "bedrock-proxy-server", entityProbe) : undefined;
     const proxy = proxyBedrock ? await viaProxy(dir, proxyBedrock.port, proxyBedrock.version) : undefined;
     for (const route of routes) {
       if (route === "java-java" && java) {
         if (!selected.includes("--modpack-only")) await javaJoin(route, false, dir, java);
         await javaJoin(route, true, dir, java);
       } else if (route === "java-bedrock" && proxy && proxyBedrock) {
-        if (!selected.includes("--modpack-only")) await javaJoin(route, false, dir, { ...proxy, log: proxyBedrock.log });
+        if (!selected.includes("--modpack-only")) await javaJoin(route, false, dir, { ...proxy, log: proxyBedrock.log },
+          entityProbe ? proxyBedrock : undefined);
         await javaJoin(route, true, dir, { ...proxy, log: proxyBedrock.log });
       } else if (route === "bedrock-bedrock" && nativeBedrock) {
         await bedrockJoin(dir, nativeBedrock);

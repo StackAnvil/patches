@@ -1,0 +1,55 @@
+# ViaBedrock entity probe
+
+This behavior pack runs entity actions from Bedrock script events. Use it to exercise entity status and metadata translation in a disposable test world.
+
+The pack contains names from Mojang's vanilla behavior definitions at `v1.26.40.05`: 127 entity types, 850 named events, and 19 client-synced property definitions. The sweep skips types that the definitions mark as not summonable. This leaves 794 event cases and 70 property-value cases. Each case starts with a new entity.
+
+The pack cannot send an arbitrary `ActorEvent` number or `ActorDataIDs` field. Bedrock's script API exposes entity events and properties, not raw network packets. A successful script action does not prove that the server sent a distinct packet. Use a packet trace or the PR's debug logging to measure packet coverage. A protocol-level test server is necessary for exhaustive numeric packet coverage.
+
+## Install and run
+
+1. Open `ViaBedrock-Entity-Probe.mcpack` with Minecraft Bedrock 1.26.40 or newer.
+2. Create a disposable world and turn on cheats.
+3. Activate **ViaBedrock Entity Probe** in the world's Behavior Packs.
+4. Join through the ViaBedrock build that you want to test.
+5. Run `/scriptevent vbprobe:help` in Bedrock chat.
+
+StackAnvil can install the pack in an isolated Bedrock Dedicated Server and run the curated status and metadata groups through a Java client:
+
+```bash
+bun run test:integration -- --route java-bedrock --entity-probe
+```
+
+The runner needs the same Bedrock server, ViaProxy, PrismLauncher, and private display as the regular integration suite. It checks that each script action was accepted and the Java client stayed alive. It cannot tell which Bedrock packets the server sent.
+
+The probe spawns one entity about 11 blocks from the command source. The next case removes the prior probe entity. Some vanilla events can damage terrain or transform an entity. Use a disposable world for the full sweep.
+
+## Commands
+
+| Command | Result |
+| --- | --- |
+| `/scriptevent vbprobe:status` | Start the curated status scenarios. |
+| `/scriptevent vbprobe:metadata` | Start the curated metadata scenarios. |
+| `/scriptevent vbprobe:next` | Run the next queued case. |
+| `/scriptevent vbprobe:status auto` | Run status cases every 40 ticks. |
+| `/scriptevent vbprobe:events wolf auto` | Run all named wolf events from the catalog. |
+| `/scriptevent vbprobe:properties copper_golem auto` | Run each client-synced copper golem property value. |
+| `/scriptevent vbprobe:event wolf minecraft:on_tame` | Run one named event. |
+| `/scriptevent vbprobe:property wolf minecraft:sound_variant grumpy` | Set one listed property value. |
+| `/scriptevent vbprobe:all auto` | Run all scenarios, summonable events, and property values. |
+| `/scriptevent vbprobe:stop` | Stop automatic execution and keep the queue. |
+| `/scriptevent vbprobe:clear` | Stop and remove probe entities. |
+
+Use `all` instead of an entity type with `events` or `properties` to queue every summonable type. The full automatic sweep takes about 30 minutes at 20 ticks per second. The pack prints every case to the Bedrock content log and reports progress in chat. A sweep ends with attempted, passed, and failed action counts.
+
+The curated status cases try hurt, death, taming, sheep eating, creeper priming, zombie conversion, and ravager roaring. The metadata cases change a name, fire state, effects, sheared state, and selected synced properties. Bedrock decides which packets these actions emit.
+
+## Update the catalog
+
+The generated catalog is in `behavior_pack/scripts/catalog.js`. The source is the `behavior_pack/entities` directory from [Mojang's Bedrock samples](https://github.com/Mojang/bedrock-samples/tree/v1.26.40.05/behavior_pack/entities).
+
+1. Install Python and `json5` with `python -m pip install json5`.
+2. Check out the desired Bedrock samples tag.
+3. Run `python generate-catalog.py /path/to/bedrock-samples/behavior_pack/entities`.
+4. Zip the contents of `behavior_pack` with `manifest.json` at the archive root.
+5. Rename the zip file to `.mcpack`.
