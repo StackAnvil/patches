@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { Effect } from "effect";
@@ -75,6 +75,12 @@ function cloneIfMissing(id: string, target: Target, mode: string) {
     if (!existsSync(join(dir, ".git"))) {
       yield* Effect.promise(() => mkdir(join(root, ".worktrees"), { recursive: true }));
       yield* git(["clone", `https://github.com/${target.upstream}.git`, dir], root);
+    }
+    // Generated checkouts are separate repositories, so the root .gitignore does not apply here.
+    const exclude = join(dir, ".git", "info", "exclude");
+    const rules = yield* Effect.promise(() => readFile(exclude, "utf8"));
+    if (!rules.split(/\r?\n/).includes("/logs/")) {
+      yield* Effect.promise(() => appendFile(exclude, `${rules.endsWith("\n") ? "" : "\n"}/logs/\n`));
     }
     return dir;
   });
