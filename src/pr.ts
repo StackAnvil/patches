@@ -11,6 +11,30 @@ export interface ArtifactReference {
   artifactId?: string;
 }
 
+interface PrParticipants {
+  author: { login: string };
+  assignees: { login: string }[];
+  isDraft: boolean;
+  reviewRequests: { __typename: string; login?: string }[];
+  reviews: { author: { login: string } | null }[];
+}
+
+export function missingPrParticipants(desired: string[], pr: PrParticipants) {
+  const assignees = new Set(pr.assignees.map(({ login }) => login.toLowerCase()));
+  const requested = new Set(pr.reviewRequests
+    .filter((request) => request.__typename === "User" && request.login)
+    .map(({ login }) => login!.toLowerCase()));
+  const reviewed = new Set(pr.reviews.flatMap(({ author }) => author ? [author.login.toLowerCase()] : []));
+  const author = pr.author.login.toLowerCase();
+  return {
+    assignees: desired.filter((login) => !assignees.has(login.toLowerCase())),
+    reviewers: desired.filter((login) => {
+      const normalized = login.toLowerCase();
+      return normalized !== author && !requested.has(normalized) && !reviewed.has(normalized);
+    }),
+  };
+}
+
 function northStarPr(target: Target) {
   return Effect.gen(function* () {
     const existing = yield* gh(["api", "-X", "GET", `repos/${target.upstream}/pulls`, "-f", "state=open", "-f", "head=StackAnvil:stackanvil/north-star"], root);
@@ -21,36 +45,42 @@ function northStarPr(target: Target) {
   });
 }
 
-export function assignPr(id: string, prUrl?: string) {
+export function updatePrParticipants(id: string, prUrl?: string) {
   return Effect.gen(function* () {
     const target = yield* Effect.promise(() => getTarget(id));
     const url = prUrl ?? (yield* northStarPr(target))?.url;
     if (!url) return yield* Effect.fail(new Error(`No open north-star PR for ${id}`));
     const desired = [...new Set(target.prAssignees)];
-    if (!desired.length) return { url, desired, added: [] };
+    if (!desired.length) return { url, desired, added: [], requested: [] };
 
     const repository = JSON.parse(yield* gh(["api", `repos/${target.upstream}`], root)) as {
       permissions?: { admin?: boolean; maintain?: boolean; push?: boolean; triage?: boolean };
     };
     const permissions = repository.permissions;
-    if (!permissions || ![permissions.admin, permissions.maintain, permissions.push, permissions.triage].some(Boolean)) {
-      return {
-        url,
-        desired,
-        added: [],
-        skippedReason: `Cannot assign ${desired.join(", ")} on ${target.upstream}: this GitHub account lacks upstream triage or write access. Ask an upstream maintainer to assign them.`,
-      };
+    const canAssign = Boolean(permissions && [permissions.admin, permissions.maintain, permissions.push, permissions.triage].some(Boolean));
+    const canRequestReviews = Boolean(permissions && [permissions.admin, permissions.maintain, permissions.push].some(Boolean));
+    const pr = JSON.parse(yield* gh(["pr", "view", url, "--repo", target.upstream, "--json", "author,assignees,isDraft,reviewRequests,reviews"], root)) as PrParticipants;
+    const missing = missingPrParticipants(desired, pr);
+    const skipped: string[] = [];
+    if (missing.assignees.length && canAssign) {
+      yield* gh(["pr", "edit", url, "--repo", target.upstream, "--add-assignee", missing.assignees.join(",")], root);
+    } else if (missing.assignees.length) {
+      skipped.push(`Cannot assign ${missing.assignees.join(", ")} on ${target.upstream}: this GitHub account lacks upstream triage or write access.`);
     }
-
-    const pr = JSON.parse(yield* gh(["pr", "view", url, "--repo", target.upstream, "--json", "assignees"], root)) as {
-      assignees: { login: string }[];
+    if (missing.reviewers.length && pr.isDraft) {
+      skipped.push(`Review requests for ${missing.reviewers.join(", ")} will wait until the PR is ready for review.`);
+    } else if (missing.reviewers.length && canRequestReviews) {
+      yield* gh(["pr", "edit", url, "--repo", target.upstream, "--add-reviewer", missing.reviewers.join(",")], root);
+    } else if (missing.reviewers.length) {
+      skipped.push(`Cannot request reviews from ${missing.reviewers.join(", ")} on ${target.upstream}: this GitHub account lacks upstream write access.`);
+    }
+    return {
+      url,
+      desired,
+      added: canAssign ? missing.assignees : [],
+      requested: canRequestReviews && !pr.isDraft ? missing.reviewers : [],
+      ...(skipped.length ? { skippedReason: skipped.join("\n") } : {}),
     };
-    const current = new Set(pr.assignees.map(({ login }) => login.toLowerCase()));
-    const missing = desired.filter((login) => !current.has(login.toLowerCase()));
-    if (missing.length) {
-      yield* gh(["pr", "edit", url, "--repo", target.upstream, ...missing.flatMap((login) => ["--add-assignee", login])], root);
-    }
-    return { url, desired, added: missing };
   });
 }
 
@@ -119,12 +149,12 @@ export function syncPr(id: string, artifact: ArtifactReference = {}) {
     const existing = yield* northStarPr(target);
     if (existing) {
       yield* gh(["pr", "edit", String(existing.number), "--repo", target.upstream, "--title", feature.title, "--body-file", bodyFile], root);
-      const assignment = yield* assignPr(id, existing.url);
+      const assignment = yield* updatePrParticipants(id, existing.url);
       if (assignment.skippedReason) console.warn(assignment.skippedReason);
       return existing.url;
     }
     const url = yield* gh(["pr", "create", "--repo", target.upstream, "--head", `StackAnvil:${head}`, "--base", target.baseBranch, "--title", feature.title, "--body-file", bodyFile, "--draft"], root);
-    const assignment = yield* assignPr(id, url);
+    const assignment = yield* updatePrParticipants(id, url);
     if (assignment.skippedReason) console.warn(assignment.skippedReason);
     return url;
   });

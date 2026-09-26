@@ -41,18 +41,18 @@ bun run build viabedrock
 
 When the first feature is ready for upstream, add a non-empty `features/<patch-name>.pr.md` beside its `.patch` file. Use it for PR context, review guidance, and testing steps that do not belong in the commit message. Inspect the combined text with `bun run pr body <project>`. A maintainer uses `bun run pr sync <project>` to update the fork's north-star branch and its draft PR. The command checks the commit description and PR extra body before pushing. Later feature patches stay in the full stack until earlier changes land upstream.
 
-## PR assignees
+## PR assignees and reviewers
 
-`targets.json` sets the default assignees for each upstream PR. `bun run pr sync <project>` adds missing assignees when it creates or updates the north-star PR. Run `bun run pr assign <project>` to update an existing PR without pushing its branch. The tool keeps assignees that someone added manually.
+`targets.json` lists the default people for each upstream PR. `bun run pr sync <project>` assigns them and requests their reviews on a ready PR. Run `bun run pr assign <project>` to update both without pushing the branch. The tool keeps people added manually and does not request another review from someone who has already reviewed.
 
-| Project | Default assignees |
+| Project | Default assignees and reviewers |
 | --- | --- |
 | ViaBedrock | `RaphiMC` (RK_01), `Exterminate5573` |
 | viafabricplus-bedrock | `RaphiMC`, `Exterminate5573`, `florianreuth` |
 | ViaFabricPlus | `florianreuth` |
 | CubeConverter | `oryxel1` |
 
-These are PR assignees, not review requests. Draft PRs can carry them. GitHub requires upstream assignment access. If your account lacks that access, the command reports the missing assignment and leaves the PR in place. Ask an upstream maintainer to add the listed people. This applies to the ViaFabricPlus and CubeConverter upstream repositories with the current account permissions.
+Draft PRs receive assignees. Review requests wait until the PR is ready; then run `bun run pr assign <project>` or `bun run pr sync <project>`. Assignment needs upstream triage or write access. Review requests need upstream write access. The command reports actions it could not complete, so an upstream maintainer can finish them.
 
 ## Conflict recovery
 

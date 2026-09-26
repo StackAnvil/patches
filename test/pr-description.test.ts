@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { parsePatchMessage } from "../src/patch-message.ts";
-import { renderPrBody } from "../src/pr.ts";
+import { missingPrParticipants, renderPrBody } from "../src/pr.ts";
 
 test("format-patch message keeps a wrapped subject and multi-paragraph description", () => {
   const patch = [
@@ -30,4 +30,17 @@ test("a PR needs both the patch description and extra body", () => {
   const body = renderPrBody("viabedrock", "Reason for change", "Extra review context");
   expect(body).toContain("Reason for change");
   expect(body).toContain("Extra review context");
+});
+
+test("PR participants do not receive duplicate review requests", () => {
+  const missing = missingPrParticipants(["RaphiMC", "Exterminate5573", "Reviewer", "NewReviewer", "Author"], {
+    author: { login: "Author" },
+    assignees: [{ login: "raphimc" }],
+    isDraft: false,
+    reviewRequests: [{ __typename: "User", login: "EXTERMINATE5573" }],
+    reviews: [{ author: { login: "reviewer" } }],
+  });
+
+  expect(missing.assignees).toEqual(["Exterminate5573", "Reviewer", "NewReviewer", "Author"]);
+  expect(missing.reviewers).toEqual(["RaphiMC", "NewReviewer"]);
 });
