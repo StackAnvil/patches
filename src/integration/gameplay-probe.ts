@@ -7,7 +7,7 @@ const prefix = "[ViaBedrock Gameplay Probe] ";
 
 export const gameplayCaseIds = [
   "movement-left", "movement-right", "block-break", "block-place", "drop-item", "inventory-script-slot",
-  "creative-select", "equip-helmet", "equip-offhand", "eat-golden-apple", "entity-attack", "entity-name",
+  "creative-select", "creative-replace", "equip-helmet", "equip-offhand", "eat-golden-apple", "entity-attack", "entity-name",
   "map-hold", "command-time", "command-completion", "command-denied", "respawn", "dimension-change",
   "chest-transfer",
 ] as const;
@@ -140,6 +140,7 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui): Promise<void> {
       await chestTransfer(ui);
       return;
     case "creative-select":
+    case "creative-replace":
       await creativeSelect(ui);
       return;
     case "eat-golden-apple":

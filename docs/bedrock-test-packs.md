@@ -21,7 +21,7 @@ Use `--gameplay-cases` to select cases. This command runs a short movement and b
 bun run test:integration -- --route java-bedrock --gameplay-cases movement-left,movement-right,block-break
 ```
 
-The default gameplay run includes movement, block actions, inventory, creative selection, chest transfer, equipment, item use, entity interaction, maps, commands, respawn, and dimension change. Each case uses a fresh arena so a client-predicted block from one case cannot interfere with the next. The current ViaBedrock handler cancels the Java creative slot packet, so that case currently exposes a known failure.
+The default gameplay run includes movement, block actions, inventory, creative selection, chest transfer, equipment, item use, entity interaction, maps, commands, respawn, and dimension change. Each case uses a fresh arena so a client-predicted block from one case cannot interfere with the next.
 
 ## What each case checks
 
@@ -32,6 +32,7 @@ The default gameplay run includes movement, block actions, inventory, creative s
 | `drop-item`, `inventory-script-slot` | Drop one emerald | The server inventory count decreases by one, including when the pack sets the slot through Script API. |
 | `chest-transfer` | Move emeralds from a chest into the hotbar | The chest is empty and the player has four emeralds. |
 | `creative-select` | Search for a nether star and place it in the hotbar | The server sees a nether star in the player inventory. |
+| `creative-replace` | Replace an emerald in the first hotbar slot with a nether star | The server sees the nether star in that slot. |
 | `equip-helmet`, `equip-offhand`, `eat-golden-apple` | Use or swap the held item | The equipment slot or effect state changes. |
 | `entity-attack`, `entity-name` | Hit or name a cow | The cow loses health or has the expected name. |
 | `map-hold` | Use an empty map | The held item becomes a filled map. The runner saves a Java screenshot for visual review. |

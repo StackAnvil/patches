@@ -170,6 +170,15 @@ define("creative-select", "creative", async (player) => {
   return { passed: stars > 0, observed: { stars, gameMode: player.getGameMode() }, expected: "At least one nether star selected from the Java creative menu." };
 });
 
+define("creative-replace", "creative", async (player) => {
+  await prepareArena(player, GameMode.Creative);
+  inventory(player).setItem(0, new ItemStack("minecraft:emerald"));
+  return {};
+}, (player) => {
+  const held = inventory(player).getItem(0)?.typeId;
+  return { passed: held === "minecraft:nether_star", observed: { held }, expected: "minecraft:nether_star" };
+});
+
 define("equip-helmet", "equipment", async (player) => {
   await prepareArena(player);
   giveSelected(player, "minecraft:iron_helmet");
