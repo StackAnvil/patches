@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Effect } from "effect";
 import { getSeries, getTarget, patchPaths, root, type Series, type Target } from "./model.ts";
 import { parsePatchMessage } from "./patch-message.ts";
-import { git } from "./process.ts";
+import { command, git } from "./process.ts";
 
 interface EditSession {
   patchIndex: number;
@@ -36,12 +36,28 @@ function seriesPaths(id: string, series: Series, mode: "full" | "pr") {
     : patchPaths(id, series);
 }
 
+function applyPatch(args: string[], dir: string, patch: string) {
+  return Effect.gen(function* () {
+    const committer = yield* git(["var", "GIT_COMMITTER_IDENT"], dir).pipe(Effect.catchAll(() => Effect.succeed("")));
+    if (committer) return yield* git(args, dir);
+
+    const text = yield* Effect.promise(() => readFile(patch, "utf8"));
+    const author = text.match(/^From: (.+) <([^<>]+)>$/m);
+    if (!author) return yield* Effect.fail(new Error(`Patch has no author identity: ${patch}`));
+    return yield* command("git", args, dir, {
+      ...process.env,
+      GIT_COMMITTER_NAME: author[1],
+      GIT_COMMITTER_EMAIL: author[2],
+    });
+  });
+}
+
 function applyRemaining(id: string, dir: string, path: string, mode: "full" | "pr", session: ApplySession) {
   return Effect.gen(function* () {
     const recoveryCommand = `bun run stack continue ${id}${mode === "pr" ? " --pr" : ""}`;
     for (let index = session.nextIndex; index < session.patches.length; index++) {
       const patch = session.patches[index]!;
-      yield* git(["am", "--3way", "--committer-date-is-author-date", patch], dir).pipe(Effect.mapError((cause) => new Error(
+      yield* applyPatch(["am", "--3way", "--committer-date-is-author-date", patch], dir, patch).pipe(Effect.mapError((cause) => new Error(
         `${cause.message}\nPatch apply stopped at ${patch}. Resolve the conflict in ${dir}, stage the result, then run ${recoveryCommand}.`,
       )));
       session.nextIndex = index + 1;
@@ -133,7 +149,7 @@ export function continueApply(id: string, mode: "full" | "pr" = "full") {
     if (commits.length !== session.nextIndex) {
       return yield* Effect.fail(new Error(`Expected ${session.nextIndex} applied patches, found ${commits.length}. Inspect ${dir} before continuing.`));
     }
-    yield* git(["am", "--continue"], dir);
+    yield* applyPatch(["am", "--continue"], dir, session.patches[session.nextIndex]!);
     session.nextIndex++;
     yield* Effect.promise(() => writeFile(path, JSON.stringify(session, null, 2)));
     return yield* applyRemaining(id, dir, path, mode, session);

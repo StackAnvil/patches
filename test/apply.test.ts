@@ -76,8 +76,7 @@ test("an interrupted patch apply can continue or abort without losing the series
   await git(["config", "user.email", "test@example.invalid"], checkout);
   const prCheckout = join(project, ".worktrees", "fixture-pr");
   await git(["clone", upstream, prCheckout], fixture);
-  await git(["config", "user.name", "Patch Test"], prCheckout);
-  await git(["config", "user.email", "test@example.invalid"], prCheckout);
+  await run("git", ["var", "GIT_COMMITTER_IDENT"], prCheckout, true);
 
   const cli = join(project, "src", "cli.ts");
   await run("bun", [cli, "pr", "check", "fixture"], project);
