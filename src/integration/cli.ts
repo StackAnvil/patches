@@ -5,15 +5,15 @@ import { closeSync, existsSync, openSync } from "node:fs";
 import { chmod, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { Effect } from "effect";
 import { activeDisplay, displayEnv, ensureDisplay, stopDisplay } from "../lab/display.ts";
 import { root } from "../model.ts";
-import { installPrism } from "../prism.ts";
+import { artifact, installPrism } from "../prism.ts";
 import { installEntityProbe, waitForProbe } from "./entity-probe.ts";
 import { gameplayCaseIds, installProbeGuiScale, runGameplayCases, type GameplayCaseId } from "./gameplay-probe.ts";
-import { convertedPackCount, installResourceProbe, resourceColorPixels } from "./resource-probe.ts";
+import { convertedPackCount, convertedTextureMatches, installResourceProbe } from "./resource-probe.ts";
 import { waitForJoin, type JoinRoute } from "./join.ts";
 import { installModpack } from "./modpack.ts";
 
@@ -125,7 +125,7 @@ async function javaServer(dir: string): Promise<{ child: ChildProcess; log: stri
 }
 
 async function bedrockServer(dir: string, source: string, name: string, entityProbe = false,
-  resourceProbe?: { variant: "a" | "b"; run: string }): Promise<{ child: ChildProcess; log: string; port: number; version: string }> {
+  resourceProbe?: { variant: "a" | "b"; run: string }): Promise<{ child: ChildProcess; log: string; port: number; version: string; transport: string }> {
   if (!existsSync(join(source, "bedrock_server"))) throw new Error(`Bedrock server missing in ${source}. Set BEDROCK_SERVER_HOME or STACKANVIL_JAVA_BEDROCK_SERVER_HOME.`);
   const home = join(dir, name);
   await mkdir(home, { recursive: true, mode: 0o700 });
@@ -138,7 +138,8 @@ async function bedrockServer(dir: string, source: string, name: string, entityPr
     ? value.replace(new RegExp(`^${key}=.*$`, "m"), `${key}=${replacement}`) : `${value}\n${key}=${replacement}\n`;
   let changed = properties;
   for (const [key, value] of Object.entries({ "server-name": "StackAnvil Integration", "server-port": String(port),
-    "server-portv6": String(port + 1), "level-name": "integration-world", "online-mode": "false", "allow-cheats": "true" })) {
+    "server-portv6": String(port + 1), "level-name": "integration-world", "online-mode": "false", "allow-list": "false",
+    "allow-cheats": "true" })) {
     changed = set(changed, key, value);
   }
   if (entityProbe) {
@@ -161,17 +162,18 @@ async function bedrockServer(dir: string, source: string, name: string, entityPr
   if (entityProbe) await waitForLog(log, /\[ViaBedrock Entity Probe\] ready/, child, 30_000);
   const version = /Version:\s*(\d+\.\d+\.\d+)/.exec(output)?.[1];
   if (!version) throw new Error(`Could not read Bedrock server version. Read ${log}.`);
-  return { child, log, port, version };
+  return { child, log, port, version, transport: /^transport=(.+)$/m.exec(changed)?.[1] ?? "raknet" };
 }
 
-async function viaProxy(dir: string, bedrockPort: number, version: string, name = "viaproxy", homeName = name): Promise<{ child: ChildProcess; log: string; port: number }> {
+async function viaProxy(dir: string, bedrockPort: number, version: string, transport: string, name = "viaproxy", homeName = name): Promise<{ child: ChildProcess; log: string; port: number }> {
   if (!existsSync(viaProxyJar)) throw new Error(`ViaProxy missing: ${viaProxyJar}. Run bun run dev:setup.`);
+  const classpath = [await artifact("viabedrock"), await artifact("cubeconverter"), viaProxyJar].join(delimiter);
   const port = await tcpPort();
   const log = join(dir, `${name}.log`);
   const home = join(dir, homeName);
   await mkdir(home, { recursive: true, mode: 0o700 });
-  const child = service(Bun.which("java") ?? "java", ["-DskipUpdateCheck", "-jar", viaProxyJar, "cli",
-    "--bind-address", `127.0.0.1:${port}`, "--target-address", `127.0.0.1:${bedrockPort}`,
+  const child = service(Bun.which("java") ?? "java", ["-DskipUpdateCheck", "-cp", classpath, "net.raphimc.viaproxy.ViaProxy", "cli",
+    "--bind-address", `127.0.0.1:${port}`, "--target-address", transport === "nethernet" ? "nethernet://127.0.0.1" : `127.0.0.1:${bedrockPort}`,
     "--target-version", `Bedrock ${version}`, "--auth-method", "NONE", "--log-ips", "false"], home, log);
   await waitForLog(log, /Binding proxy server/, child);
   return { child, log, port };
@@ -227,23 +229,6 @@ async function waitForGameProcess(launcher: ChildProcess, log: string, name: str
   throw new Error(`Minecraft did not start within 60s (Prism ${alive(launcher.pid) ? "is running" : "has exited"}). Read ${log}.`);
 }
 
-async function checkResourceRender(dir: string, label: string, variant: "a" | "b", server: ChildProcess): Promise<void> {
-  const inventory = () => capture(["ui", "key-hold", "e", "80", "--client", "java"]);
-  server.stdin?.write("gamemode survival @a\nclear @a\n");
-  await Bun.sleep(750);
-  await inventory();
-  const before = await capture(["ui", "screenshot", `resource-${label}-before`, "--client", "java", "--output-dir", dir]);
-  await inventory();
-  server.stdin?.write("give @a diamond 1\n");
-  await Bun.sleep(750);
-  await inventory();
-  const after = await capture(["ui", "screenshot", `resource-${label}-after`, "--client", "java", "--output-dir", dir]);
-  await inventory();
-  const added = await resourceColorPixels(after, variant) - await resourceColorPixels(before, variant);
-  if (added < 32) throw new Error(`Resource probe ${label} did not show the ${variant} diamond texture in Java. Screenshots: ${before}, ${after}.`);
-  console.log(`PASS resource pack ${label}: ${added} new texture-colored pixels in the Java inventory.`);
-}
-
 async function javaJoin(route: "java-java" | "java-bedrock", modpack: boolean, dir: string,
   target: { port: number; log: string; child: ChildProcess; proxyLog?: string }, entityProbe?: { child: ChildProcess; log: string },
   runEntityProbe = false, gameplayCases: readonly GameplayCaseId[] = [],
@@ -273,7 +258,7 @@ async function javaJoin(route: "java-java" | "java-bedrock", modpack: boolean, d
     if (route === "java-bedrock") {
       await waitForLog(clientLog, /Connecting to 127\.0\.0\.1/, () => alive(gamePid), 120_000);
       await Bun.sleep(3500);
-      await capture(["ui", "click", "0.32", "0.76", "--client", "java"]);
+      await capture(["ui", "click", "0.32", "0.69", "--client", "java"]);
     }
     const player = await waitForJoin({ route, serverLog: async () => (await textFile(target.log)).slice(serverLogStart), clientLog: () => textFile(clientLog),
       connectionLog: target.proxyLog ? async () => (await textFile(target.proxyLog!)).slice(connectionLogStart) : undefined,
@@ -282,7 +267,16 @@ async function javaJoin(route: "java-java" | "java-bedrock", modpack: boolean, d
         target.child.stdin?.write(`execute at ${name} run summon minecraft:interaction ~ ~ ~\n`);
       } : undefined });
     console.log(`PASS ${route}${modpack ? "+fabulously-optimized" : ""}: ${player} joined and remained connected for 20s.`);
-    if (resource && entityProbe) await checkResourceRender(dir, resource.label, resource.variant, entityProbe.child);
+    if (resource) {
+      const log = await textFile(clientLog);
+      if (!/Reloading ResourceManager:.*server\//.test(log)) {
+        throw new Error(`Resource probe ${resource.label} did not load the converted Java pack.`);
+      }
+      if (!await convertedTextureMatches(join(dir, "viaproxy"), resource.variant)) {
+        throw new Error(`Resource probe ${resource.label} did not preserve the ${resource.variant} texture in its converted pack.`);
+      }
+      console.log(`PASS resource pack ${resource.label}: converted texture matched and Java loaded the pack.`);
+    }
     if (entityProbe && runEntityProbe) {
       for (const group of ["status", "metadata"] as const) {
         const logStart = (await textFile(entityProbe.log)).length;
@@ -444,7 +438,7 @@ async function main(): Promise<void> {
     const nativeBedrock = routes.includes("bedrock-bedrock") ? await bedrockServer(dir, bdsSource, "bedrock-native-server") : undefined;
     const proxyBedrock = routes.includes("java-bedrock") ? await bedrockServer(dir, proxyBdsSource, "bedrock-proxy-server", entityProbe || gameplayCases.length > 0,
       resourceProbe ? { variant: "a", run: resourceRun } : undefined) : undefined;
-    const proxy = proxyBedrock ? await viaProxy(dir, proxyBedrock.port, proxyBedrock.version) : undefined;
+    const proxy = proxyBedrock ? await viaProxy(dir, proxyBedrock.port, proxyBedrock.version, proxyBedrock.transport) : undefined;
     for (const route of routes) {
       if (route === "java-java" && java) {
         if (!selected.includes("--modpack-only")) await javaJoin(route, false, dir, java);
@@ -469,10 +463,13 @@ async function main(): Promise<void> {
           if (alive(proxy.child.pid)) process.kill(-proxy.child.pid!, "SIGINT");
           for (let attempt = 0; attempt < 40 && alive(proxy.child.pid); attempt++) await Bun.sleep(250);
           if (alive(proxy.child.pid)) throw new Error("ViaProxy did not stop before the changed resource pack run.");
+          if (alive(proxyBedrock.child.pid)) process.kill(-proxyBedrock.child.pid!, "SIGINT");
+          for (let attempt = 0; attempt < 40 && alive(proxyBedrock.child.pid); attempt++) await Bun.sleep(250);
+          if (alive(proxyBedrock.child.pid)) throw new Error("Bedrock server did not stop before the changed resource pack run.");
 
           const changedServer = await bedrockServer(dir, proxyBdsSource, "bedrock-resource-changed-server", false,
             { variant: "b", run: resourceRun });
-          const changedProxy = await viaProxy(dir, changedServer.port, changedServer.version, "viaproxy-resource-changed", "viaproxy");
+          const changedProxy = await viaProxy(dir, changedServer.port, changedServer.version, changedServer.transport, "viaproxy-resource-changed", "viaproxy");
           const changedStart = (await textFile(changedProxy.log)).length;
           const changedClientLog = await javaJoin(route, false, dir, { ...changedProxy, log: changedServer.log, proxyLog: changedProxy.log }, changedServer,
             false, [], { variant: "b", label: "b-changed" });

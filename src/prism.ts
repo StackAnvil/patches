@@ -15,7 +15,7 @@ const prismInstance = process.env.STACKANVIL_JAVA_INSTANCE ?? "StackAnvil 26.3";
 interface ArtifactManifest { artifacts: { file: string; sha256: string }[] }
 interface FabricMod { id: string; version: string; depends: { minecraft: string }; jars?: { file: string }[] }
 
-async function artifact(project: string): Promise<string> {
+export async function artifact(project: string): Promise<string> {
   const dir = join(root, "dist", project);
   const manifest = JSON.parse(await readFile(join(dir, "manifest.json"), "utf8")) as ArtifactManifest;
   if (manifest.artifacts.length !== 1) throw new Error(`Expected one ${project} release JAR`);
