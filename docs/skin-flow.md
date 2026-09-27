@@ -14,7 +14,7 @@ ViaBedrock reads skins from `PlayerListPacket` and `PlayerSkinPacket`. Its curre
 
 The add-on's Dressing Room selects Steve, Alex, or an imported classic PNG. `BedrockAppearanceStore` keeps this choice per account. `ViaFabricPlusSkinProvider` places it in the next login JWT. The add-on does not send a live `PlayerSkinPacket` when the player changes this choice.
 
-The Dressing Room also has an Account slots screen. It reads five saved Character Creator slots from `GET /api/v1.0/appearance/retrieve`. It reads Marketplace entitlements from `GET /api/v1.0/player/inventory`. The screen shows slot occupancy and piece counts. It does not equip a slot.
+The Dressing Room also has a Character Creator account screen. It reads five saved slots from `GET /api/v1.0/appearance/retrieve`. It reads Marketplace entitlements from `GET /api/v1.0/player/inventory`. It resolves owned persona pieces through PlayFab's `Catalog/GetPublishedItem` API. The screen shows slot details, piece names, and thumbnails. It does not equip a slot or piece.
 
 Each saved slot is a recipe with a base, piece IDs, and colors. The account response does not contain the rendered skin pixels or geometry. The native client downloads persona packs and assembles the skin locally. Captured Marketplace persona packs contain encrypted files. The add-on does not have an asset decoder or a compositor for those packs.
 

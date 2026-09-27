@@ -1,26 +1,26 @@
-From e28b4201915c4c28df6070c7a6ee20644af24b71 Mon Sep 17 00:00:00 2001
+From 3fa5063f0b7ed5c9538abdac17e3c1b9e6130682 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): show saved Character Creator slots
 
-Bedrock stores five character recipes separately from the classic skin selected for login. Read saved recipes and Marketplace inventory for the signed-in account, and expose their state from the Dressing Room without suggesting that a recipe alone is an assembled skin.
+Bedrock stores five character recipes separately from the classic skin selected for login. Read those recipes and Marketplace entitlements for the signed-in account, then resolve owned persona catalog items for names and thumbnails. Load the catalog after the slots so a slow wardrobe request does not hold back saved characters. A recipe alone is not an assembled skin, so this screen does not equip it.
 ---
- .../appearance/BedrockCharacterProfiles.java  | 147 ++++++++++++++++++
- .../screen/BedrockCharacterSlotsScreen.java   | 105 +++++++++++++
+ .../appearance/BedrockCharacterProfiles.java  | 228 ++++++++++++++++++
+ .../screen/BedrockCharacterSlotsScreen.java   | 204 ++++++++++++++++
  .../screen/BedrockDressingRoomScreen.java     |   4 +-
- .../viafabricplus-bedrock/lang/en_us.json     |  14 ++
- .../BedrockCharacterProfilesTest.java         |  47 ++++++
- 5 files changed, 316 insertions(+), 1 deletion(-)
+ .../viafabricplus-bedrock/lang/en_us.json     |  24 ++
+ .../BedrockCharacterProfilesTest.java         |  68 ++++++
+ 5 files changed, 527 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
 new file mode 100644
-index 0000000..6d7f3b6
+index 0000000..d1693c2
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,228 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -40,7 +40,10 @@ index 0000000..6d7f3b6
 +import java.net.http.HttpResponse;
 +import java.time.Duration;
 +import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.LinkedHashSet;
 +import java.util.List;
++import java.util.Set;
 +import java.util.UUID;
 +import java.util.concurrent.CompletableFuture;
 +import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
@@ -52,6 +55,7 @@ index 0000000..6d7f3b6
 +        + "?profilenames=personaProfile1&profilenames=personaProfile2&profilenames=personaProfile3"
 +        + "&profilenames=personaProfile4&profilenames=personaProfile5&profilenames=personaProfile");
 +    private static final URI INVENTORY = URI.create("https://entitlements.mktpl.minecraft-services.net/api/v1.0/player/inventory?includeReceipt=true");
++    private static final URI CATALOG = URI.create("https://20ca2.playfabapi.com/Catalog/GetPublishedItem");
 +    private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
 +
 +    private BedrockCharacterProfiles() {
@@ -75,6 +79,18 @@ index 0000000..6d7f3b6
 +                return parse(send(profilesRequest), send(inventoryRequest));
 +            } catch (Exception e) {
 +                throw new IllegalStateException("Could not load Bedrock character profiles", e);
++            }
++        });
++    }
++
++    public static CompletableFuture<List<WardrobeItem>> loadItems(final BedrockAuthManager account,
++                                                                   final List<Entitlement> entitlements) {
++        return CompletableFuture.supplyAsync(() -> {
++            try {
++                final String entityToken = account.getPlayFabToken().getUpToDate().getEntityToken().getToken();
++                return catalogItems(entitlements, entityToken);
++            } catch (Exception e) {
++                throw new IllegalStateException("Could not load Bedrock wardrobe items", e);
 +            }
 +        });
 +    }
@@ -124,11 +140,73 @@ index 0000000..6d7f3b6
 +        for (final JsonElement element : array(accountInventory, "entitlements")) {
 +            if (element.isJsonObject()) {
 +                final JsonObject entitlement = element.getAsJsonObject();
++                final List<String> offerIds = new ArrayList<>();
++                for (final JsonElement offer : array(entitlement, "offerIds")) {
++                    if (offer.isJsonPrimitive()) {
++                        offerIds.add(offer.getAsString());
++                    }
++                }
 +                entitlements.add(new Entitlement(string(entitlement, "id"), string(entitlement, "packId"),
-+                    string(entitlement, "ownership")));
++                    string(entitlement, "ownership"), List.copyOf(offerIds)));
 +            }
 +        }
 +        return new AccountWardrobe(List.copyOf(slots), List.copyOf(entitlements));
++    }
++
++    private static List<WardrobeItem> catalogItems(final List<Entitlement> entitlements, final String entityToken) {
++        final Set<String> offerIds = new LinkedHashSet<>();
++        for (final Entitlement entitlement : entitlements) {
++            offerIds.addAll(entitlement.offerIds());
++        }
++        final List<WardrobeItem> items = new ArrayList<>();
++        for (final String offerId : offerIds) {
++            if (offerId.isBlank()) {
++                continue;
++            }
++            try {
++                final JsonObject body = new JsonObject();
++                body.addProperty("ETag", "");
++                body.addProperty("ItemId", offerId);
++                final HttpRequest request = HttpRequest.newBuilder(CATALOG)
++                    .timeout(Duration.ofSeconds(15))
++                    .header("X-EntityToken", entityToken)
++                    .header("Content-Type", "application/json")
++                    .header("Accept", "application/json")
++                    .POST(HttpRequest.BodyPublishers.ofString(body.toString())).build();
++                final WardrobeItem item = catalogItem(send(request));
++                if (item != null) {
++                    items.add(item);
++                }
++            } catch (IOException | InterruptedException e) {
++                if (e instanceof InterruptedException) {
++                    Thread.currentThread().interrupt();
++                }
++                throw new IllegalStateException("Could not load a Bedrock wardrobe item", e);
++            }
++        }
++        items.sort(Comparator.comparing(WardrobeItem::name, String.CASE_INSENSITIVE_ORDER));
++        return List.copyOf(items);
++    }
++
++    static WardrobeItem catalogItem(final JsonObject response) {
++        final JsonObject item = object(object(response, "data"), "Item");
++        if (!"PersonaDurable".equals(string(item, "ContentType"))) {
++            return null;
++        }
++        final JsonObject title = object(item, "Title");
++        final String name = !string(title, "en-US").isBlank() ? string(title, "en-US") : string(title, "NEUTRAL");
++        if (name.isBlank()) {
++            return null;
++        }
++        String thumbnailUrl = "";
++        for (final JsonElement element : array(item, "Images")) {
++            if (element.isJsonObject() && "Thumbnail".equals(string(element.getAsJsonObject(), "Tag"))) {
++                thumbnailUrl = string(element.getAsJsonObject(), "Url");
++                break;
++            }
++        }
++        return new WardrobeItem(string(item, "Id"), name,
++            string(object(item, "DisplayProperties"), "pieceType"), thumbnailUrl);
 +    }
 +
 +    private static JsonObject send(final HttpRequest request) throws IOException, InterruptedException {
@@ -164,16 +242,19 @@ index 0000000..6d7f3b6
 +        }
 +    }
 +
-+    public record Entitlement(String id, String packId, String ownership) {
++    public record Entitlement(String id, String packId, String ownership, List<String> offerIds) {
++    }
++
++    public record WardrobeItem(String id, String name, String type, String thumbnailUrl) {
 +    }
 +
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
 new file mode 100644
-index 0000000..43016d0
+index 0000000..28a0ffe
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,204 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -186,22 +267,38 @@ index 0000000..43016d0
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockCharacterProfiles;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockCharacterProfiles.AccountWardrobe;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockCharacterProfiles.Slot;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockCharacterProfiles.WardrobeItem;
++import com.viaversion.viafabricplus.bedrock.visual.BedrockImageCache;
 +import com.viaversion.viafabricplus.screen.base.VFPScreen;
++import java.util.List;
 +import net.minecraft.client.gui.GuiGraphicsExtractor;
 +import net.minecraft.client.gui.components.Button;
 +import net.minecraft.network.chat.Component;
 +import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
 +import org.jspecify.annotations.NonNull;
 +
-+/** Shows the saved Character Creator recipes and Marketplace entitlements for the signed-in account. */
++/** Browses the saved Character Creator recipes and owned persona pieces for the signed-in account. */
 +public final class BedrockCharacterSlotsScreen extends VFPScreen {
 +
 +    public static final Component TITLE = Component.translatable("screen.viafabricplus.bedrock_character_slots");
 +
++    private enum View {
++        SLOTS, WARDROBE
++    }
++
 +    private AccountWardrobe wardrobe;
++    private List<WardrobeItem> items;
++    private View view = View.SLOTS;
 +    private int selectedSlot;
++    private int selectedItem;
 +    private boolean loading;
 +    private boolean failed;
++    private boolean itemsFailed;
++    private final Button[] slotButtons = new Button[5];
++    private Button slotsTab;
++    private Button wardrobeTab;
++    private Button previousItem;
++    private Button nextItem;
 +
 +    public BedrockCharacterSlotsScreen() {
 +        super(TITLE, true);
@@ -212,12 +309,23 @@ index 0000000..43016d0
 +        super.init();
 +        final int left = this.width / 2 - 150;
 +        final int top = Math.max(66, (this.height - 220) / 2);
++        this.slotsTab = this.addRenderableWidget(Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.slots"),
++            _ -> this.changeView(View.SLOTS)).bounds(left, top, 146, 20).build());
++        this.wardrobeTab = this.addRenderableWidget(Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.wardrobe"),
++            _ -> this.changeView(View.WARDROBE)).bounds(left + 154, top, 146, 20).build());
 +        for (int index = 0; index < 5; index++) {
 +            final int slot = index;
-+            this.addRenderableWidget(Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.slot", index + 1),
-+                _ -> this.selectedSlot = slot).bounds(left + index * 61, top, 56, 20).build());
++            this.slotButtons[index] = this.addRenderableWidget(Button.builder(
++                Component.translatable("bedrock_character_slots.viafabricplus.slot", index + 1),
++                _ -> this.selectedSlot = slot).bounds(left + index * 61, top + 28, 56, 20).build());
 +        }
-+        this.addFooter(Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.refresh"), _ -> this.refresh()).build());
++        this.previousItem = Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.previous"),
++            _ -> this.changeItem(-1)).build();
++        this.nextItem = Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.next"),
++            _ -> this.changeItem(1)).build();
++        this.addFooter(this.previousItem, this.nextItem,
++            Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.refresh"), _ -> this.refresh()).build());
++        this.updateControls();
 +        if (this.wardrobe == null && !this.loading) {
 +            this.refresh();
 +        }
@@ -228,7 +336,7 @@ index 0000000..43016d0
 +        super.extractRenderState(graphics, mouseX, mouseY, delta);
 +        this.renderScreenTitle(graphics);
 +        final int left = this.width / 2 - 150;
-+        final int top = Math.max(66, (this.height - 220) / 2) + 36;
++        final int top = Math.max(66, (this.height - 220) / 2) + 64;
 +        if (this.loading && this.wardrobe == null) {
 +            graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.loading"), left, top, ACCENT_COLOR);
 +            return;
@@ -237,6 +345,10 @@ index 0000000..43016d0
 +            graphics.textWithWordWrap(this.font, Component.translatable(this.failed
 +                ? "bedrock_character_slots.viafabricplus.failed" : "bedrock_character_slots.viafabricplus.sign_in"),
 +                left, top, 300, ACCENT_COLOR);
++            return;
++        }
++        if (this.view == View.WARDROBE) {
++            this.renderWardrobe(graphics, left, top);
 +            return;
 +        }
 +        final Slot slot = this.wardrobe.slots().get(this.selectedSlot);
@@ -257,6 +369,57 @@ index 0000000..43016d0
 +            left, top + 116, 300, ACCENT_COLOR);
 +    }
 +
++    private void renderWardrobe(final GuiGraphicsExtractor graphics, final int left, final int top) {
++        if (this.items == null) {
++            graphics.textWithWordWrap(this.font, Component.translatable(this.itemsFailed
++                ? "bedrock_character_slots.viafabricplus.items_failed" : "bedrock_character_slots.viafabricplus.items_loading"),
++                left, top, 300, ACCENT_COLOR);
++            return;
++        }
++        graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.owned_pieces",
++            this.items.size()), left, top, -1);
++        if (this.items.isEmpty()) {
++            graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.no_pieces"),
++                left, top + 24, 300, ACCENT_COLOR);
++            return;
++        }
++        final WardrobeItem item = this.items.get(this.selectedItem);
++        BedrockImageCache.drawRemote(graphics, item.thumbnailUrl(), left, top + 24, 96, 96);
++        graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.item_number",
++            this.selectedItem + 1, this.items.size()), left + 110, top + 24, ACCENT_COLOR);
++        graphics.textWithWordWrap(this.font, Component.literal(item.name()), left + 110, top + 44, 190, -1);
++        graphics.textWithWordWrap(this.font, Component.literal(item.type().replace("persona_", "").replace('_', ' ')),
++            left + 110, top + 92, 190, ACCENT_COLOR);
++        graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.wardrobe_notice"),
++            left, top + 132, 300, ACCENT_COLOR);
++    }
++
++    private void changeView(final View next) {
++        this.view = next;
++        this.updateControls();
++    }
++
++    private void changeItem(final int offset) {
++        if (this.items == null || this.items.isEmpty()) {
++            return;
++        }
++        this.selectedItem = Math.floorMod(this.selectedItem + offset, this.items.size());
++        this.updateControls();
++    }
++
++    private void updateControls() {
++        this.slotsTab.active = this.view != View.SLOTS;
++        this.wardrobeTab.active = this.view != View.WARDROBE;
++        for (final Button button : this.slotButtons) {
++            button.visible = this.view == View.SLOTS;
++        }
++        this.previousItem.visible = this.view == View.WARDROBE;
++        this.nextItem.visible = this.view == View.WARDROBE;
++        final boolean hasItems = this.items != null && this.items.size() > 1;
++        this.previousItem.active = hasItems;
++        this.nextItem.active = hasItems;
++    }
++
 +    private void refresh() {
 +        final BedrockAuthManager account = ViaFabricPlusBedrock.impl().account().get();
 +        if (account == null || this.loading) {
@@ -274,13 +437,30 @@ index 0000000..43016d0
 +                ViaFabricPlusBedrock.impl().logger().warn("Could not load Bedrock character slots", error);
 +            } else {
 +                this.wardrobe = loaded;
++                this.items = null;
++                this.itemsFailed = false;
++                this.updateControls();
++                BedrockCharacterProfiles.loadItems(account, loaded.entitlements()).whenComplete((loadedItems, itemError) ->
++                    this.minecraft.execute(() -> {
++                        if (this.minecraft.gui.screen() != this || this.wardrobe != loaded) {
++                            return;
++                        }
++                        if (itemError != null) {
++                            this.itemsFailed = true;
++                            ViaFabricPlusBedrock.impl().logger().warn("Could not load Bedrock wardrobe items", itemError);
++                        } else {
++                            this.items = loadedItems;
++                            this.selectedItem = Math.min(this.selectedItem, Math.max(0, loadedItems.size() - 1));
++                            this.updateControls();
++                        }
++                    }));
 +            }
 +        }));
 +    }
 +
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
-index a3a1cdd..d376980 100644
+index a3a1cdd..eaacfbf 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
 @@ -114,7 +114,9 @@ public final class BedrockDressingRoomScreen extends VFPScreen {
@@ -289,38 +469,48 @@ index a3a1cdd..d376980 100644
              Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.import_cape"), _ -> this.chooseFile(true)).build(),
 -            this.removeCapeButton = Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.remove_cape"), _ -> this.removeCape()).build()
 +            this.removeCapeButton = Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.remove_cape"), _ -> this.removeCape()).build(),
-+            Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.account_slots"),
++            Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.character_creator"),
 +                _ -> new BedrockCharacterSlotsScreen().open(this)).build()
          );
  
          try {
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
-index 5667798..4082684 100644
+index 5667798..def232a 100644
 --- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 +++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 @@ -27,6 +27,7 @@
    "bedrock_lan.viafabricplus.scan_failed": "Could not scan the LAN",
    "screen.viafabricplus.bedrock_party": "Bedrock Party",
    "screen.viafabricplus.bedrock_dressing_room": "Bedrock Dressing Room",
-+  "screen.viafabricplus.bedrock_character_slots": "Saved Bedrock Characters",
++  "screen.viafabricplus.bedrock_character_slots": "Bedrock Character Creator",
    "screen.viafabricplus.accept_invite": "Accept an invitation code",
  
    "bedrock_dressing_room.viafabricplus.steve": "Steve",
-@@ -40,9 +41,22 @@
+@@ -40,9 +41,32 @@
    "bedrock_dressing_room.viafabricplus.import_skin": "Import skin",
    "bedrock_dressing_room.viafabricplus.import_cape": "Import cape",
    "bedrock_dressing_room.viafabricplus.remove_cape": "Remove cape",
-+  "bedrock_dressing_room.viafabricplus.account_slots": "Account slots",
++  "bedrock_dressing_room.viafabricplus.character_creator": "Characters",
    "bedrock_dressing_room.viafabricplus.reconnect": "Applies when you next join a Bedrock world.",
    "bedrock_dressing_room.viafabricplus.load_failed": "Could not load your saved appearance. Check the log.",
    "bedrock_dressing_room.viafabricplus.one_file": "Drop one skin PNG at a time.",
 +  "bedrock_character_slots.viafabricplus.slot": "Slot %s",
++  "bedrock_character_slots.viafabricplus.slots": "Saved characters",
++  "bedrock_character_slots.viafabricplus.wardrobe": "Owned wardrobe",
++  "bedrock_character_slots.viafabricplus.previous": "Previous",
++  "bedrock_character_slots.viafabricplus.next": "Next",
 +  "bedrock_character_slots.viafabricplus.selected": "Character slot %s",
 +  "bedrock_character_slots.viafabricplus.saved": "Saved to your Bedrock account",
 +  "bedrock_character_slots.viafabricplus.empty": "Empty slot",
 +  "bedrock_character_slots.viafabricplus.pieces": "Selected pieces: %s",
 +  "bedrock_character_slots.viafabricplus.arms": "Arms: %s",
 +  "bedrock_character_slots.viafabricplus.entitlements": "Marketplace entitlements: %s",
++  "bedrock_character_slots.viafabricplus.owned_pieces": "Owned character pieces: %s",
++  "bedrock_character_slots.viafabricplus.items_loading": "Loading owned character pieces...",
++  "bedrock_character_slots.viafabricplus.items_failed": "Could not load owned character pieces. Try refreshing.",
++  "bedrock_character_slots.viafabricplus.no_pieces": "No Character Creator pieces are listed for this account.",
++  "bedrock_character_slots.viafabricplus.item_number": "%s of %s",
++  "bedrock_character_slots.viafabricplus.wardrobe_notice": "These pieces belong to your Bedrock account. This screen cannot equip them in a VFP world yet.",
 +  "bedrock_character_slots.viafabricplus.recipe_notice": "These slots store piece recipes. The Dressing Room still uses your selected classic skin when you join a world.",
 +  "bedrock_character_slots.viafabricplus.refresh": "Refresh",
 +  "bedrock_character_slots.viafabricplus.loading": "Loading saved characters...",
@@ -331,10 +521,10 @@ index 5667798..4082684 100644
    "bedrock_realms.viafabricplus.availability_check": "Checking availability...",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java
 new file mode 100644
-index 0000000..5bcf722
+index 0000000..6951ba8
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,68 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import com.google.gson.JsonObject;
@@ -343,6 +533,8 @@ index 0000000..5bcf722
 +
 +import static org.junit.jupiter.api.Assertions.assertEquals;
 +import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertNull;
 +import static org.junit.jupiter.api.Assertions.assertTrue;
 +
 +final class BedrockCharacterProfilesTest {
@@ -364,7 +556,7 @@ index 0000000..5bcf722
 +            """).getAsJsonObject();
 +        final JsonObject inventory = JsonParser.parseString("""
 +            {"result":{"inventory":{"entitlements":[
-+              {"id":"product","packId":"pack","ownership":"Purchased"}
++              {"id":"product","packId":"pack","ownership":"Purchased","offerIds":["offer"]}
 +            ]}}}
 +            """).getAsJsonObject();
 +
@@ -379,6 +571,25 @@ index 0000000..5bcf722
 +        assertEquals(2, wardrobe.slots().get(2).pieceIds().size());
 +        assertEquals(1, wardrobe.entitlements().size());
 +        assertEquals("pack", wardrobe.entitlements().getFirst().packId());
++        assertEquals(1, wardrobe.entitlements().getFirst().offerIds().size());
++    }
++
++    @Test
++    void includesOnlyPersonaPiecesFromTheMarketplaceCatalog() {
++        final JsonObject response = JsonParser.parseString("""
++            {"data":{"Item":{"Id":"piece","ContentType":"PersonaDurable",
++              "Title":{"en-US":"Blue Hat"},"DisplayProperties":{"pieceType":"persona_head"},
++              "Images":[{"Tag":"Thumbnail","Url":"https://example.test/hat.png"}]}}}
++            """).getAsJsonObject();
++
++        final var item = BedrockCharacterProfiles.catalogItem(response);
++
++        assertNotNull(item);
++        assertEquals("Blue Hat", item.name());
++        assertEquals("persona_head", item.type());
++        assertEquals("https://example.test/hat.png", item.thumbnailUrl());
++        response.getAsJsonObject("data").getAsJsonObject("Item").addProperty("ContentType", "GrantBundle_V1.0");
++        assertNull(BedrockCharacterProfiles.catalogItem(response));
 +    }
 +
 +}
