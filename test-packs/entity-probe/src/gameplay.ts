@@ -1,4 +1,4 @@
-import { CommandPermissionLevel, EquipmentSlot, GameMode, ItemStack, system, world } from "@minecraft/server";
+import { BlockPermutation, CommandPermissionLevel, EquipmentSlot, GameMode, ItemStack, system, world } from "@minecraft/server";
 
 const PREFIX = "[ViaBedrock Gameplay Probe]";
 const ENTITY_TAG = "viabedrock_gameplay_probe";
@@ -110,6 +110,15 @@ for (const [id, direction] of [["movement-left", -1], ["movement-right", 1]]) {
 
 define("block-break", "blocks", async (player) => {
   await prepareArena(player);
+  blockAt(player.dimension, 0, 1, 2).setType("minecraft:dirt");
+  return {};
+}, (player) => {
+  const typeId = blockAt(player.dimension, 0, 1, 2).typeId;
+  return { passed: typeId === "minecraft:air", observed: { typeId }, expected: "minecraft:air" };
+});
+
+define("creative-block-break", "blocks", async (player) => {
+  await prepareArena(player, GameMode.Creative);
   blockAt(player.dimension, 0, 1, 2).setType("minecraft:dirt");
   return {};
 }, (player) => {
@@ -298,6 +307,54 @@ define("boat-forward", "movement", async (player) => {
       && fixture.observation.riderSamples > 0 && fixture.observation.maxStep < 2,
     observed: { delta, distance, player: player.location, ...fixture.observation },
     expected: "Ridden boat stays on water, moves at least 0.8 blocks, and has no two-block jump between ticks." };
+});
+
+define("minecart-dismount", "movement", async (player) => {
+  await prepareArena(player);
+  for (let z = -2; z <= 28; z++) {
+    for (let x = -1; x <= 1; x++) {
+      blockAt(arena.dimension, x, -1, z).setType(x === 0 ? "minecraft:redstone_block" : "minecraft:stone");
+      for (let y = 0; y <= 3; y++) blockAt(arena.dimension, x, y, z).setType("minecraft:air");
+    }
+    blockAt(arena.dimension, 0, 0, z).setPermutation(BlockPermutation.resolve("minecraft:golden_rail", { rail_direction: 0 }));
+  }
+  const minecart = player.dimension.spawnEntity("minecraft:minecart", position(0.5, 0.2, 0.5));
+  minecart.addTag(ENTITY_TAG);
+  const rideable = minecart.getComponent("minecraft:rideable");
+  if (!rideable?.addRider(player)) throw new Error("Could not mount the player in the minecart.");
+  await nextTick();
+  const start = { ...minecart.location };
+  minecart.applyImpulse({ x: 0, y: 0, z: 0.25 });
+  const observation = { riderSamples: 0, maxDistance: 0, maxStep: 0, dismountPosition: null };
+  let previous = { ...minecart.location };
+  let lastRiddenPosition;
+  const monitor = system.runInterval(() => {
+    if (!minecart.isValid) return;
+    const location = minecart.location;
+    const riding = rideable.getRiders().some((rider) => rider.id === player.id);
+    if (riding) {
+      observation.riderSamples++;
+      lastRiddenPosition = { ...location };
+    } else if (lastRiddenPosition && !observation.dismountPosition) {
+      observation.dismountPosition = lastRiddenPosition;
+    }
+    observation.maxDistance = Math.max(observation.maxDistance, Math.hypot(location.x - start.x, location.z - start.z));
+    observation.maxStep = Math.max(observation.maxStep, Math.hypot(location.x - previous.x, location.z - previous.z));
+    previous = { ...location };
+  }, 1);
+  return { minecart, rideable, start, observation, monitor };
+}, (player, fixture) => {
+  system.clearRun(fixture.monitor);
+  const vehicle = fixture.minecart.location;
+  const rider = fixture.rideable.getRiders().some((entity) => entity.id === player.id);
+  const fromStart = Math.hypot(player.location.x - fixture.start.x, player.location.z - fixture.start.z);
+  const dismountPosition = fixture.observation.dismountPosition;
+  const fromDismount = dismountPosition
+    ? Math.hypot(player.location.x - dismountPosition.x, player.location.z - dismountPosition.z) : null;
+  return { passed: fixture.observation.maxDistance > 2 && fixture.observation.riderSamples > 0
+      && fixture.observation.maxStep < 2 && !rider && fromStart > 1.5 && fromDismount !== null && fromDismount < 3,
+    observed: { rider, fromStart, fromDismount, player: player.location, vehicle, ...fixture.observation },
+    expected: "The player dismounts after the minecart moves and remains near its new position." };
 });
 
 define("drop-item", "inventory", async (player) => {

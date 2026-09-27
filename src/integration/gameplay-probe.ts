@@ -6,11 +6,11 @@ import { root } from "../model.ts";
 const prefix = "[ViaBedrock Gameplay Probe] ";
 
 export const gameplayCaseIds = [
-  "movement-left", "movement-right", "block-break", "block-place", "drop-item", "inventory-script-slot",
+  "movement-left", "movement-right", "block-break", "creative-block-break", "block-place", "drop-item", "inventory-script-slot",
   "creative-select", "creative-replace", "creative-replace-main", "equip-helmet", "equip-offhand", "eat-golden-apple", "entity-attack", "entity-name",
   "map-hold", "command-time", "command-completion", "command-denied", "respawn", "dimension-change",
   "chest-transfer", "chest-rapid-transfer", "chest-pickup-all", "lab-table-then-chest", "chest-boat-transfer", "chest-minecart-transfer", "enchant-basic",
-  "offhand-block-place", "offhand-shield-use", "offhand-elytra-rocket", "boat-forward",
+  "offhand-block-place", "offhand-shield-use", "offhand-elytra-rocket", "boat-forward", "minecart-dismount",
   "shield-projectile-baseline", "shield-projectile-block",
   "crafting-manual-sticks", "crafting-book-sticks",
 ] as const;
@@ -205,6 +205,7 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
       await ui(["ui", "key-hold", id === "movement-left" ? "a" : "d", "500", "--client", "java"]);
       return;
     case "block-break":
+    case "creative-block-break":
       await uiMouse(ui, "left", 1200);
       return;
     case "block-place":
@@ -325,6 +326,11 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
       return;
     case "boat-forward":
       await ui(["ui", "key-hold", "w", "1800", "--client", "java"]);
+      return;
+    case "minecart-dismount":
+      await Bun.sleep(1800);
+      await uiKey(ui, "Shift_L");
+      await Bun.sleep(650);
       return;
     case "equip-offhand":
       await uiKey(ui, "f");
