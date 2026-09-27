@@ -257,14 +257,15 @@ define("shield-projectile-block", "equipment", async (player) => prepareShieldPr
       expected: "A frontal arrow hits while the shield is raised without damage during active use." };
   });
 
-define("offhand-elytra-rocket", "equipment", async (player) => {
+async function prepareElytraRocket(player, hand) {
   await prepareArena(player);
   equipment(player).setEquipment(EquipmentSlot.Chest, new ItemStack("minecraft:elytra"));
-  equipment(player).setEquipment(EquipmentSlot.Offhand, new ItemStack("minecraft:firework_rocket", 3));
+  if (hand === "offhand") equipment(player).setEquipment(EquipmentSlot.Offhand, new ItemStack("minecraft:firework_rocket", 3));
+  else inventory(player).setItem(0, new ItemStack("minecraft:firework_rocket", 3));
   await nextTick();
   if (equipment(player).getEquipment(EquipmentSlot.Chest)?.typeId !== "minecraft:elytra"
-      || equipment(player).getEquipment(EquipmentSlot.Offhand)?.amount !== 3) {
-    throw new Error("Bedrock did not equip the elytra and three offhand rockets.");
+      || rocketCount(player, hand) !== 3) {
+    throw new Error(`Bedrock did not equip the elytra and three ${hand} rockets.`);
   }
   player.addEffect("resistance", 200, { amplifier: 255, showParticles: false });
   const observation = { gliding: false, rocketConsumedWhileGliding: false, speedBeforeUse: 0,
@@ -277,8 +278,7 @@ define("offhand-elytra-rocket", "equipment", async (player) => {
     const velocity = player.getVelocity();
     const speed = Math.hypot(velocity.x, velocity.z);
     observation.maxHorizontalSpeed = Math.max(observation.maxHorizontalSpeed, speed);
-    const offhand = equipment(player).getEquipment(EquipmentSlot.Offhand);
-    const count = offhand?.typeId === "minecraft:firework_rocket" ? offhand.amount : 0;
+    const count = rocketCount(player, hand);
     if (player.isGliding && count < previousCount && !observation.rocketConsumedWhileGliding) {
       observation.rocketConsumedWhileGliding = true;
       observation.speedBeforeUse = previousSpeed;
@@ -288,17 +288,28 @@ define("offhand-elytra-rocket", "equipment", async (player) => {
     previousSpeed = speed;
   }, 1);
   return { observation, monitor };
-}, (player, fixture) => {
+}
+
+function rocketCount(player, hand) {
+  const item = hand === "offhand" ? equipment(player).getEquipment(EquipmentSlot.Offhand) : inventory(player).getItem(0);
+  return item?.typeId === "minecraft:firework_rocket" ? item.amount : 0;
+}
+
+function verifyElytraRocket(player, fixture, hand) {
   system.clearRun(fixture.monitor);
-  const offhand = equipment(player).getEquipment(EquipmentSlot.Offhand);
-  const remaining = offhand?.typeId === "minecraft:firework_rocket" ? offhand.amount : 0;
+  const remaining = rocketCount(player, hand);
   const health = player.getComponent("minecraft:health")?.currentValue;
   return { passed: fixture.observation.gliding && fixture.observation.rocketConsumedWhileGliding
       && fixture.observation.maxSpeedAfterUse > fixture.observation.speedBeforeUse + 0.15 && health > 0,
     observed: { ...fixture.observation, remaining, health,
       location: player.location },
     expected: "Rocket count falls during glide, horizontal speed rises, and the player survives." };
-});
+}
+
+for (const hand of ["offhand", "mainhand"]) {
+  define(`${hand}-elytra-rocket`, "equipment", (player) => prepareElytraRocket(player, hand),
+    (player, fixture) => verifyElytraRocket(player, fixture, hand));
+}
 
 define("boat-forward", "movement", async (player) => {
   await prepareArena(player);
@@ -731,8 +742,8 @@ export async function prepareGameplay(id, run, player) {
 
 export function startGameplay(id, run, player) {
   if (!active || active.scenario.id !== id || active.run !== run || active.playerName !== player?.name
-      || id !== "offhand-elytra-rocket") {
-    record(id, run, "start", "error", { error: "The elytra flight scenario is not active for this player and run." });
+      || !["offhand-elytra-rocket", "mainhand-elytra-rocket"].includes(id)) {
+    record(id, run, "start", "error", { error: "The gameplay start scenario is not active for this player and run." });
     return;
   }
   try {

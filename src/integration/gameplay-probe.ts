@@ -10,7 +10,7 @@ export const gameplayCaseIds = [
   "creative-select", "creative-replace", "creative-replace-main", "equip-helmet", "equip-offhand", "eat-golden-apple", "entity-attack", "entity-name",
   "map-hold", "command-time", "command-completion", "command-denied", "respawn", "dimension-change",
   "chest-transfer", "chest-rapid-transfer", "chest-pickup-all", "lab-table-then-chest", "chest-boat-transfer", "chest-minecart-transfer", "enchant-basic",
-  "offhand-block-place", "offhand-shield-use", "offhand-elytra-rocket", "boat-forward", "minecart-dismount",
+  "offhand-block-place", "offhand-shield-use", "offhand-elytra-rocket", "mainhand-elytra-rocket", "boat-forward", "minecart-dismount",
   "shield-projectile-baseline", "shield-projectile-block",
   "crafting-manual-sticks", "crafting-book-sticks",
 ] as const;
@@ -320,6 +320,7 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
       await uiMouse(ui, "right", 9500);
       return;
     case "offhand-elytra-rocket":
+    case "mainhand-elytra-rocket":
       await uiKey(ui, "e");
       await Bun.sleep(300);
       await ui(["ui", "screenshot", "elytra-equipped-before-flight", "--client", "java", "--output-dir", join(root, ".stackanvil", "integration")]);
