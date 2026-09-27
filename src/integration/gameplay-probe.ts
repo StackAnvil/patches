@@ -44,6 +44,22 @@ export function gameplayEvents(log: string): GameplayEvent[] {
   });
 }
 
+export function minecartDismountHasClearance(observed: unknown): boolean {
+  if (!observed || typeof observed !== "object") return false;
+  const { fromStart, player, dismountPosition } = observed as Record<string, unknown>;
+  const playerY = player && typeof player === "object" && "y" in player ? player.y : undefined;
+  const cartY = dismountPosition && typeof dismountPosition === "object" && "y" in dismountPosition
+    ? dismountPosition.y : undefined;
+  if (typeof fromStart !== "number" || !Number.isFinite(fromStart)
+    || typeof playerY !== "number" || !Number.isFinite(playerY)
+    || typeof cartY !== "number" || !Number.isFinite(cartY)) return false;
+
+  // The probe builds rails over a floor at Y=250, ending 28 blocks from the spawn point.
+  return fromStart > 1.5 && fromStart < 27.5
+    && cartY >= 250 && cartY <= 250.5
+    && playerY >= 249.95 && playerY <= cartY + 1.25;
+}
+
 export async function waitForGameplayEvent(id: GameplayCaseId, run: string, phase: GameplayPhase,
   log: () => Promise<string>, alive: () => boolean, timeoutMs = 20_000, pollMs = 250): Promise<GameplayEvent> {
   const deadline = Date.now() + timeoutMs;
@@ -406,6 +422,9 @@ export async function runGameplayCases(ids: readonly GameplayCaseId[], options: 
         "--output-dir", options.artifactDir]));
       options.server.stdin?.write(`scriptevent vbprobe:verify ${id} ${run}\n`);
       const event = await waitForGameplayEvent(id, run, "verify", log, alive);
+      if (id === "minecart-dismount" && !minecartDismountHasClearance(event.observed)) {
+        throw new Error(`Minecart dismount left the rail or clipped below its floor: ${JSON.stringify(event.observed)}`);
+      }
       results.push({ id, status: "pass", observed: event.observed, screenshots });
       console.log(`PASS gameplay ${id}: ${JSON.stringify(event.observed)}`);
     } catch (error) {

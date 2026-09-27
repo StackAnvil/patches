@@ -137,7 +137,7 @@ async function bedrockServer(dir: string, source: string, name: string, entityPr
   let changed = properties;
   for (const [key, value] of Object.entries({ "server-name": "StackAnvil Integration", "server-port": String(port),
     "server-portv6": String(port + 1), "level-name": "integration-world", "online-mode": "false", "allow-list": "false",
-    "allow-cheats": "true" })) {
+    "allow-cheats": "true", "enable-lan-visibility": "false" })) {
     changed = set(changed, key, value);
   }
   if (entityProbe) {

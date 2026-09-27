@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { gameplayEvents, waitForGameplayEvent } from "../src/integration/gameplay-probe.ts";
+import { gameplayEvents, minecartDismountHasClearance, waitForGameplayEvent } from "../src/integration/gameplay-probe.ts";
 
 test("gameplay events match their case, run, and phase", async () => {
   const log = [
@@ -21,4 +21,13 @@ test("gameplay events match their case, run, and phase", async () => {
 test("a stopped client fails a pending gameplay case", async () => {
   await expect(waitForGameplayEvent("movement-left", "run", "verify", async () => "", () => false, 10, 1))
     .rejects.toThrow("stopped");
+});
+
+test("minecart dismount remains near the rail height and within the track", () => {
+  const observed = { fromStart: 22.2, player: { y: 250 }, dismountPosition: { y: 250.15 } };
+  expect(minecartDismountHasClearance(observed)).toBe(true);
+  expect(minecartDismountHasClearance({ ...observed, player: { y: 249.2 } })).toBe(false);
+  expect(minecartDismountHasClearance({ ...observed, dismountPosition: { y: 249.2 } })).toBe(false);
+  expect(minecartDismountHasClearance({ ...observed, fromStart: 29 })).toBe(false);
+  expect(minecartDismountHasClearance(null)).toBe(false);
 });
