@@ -65,6 +65,7 @@ type Step =
   | { action: "buttonHold"; button: "left" | "right"; ms: number }
   | { action: "type"; text: string }
   | { action: "key"; key: string }
+  | { action: "doubleKey"; key: string }
   | { action: "keyHold"; key: string; ms: number }
   | { action: "videoStart"; name: string }
   | { action: "videoStop" };
@@ -400,7 +401,8 @@ async function click(x: number, y: number, windowId?: string, client?: Client, a
   }
 }
 
-async function key(name: string, windowId?: string, client?: Client, allowFocus = false, durationMs?: number): Promise<void> {
+async function key(name: string, windowId?: string, client?: Client, allowFocus = false,
+  durationMs?: number, doubleTap = false): Promise<void> {
   if (!/^[A-Za-z0-9_+]{1,32}$/.test(name)) throw new Error("Use a key name such as Escape, Return, Tab, or Control+b.");
   const window = await chosenWindow(windowId, client);
   const isolated = await displayEnv();
@@ -408,11 +410,13 @@ async function key(name: string, windowId?: string, client?: Client, allowFocus 
   const env = isolated ?? process.env;
   await run(nativeBinary, ["focus", window.id], root, env);
   if (!isolated && process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes("gnome")) {
+    if (doubleTap) throw new Error("Double key presses require the private display on GNOME Wayland.");
     if (durationMs !== undefined) throw new Error("Key holds require the private display on GNOME Wayland.");
     await run("python3", [gnomeRemote, nativeBinary, "key", name]);
   } else {
     await run(nativeBinary, durationMs === undefined
-      ? ["key", window.id, name] : ["key-hold", window.id, name, String(durationMs)], root, env);
+      ? [doubleTap ? "double-key" : "key", window.id, name]
+      : ["key-hold", window.id, name, String(durationMs)], root, env);
   }
 }
 
@@ -456,6 +460,7 @@ async function scenario(file: string, windowId?: string, client: Client = "bedro
       case "mouseHold": await click(step.x, step.y, windowId, client, allowFocus, step.button, step.ms); break;
       case "buttonHold": await buttonHold(step.button, step.ms, windowId, client, allowFocus); break;
       case "key": await key(step.key, windowId, client, allowFocus); break;
+      case "doubleKey": await key(step.key, windowId, client, allowFocus, undefined, true); break;
       case "keyHold": await key(step.key, windowId, client, allowFocus, step.ms); break;
       case "type": await typeText(step.text, windowId, client, allowFocus); break;
       case "videoStart": await startVideo(step.name, client, windowId); break;
@@ -607,11 +612,12 @@ async function main(): Promise<void> {
           return;
         }
         case "key": if (!input[0]) throw new Error("Supply a key name."); await key(input[0], windowId, client, allowFocus); return;
+        case "double-key": if (!input[0]) throw new Error("Supply a key name."); await key(input[0], windowId, client, allowFocus, undefined, true); return;
         case "key-hold": if (!input[0]) throw new Error("Supply a key name."); await key(input[0], windowId, client, allowFocus, Number(input[1])); return;
         case "type": if (!input[0]) throw new Error("Supply text."); await typeText(input[0], windowId, client, allowFocus); return;
         case "run": if (!input[0]) throw new Error("Supply a scenario JSON file."); await scenario(input[0], windowId, client, allowFocus); return;
       }
-      throw new Error("Usage: bun run capture ui <list|screenshot|pixel|click|double-click|mouse-hold|button-hold|key|key-hold|run>");
+      throw new Error("Usage: bun run capture ui <list|screenshot|pixel|click|double-click|mouse-hold|button-hold|key|double-key|key-hold|run>");
     }
     default: throw new Error("Usage: bun run capture <doctor|start|launch|game-stop|mark|stop|status|report|compare|video|ui>");
   }

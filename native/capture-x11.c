@@ -222,6 +222,7 @@ int main(int argc, char **argv) {
                 usleep(30000);
             }
         } else if ((strcmp(argv[1], "key") == 0 && argc == 4)
+                   || (strcmp(argv[1], "double-key") == 0 && argc == 4)
                    || (strcmp(argv[1], "key-hold") == 0 && argc == 5)) {
             char *sequence = strdup(argv[3]);
             char *position = NULL;
@@ -241,13 +242,17 @@ int main(int argc, char **argv) {
             if (duration_ms < 1 || duration_ms > 10000) { fprintf(stderr, "Key hold must be 1 to 10000 ms\n"); return 1; }
             XRaiseWindow(display, window);
             XSetInputFocus(display, window, RevertToParent, CurrentTime);
-            for (int i = 0; i < length; i++) XTestFakeKeyEvent(display, codes[i], True, CurrentTime);
-            XFlush(display);
-            usleep((useconds_t)duration_ms * 1000);
-            for (int i = length - 1; i >= 0; i--) XTestFakeKeyEvent(display, codes[i], False, CurrentTime);
-            XFlush(display);
-        } else { fprintf(stderr, "Usage: capture-x11 list|pixel ID X Y|screenshot ID FILE|resize ID WIDTH HEIGHT|click|double-click ID X Y [left|right]|mouse-hold ID X Y BUTTON MS|button-hold ID BUTTON MS|key ID NAME|key-hold ID NAME MS\n"); return 2; }
-    } else { fprintf(stderr, "Usage: capture-x11 list|pixel ID X Y|screenshot ID FILE|resize ID WIDTH HEIGHT|click|double-click ID X Y [left|right]|mouse-hold ID X Y BUTTON MS|button-hold ID BUTTON MS|key ID NAME|key-hold ID NAME MS\n"); return 2; }
+            int presses = strcmp(argv[1], "double-key") == 0 ? 2 : 1;
+            for (int press = 0; press < presses; press++) {
+                for (int i = 0; i < length; i++) XTestFakeKeyEvent(display, codes[i], True, CurrentTime);
+                XFlush(display);
+                usleep((useconds_t)(presses == 2 ? 70 : duration_ms) * 1000);
+                for (int i = length - 1; i >= 0; i--) XTestFakeKeyEvent(display, codes[i], False, CurrentTime);
+                XFlush(display);
+                if (press + 1 < presses) usleep(70000);
+            }
+        } else { fprintf(stderr, "Usage: capture-x11 list|pixel ID X Y|screenshot ID FILE|resize ID WIDTH HEIGHT|click|double-click ID X Y [left|right]|mouse-hold ID X Y BUTTON MS|key|double-key ID NAME|key-hold ID NAME MS\n"); return 2; }
+    } else { fprintf(stderr, "Usage: capture-x11 list|pixel ID X Y|screenshot ID FILE|resize ID WIDTH HEIGHT|click|double-click ID X Y [left|right]|mouse-hold ID X Y BUTTON MS|key|double-key ID NAME|key-hold ID NAME MS\n"); return 2; }
     XCloseDisplay(display);
     return 0;
 }
