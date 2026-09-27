@@ -1,6 +1,6 @@
 import { system, world } from "@minecraft/server";
 import { catalog } from "./catalog.ts";
-import { gameplayIds, prepareGameplay, resetGameplay, verifyGameplay } from "./gameplay.ts";
+import { gameplayIds, prepareGameplay, resetGameplay, startGameplay, verifyGameplay } from "./gameplay.ts";
 
 const TAG = "viabedrock_entity_probe";
 const entries = new Map(catalog.map((entry) => [entry.type, entry]));
@@ -185,6 +185,9 @@ function handle(event) {
       return;
     case "prepare":
       void prepareGameplay(args[0], args[1], currentPlayer(source));
+      return;
+    case "start":
+      startGameplay(args[0], args[1], currentPlayer(source));
       return;
     case "verify":
       verifyGameplay(args[0], args[1], currentPlayer(source));

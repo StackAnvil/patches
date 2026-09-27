@@ -129,6 +129,177 @@ define("block-place", "blocks", async (player) => {
   return { passed: placed.length === 1 && remaining === 1, observed: { placed, remaining }, expected: { placed: 1, remaining: 1 } };
 });
 
+define("offhand-block-place", "blocks", async (player) => {
+  await prepareArena(player);
+  blockAt(player.dimension, 0, 1, 2).setType("minecraft:stone");
+  equipment(player).setEquipment(EquipmentSlot.Offhand, new ItemStack("minecraft:dirt", 2));
+  player.teleport(position(), { dimension: arena.dimension, facingLocation: position(0.5, 1.5, 2.5) });
+  await nextTick();
+  const equipped = equipment(player).getEquipment(EquipmentSlot.Offhand);
+  if (equipped?.typeId !== "minecraft:dirt") throw new Error(`Bedrock rejected offhand dirt: ${equipped?.typeId ?? "empty"}`);
+  return {};
+}, (player) => {
+  const neighbors = [[-1, 1, 2], [1, 1, 2], [0, 0, 2], [0, 2, 2], [0, 1, 1], [0, 1, 3]];
+  const placed = neighbors.filter(([x, y, z]) => blockAt(player.dimension, x, y, z).typeId === "minecraft:dirt");
+  const offhand = equipment(player).getEquipment(EquipmentSlot.Offhand);
+  return { passed: placed.length === 1 && offhand?.amount === 1,
+    observed: { placed, offhand: offhand?.typeId, amount: offhand?.amount },
+    expected: { placed: 1, offhand: "minecraft:dirt", amount: 1 } };
+});
+
+define("offhand-shield-use", "equipment", async (player) => {
+  await prepareArena(player);
+  equipment(player).setEquipment(EquipmentSlot.Offhand, new ItemStack("minecraft:shield"));
+  await nextTick();
+  if (equipment(player).getEquipment(EquipmentSlot.Offhand)?.typeId !== "minecraft:shield") {
+    throw new Error("Bedrock did not equip the offhand shield.");
+  }
+  const observation = { sneakingWhileUsing: false };
+  const monitor = system.runInterval(() => {
+    if (player.isValid && player.isSneaking) observation.sneakingWhileUsing = true;
+  }, 1);
+  return { observation, monitor };
+}, (_player, fixture) => {
+  system.clearRun(fixture.monitor);
+  return { passed: fixture.observation.sneakingWhileUsing, observed: fixture.observation,
+    expected: "Bedrock sees the sneak input used to raise the shield." };
+});
+
+async function prepareShieldProjectile(player, withShield) {
+  await prepareArena(player);
+  for (let z = 0; z <= 5; z++) {
+    for (let y = 1; y <= 3; y++) {
+      blockAt(arena.dimension, -1, y, z).setType("minecraft:stone");
+      blockAt(arena.dimension, 1, y, z).setType("minecraft:stone");
+    }
+    blockAt(arena.dimension, 0, 3, z).setType("minecraft:stone");
+  }
+  if (withShield) equipment(player).setEquipment(EquipmentSlot.Offhand, new ItemStack("minecraft:shield"));
+  await nextTick();
+  const observation = { arrowHits: 0, sneakingWhileUsing: false, hitsWhileSneaking: 0, damageEvents: [] };
+  system.runTimeout(() => {
+    if (!player.isValid) return;
+    const skeleton = player.dimension.spawnEntity("minecraft:skeleton", position(0.5, 1, 4.5));
+    skeleton.addTag(ENTITY_TAG);
+    skeleton.addEffect("slowness", 400, { amplifier: 255, showParticles: false });
+  }, 40);
+  const monitor = system.runInterval(() => {
+    if (player.isValid && player.isSneaking) observation.sneakingWhileUsing = true;
+  }, 1);
+  return { playerId: player.id, health: player.getComponent("minecraft:health")?.currentValue, observation, monitor };
+}
+
+world.afterEvents.projectileHitEntity.subscribe((event) => {
+  if (!active?.scenario.id.startsWith("shield-projectile-") || event.projectile.typeId !== "minecraft:arrow") return;
+  if (event.getEntityHit()?.entity.id === active.fixture.playerId) {
+    active.fixture.observation.arrowHits++;
+    if (event.getEntityHit()?.entity.isSneaking) active.fixture.observation.hitsWhileSneaking++;
+  }
+});
+
+world.afterEvents.entityHurt.subscribe((event) => {
+  if (!active?.scenario.id.startsWith("shield-projectile-") || event.hurtEntity.id !== active.fixture.playerId) return;
+  active.fixture.observation.damageEvents.push({ tick: system.currentTick, damage: event.damage,
+    cause: event.damageSource.cause, sneaking: event.hurtEntity.isSneaking });
+});
+
+define("shield-projectile-baseline", "equipment", async (player) => prepareShieldProjectile(player, false),
+  (player, fixture) => {
+    system.clearRun(fixture.monitor);
+    const health = player.getComponent("minecraft:health")?.currentValue;
+    return { passed: fixture.observation.arrowHits > 0 && health < fixture.health,
+      observed: { ...fixture.observation, health, before: fixture.health },
+      expected: "A frontal skeleton arrow hits and damages an unshielded player." };
+  });
+
+define("shield-projectile-block", "equipment", async (player) => prepareShieldProjectile(player, true),
+  (player, fixture) => {
+    system.clearRun(fixture.monitor);
+    const health = player.getComponent("minecraft:health")?.currentValue;
+    const blockedWhileUsing = fixture.observation.hitsWhileSneaking > 0
+      && !fixture.observation.damageEvents.some((event) => event.sneaking);
+    return { passed: blockedWhileUsing && fixture.observation.sneakingWhileUsing,
+      observed: { ...fixture.observation, health, before: fixture.health },
+      expected: "A frontal arrow hits while the shield is raised without damage during active use." };
+  });
+
+define("offhand-elytra-rocket", "equipment", async (player) => {
+  await prepareArena(player);
+  equipment(player).setEquipment(EquipmentSlot.Chest, new ItemStack("minecraft:elytra"));
+  equipment(player).setEquipment(EquipmentSlot.Offhand, new ItemStack("minecraft:firework_rocket", 3));
+  await nextTick();
+  if (equipment(player).getEquipment(EquipmentSlot.Chest)?.typeId !== "minecraft:elytra"
+      || equipment(player).getEquipment(EquipmentSlot.Offhand)?.amount !== 3) {
+    throw new Error("Bedrock did not equip the elytra and three offhand rockets.");
+  }
+  player.addEffect("resistance", 200, { amplifier: 255, showParticles: false });
+  const observation = { gliding: false, rocketConsumedWhileGliding: false, speedBeforeUse: 0,
+    maxSpeedAfterUse: 0, maxHorizontalSpeed: 0 };
+  let previousCount = 3;
+  let previousSpeed = 0;
+  const monitor = system.runInterval(() => {
+    if (!player.isValid) return;
+    observation.gliding ||= player.isGliding;
+    const velocity = player.getVelocity();
+    const speed = Math.hypot(velocity.x, velocity.z);
+    observation.maxHorizontalSpeed = Math.max(observation.maxHorizontalSpeed, speed);
+    const offhand = equipment(player).getEquipment(EquipmentSlot.Offhand);
+    const count = offhand?.typeId === "minecraft:firework_rocket" ? offhand.amount : 0;
+    if (player.isGliding && count < previousCount && !observation.rocketConsumedWhileGliding) {
+      observation.rocketConsumedWhileGliding = true;
+      observation.speedBeforeUse = previousSpeed;
+    }
+    if (observation.rocketConsumedWhileGliding) observation.maxSpeedAfterUse = Math.max(observation.maxSpeedAfterUse, speed);
+    previousCount = count;
+    previousSpeed = speed;
+  }, 1);
+  return { observation, monitor };
+}, (player, fixture) => {
+  system.clearRun(fixture.monitor);
+  const offhand = equipment(player).getEquipment(EquipmentSlot.Offhand);
+  const remaining = offhand?.typeId === "minecraft:firework_rocket" ? offhand.amount : 0;
+  const health = player.getComponent("minecraft:health")?.currentValue;
+  return { passed: fixture.observation.gliding && fixture.observation.rocketConsumedWhileGliding
+      && fixture.observation.maxSpeedAfterUse > fixture.observation.speedBeforeUse + 0.15 && health > 0,
+    observed: { ...fixture.observation, remaining, health,
+      location: player.location },
+    expected: "Rocket count falls during glide, horizontal speed rises, and the player survives." };
+});
+
+define("boat-forward", "movement", async (player) => {
+  await prepareArena(player);
+  for (let x = -30; x <= 30; x++) {
+    for (let z = -2; z <= 2; z++) blockAt(arena.dimension, x, 0, z).setType("minecraft:water");
+  }
+  const boat = player.dimension.spawnEntity("minecraft:boat", position(0.5, 0.4, 0.5));
+  boat.addTag(ENTITY_TAG);
+  const rideable = boat.getComponent("minecraft:rideable");
+  if (!rideable?.addRider(player)) throw new Error("Could not mount the player in the boat.");
+  await nextTick();
+  const observation = { samples: 0, riderSamples: 0, maxStep: 0, pathLength: 0 };
+  let previous = { ...boat.location };
+  const monitor = system.runInterval(() => {
+    if (!boat.isValid) return;
+    const location = boat.location;
+    const step = Math.hypot(location.x - previous.x, location.z - previous.z);
+    observation.samples++;
+    observation.riderSamples += rideable.getRiders().some((rider) => rider.id === player.id) ? 1 : 0;
+    observation.maxStep = Math.max(observation.maxStep, step);
+    observation.pathLength += step;
+    previous = { ...location };
+  }, 1);
+  return { boat, start: { ...boat.location }, observation, monitor };
+}, (player, fixture) => {
+  system.clearRun(fixture.monitor);
+  const delta = { x: fixture.boat.location.x - fixture.start.x, y: fixture.boat.location.y - fixture.start.y,
+    z: fixture.boat.location.z - fixture.start.z };
+  const distance = Math.hypot(delta.x, delta.z);
+  return { passed: distance > 0.8 && Math.abs(delta.y) < 2
+      && fixture.observation.riderSamples > 0 && fixture.observation.maxStep < 2,
+    observed: { delta, distance, player: player.location, ...fixture.observation },
+    expected: "Ridden boat stays on water, moves at least 0.8 blocks, and has no two-block jump between ticks." };
+});
+
 define("drop-item", "inventory", async (player) => {
   await prepareArena(player);
   giveSelected(player, "minecraft:emerald", 4);
@@ -162,24 +333,75 @@ define("chest-transfer", "inventory", async (player) => {
   return { passed: observed.chest === 0 && observed.player === 4, observed, expected: { chest: 0, player: 4 } };
 });
 
+define("chest-rapid-transfer", "inventory", async (player) => {
+  await prepareArena(player);
+  blockAt(player.dimension, 0, 1, 2).setType("minecraft:chest");
+  await nextTick();
+  const chest = blockAt(player.dimension, 0, 1, 2).getComponent("minecraft:inventory")?.container;
+  if (!chest) throw new Error("Chest inventory is unavailable.");
+  chest.setItem(0, new ItemStack("minecraft:emerald", 4));
+  chest.setItem(1, new ItemStack("minecraft:diamond", 3));
+  return {};
+}, (player) => {
+  const chest = blockAt(player.dimension, 0, 1, 2).getComponent("minecraft:inventory")?.container;
+  if (!chest) throw new Error("Chest inventory is unavailable.");
+  const observed = {
+    chestEmeralds: countItem(chest, "minecraft:emerald"),
+    chestDiamonds: countItem(chest, "minecraft:diamond"),
+    playerEmeralds: countItem(inventory(player), "minecraft:emerald"),
+    playerDiamonds: countItem(inventory(player), "minecraft:diamond"),
+  };
+  const expected = { chestEmeralds: 0, chestDiamonds: 0, playerEmeralds: 4, playerDiamonds: 3 };
+  return { passed: Object.entries(expected).every(([key, value]) => observed[key] === value), observed, expected };
+});
+
+define("chest-pickup-all", "inventory", async (player) => {
+  await prepareArena(player);
+  blockAt(player.dimension, 0, 1, 2).setType("minecraft:chest");
+  await nextTick();
+  const chest = blockAt(player.dimension, 0, 1, 2).getComponent("minecraft:inventory")?.container;
+  if (!chest) throw new Error("Chest inventory is unavailable.");
+  chest.setItem(0, new ItemStack("minecraft:emerald", 2));
+  chest.setItem(1, new ItemStack("minecraft:emerald", 3));
+  chest.setItem(2, new ItemStack("minecraft:emerald", 4));
+  return {};
+}, (player) => {
+  const chest = blockAt(player.dimension, 0, 1, 2).getComponent("minecraft:inventory")?.container;
+  if (!chest) throw new Error("Chest inventory is unavailable.");
+  const observed = { chest: countItem(chest, "minecraft:emerald"), player: countItem(inventory(player), "minecraft:emerald") };
+  return { passed: observed.chest === 0 && observed.player === 9, observed, expected: { chest: 0, player: 9 } };
+});
+
+for (const id of ["crafting-manual-sticks", "crafting-book-sticks"]) {
+  define(id, "crafting", async (player) => {
+    await prepareArena(player);
+    blockAt(player.dimension, 0, 1, 2).setType("minecraft:crafting_table");
+    giveSelected(player, "minecraft:oak_planks", 2);
+    return {};
+  }, (player) => {
+    const observed = {
+      planks: countItem(inventory(player), "minecraft:oak_planks"),
+      sticks: countItem(inventory(player), "minecraft:stick"),
+    };
+    return { passed: observed.planks === 0 && observed.sticks === 4,
+      observed, expected: { planks: 0, sticks: 4 } };
+  });
+}
+
 define("lab-table-then-chest", "inventory", async (player) => {
   await prepareArena(player);
   blockAt(player.dimension, 0, 1, 2).setType("minecraft:lab_table");
-  blockAt(player.dimension, 2, 1, 2).setType("minecraft:chest");
-  await nextTick();
-  const chest = blockAt(player.dimension, 2, 1, 2).getComponent("minecraft:inventory")?.container;
-  if (!chest) throw new Error("Chest inventory is unavailable.");
-  chest.setItem(0, new ItemStack("minecraft:emerald", 4));
-  return { labInteracted: false };
+  return { labInteracted: false, chestReady: false };
 }, (player, fixture) => {
-  const chest = blockAt(player.dimension, 2, 1, 2).getComponent("minecraft:inventory")?.container;
+  const chest = blockAt(player.dimension, 0, 1, 1).getComponent("minecraft:inventory")?.container;
   const observed = {
     labInteracted: fixture.labInteracted,
+    chestReady: fixture.chestReady,
     chest: chest ? countItem(chest, "minecraft:emerald") : null,
     player: countItem(inventory(player), "minecraft:emerald"),
   };
-  return { passed: observed.labInteracted && observed.chest === 0 && observed.player === 4,
-    observed, expected: { labInteracted: true, chest: 0, player: 4 } };
+  return { passed: observed.labInteracted && observed.chestReady && observed.chest === 0 && observed.player === 4,
+    observed, expected: { labInteracted: true, chestReady: true, chest: 0, player: 4 } };
 });
 
 for (const [id, typeId] of [["chest-boat-transfer", "minecraft:chest_boat"],
@@ -194,17 +416,32 @@ for (const [id, typeId] of [["chest-boat-transfer", "minecraft:chest_boat"],
     const storage = entity.getComponent("minecraft:inventory")?.container;
     if (!storage) throw new Error(`${typeId} inventory is unavailable.`);
     storage.setItem(0, new ItemStack("minecraft:emerald", 4));
-    player.teleport(position(), { dimension: arena.dimension, facingLocation: position(0.5, 0.6, 2.5) });
-    return { entity };
+    player.teleport(position(), { dimension: arena.dimension, facingLocation: position(0.5, -0.8, 2.5) });
+    return { entity, interactionStarted: false, interacted: false };
   }, (player, fixture) => {
     const storage = fixture.entity.getComponent("minecraft:inventory")?.container;
     if (!storage) throw new Error(`${typeId} inventory is unavailable.`);
-    const observed = { storage: countItem(storage, "minecraft:emerald"),
+    const observed = { interactionStarted: fixture.interactionStarted, interacted: fixture.interacted,
+      storage: countItem(storage, "minecraft:emerald"),
       player: countItem(inventory(player), "minecraft:emerald") };
     return { passed: observed.storage === 0 && observed.player === 4,
       observed, expected: { storage: 0, player: 4 } };
   });
 }
+
+world.beforeEvents.playerInteractWithEntity.subscribe((event) => {
+  if (!active?.scenario.id.startsWith("chest-") || event.player.name !== active.playerName
+      || event.target.id !== active.fixture.entity?.id) return;
+  active.fixture.interactionStarted = true;
+});
+
+world.afterEvents.playerInteractWithEntity.subscribe((event) => {
+  if (!active?.scenario.id.startsWith("chest-") || event.player.name !== active.playerName
+      || event.target.id !== active.fixture.entity?.id) return;
+  active.fixture.interacted = true;
+  record(active.scenario.id, active.run, "entity-interaction", "observed",
+    { entityType: event.target.typeId, sneaking: event.player.isSneaking });
+});
 
 world.afterEvents.playerInteractWithBlock.subscribe((event) => {
   if (active?.scenario.id !== "lab-table-then-chest" || event.player.name !== active.playerName
@@ -212,8 +449,31 @@ world.afterEvents.playerInteractWithBlock.subscribe((event) => {
   active.fixture.labInteracted = true;
   system.runTimeout(() => {
     if (active?.scenario.id !== "lab-table-then-chest") return;
-    event.player.setRotation({ x: 0, y: -45 });
+    const chestBlock = blockAt(event.player.dimension, 0, 1, 1);
+    chestBlock.setType("minecraft:chest");
+    const chest = chestBlock.getComponent("minecraft:inventory")?.container;
+    if (!chest) return;
+    chest.setItem(0, new ItemStack("minecraft:emerald", 4));
+    active.fixture.chestReady = true;
   }, 4);
+});
+
+define("enchant-basic", "inventory", async (player) => {
+  await prepareArena(player);
+  blockAt(player.dimension, 0, 1, 2).setType("minecraft:enchanting_table");
+  inventory(player).setItem(0, new ItemStack("minecraft:iron_sword"));
+  inventory(player).setItem(1, new ItemStack("minecraft:lapis_lazuli", 3));
+  player.resetLevel();
+  player.addLevels(30);
+  return {};
+}, (player) => {
+  const sword = inventory(player).getItem(0);
+  const enchantments = sword?.getComponent("minecraft:enchantable")?.getEnchantments() ?? [];
+  const observed = { sword: sword?.typeId, enchantments: enchantments.map(({ type, level }) => ({ id: type.id, level })),
+    lapis: countItem(inventory(player), "minecraft:lapis_lazuli"), level: player.level };
+  return { passed: observed.sword === "minecraft:iron_sword" && observed.enchantments.length > 0
+    && observed.lapis === 2 && observed.level < 30,
+  observed, expected: "An enchanted iron sword, two lapis, and reduced experience level." };
 });
 
 define("creative-select", "creative", async (player) => {
@@ -231,6 +491,15 @@ define("creative-replace", "creative", async (player) => {
 }, (player) => {
   const held = inventory(player).getItem(0)?.typeId;
   return { passed: held === "minecraft:nether_star", observed: { held }, expected: "minecraft:nether_star" };
+});
+
+define("creative-replace-main", "creative", async (player) => {
+  await prepareArena(player, GameMode.Creative);
+  inventory(player).setItem(9, new ItemStack("minecraft:emerald"));
+  return {};
+}, (player) => {
+  const item = inventory(player).getItem(9)?.typeId;
+  return { passed: item === "minecraft:nether_star", observed: { item }, expected: "minecraft:nether_star in the first main inventory slot" };
 });
 
 define("equip-helmet", "equipment", async (player) => {
@@ -375,6 +644,22 @@ export async function prepareGameplay(id, run, player) {
     record(id, run, "prepare", "ready", { group: scenario.group });
   } catch (error) {
     record(id, run, "prepare", "error", { error: String(error) });
+  }
+}
+
+export function startGameplay(id, run, player) {
+  if (!active || active.scenario.id !== id || active.run !== run || active.playerName !== player?.name
+      || id !== "offhand-elytra-rocket") {
+    record(id, run, "start", "error", { error: "The elytra flight scenario is not active for this player and run." });
+    return;
+  }
+  try {
+    player.teleport(position(0.5, 50, 0.5),
+      { dimension: arena.dimension, facingLocation: position(0.5, 50, 8.5) });
+    active.fixture.observation.flightStartTick = system.currentTick;
+    record(id, run, "start", "ready", { observed: { location: player.location } });
+  } catch (error) {
+    record(id, run, "start", "error", { error: String(error) });
   }
 }
 
