@@ -319,8 +319,6 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
       await start();
       await Bun.sleep(700);
       await uiKey(ui, "space");
-      await Bun.sleep(300);
-      await uiKey(ui, "space");
       await Bun.sleep(350);
       await uiMouse(ui, "right");
       await Bun.sleep(450);
