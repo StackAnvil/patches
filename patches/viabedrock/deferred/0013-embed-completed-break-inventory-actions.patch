@@ -1,4 +1,4 @@
-From 656789607f00bb9957b50bf0331e7cd132a07f9e Mon Sep 17 00:00:00 2001
+From 8e6399a998bfcd66116974292e75c13155b36ba9 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 04:00:05 +0200
 Subject: [PATCH] fix(mining): embed completed-break inventory actions
@@ -10,14 +10,14 @@ Send MineBlock requests or legacy destroy transactions in PLAYER_AUTH_INPUT at t
  .../protocol/packet/ClientPlayerPackets.java  | 167 +++++++++++++++---
  .../storage/InventoryRequestTracker.java      |  83 +++++++++
  .../types/inventory/ItemStackActionType.java  |   4 +
- .../packet/ClientPlayerPacketsTest.java       |  61 +++++++
+ .../packet/ClientPlayerPacketsTest.java       |  60 +++++++
  .../InventoryRequestTrackerMiningTest.java    |  55 ++++++
  .../types/inventory/ItemStackCodecTest.java   |  10 ++
- 8 files changed, 398 insertions(+), 22 deletions(-)
+ 8 files changed, 397 insertions(+), 22 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerMiningTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
-index 8e9071fd..fb228302 100644
+index 91095cc2..cc37a608 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
 @@ -39,6 +39,8 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand
@@ -38,7 +38,7 @@ index 8e9071fd..fb228302 100644
      private Set<InputFlag> inputFlags = EnumSet.noneOf(InputFlag.class);
      private Set<InputFlag> prevInputFlags = EnumSet.noneOf(InputFlag.class);
      private boolean horizontalCollision;
-@@ -536,6 +540,32 @@ public class ClientPlayerEntity extends PlayerEntity {
+@@ -542,6 +546,32 @@ public class ClientPlayerEntity extends PlayerEntity {
          this.blockBreakingInfo = blockBreakingInfo;
      }
  
@@ -100,7 +100,7 @@ index 61d4e8be..809781b6 100644
              implements ItemStackRequestAction {
          @Override
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index f25eb2a6..8f720884 100644
+index 6a9afa4b..0bfc7aa9 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 @@ -17,6 +17,9 @@
@@ -221,7 +221,7 @@ index f25eb2a6..8f720884 100644
      static Entity predictedVehicle(final EntityTracker entityTracker, final ClientPlayerEntity clientPlayer) {
          final Entity vehicle = entityTracker.getEntityByRid(clientPlayer.mountEntityRuntimeId());
          if (vehicle == null || !(vehicle.javaType().isOrHasParent(EntityTypes26_3.ABSTRACT_BOAT)
-@@ -368,43 +460,54 @@ public final class ClientPlayerPackets {
+@@ -381,46 +473,57 @@ public final class ClientPlayerPackets {
  
              final boolean isMining = action == PlayerActionAction.START_DESTROY_BLOCK || action == PlayerActionAction.ABORT_DESTROY_BLOCK || action == PlayerActionAction.STOP_DESTROY_BLOCK || action == PlayerActionAction.CHANGE_DESTROY_DIRECTION;
              if (isMining && (gameSession.isImmutableWorld() || !clientPlayer.abilities().getBooleanValue(AbilitiesIndex.Mine))) {
@@ -236,6 +236,7 @@ index f25eb2a6..8f720884 100644
 -
              switch (action) {
                  case START_DESTROY_BLOCK -> {
+                     wrapper.user().get(BlockInteractionSoundTracker.class).startMining(position);
                      clientPlayer.sendSwingPacketToServer();
                      clientPlayer.cancelNextSwingPacket();
 -                    clientPlayer.setBlockBreakingInfo(new ClientPlayerEntity.BlockBreakingInfo(position, direction));
@@ -254,11 +255,13 @@ index f25eb2a6..8f720884 100644
                  }
                  case CHANGE_DESTROY_DIRECTION -> updateDestroyDirection(clientPlayer, position, direction, gameSession.isBlockBreakingServerAuthoritative());
                  case ABORT_DESTROY_BLOCK -> {
+                     wrapper.user().get(BlockInteractionSoundTracker.class).stopMining(position);
                      clientPlayer.setBlockBreakingInfo(null);
 -                    clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, 0/*TODO: Figure this value out*/));
 +                    clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, direction.ordinal()));
                  }
                  case STOP_DESTROY_BLOCK -> {
+                     wrapper.user().get(BlockInteractionSoundTracker.class).stopMining(position);
                      clientPlayer.cancelNextSwingPacket();
                      clientPlayer.setBlockBreakingInfo(null);
  
@@ -287,7 +290,7 @@ index f25eb2a6..8f720884 100644
                      }
  
                      chunkTracker.handleBlockChange(position, 0, chunkTracker.bedrockAirId());
-@@ -570,6 +673,8 @@ public final class ClientPlayerPackets {
+@@ -586,6 +689,8 @@ public final class ClientPlayerPackets {
  
              if (!clientPlayer.isInitiallySpawned() || clientPlayer.isDead()) {
                  clientPlayer.setShieldBlockingHand(null);
@@ -296,7 +299,7 @@ index f25eb2a6..8f720884 100644
                  wrapper.cancel();
                  return;
              }
-@@ -675,8 +780,23 @@ public final class ClientPlayerPackets {
+@@ -691,8 +796,23 @@ public final class ClientPlayerPackets {
              wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().y()); // interact yaw
              wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, (long) clientPlayer.age()); // tick
              wrapper.write(BedrockTypes.POSITION_3F, velocity); // delta
@@ -322,7 +325,7 @@ index f25eb2a6..8f720884 100644
              final boolean hasBlockActions = clientPlayer.authInputData().contains(PlayerAuthInputData.PerformBlockActions);
              wrapper.write(Types.BOOLEAN, hasBlockActions);
              if (hasBlockActions) {
-@@ -703,6 +823,8 @@ public final class ClientPlayerPackets {
+@@ -719,6 +839,8 @@ public final class ClientPlayerPackets {
  
              clientPlayer.authInputData().clear();
              clientPlayer.authInputBlockActions().clear();
@@ -331,7 +334,7 @@ index f25eb2a6..8f720884 100644
          });
          protocol.registerServerbound(ServerboundPackets26_3.PLAYER_ABILITIES, null, wrapper -> {
              wrapper.cancel();
-@@ -741,19 +863,22 @@ public final class ClientPlayerPackets {
+@@ -757,19 +879,22 @@ public final class ClientPlayerPackets {
                  return;
              }
  
@@ -522,7 +525,7 @@ index 5c3a110d..0346efba 100644
              BedrockTypes.UNSIGNED_VAR_INT.write(buffer, action.recipeNetworkId());
              buffer.writeByte(action.numberOfRequestedCrafts());
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
-index ad55fc55..e63849ad 100644
+index cb478e6f..78d4d58a 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
 @@ -9,6 +9,8 @@
@@ -534,8 +537,8 @@ index ad55fc55..e63849ad 100644
  import com.viaversion.viaversion.api.connection.UserConnection;
  import com.viaversion.viaversion.api.minecraft.BlockPosition;
  import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
-@@ -17,20 +19,79 @@ import net.raphimc.viabedrock.api.model.entity.Entity;
- import net.raphimc.viabedrock.protocol.data.enums.Direction;
+@@ -23,14 +25,19 @@ import net.raphimc.viabedrock.protocol.data.enums.Direction;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InteractPacketPayload_Action;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerActionType;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputData;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.TextProcessingEventOrigin;
@@ -545,6 +548,7 @@ index ad55fc55..e63849ad 100644
  import net.raphimc.viabedrock.protocol.model.Position3f;
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
 +import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
  import org.junit.jupiter.api.Test;
  
  import java.lang.reflect.Proxy;
@@ -553,8 +557,7 @@ index ad55fc55..e63849ad 100644
  
  import static org.junit.jupiter.api.Assertions.assertEquals;
  import static org.junit.jupiter.api.Assertions.assertFalse;
-+import static org.junit.jupiter.api.Assertions.assertNull;
- import static org.junit.jupiter.api.Assertions.assertTrue;
+@@ -39,6 +46,59 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  
  class ClientPlayerPacketsTest {
  

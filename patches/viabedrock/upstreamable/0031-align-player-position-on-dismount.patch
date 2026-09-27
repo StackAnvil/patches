@@ -1,21 +1,24 @@
-From d0a68a3b76e05bf6ca1fbd1374644e5dc9bf82e4 Mon Sep 17 00:00:00 2001
+From 7dd757f68ccc1820e3f8777dc187a6ff91f40897 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 10:21:54 +0200
 Subject: [PATCH] fix(vehicles): align player position when dismounting
 
 The Bedrock player input retains the boarding position while a predicted vehicle moves. On unlink or vehicle removal, seed the player position from the vehicle before clearing the mount so the next auth input does not snap the server player back to the boarding point.
+
+Java's passenger unlink does not move the local player to the server's dismount position. Schedule a player position correction after the unlink or entity removal packet so the Java client does not keep the riding offset, which can put a chest boat rider below the surface.
 ---
- .../api/model/entity/ClientPlayerEntity.java          | 11 +++++++++++
- .../protocol/packet/InteractionPackets.java           |  3 +--
- .../viabedrock/protocol/storage/EntityTracker.java    |  3 +--
- .../protocol/storage/EntityTrackerTest.java           |  4 ++++
- 4 files changed, 17 insertions(+), 4 deletions(-)
+ .../api/model/entity/ClientPlayerEntity.java    | 17 +++++++++++++++++
+ .../protocol/packet/EntityPackets.java          |  5 +++++
+ .../protocol/packet/InteractionPackets.java     |  4 ++--
+ .../protocol/storage/EntityTracker.java         |  3 +--
+ .../protocol/storage/EntityTrackerTest.java     |  4 ++++
+ 5 files changed, 29 insertions(+), 4 deletions(-)
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
-index 870cbfaf..8e9071fd 100644
+index 870cbfaf..91095cc2 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
-@@ -416,6 +416,17 @@ public class ClientPlayerEntity extends PlayerEntity {
+@@ -416,6 +416,23 @@ public class ClientPlayerEntity extends PlayerEntity {
          this.paddlingRight = false;
      }
  
@@ -30,20 +33,46 @@ index 870cbfaf..8e9071fd 100644
 +        this.requestedDismount = false;
 +    }
 +
++    public void scheduleDismountPositionCorrection() {
++        final PacketWrapper playerPosition = PacketWrapper.create(ClientboundPackets26_3.PLAYER_POSITION, this.user);
++        this.writePlayerPositionPacketToClient(playerPosition, Relative.union(Relative.ROTATION, Relative.VELOCITY), true);
++        playerPosition.scheduleSend(BedrockProtocol.class);
++    }
++
      @Override
      public void setMountEntityRuntimeId(final long runtimeId) {
          if (this.mountRuntimeId != runtimeId) {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
+index 94480649..218e04c1 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
+@@ -344,9 +344,14 @@ public final class EntityPackets {
+                 wrapper.cancel();
+                 return;
+             }
++            final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
++            final boolean dismountingPlayer = clientPlayer != null && clientPlayer.mountEntityRuntimeId() == entity.runtimeId();
+             entityTracker.removeEntity(entity);
+ 
+             wrapper.write(Types.VAR_INT_ARRAY_PRIMITIVE, new int[]{entity.javaId()}); // entity ids
++            if (dismountingPlayer) {
++                clientPlayer.scheduleDismountPositionCorrection();
++            }
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.ADD_PAINTING, ClientboundPackets26_3.ADD_ENTITY, wrapper -> {
+             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-index 4a69f711..d72086ba 100644
+index 4a69f711..eda7af6e 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-@@ -376,8 +376,7 @@ public final class InteractionPackets {
+@@ -376,8 +376,8 @@ public final class InteractionPackets {
  
                      if (linkType.toEntityUniqueId() == entityTracker.getClientPlayer().uniqueId()) { // TODO: This could be applied to all passengers not just players
                          // The player is no longer riding an entity, update the state
 -                        entityTracker.getClientPlayer().setMountEntityRuntimeId(-1);
 -                        entityTracker.getClientPlayer().setRequestedDismount(false);
 +                        entityTracker.getClientPlayer().dismountVehicle(vehicle);
++                        entityTracker.getClientPlayer().scheduleDismountPositionCorrection();
                      }
                  }
              }
@@ -91,5 +120,3 @@ index 23575461..c76e603f 100644
  
 -- 
 2.55.0
-
-

@@ -1,13 +1,150 @@
-From 0c94a3fd7bb52e1e08aa65befc447fc0e655789e Mon Sep 17 00:00:00 2001
+From c03e21a81aa405e35d8af83023ac74cd9c5c1731 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 20:13:41 +0200
-Subject: [PATCH] fix(world): reflect jukebox record occupancy
+Subject: [PATCH] fix(world): synchronize jukebox occupancy and playback
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
-Bedrock stores the inserted disc in its block entity, while the mapped Java jukebox state always reports has_record=false. Send the occupied Java state when a valid record item is present so the client sees the server jukebox state during chunk load and later block entity updates.
+Bedrock sends disc sounds by name, while Java uses a jukebox level event keyed by the sent song registry. Forward the named sound through that event so playback, stopping, and nearby entity reactions share Java’s jukebox lifecycle. Stop playback when a jukebox block is removed, including when Bedrock does not send a separate stop sound.
 ---
- .../blockentity/JukeboxBlockEntityRewriter.java      | 12 +++++++++++-
- 1 file changed, 11 insertions(+), 1 deletion(-)
+ .../protocol/packet/WorldEffectPackets.java   | 41 ++++++++++++++
+ .../protocol/packet/WorldPackets.java         | 14 +++++
+ .../JukeboxBlockEntityRewriter.java           | 12 +++-
+ .../packet/WorldEffectPacketsTest.java        | 56 +++++++++++++++++++
+ 4 files changed, 122 insertions(+), 1 deletion(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPacketsTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
+index 8a153baf..9ecc8f80 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
+@@ -47,6 +47,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ParticleType;
+ import net.raphimc.viabedrock.protocol.data.enums.java.GameEventType;
+ import net.raphimc.viabedrock.protocol.data.enums.java.PositionSourceType;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.SoundSource;
++import net.raphimc.viabedrock.protocol.data.generated.java.RegistryKeys;
+ import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
+ import net.raphimc.viabedrock.protocol.model.BedrockItem;
+ import net.raphimc.viabedrock.protocol.model.Position3f;
+@@ -56,6 +57,7 @@ import net.raphimc.viabedrock.protocol.storage.BreakingTracker;
+ import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
+ import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
+ import java.util.Map;
+@@ -208,6 +210,17 @@ public final class WorldEffectPackets {
+             wrapper.read(BedrockTypes.OPTIONAL_POSITION_3F); // fire at position
+ 
+             final boolean globalSound = isGlobal || Float.isNaN(position.x()) || Float.isNaN(position.y()) || Float.isNaN(position.z());
++            if (soundEvent.startsWith("record.") && !globalSound) {
++                final String song = soundEvent.substring("record.".length());
++                final int songId = jukeboxSongId(wrapper.user().get(GameSessionStorage.class).getJavaRegistries().getCompoundTag(RegistryKeys.JUKEBOX_SONG), song);
++                if ("null".equals(song) || songId >= 0) {
++                    wrapper.setPacketType(ClientboundPackets26_3.LEVEL_EVENT);
++                    writeJukeboxEvent(wrapper, new BlockPosition(MathUtil.floor(position.x()), MathUtil.floor(position.y()), MathUtil.floor(position.z())),
++                            "null".equals(song) ? net.raphimc.viabedrock.protocol.data.enums.java.LevelEvent.SOUND_STOP_JUKEBOX_SONG.getValue()
++                                    : net.raphimc.viabedrock.protocol.data.enums.java.LevelEvent.SOUND_PLAY_JUKEBOX_SONG.getValue(), songId);
++                    return;
++                }
++            }
+             final SoundDefinitions.ConfiguredSound configuredSound;
+             switch (soundEvent) {
+                 case "record.null" -> {
+@@ -710,6 +723,34 @@ public final class WorldEffectPackets {
+         });
+     }
+ 
++    static int jukeboxSongId(final CompoundTag registry, final String song) {
++        if (registry == null) {
++            return -1;
++        }
++        final String key = Key.namespaced(song);
++        int id = 0;
++        for (String registeredSong : registry.keySet()) {
++            if (registeredSong.equals(key)) {
++                return id;
++            }
++            id++;
++        }
++        return -1;
++    }
++
++    static void writeJukeboxEvent(final PacketWrapper wrapper, final BlockPosition position, final int event, final int songId) {
++        wrapper.write(Types.INT, event);
++        wrapper.write(Types.BLOCK_POSITION1_14, position);
++        wrapper.write(Types.INT, songId);
++        wrapper.write(Types.BOOLEAN, false);
++    }
++
++    static void stopJukeboxSong(final UserConnection user, final BlockPosition position) {
++        final PacketWrapper wrapper = PacketWrapper.create(ClientboundPackets26_3.LEVEL_EVENT, user);
++        writeJukeboxEvent(wrapper, position, net.raphimc.viabedrock.protocol.data.enums.java.LevelEvent.SOUND_STOP_JUKEBOX_SONG.getValue(), 0);
++        wrapper.scheduleSend(BedrockProtocol.class);
++    }
++
+     private static SoundDefinitions.ConfiguredSound tryFindSound(final UserConnection user, final String soundEvent, final int data, final String entityIdentifier, final boolean isBabyMob) {
+         final Map<String, SoundDefinitions.ConfiguredSound> soundEvents = BedrockProtocol.MAPPINGS.getBedrockLevelSoundEvents().get(soundEvent);
+         if (soundEvents == null) {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+index b205ba5b..557f42bf 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+@@ -42,6 +42,7 @@ import net.raphimc.viabedrock.api.chunk.datapalette.BedrockBiomeArray;
+ import net.raphimc.viabedrock.api.chunk.datapalette.BedrockDataPalette;
+ import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSection;
+ import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSectionImpl;
++import net.raphimc.viabedrock.api.model.BlockState;
+ import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
+ import net.raphimc.viabedrock.api.util.PacketFactory;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+@@ -85,6 +86,7 @@ public final class WorldPackets {
+             return;
+         }
+ 
++        final boolean removedJukebox = layer == 0 && isJukebox(chunkTracker.getJavaBlockState(position));
+         final IntObjectPair<BlockEntity> remappedBlock = chunkTracker.handleBlockChange(position, layer, blockState);
+         if (remappedBlock == null) {
+             wrapper.cancel();
+@@ -92,6 +94,9 @@ public final class WorldPackets {
+         }
+ 
+         wrapper.write(Types.VAR_INT, remappedBlock.keyInt()); // block state
++        if (removedJukebox && !isJukebox(remappedBlock.keyInt())) {
++            WorldEffectPackets.stopJukeboxSong(wrapper.user(), position);
++        }
+         chunkTracker.sendNearbyRedstoneUpdates(List.of(position));
+ 
+         if (remappedBlock.value() != null) {
+@@ -430,10 +435,14 @@ public final class WorldPackets {
+             final List<BlockPosition> changedPositions = new ArrayList<>();
+             for (int layer = 0; layer < blockUpdatesArray.length; layer++) {
+                 for (BlockChangeEntry entry : blockUpdatesArray[layer]) {
++                    final boolean removedJukebox = layer == 0 && isJukebox(chunkTracker.getJavaBlockState(entry.position()));
+                     final IntObjectPair<BlockEntity> remappedBlock = chunkTracker.handleBlockChange(entry.position(), layer, entry.blockState());
+                     if (remappedBlock == null) {
+                         continue;
+                     }
++                    if (removedJukebox && !isJukebox(remappedBlock.keyInt())) {
++                        WorldEffectPackets.stopJukeboxSong(wrapper.user(), entry.position());
++                    }
+                     changedPositions.add(entry.position());
+                     if (remappedBlock.value() != null) {
+                         blockEntities.put(entry.position(), remappedBlock.value());
+@@ -587,6 +596,11 @@ public final class WorldPackets {
+         });
+     }
+ 
++    static boolean isJukebox(final int javaBlockState) {
++        final BlockState state = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(javaBlockState);
++        return state != null && Key.stripMinecraftNamespace(state.identifier()).equals("jukebox");
++    }
++
+     static void writeJavaTime(final PacketWrapper wrapper, final long gameTime, final long bedrockTime, final boolean dayCycleEnabled) {
+         writeJavaTime(wrapper, gameTime, List.of(new JavaClockUpdate(0, bedrockTime, dayCycleEnabled)));
+     }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/JukeboxBlockEntityRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/JukeboxBlockEntityRewriter.java
 index 841a266c..f0159ea4 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/JukeboxBlockEntityRewriter.java
@@ -42,6 +179,67 @@ index 841a266c..f0159ea4 100644
      }
  
  }
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPacketsTest.java
+new file mode 100644
+index 00000000..27c59931
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPacketsTest.java
+@@ -0,0 +1,56 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class WorldEffectPacketsTest {
++
++    @Test
++    void resolvesJukeboxSongsInTheSentRegistryOrder() {
++        final CompoundTag registry = new CompoundTag();
++        registry.put("minecraft:cat", new CompoundTag());
++        registry.put("minecraft:far", new CompoundTag());
++
++        assertEquals(0, WorldEffectPackets.jukeboxSongId(registry, "cat"));
++        assertEquals(1, WorldEffectPackets.jukeboxSongId(registry, "far"));
++        assertEquals(-1, WorldEffectPackets.jukeboxSongId(registry, "missing"));
++    }
++
++    @Test
++    void writesPositionedJukeboxEventForJavaPlayback() throws Exception {
++        final var wrapper = new PacketWrapperImpl(ClientboundPackets26_3.LEVEL_EVENT, null, null);
++        final BlockPosition position = new BlockPosition(10, 64, -5);
++        WorldEffectPackets.writeJukeboxEvent(wrapper, position, 1010, 7);
++
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            wrapper.writeToBuffer(buffer);
++            assertEquals(ClientboundPackets26_3.LEVEL_EVENT.getId(), Types.VAR_INT.read(buffer));
++            assertEquals(1010, Types.INT.read(buffer));
++            assertEquals(position, Types.BLOCK_POSITION1_14.read(buffer));
++            assertEquals(7, Types.INT.read(buffer));
++            assertEquals(false, Types.BOOLEAN.read(buffer));
++            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
++        }
++    }
++
++}
 -- 
 2.55.0
-
