@@ -1,0 +1,239 @@
+From c1cc8d07bb36d89b466b767b36996084cf73b4b8 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 19:27:34 +0200
+Subject: [PATCH] feat(resource-packs): decode Bedrock TGA textures
+
+Some Bedrock packs supply entity textures as uncompressed or RLE true-color TGA rather than PNG or JPEG. Decode both supported true-color forms when loading a texture and retain their origin and alpha information so pack conversion can use those assets.
+---
+ .../api/resourcepack/content/Content.java     | 11 ++-
+ .../api/resourcepack/content/TgaImage.java    | 97 +++++++++++++++++++
+ .../resourcepack/content/TgaContentTest.java  | 75 ++++++++++++++
+ 3 files changed, 180 insertions(+), 3 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/content/TgaImage.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/content/TgaContentTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
+index 0f5b02b5..9110d36b 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
+@@ -118,7 +118,7 @@ public abstract class Content {
+     }
+ 
+     public LazyImage getShortnameImage(final String path) {
+-        return this.getImage(this.getFullPath(path, "png", "jpg"));
++        return this.getImage(this.getFullPath(path, "png", "jpg", "tga"));
+     }
+ 
+     public LazyImage getImage(final String path) {
+@@ -129,11 +129,12 @@ public abstract class Content {
+ 
+         final boolean isPng = bytes.length > 8 && bytes[0] == (byte) 0x89 && bytes[1] == (byte) 0x50 && bytes[2] == (byte) 0x4E && bytes[3] == (byte) 0x47 && bytes[4] == (byte) 0x0D && bytes[5] == (byte) 0x0A && bytes[6] == (byte) 0x1A && bytes[7] == (byte) 0x0A;
+         final boolean isJpg = bytes.length > 2 && bytes[0] == (byte) 0xFF && bytes[1] == (byte) 0xD8 && bytes[2] == (byte) 0xFF;
+-        if (!isPng && !isJpg) {
++        final boolean isTga = path.endsWith(".tga");
++        if (!isPng && !isJpg && !isTga) {
+             return null;
+         }
+ 
+-        return new LazyImage(bytes, isPng ? "png" : "jpg");
++        return new LazyImage(bytes, isPng ? "png" : isJpg ? "jpg" : "tga");
+     }
+ 
+     public boolean putPngImage(final String path, final LazyImage image) {
+@@ -188,6 +189,10 @@ public abstract class Content {
+ 
+         public BufferedImage getImage() {
+             if (this.image == null) {
++                if (this.format.equals("tga")) {
++                    this.image = TgaImage.read(this.bytes);
++                    return this.image;
++                }
+                 try {
+                     this.image = ImageIO.read(new ByteArrayInputStream(this.bytes));
+                 } catch (final IOException e) {
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/TgaImage.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/TgaImage.java
+new file mode 100644
+index 00000000..66f6d843
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/TgaImage.java
+@@ -0,0 +1,97 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.content;
++
++import java.awt.image.BufferedImage;
++
++/** Decodes the true-color TGA textures used by Bedrock resource packs. */
++final class TgaImage {
++
++    private static final int HEADER_SIZE = 18;
++    private static final int MAX_PIXELS = 4096 * 4096;
++
++    private TgaImage() {
++    }
++
++    static BufferedImage read(final byte[] data) {
++        if (data.length < HEADER_SIZE) {
++            throw new IllegalArgumentException("Truncated TGA header");
++        }
++        final int imageType = unsigned(data[2]);
++        final boolean runLengthEncoded = imageType == 10;
++        if ((imageType != 2 && !runLengthEncoded) || unsigned(data[1]) != 0) {
++            throw new IllegalArgumentException("Unsupported TGA image type or color map");
++        }
++        final int width = word(data, 12);
++        final int height = word(data, 14);
++        final int bitsPerPixel = unsigned(data[16]);
++        if (width == 0 || height == 0 || (long) width * height > MAX_PIXELS
++            || (bitsPerPixel != 24 && bitsPerPixel != 32)) {
++            throw new IllegalArgumentException("Unsupported TGA dimensions or pixel depth");
++        }
++        final int descriptor = unsigned(data[17]);
++        if ((descriptor & 0xC0) != 0) {
++            throw new IllegalArgumentException("Unsupported TGA interleaving");
++        }
++        final boolean rightOrigin = (descriptor & 0x10) != 0;
++        final boolean topOrigin = (descriptor & 0x20) != 0;
++        final int pixelSize = bitsPerPixel / 8;
++        final int pixelCount = width * height;
++        final BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
++        final Cursor cursor = new Cursor(data, HEADER_SIZE + unsigned(data[0]));
++        int index = 0;
++        while (index < pixelCount) {
++            final int packet = runLengthEncoded ? cursor.read() : 0;
++            final int count = runLengthEncoded ? (packet & 0x7F) + 1 : 1;
++            if (count > pixelCount - index) {
++                throw new IllegalArgumentException("TGA packet exceeds image bounds");
++            }
++            final boolean repeated = runLengthEncoded && (packet & 0x80) != 0;
++            final int repeatedColor = repeated ? pixel(cursor, pixelSize) : 0;
++            for (int i = 0; i < count; i++, index++) {
++                final int color = repeated ? repeatedColor : pixel(cursor, pixelSize);
++                final int x = rightOrigin ? width - 1 - index % width : index % width;
++                final int y = topOrigin ? index / width : height - 1 - index / width;
++                image.setRGB(x, y, color);
++            }
++        }
++        return image;
++    }
++
++    private static int pixel(final Cursor cursor, final int size) {
++        final int blue = cursor.read();
++        final int green = cursor.read();
++        final int red = cursor.read();
++        final int alpha = size == 4 ? cursor.read() : 255;
++        return alpha << 24 | red << 16 | green << 8 | blue;
++    }
++
++    private static int word(final byte[] data, final int index) {
++        return unsigned(data[index]) | unsigned(data[index + 1]) << 8;
++    }
++
++    private static int unsigned(final byte value) {
++        return Byte.toUnsignedInt(value);
++    }
++
++    private static final class Cursor {
++        private final byte[] data;
++        private int offset;
++
++        private Cursor(final byte[] data, final int offset) {
++            this.data = data;
++            this.offset = offset;
++        }
++
++        private int read() {
++            if (this.offset >= this.data.length) {
++                throw new IllegalArgumentException("Truncated TGA pixel data");
++            }
++            return unsigned(this.data[this.offset++]);
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/TgaContentTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/TgaContentTest.java
+new file mode 100644
+index 00000000..fa7b2531
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/TgaContentTest.java
+@@ -0,0 +1,75 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.content;
++
++import org.junit.jupiter.api.Test;
++
++import javax.imageio.ImageIO;
++import java.awt.image.BufferedImage;
++import java.io.ByteArrayInputStream;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class TgaContentTest {
++
++    @Test
++    void decodesTopOriginTrueColorWithAlphaAndConvertsToPng() throws Exception {
++        final InMemoryContent content = new InMemoryContent();
++        content.put("textures/entity/example.tga", tga(2, 2, 32, 0x28, 2,
++            0, 0, 255, 128, 0, 255, 0, 255,
++            255, 0, 0, 64, 255, 255, 255, 0));
++
++        final Content.LazyImage texture = content.getShortnameImage("textures/entity/example");
++        assertNotNull(texture);
++        final BufferedImage image = texture.getImage();
++        assertEquals(0x80FF0000, image.getRGB(0, 0));
++        assertEquals(0xFF00FF00, image.getRGB(1, 0));
++        assertEquals(0x400000FF, image.getRGB(0, 1));
++        assertEquals(0x00FFFFFF, image.getRGB(1, 1));
++        assertEquals(0x80FF0000, ImageIO.read(new ByteArrayInputStream(texture.getPngBytes())).getRGB(0, 0));
++    }
++
++    @Test
++    void decodesBottomOriginRunLengthPackets() {
++        final InMemoryContent content = new InMemoryContent();
++        content.put("textures/entity/example.tga", tga(2, 2, 24, 0, 10,
++            0x81, 255, 0, 0,           // two blue pixels on the bottom row
++            0x01, 0, 255, 0, 0, 0, 255)); // green and red on the top row
++
++        final BufferedImage image = content.getShortnameImage("textures/entity/example").getImage();
++        assertEquals(0xFF00FF00, image.getRGB(0, 0));
++        assertEquals(0xFFFF0000, image.getRGB(1, 0));
++        assertEquals(0xFF0000FF, image.getRGB(0, 1));
++        assertEquals(0xFF0000FF, image.getRGB(1, 1));
++    }
++
++    @Test
++    void rejectsTruncatedPixelData() {
++        final InMemoryContent content = new InMemoryContent();
++        content.put("textures/entity/example.tga", tga(2, 2, 32, 0x28, 2, 0, 0, 255, 255));
++
++        final Content.LazyImage texture = content.getShortnameImage("textures/entity/example");
++        assertNotNull(texture);
++        assertThrows(IllegalArgumentException.class, texture::getImage);
++    }
++
++    private static byte[] tga(final int width, final int height, final int bitsPerPixel,
++                              final int imageDescriptor, final int imageType, final int... pixels) {
++        final byte[] bytes = new byte[18 + pixels.length];
++        bytes[2] = (byte) imageType;
++        bytes[12] = (byte) width;
++        bytes[13] = (byte) (width >>> 8);
++        bytes[14] = (byte) height;
++        bytes[15] = (byte) (height >>> 8);
++        bytes[16] = (byte) bitsPerPixel;
++        bytes[17] = (byte) imageDescriptor;
++        for (int i = 0; i < pixels.length; i++) {
++            bytes[18 + i] = (byte) pixels[i];
++        }
++        return bytes;
++    }
++
++}
+-- 
+2.55.0

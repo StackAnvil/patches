@@ -1,4 +1,4 @@
-From 3d643582c4ee655c9d7cc5b222e9009157b30219 Mon Sep 17 00:00:00 2001
+From 17e0c0985e15f7883df00149fb38da48038cdcf6 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 12:56:10 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -42,10 +42,15 @@ Decode creative item user data, route creative armor and offhand slots, accept t
 Forward Java's mounted OPEN_INVENTORY command to the Bedrock Interact action with the mount runtime ID. The Java client sends this command when opening a storage vehicle while riding it; leaving it unhandled disconnects the client before Bedrock can open the container. Use the player runtime ID for an unmounted inventory request.
 
 Predict creative slot changes in the container tracker after sending the legacy transaction. Java applies its creative click locally, and Bedrock can leave the initiating client's slot unchanged until a later inventory update. Keeping the tracker on the pre-click item made later updates erase a valid hotbar item and made replacement transactions use a stale source stack.
+
+Let the entity interaction transaction open unmounted storage vehicles. An extra OpenInventory Interact request suppresses the server container-open response on 1.26.51.1. Reconcile final custom names from successful stack responses, but preserve item damage because Bedrock reports a durability correction rather than an absolute damage value.
+
+Open plain horse saddle and armor screens through Java's mount menu and route those slots through Bedrock HorseEquipContainer. Keep unsupported mount storage closed until its layout is verified. Assert the OpenInventory wire value accepted by the 1.26.51.1 server in the inventory interaction tests.
 ---
  build.gradle                                  |    3 +-
  .../api/model/container/ChestContainer.java   |   52 +-
  .../api/model/container/Container.java        |  965 +++++++++-
+ .../api/model/container/HorseContainer.java   |   55 +
  .../model/container/block/AnvilContainer.java |  192 ++
  .../container/block/BeaconContainer.java      |  225 +++
  .../block/BlastFurnaceContainer.java          |   51 +
@@ -71,27 +76,29 @@ Predict creative slot changes in the container tracker after sending the legacy 
  .../viabedrock/protocol/BedrockProtocol.java  |  132 +-
  .../protocol/data/BedrockMappingData.java     |  726 ++++++--
  .../generated/bedrock/CustomBlockTags.java    |    5 +-
- .../protocol/packet/ClientPlayerPackets.java  |   53 +-
- .../protocol/packet/InventoryPackets.java     | 1634 ++++++++++++-----
+ .../protocol/packet/ClientPlayerPackets.java  |   57 +-
+ .../protocol/packet/InventoryPackets.java     | 1651 ++++++++++++-----
  .../protocol/rewriter/ItemRewriter.java       |  259 ++-
  .../protocol/rewriter/ItemStackSizes.java     |   59 +
  .../protocol/storage/CraftingDataTracker.java |  202 ++
  .../storage/InventoryRequestRecovery.java     |   80 +
  .../storage/InventoryRequestStorage.java      |   29 +
- .../storage/InventoryRequestTracker.java      |  386 ++++
+ .../storage/InventoryRequestTracker.java      |  409 ++++
  .../protocol/storage/InventoryTracker.java    |  144 +-
  .../protocol/types/item/BedrockItemType.java  |   12 +-
  .../data/bedrock/item_stack_sizes.json        |  267 +++
  .../viabedrock/data/custom/block_tags.json    |   16 +-
  .../api/model/container/ContainerTest.java    |   58 +
+ .../model/container/HorseContainerTest.java   |   53 +
  .../block/EnchantmentContainerTest.java       |  120 ++
- .../packet/ClientPlayerPacketsTest.java       |   31 +
+ .../packet/ClientPlayerPacketsTest.java       |   30 +
  .../protocol/packet/InventoryPacketsTest.java |  173 ++
  .../storage/InventoryRequestRecoveryTest.java |   68 +
  .../InventoryRequestTrackerQueueTest.java     |  104 ++
- .../storage/InventoryRequestTrackerTest.java  |   68 +
+ .../storage/InventoryRequestTrackerTest.java  |   91 +
  .../storage/InventoryTrackerTest.java         |  118 ++
- 48 files changed, 7211 insertions(+), 804 deletions(-)
+ 50 files changed, 7385 insertions(+), 804 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/AnvilContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/BeaconContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/BlastFurnaceContainer.java
@@ -113,6 +120,7 @@ Predict creative slot changes in the container tracker after sending the legacy 
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
  create mode 100644 src/main/resources/assets/viabedrock/data/bedrock/item_stack_sizes.json
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/ContainerTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/HorseContainerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/block/EnchantmentContainerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestRecoveryTest.java
@@ -1236,6 +1244,67 @@ index 26f17241..ba507552 100644
      }
  
  }
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
+new file mode 100644
+index 00000000..f20a32a4
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
+@@ -0,0 +1,55 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.api.model.container;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.libs.mcstructs.text.components.TranslationComponent;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
++import net.raphimc.viabedrock.protocol.model.FullContainerName;
++
++public final class HorseContainer extends Container {
++
++    private final int javaEntityId;
++
++    public HorseContainer(final UserConnection user, final byte containerId, final int javaEntityId) {
++        super(user, containerId, ContainerType.HORSE,
++                new TranslationComponent("container.horse"), null, 2);
++        this.javaEntityId = javaEntityId;
++    }
++
++    public void writeJavaOpen(final PacketWrapper wrapper) {
++        wrapper.setPacketType(ClientboundPackets26_3.MOUNT_SCREEN_OPEN);
++        wrapper.write(Types.VAR_INT, Byte.toUnsignedInt(this.containerId));
++        wrapper.write(Types.VAR_INT, 0); // Plain horses have no storage columns
++        wrapper.write(Types.INT, this.javaEntityId);
++    }
++
++    @Override
++    public FullContainerName getFullContainerName(final int slot) {
++        if (slot < 0 || slot >= this.size()) {
++            throw new IllegalArgumentException("Invalid horse equipment slot: " + slot);
++        }
++        return new FullContainerName(ContainerEnumName.HorseEquipContainer, null);
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/AnvilContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/AnvilContainer.java
 new file mode 100644
 index 00000000..628e7e46
@@ -5612,7 +5681,7 @@ index a3ac8134..a3b933c2 100644
 +    public static final String WORKBENCH = "workbench";
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index 09db3dce..6a9afa4b 100644
+index 09db3dce..5c997743 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 @@ -29,6 +29,7 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets
@@ -5642,22 +5711,26 @@ index 09db3dce..6a9afa4b 100644
  import java.util.Set;
  import java.util.UUID;
  import java.util.logging.Level;
-@@ -99,6 +106,14 @@ public final class ClientPlayerPackets {
+@@ -99,6 +106,18 @@ public final class ClientPlayerPackets {
          return vehicle;
      }
  
 +    static void writeOpenInventoryInteraction(final PacketWrapper wrapper, final ClientPlayerEntity clientPlayer) {
-+        wrapper.write(Types.UNSIGNED_BYTE, (short) InteractPacketPayload_Action.OpenInventory.getValue());
 +        final long mountRuntimeId = clientPlayer.mountEntityRuntimeId();
-+        wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG,
++        writeOpenInventoryInteraction(wrapper,
 +                mountRuntimeId >= 0 ? mountRuntimeId : clientPlayer.runtimeId());
++    }
++
++    static void writeOpenInventoryInteraction(final PacketWrapper wrapper, final long targetRuntimeId) {
++        wrapper.write(Types.UNSIGNED_BYTE, (short) InteractPacketPayload_Action.OpenInventory.getValue());
++        wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, targetRuntimeId);
 +        wrapper.write(BedrockTypes.OPTIONAL_POSITION_3F, null);
 +    }
 +
      public static void register(final BedrockProtocol protocol) {
          protocol.registerClientbound(ClientboundBedrockPackets.RESPAWN, ClientboundPackets26_3.RESPAWN, wrapper -> {
              final Position3f position = wrapper.read(BedrockTypes.POSITION_3F); // position
-@@ -343,6 +358,11 @@ public final class ClientPlayerPackets {
+@@ -343,6 +362,11 @@ public final class ClientPlayerPackets {
                      clientPlayer.setGliding(true);
                      clientPlayer.addAuthInputData(PlayerAuthInputData.StartGliding);
                  }
@@ -5669,7 +5742,7 @@ index 09db3dce..6a9afa4b 100644
                  default -> throw new IllegalStateException("Unhandled PlayerCommandAction: " + action);
              }
          });
-@@ -406,8 +426,8 @@ public final class ClientPlayerPackets {
+@@ -406,8 +430,8 @@ public final class ClientPlayerPackets {
                      chunkTracker.handleBlockChange(position, 0, chunkTracker.bedrockAirId());
                      PacketFactory.sendJavaBlockUpdate(wrapper.user(), position, ProtocolConstants.JAVA_AIR_ID);
                  }
@@ -5680,7 +5753,7 @@ index 09db3dce..6a9afa4b 100644
                  default -> throw new IllegalStateException("Unhandled PlayerActionAction: " + action);
              }
  
-@@ -753,6 +773,35 @@ public final class ClientPlayerPackets {
+@@ -753,6 +777,35 @@ public final class ClientPlayerPackets {
          });
      }
  
@@ -5717,7 +5790,7 @@ index 09db3dce..6a9afa4b 100644
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index 4b233b07..169a51d0 100644
+index 4b233b07..39292a0e 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 @@ -22,11 +22,13 @@ import com.viaversion.nbt.tag.StringTag;
@@ -5744,15 +5817,16 @@ index 4b233b07..169a51d0 100644
  import net.lenni0451.mcstructs_bedrock.forms.Form;
  import net.lenni0451.mcstructs_bedrock.forms.elements.*;
  import net.lenni0451.mcstructs_bedrock.forms.serializer.FormSerializer;
-@@ -59,6 +64,7 @@ import net.raphimc.viabedrock.ViaBedrock;
+@@ -59,6 +64,8 @@ import net.raphimc.viabedrock.ViaBedrock;
  import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
  import net.raphimc.viabedrock.api.model.container.ChestContainer;
  import net.raphimc.viabedrock.api.model.container.Container;
++import net.raphimc.viabedrock.api.model.container.HorseContainer;
 +import net.raphimc.viabedrock.api.model.container.block.*;
  import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
  import net.raphimc.viabedrock.api.model.entity.Entity;
  import net.raphimc.viabedrock.api.util.PacketFactory;
-@@ -66,496 +72,1265 @@ import net.raphimc.viabedrock.api.util.TextUtil;
+@@ -66,496 +73,1281 @@ import net.raphimc.viabedrock.api.util.TextUtil;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
  import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
  import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
@@ -5977,6 +6051,17 @@ index 4b233b07..169a51d0 100644
 +                                        new HopperContainer(
 +                                                wrapper.user(), containerId, type,
 +                                                new TranslationComponent("container.hopper"), null);
++                        case HORSE -> {
++                            if (containerEntity == null
++                                    || !"minecraft:horse".equals(containerEntity.type())) {
++                                PacketFactory.sendBedrockContainerClose(
++                                        wrapper.user(), containerId, ContainerType.NONE);
++                                wrapper.cancel();
++                                return;
++                            }
++                            container = new HorseContainer(
++                                    wrapper.user(), containerId, containerEntity.javaId());
++                        }
 +                        case FURNACE ->
 +                        container =
 +                                        new FurnaceContainer(
@@ -6059,6 +6144,11 @@ index 4b233b07..169a51d0 100644
 +                        }
 +                    }
 +                    inventoryTracker.setCurrentContainer(container);
++
++                    if (screenType == ContainerType.HORSE) {
++                        ((HorseContainer) container).writeJavaOpen(wrapper);
++                        return;
++                    }
 +
 +                    wrapper.write(Types.VAR_INT, (int) containerId); // container id
 +                    wrapper.write(
@@ -7443,7 +7533,7 @@ index 4b233b07..169a51d0 100644
                  for (String line : BedrockTextUtils.split(text, "\n")) {
                      final TextInput textInput = new TextInput(TextUtil.stringToTextComponent(line));
                      textInput.setMaxLength(Integer.MAX_VALUE);
-@@ -563,12 +1338,15 @@ public final class InventoryPackets {
+@@ -563,12 +1355,15 @@ public final class InventoryPackets {
                      dialog.getInputs().add(new Input("dummy", textInput));
                  }
              } else { // VB compatibility
@@ -8267,10 +8357,10 @@ index 00000000..791ec5f3
 +        List<Container> prevContainers) { }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
 new file mode 100644
-index 00000000..c03e48ca
+index 00000000..d600fe0c
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
-@@ -0,0 +1,386 @@
+@@ -0,0 +1,409 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2025 RK_01/RaphiMC and contributors
@@ -8540,10 +8630,8 @@ index 00000000..c03e48ca
 +                    if (updatedSinceRequest(container, request)) {
 +                        continue;
 +                    }
-+                    final BedrockItem item = container.getItem(slot).copy();
-+                    item.setAmount(Byte.toUnsignedInt(slotInfo.amount()));
-+                    item.setNetId(slotInfo.itemNetId());
-+                    container.setItem(slot, item.amount() == 0 ? BedrockItem.empty() : item);
++                    container.setItem(slot,
++                            reconcileResponseItem(container.getItem(slot), slotInfo));
 +                    changed.add(container);
 +                }
 +            }
@@ -8557,6 +8645,31 @@ index 00000000..c03e48ca
 +            PacketFactory.sendJavaContainerSetContent(this.user(), container);
 +        }
 +        PacketFactory.sendJavaContainerSetContent(this.user(), tracker.getInventoryContainer());
++    }
++
++    static BedrockItem reconcileResponseItem(final BedrockItem current,
++                                             final ItemStackResponseSlotInfo slotInfo) {
++        if (slotInfo.amount() == 0) {
++            return BedrockItem.empty();
++        }
++        final BedrockItem item = current.copy();
++        item.setAmount(Byte.toUnsignedInt(slotInfo.amount()));
++        item.setNetId(slotInfo.itemNetId());
++
++        final CompoundTag tag = item.tag() == null ? new CompoundTag() : item.tag();
++        final CompoundTag display = tag.getCompoundTag("display");
++        if (slotInfo.customName() != null && !slotInfo.customName().isEmpty()) {
++            final CompoundTag updatedDisplay = display == null ? new CompoundTag() : display;
++            updatedDisplay.putString("Name", slotInfo.customName());
++            tag.put("display", updatedDisplay);
++        } else if (display != null) {
++            display.remove("Name");
++            if (display.isEmpty()) {
++                tag.remove("display");
++            }
++        }
++        item.setTag(tag.isEmpty() ? null : tag);
++        return item;
 +    }
 +
 +    void drainQueuedInteractions() {
@@ -9321,6 +9434,65 @@ index 00000000..40e60410
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/HorseContainerTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/HorseContainerTest.java
+new file mode 100644
+index 00000000..a9f34ffd
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/container/HorseContainerTest.java
+@@ -0,0 +1,53 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.api.model.container;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Proxy;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class HorseContainerTest {
++
++    @Test
++    void saddleAndArmorUseHorseEquipmentSlots() {
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(
++                UserConnection.class.getClassLoader(), new Class<?>[]{UserConnection.class},
++                (proxy, method, args) -> null);
++        final HorseContainer horse = new HorseContainer(user, (byte) 8, 47);
++
++        assertEquals(2, horse.size());
++        assertEquals(ContainerEnumName.HorseEquipContainer, horse.getFullContainerName(0).name());
++        assertEquals(ContainerEnumName.HorseEquipContainer, horse.getFullContainerName(1).name());
++        assertTrue(horse.ownsBedrockSlot(horse.getFullContainerName(0), 0));
++        assertTrue(horse.ownsBedrockSlot(horse.getFullContainerName(1), 1));
++        assertFalse(horse.ownsBedrockSlot(horse.getFullContainerName(0), 2));
++        assertThrows(IllegalArgumentException.class, () -> horse.getFullContainerName(2));
++
++        final PacketWrapper open = new PacketWrapperImpl(0, Unpooled.buffer(), user);
++        horse.writeJavaOpen(open);
++        assertEquals(ClientboundPackets26_3.MOUNT_SCREEN_OPEN, open.getPacketType());
++        assertEquals(8, open.get(Types.VAR_INT, 0));
++        assertEquals(0, open.get(Types.VAR_INT, 1));
++        assertEquals(47, open.get(Types.INT, 0));
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/block/EnchantmentContainerTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/block/EnchantmentContainerTest.java
 new file mode 100644
 index 00000000..50c8d5c0
@@ -9448,10 +9620,10 @@ index 00000000..50c8d5c0
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
-index ad55fc55..cb478e6f 100644
+index ad55fc55..7a7562e7 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
-@@ -12,14 +12,21 @@ package net.raphimc.viabedrock.protocol.packet;
+@@ -12,14 +12,20 @@ package net.raphimc.viabedrock.protocol.packet;
  import com.viaversion.viaversion.api.connection.UserConnection;
  import com.viaversion.viaversion.api.minecraft.BlockPosition;
  import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
@@ -9463,7 +9635,6 @@ index ad55fc55..cb478e6f 100644
  import net.raphimc.viabedrock.api.model.entity.Entity;
 +import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
  import net.raphimc.viabedrock.protocol.data.enums.Direction;
-+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InteractPacketPayload_Action;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerActionType;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputData;
  import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
@@ -9473,7 +9644,7 @@ index ad55fc55..cb478e6f 100644
  import org.junit.jupiter.api.Test;
  
  import java.lang.reflect.Proxy;
-@@ -27,6 +34,7 @@ import java.util.UUID;
+@@ -27,6 +33,7 @@ import java.util.UUID;
  
  import static org.junit.jupiter.api.Assertions.assertEquals;
  import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -9481,7 +9652,7 @@ index ad55fc55..cb478e6f 100644
  import static org.junit.jupiter.api.Assertions.assertTrue;
  
  class ClientPlayerPacketsTest {
-@@ -131,6 +139,29 @@ class ClientPlayerPacketsTest {
+@@ -131,6 +138,29 @@ class ClientPlayerPacketsTest {
          assertEquals(Position3f.ZERO, player.vehiclePositionDelta(boat));
      }
  
@@ -9495,7 +9666,7 @@ index ad55fc55..cb478e6f 100644
 +                Unpooled.buffer(), user);
 +        ClientPlayerPackets.writeOpenInventoryInteraction(ownInventory, player);
 +
-+        assertEquals(InteractPacketPayload_Action.OpenInventory.getValue(),
++        assertEquals(6,
 +                ownInventory.get(Types.UNSIGNED_BYTE, 0).intValue());
 +        assertEquals(player.runtimeId(), ownInventory.get(BedrockTypes.UNSIGNED_VAR_LONG, 0));
 +        assertNull(ownInventory.get(BedrockTypes.OPTIONAL_POSITION_3F, 0));
@@ -9876,10 +10047,10 @@ index 00000000..ba52fb22
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java
 new file mode 100644
-index 00000000..d49cd8e2
+index 00000000..c184434c
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,91 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -9899,7 +10070,10 @@ index 00000000..d49cd8e2
 + */
 +package net.raphimc.viabedrock.protocol.storage;
 +
++import com.viaversion.nbt.tag.CompoundTag;
 +import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseSlotInfo;
 +import org.junit.jupiter.api.Test;
 +
 +import java.util.List;
@@ -9909,6 +10083,26 @@ index 00000000..d49cd8e2
 +import static org.junit.jupiter.api.Assertions.assertTrue;
 +
 +class InventoryRequestTrackerTest {
++
++    @Test
++    void successfulResponseUpdatesNameAndCountWithoutTreatingDurabilityCorrectionAsDamage() {
++        final BedrockItem current = new BedrockItem(276);
++        current.setAmount(1);
++        current.setNetId(17);
++        final CompoundTag originalTag = new CompoundTag();
++        originalTag.putInt("Damage", 7);
++        current.setTag(originalTag);
++        final ItemStackResponseSlotInfo slot = new ItemStackResponseSlotInfo(
++                (byte) 4, (byte) 4, (byte) 2, 29, "Repaired", null, 3);
++
++        final BedrockItem reconciled = InventoryRequestTracker.reconcileResponseItem(current, slot);
++
++        assertEquals(2, reconciled.amount());
++        assertEquals(29, reconciled.netId());
++        final CompoundTag tag = reconciled.tag();
++        assertEquals(7, tag.getInt("Damage"));
++        assertEquals("Repaired", tag.getCompoundTag("display").getString("Name"));
++    }
 +
 +    @Test
 +    void inventoryClicksWaitForOpenInOrderAndExpireWhenItNeverArrives() {
