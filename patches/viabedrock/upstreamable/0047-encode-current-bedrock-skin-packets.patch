@@ -1,0 +1,240 @@
+From 3c5db2793ec3a8933073a08885afe9c66676eab1 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 13:52:46 +0200
+Subject: [PATCH] fix(skins): encode current Bedrock skin packets
+
+PlayerSkinPacket uses varint list lengths, numeric persona enums, UUID pack IDs, and fixed-width colors. Preserve the trailing trust fields so decoded skins can be sent back without discarding them. This enables connected skin changes and prevents malformed packets.
+---
+ .../viabedrock/protocol/model/SkinData.java   |  2 +-
+ .../protocol/types/model/SkinType.java        | 53 ++++++++-----
+ .../protocol/types/model/SkinTypeTest.java    | 74 +++++++++++++++++++
+ 3 files changed, 109 insertions(+), 20 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/model/SkinTypeTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/SkinData.java b/src/main/java/net/raphimc/viabedrock/protocol/model/SkinData.java
+index d912bfd0..bc8f797c 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/model/SkinData.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/SkinData.java
+@@ -23,7 +23,7 @@ import java.util.List;
+ public record SkinData(String skinId, String playFabId, String skinResourcePatch, BufferedImage skinData, List<AnimationData> animations, BufferedImage capeData,
+                        String geometryData, String geometryDataEngineVersion, String animationData, boolean premium, boolean persona, boolean capeOnClassic, boolean primaryUser,
+                        String capeId, String fullSkinId, String armSize, String skinColor, List<PersonaPieceData> personaPieces, List<PersonaPieceTintData> tintColors,
+-                       boolean overridingPlayerAppearance) {
++                       boolean overridingPlayerAppearance, String trustedSkinFlag, String profileHash) {
+ 
+     public record AnimationData(BufferedImage image, int type, float frames, int expression) {
+     }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/model/SkinType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/model/SkinType.java
+index 3ac33a68..42bd478d 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/types/model/SkinType.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/types/model/SkinType.java
+@@ -24,10 +24,11 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.persona_Piec
+ import net.raphimc.viabedrock.protocol.model.SkinData;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
+-import java.awt.*;
+ import java.awt.image.BufferedImage;
+ import java.util.ArrayList;
+ import java.util.List;
++import java.util.Locale;
++import java.util.UUID;
+ 
+ public class SkinType extends Type<SkinData> {
+ 
+@@ -35,7 +36,6 @@ public class SkinType extends Type<SkinData> {
+         super(SkinData.class);
+     }
+ 
+-    // TODO
+     @Override
+     public SkinData read(final ByteBuf buffer) {
+         final String skinId = BedrockTypes.STRING.read(buffer);
+@@ -61,7 +61,7 @@ public class SkinType extends Type<SkinData> {
+         final String fullSkinId = BedrockTypes.STRING.read(buffer);
+ 
+         final String armSize = persona_ArmSize_Type.getByValue(buffer.readUnsignedByte()).name();
+-        final String skinColor = new Color(buffer.readIntLE(), true).toString();
++        final String skinColor = color(buffer.readIntLE());
+ 
+         final int piecesLength = BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
+         final List<SkinData.PersonaPieceData> personaPieces = new ArrayList<>(piecesLength);
+@@ -80,7 +80,7 @@ public class SkinType extends Type<SkinData> {
+             final String type = persona_PieceType.getByName(BedrockTypes.STRING.read(buffer)).name();
+             final List<String> colors = new ArrayList<>(4);
+             for (int i2 = 0; i2 < 4; i2++) {
+-                colors.add(new Color(buffer.readIntLE(), true).toString());
++                colors.add(color(buffer.readIntLE()));
+             }
+             tintColors.add(new SkinData.PersonaPieceTintData(type, colors));
+         }
+@@ -91,25 +91,25 @@ public class SkinType extends Type<SkinData> {
+         final boolean primaryUser = buffer.readBoolean();
+         final boolean overridingPlayerAppearance = buffer.readBoolean();
+ 
+-        "true".equalsIgnoreCase(BedrockTypes.STRING.read(buffer)); // trusted
+-        BedrockTypes.STRING.read(buffer); // profile hash
++        final String trustedSkinFlag = BedrockTypes.STRING.read(buffer);
++        final String profileHash = BedrockTypes.STRING.read(buffer);
+ 
+-        return new SkinData(skinId, playFabId, skinResourcePatch, skinData, animations, capeData, geometryData, geometryDataEngineVersion, animationData, premium, persona, capeOnClassic, primaryUser, capeId, fullSkinId, armSize, skinColor, personaPieces, tintColors, overridingPlayerAppearance);
++        return new SkinData(skinId, playFabId, skinResourcePatch, skinData, animations, capeData, geometryData, geometryDataEngineVersion, animationData, premium, persona, capeOnClassic, primaryUser, capeId, fullSkinId, armSize, skinColor, personaPieces, tintColors, overridingPlayerAppearance, trustedSkinFlag, profileHash);
+     }
+ 
+     @Override
+-    public void write(final ByteBuf buffer, final SkinData value) { // TODO: I havent bothered updating this as it isnt used
++    public void write(final ByteBuf buffer, final SkinData value) {
+         BedrockTypes.STRING.write(buffer, value.skinId());
+         BedrockTypes.STRING.write(buffer, value.playFabId());
+         BedrockTypes.STRING.write(buffer, value.skinResourcePatch());
+         BedrockTypes.IMAGE.write(buffer, value.skinData());
+ 
+-        buffer.writeIntLE(value.animations().size());
++        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, value.animations().size());
+         for (SkinData.AnimationData animation : value.animations()) {
+             BedrockTypes.IMAGE.write(buffer, animation.image());
+-            buffer.writeIntLE(animation.type());
++            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, animation.type());
+             buffer.writeFloatLE(animation.frames());
+-            buffer.writeIntLE(animation.expression());
++            BedrockTypes.UNSIGNED_VAR_INT.write(buffer, animation.expression());
+         }
+ 
+         BedrockTypes.IMAGE.write(buffer, value.capeData());
+@@ -118,24 +118,26 @@ public class SkinType extends Type<SkinData> {
+         BedrockTypes.STRING.write(buffer, value.animationData());
+         BedrockTypes.STRING.write(buffer, value.capeId());
+         BedrockTypes.STRING.write(buffer, value.fullSkinId());
+-        BedrockTypes.STRING.write(buffer, value.armSize());
+-        BedrockTypes.STRING.write(buffer, value.skinColor());
++        buffer.writeByte(persona_ArmSize_Type.getByName(value.armSize()).getValue());
++        buffer.writeIntLE(parseColor(value.skinColor()));
+ 
+-        buffer.writeIntLE(value.personaPieces().size());
++        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, value.personaPieces().size());
+         for (SkinData.PersonaPieceData piece : value.personaPieces()) {
+             BedrockTypes.STRING.write(buffer, piece.id());
+-            BedrockTypes.STRING.write(buffer, piece.type());
+-            BedrockTypes.STRING.write(buffer, piece.packId());
++            buffer.writeIntLE(persona_PieceType.getByName(piece.type()).getValue());
++            BedrockTypes.UUID.write(buffer, UUID.fromString(piece.packId()));
+             buffer.writeBoolean(piece.defaultPiece());
+             BedrockTypes.STRING.write(buffer, piece.productId());
+         }
+ 
+-        buffer.writeIntLE(value.tintColors().size());
++        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, value.tintColors().size());
+         for (SkinData.PersonaPieceTintData tint : value.tintColors()) {
+             BedrockTypes.STRING.write(buffer, tint.type());
+-            buffer.writeIntLE(tint.colors().size());
++            if (tint.colors().size() != 4) {
++                throw new IllegalArgumentException("Persona piece tint requires four colors");
++            }
+             for (String color : tint.colors()) {
+-                BedrockTypes.STRING.write(buffer, color);
++                buffer.writeIntLE(parseColor(color));
+             }
+         }
+ 
+@@ -144,6 +146,19 @@ public class SkinType extends Type<SkinData> {
+         buffer.writeBoolean(value.capeOnClassic());
+         buffer.writeBoolean(value.primaryUser());
+         buffer.writeBoolean(value.overridingPlayerAppearance());
++        BedrockTypes.STRING.write(buffer, value.trustedSkinFlag());
++        BedrockTypes.STRING.write(buffer, value.profileHash());
++    }
++
++    private static String color(final int value) {
++        return String.format(Locale.ROOT, "#%08x", value);
++    }
++
++    private static int parseColor(final String value) {
++        if (value == null || !value.matches("#[0-9a-fA-F]{1,8}")) {
++            throw new IllegalArgumentException("Invalid skin color: " + value);
++        }
++        return (int) Long.parseUnsignedLong(value.substring(1), 16);
+     }
+ 
+ }
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/types/model/SkinTypeTest.java b/src/test/java/net/raphimc/viabedrock/protocol/types/model/SkinTypeTest.java
+new file mode 100644
+index 00000000..84fdd1f4
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/types/model/SkinTypeTest.java
+@@ -0,0 +1,74 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.types.model;
++
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import java.awt.image.BufferedImage;
++import java.util.List;
++import net.raphimc.viabedrock.protocol.model.SkinData;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++
++final class SkinTypeTest {
++
++    private final SkinType type = new SkinType();
++
++    @Test
++    void roundTripsPersonaImagesPiecesAndColors() {
++        final BufferedImage skinImage = image(2, 2, 0xFF874321);
++        final BufferedImage faceImage = image(1, 2, 0x80ABCDEF);
++        final SkinData skin = new SkinData("skin-id", "playfab-id", "{}", skinImage,
++            List.of(new SkinData.AnimationData(faceImage, 1, 2F, 1)), null, "{}", "0.0.0", "{}",
++            false, true, false, true, "", "full-id", "Slim", "#ff123456",
++            List.of(new SkinData.PersonaPieceData("piece", "Hair", "00000000-0000-0000-0000-000000000001", true, "product")),
++            List.of(new SkinData.PersonaPieceTintData("Hair", List.of("#0", "#ff112233", "#80445566", "#ffffffff"))),
++            false, "True", "profile-hash");
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            this.type.write(buffer, skin);
++            final SkinData decoded = this.type.read(buffer);
++
++            assertEquals(0, buffer.readableBytes());
++            assertEquals(skin.skinId(), decoded.skinId());
++            assertEquals(skin.playFabId(), decoded.playFabId());
++            assertEquals(skin.skinData().getRGB(0, 0), decoded.skinData().getRGB(0, 0));
++            assertEquals(skin.animations().get(0).image().getRGB(0, 0), decoded.animations().get(0).image().getRGB(0, 0));
++            assertEquals(skin.animations().get(0).type(), decoded.animations().get(0).type());
++            assertEquals(skin.animations().get(0).expression(), decoded.animations().get(0).expression());
++            assertEquals(skin.armSize(), decoded.armSize());
++            assertEquals(skin.skinColor(), decoded.skinColor());
++            assertEquals(skin.personaPieces(), decoded.personaPieces());
++            assertEquals(List.of("#00000000", "#ff112233", "#80445566", "#ffffffff"), decoded.tintColors().get(0).colors());
++            assertEquals(skin.trustedSkinFlag(), decoded.trustedSkinFlag());
++            assertEquals(skin.profileHash(), decoded.profileHash());
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void rejectsIncompleteTint() {
++        final SkinData skin = new SkinData("id", "", "{}", image(1, 1, 0), List.of(), null, "{}", "", "",
++            false, true, false, false, "", "", "Wide", "#0", List.of(),
++            List.of(new SkinData.PersonaPieceTintData("Hair", List.of("#0"))), false, "False", "");
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            assertThrows(IllegalArgumentException.class, () -> this.type.write(buffer, skin));
++        } finally {
++            buffer.release();
++        }
++    }
++
++    private static BufferedImage image(final int width, final int height, final int color) {
++        final BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
++        image.setRGB(0, 0, color);
++        return image;
++    }
++
++}
+-- 
+2.55.0
+
