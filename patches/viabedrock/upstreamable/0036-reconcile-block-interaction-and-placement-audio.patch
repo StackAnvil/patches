@@ -1,17 +1,18 @@
-From 04e153458e62ad3f2c94d9d3365f860f99ff3b9e Mon Sep 17 00:00:00 2001
+From b58c477a3572a45abbdcf09f4e5236e8010b027a Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 11:37:29 +0200
-Subject: [PATCH] fix(sound): avoid replaying predicted block interaction
- sounds
+Subject: [PATCH] fix(sound): reconcile block interaction and placement audio
 
 Java 26.3 plays door, trapdoor, fence gate, and button sounds when the local player interacts. Bedrock then echoes a matching level sound event, so forwarding it makes the player hear two sounds. Track the local click briefly and consume only the matching event at that block, leaving redstone and other players audible.
+
+Record local block placement and consume only matching Bedrock echoes, including placement at replaceable blocks. Forward unrelated placement sounds from other players and retain door audio across connections.
 ---
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
- .../protocol/packet/InteractionPackets.java   |   8 +-
- .../protocol/packet/WorldEffectPackets.java   |   6 ++
- .../storage/BlockInteractionSoundTracker.java | 101 ++++++++++++++++++
- .../BlockInteractionSoundTrackerTest.java     |  71 ++++++++++++
- 5 files changed, 186 insertions(+), 1 deletion(-)
+ .../protocol/packet/InteractionPackets.java   |  15 ++-
+ .../protocol/packet/WorldEffectPackets.java   |  21 +---
+ .../storage/BlockInteractionSoundTracker.java | 114 ++++++++++++++++++
+ .../BlockInteractionSoundTrackerTest.java     | 103 ++++++++++++++++
+ 5 files changed, 238 insertions(+), 16 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTracker.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTrackerTest.java
 
@@ -28,7 +29,7 @@ index 3e72aeeb..e76b2f9a 100644
          user.put(new BlobCache(user));
          user.put(new PacketSyncStorage(user));
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-index c256792d..54f8220a 100644
+index c256792d..6d67c299 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 @@ -50,6 +50,7 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerActionAct
@@ -39,7 +40,7 @@ index c256792d..54f8220a 100644
  import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
  import net.raphimc.viabedrock.protocol.storage.EntityTracker;
  import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
-@@ -307,8 +308,13 @@ public final class InteractionPackets {
+@@ -307,8 +308,20 @@ public final class InteractionPackets {
                  PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
                  return;
              }
@@ -50,12 +51,19 @@ index c256792d..54f8220a 100644
 +            }
              final BlockPosition placedPosition = insideBlock ? position : position.getRelative(direction.blockFace());
 -            wrapper.user().get(ChunkTracker.class).trackBlockPrediction(sequence, position, placedPosition);
++            final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
++            final BedrockItem usedItem = hand == InteractionHand.MAIN_HAND
++                    ? inventoryTracker.getInventoryContainer().getSelectedHotbarItem()
++                    : inventoryTracker.getOffhandContainer().getItem(0);
++            if (usedItem.blockRuntimeId() != 0) {
++                wrapper.user().get(BlockInteractionSoundTracker.class).recordPlacement(position, placedPosition);
++            }
 +            chunkTracker.trackBlockPrediction(sequence, position, placedPosition);
              sendUseItemOnBlock(wrapper.user(), hand, position, faceInt, clickPosition, insideBlock);
          });
          protocol.registerClientbound(ClientboundBedrockPackets.INVENTORY_TRANSACTION, null, wrapper -> {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
-index 8a153baf..c35d784d 100644
+index 8a153baf..458d290b 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
 @@ -52,6 +52,7 @@ import net.raphimc.viabedrock.protocol.model.BedrockItem;
@@ -78,12 +86,36 @@ index 8a153baf..c35d784d 100644
              final boolean globalSound = isGlobal || Float.isNaN(position.x()) || Float.isNaN(position.y()) || Float.isNaN(position.z());
              final SoundDefinitions.ConfiguredSound configuredSound;
              switch (soundEvent) {
+@@ -223,23 +229,8 @@ public final class WorldEffectPackets {
+                     final float pitch = (float) Math.pow(2D, (double) (key - 12) / 12);
+                     configuredSound = new SoundDefinitions.ConfiguredSound(noteBlockSound, 1F, 1F, pitch, pitch);
+                 }
+-                case "place" -> {
+-                    // TODO: Mixin in VFP and a setting, Block place sounds are sent by the server
+-                    wrapper.cancel();
+-                    return;
+-                }
+-                // TODO: I suspect block break sounds are sent by the server as well
+                 default -> {
+                     configuredSound = tryFindSound(wrapper.user(), soundEvent, data, entityIdentifier, isBabyMob);
+-                    if (configuredSound == null) { // Fallback for some special handled sounds
+-                        /*switch (soundEvent) {
+-                         *     case AmbientBaby, MobWarningBaby, HurtBaby, DeathBaby, StepBaby -> {
+-                         *         final SharedTypes_Legacy_LevelSoundEvent soundEventAdult = EnumUtil.getEnumConstantOrNull(SharedTypes_Legacy_LevelSoundEvent.class, soundEvent.name().replace("Baby", ""));
+-                         *         configuredSound = tryFindSound(wrapper.user(), soundEventAdult, data, entityIdentifier, true);
+-                         *     }
+-                         *     case AmbientInWater, AmbientInAir -> configuredSound = tryFindSound(wrapper.user(), SharedTypes_Legacy_LevelSoundEvent.Ambient, data, entityIdentifier, isBabyMob);
+-                         * }*/
+-                    }
+                     if (configuredSound == null) {
+                         if (LEVEL_SOUND_DEBUG_LOG) {
+                             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing level sound event mapping for " + soundEvent + " with entity identifier '" + entityIdentifier + "' and data " + data);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTracker.java
 new file mode 100644
-index 00000000..d96c519b
+index 00000000..19ff745b
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTracker.java
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,114 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -142,13 +174,21 @@ index 00000000..d96c519b
 +            return;
 +        }
 +
++        final int lowerY = state.hasProperty("half", "upper") ? position.y() - 1 : position.y();
++        this.record(new BlockPosition(position.x(), lowerY, position.z()), null, event);
++    }
++
++    public void recordPlacement(final BlockPosition clickedPosition, final BlockPosition placedPosition) {
++        this.record(placedPosition, clickedPosition.equals(placedPosition) ? null : clickedPosition, "place");
++    }
++
++    private void record(final BlockPosition position, final BlockPosition alternatePosition, final String event) {
 +        final long now = this.clock.getAsLong();
 +        this.removeExpired(now);
 +        if (this.pending.size() == MAX_PENDING) {
 +            this.pending.removeFirst();
 +        }
-+        final int lowerY = state.hasProperty("half", "upper") ? position.y() - 1 : position.y();
-+        this.pending.addLast(new PendingSound(position.x(), lowerY, position.z(), event, now));
++        this.pending.addLast(new PendingSound(position, alternatePosition, event, now));
 +    }
 +
 +    private static String toggledEvent(final String prefix, final BlockState state) {
@@ -165,14 +205,19 @@ index 00000000..d96c519b
 +        this.removeExpired(this.clock.getAsLong());
 +        for (final Iterator<PendingSound> iterator = this.pending.iterator(); iterator.hasNext(); ) {
 +            final PendingSound sound = iterator.next();
-+            if (sound.event().equals(event) && Math.abs(position.x() - (sound.x() + 0.5F)) <= 0.75F
-+                    && Math.abs(position.y() - (sound.y() + 0.5F)) <= 1.25F
-+                    && Math.abs(position.z() - (sound.z() + 0.5F)) <= 0.75F) {
++            if (sound.event().equals(event) && (matches(position, sound.position())
++                    || sound.alternatePosition() != null && matches(position, sound.alternatePosition()))) {
 +                iterator.remove();
 +                return true;
 +            }
 +        }
 +        return false;
++    }
++
++    private static boolean matches(final Position3f soundPosition, final BlockPosition blockPosition) {
++        return Math.abs(soundPosition.x() - (blockPosition.x() + 0.5F)) <= 0.75F
++                && Math.abs(soundPosition.y() - (blockPosition.y() + 0.5F)) <= 1.25F
++                && Math.abs(soundPosition.z() - (blockPosition.z() + 0.5F)) <= 0.75F;
 +    }
 +
 +    private void removeExpired(final long now) {
@@ -181,16 +226,16 @@ index 00000000..d96c519b
 +        }
 +    }
 +
-+    private record PendingSound(int x, int y, int z, String event, long createdAt) {
++    private record PendingSound(BlockPosition position, BlockPosition alternatePosition, String event, long createdAt) {
 +    }
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTrackerTest.java
 new file mode 100644
-index 00000000..4a83e00e
+index 00000000..51f851b0
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTrackerTest.java
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,103 @@
 +package net.raphimc.viabedrock.protocol.storage;
 +
 +import com.viaversion.viaversion.api.minecraft.BlockPosition;
@@ -216,6 +261,22 @@ index 00000000..4a83e00e
 +        assertFalse(tracker.consumeLocallyPlayed("door.open", new Position3f(11.5F, 64.5F, 20.5F)));
 +        assertTrue(tracker.consumeLocallyPlayed("door.open", new Position3f(10.5F, 64.5F, 20.5F)));
 +        assertFalse(tracker.consumeLocallyPlayed("door.open", new Position3f(10.5F, 64.5F, 20.5F)));
++    }
++
++    @Test
++    void anotherConnectionStillReceivesTheDoorSound() {
++        final BlockInteractionSoundTracker opener = new BlockInteractionSoundTracker();
++        final BlockInteractionSoundTracker otherPlayer = new BlockInteractionSoundTracker();
++        final BlockPosition door = new BlockPosition(10, 64, 20);
++        final Position3f soundPosition = new Position3f(10.5F, 64.5F, 20.5F);
++        opener.recordInteraction(door, new BlockState("oak_door", Map.of("open", "false", "half", "lower")));
++
++        assertFalse(otherPlayer.consumeLocallyPlayed("door.open", soundPosition));
++        assertTrue(opener.consumeLocallyPlayed("door.open", soundPosition));
++
++        opener.recordInteraction(door, new BlockState("oak_door", Map.of("open", "true", "half", "lower")));
++        assertFalse(otherPlayer.consumeLocallyPlayed("door.close", soundPosition));
++        assertTrue(opener.consumeLocallyPlayed("door.close", soundPosition));
 +    }
 +
 +    @Test
@@ -261,8 +322,22 @@ index 00000000..4a83e00e
 +        assertFalse(tracker.consumeLocallyPlayed("chest.open", soundPosition));
 +    }
 +
++    @Test
++    void consumesOnlyTheLocalPlacementEchoAtThePlacedBlock() {
++        final BlockInteractionSoundTracker tracker = new BlockInteractionSoundTracker();
++        final BlockPosition placed = new BlockPosition(10, 64, 20);
++        tracker.recordPlacement(new BlockPosition(10, 64, 19), placed);
++
++        assertFalse(tracker.consumeLocallyPlayed("place", new Position3f(11.5F, 64.5F, 20.5F)));
++        assertFalse(tracker.consumeLocallyPlayed("break", new Position3f(10.5F, 64.5F, 20.5F)));
++        assertTrue(tracker.consumeLocallyPlayed("place", new Position3f(10.5F, 64.5F, 20.5F)));
++        assertFalse(tracker.consumeLocallyPlayed("place", new Position3f(10.5F, 64.5F, 20.5F)));
++
++        tracker.recordPlacement(new BlockPosition(10, 64, 19), placed);
++        assertTrue(tracker.consumeLocallyPlayed("place", new Position3f(10.5F, 64.5F, 19.5F)));
++        assertFalse(tracker.consumeLocallyPlayed("place", new Position3f(10.5F, 64.5F, 20.5F)));
++    }
++
 +}
 -- 
 2.55.0
-
-

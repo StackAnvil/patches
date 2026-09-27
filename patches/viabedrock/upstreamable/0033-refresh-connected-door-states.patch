@@ -1,14 +1,14 @@
-From f5f8c05bf51983ce169a099fd11b111d4a83aaa0 Mon Sep 17 00:00:00 2001
+From 1839790ea6df825074dab2dc43879d89c4fe2278 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
-Date: Sun, 27 Sep 2026 10:37:24 +0200
-Subject: [PATCH] fix(world): refresh connected doors and bed colors
+Date: Sun, 27 Sep 2026 12:58:08 +0200
+Subject: [PATCH] fix(world): refresh connected door states
 
-Bedrock can change a door lower half without updating its upper half, and a bed color can change while the base block runtime ID stays the same. Derive the upper door open state from the lower half, emit its Java update, and recompute block-entity-derived block states on repeated updates.
+Bedrock can update a door lower half without updating its upper half. Derive the upper open state from the lower block, send an upper-half update when the lower half changes, and apply the same connection while converting chunk palettes.
 ---
  .../protocol/packet/WorldPackets.java         |  2 +
- .../protocol/storage/ChunkTracker.java        | 77 +++++++++++++++----
- .../protocol/storage/ChunkTrackerTest.java    | 10 +++
- 3 files changed, 73 insertions(+), 16 deletions(-)
+ .../protocol/storage/ChunkTracker.java        | 44 ++++++++++++++++++-
+ .../protocol/storage/ChunkTrackerTest.java    | 10 +++++
+ 3 files changed, 55 insertions(+), 1 deletion(-)
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
 index 8e72b28b..76317578 100644
@@ -31,7 +31,7 @@ index 8e72b28b..76317578 100644
          protocol.registerClientbound(ClientboundBedrockPackets.BLOCK_ENTITY_DATA, ClientboundPackets26_3.BLOCK_ENTITY_DATA, new PacketHandlers() {
              @Override
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
-index 22d69c90..228d0c88 100644
+index 22d69c90..dd98ed11 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 @@ -234,6 +234,12 @@ public class ChunkTracker extends StoredObject {
@@ -68,56 +68,7 @@ index 22d69c90..228d0c88 100644
      public boolean isRedstoneWire(final BlockPosition position) {
          return RedstoneWireConnections.isWire(this.getUnconnectedJavaBlockStateModel(position));
      }
-@@ -487,7 +507,8 @@ public class ChunkTracker extends StoredObject {
-             entityTracker.removeItemFrame(blockPosition);
-         }
- 
--        if (prevBlockState != blockState) {
-+        final boolean stateChanged = prevBlockState != blockState;
-+        if (stateChanged) {
-             this.invalidateJavaBlockStates(blockPosition.x() >> 4, blockPosition.y() >> 4, blockPosition.z() >> 4);
-             if (changesLight(previousJavaState, currentJavaState,
-                     BedrockProtocol.MAPPINGS.getJavaBlockLightEmission(), BedrockProtocol.MAPPINGS.getJavaBlockOpacity())) {
-@@ -496,22 +517,24 @@ public class ChunkTracker extends StoredObject {
- 
-             if (CustomBlockTags.ITEM_FRAME.equals(tag)) {
-                 entityTracker.spawnItemFrame(blockPosition, blockStateRewriter.blockState(blockState));
--            } else if (BlockEntityRewriter.isBlockEntity(tag)) {
--                final BedrockBlockEntity bedrockBlockEntity = this.getBlockEntity(blockPosition);
--                BlockEntity javaBlockEntity = null;
--                if (bedrockBlockEntity != null) {
--                    javaBlockEntity = BlockEntityRewriter.toJava(this.user(), blockState, bedrockBlockEntity);
--                    if (javaBlockEntity instanceof BlockEntityWithBlockState blockEntityWithBlockState) {
--                        remappedBlockState = blockEntityWithBlockState.blockState();
--                    }
--                } else if (BedrockProtocol.MAPPINGS.getJavaBlockEntities().containsKey(tag)) {
--                    final int javaType = BedrockProtocol.MAPPINGS.getJavaBlockEntities().get(tag);
--                    javaBlockEntity = new BlockEntityImpl(BlockEntity.pack(sectionX, sectionZ), (short) blockPosition.y(), javaType, new CompoundTag());
--                }
-+            }
-+        }
- 
--                if (javaBlockEntity != null && javaBlockEntity.tag() != null) {
--                    return new IntObjectImmutablePair<>(remappedBlockState, javaBlockEntity);
-+        if (BlockEntityRewriter.isBlockEntity(tag)) {
-+            final BedrockBlockEntity bedrockBlockEntity = this.getBlockEntity(blockPosition);
-+            BlockEntity javaBlockEntity = null;
-+            if (bedrockBlockEntity != null) {
-+                javaBlockEntity = BlockEntityRewriter.toJava(this.user(), blockState, bedrockBlockEntity);
-+                if (javaBlockEntity instanceof BlockEntityWithBlockState blockEntityWithBlockState) {
-+                    remappedBlockState = blockEntityWithBlockState.blockState();
-                 }
-+            } else if (stateChanged && BedrockProtocol.MAPPINGS.getJavaBlockEntities().containsKey(tag)) {
-+                final int javaType = BedrockProtocol.MAPPINGS.getJavaBlockEntities().get(tag);
-+                javaBlockEntity = new BlockEntityImpl(BlockEntity.pack(sectionX, sectionZ), (short) blockPosition.y(), javaType, new CompoundTag());
-+            }
-+
-+            if (stateChanged && javaBlockEntity != null && javaBlockEntity.tag() != null) {
-+                return new IntObjectImmutablePair<>(remappedBlockState, javaBlockEntity);
-             }
-         }
- 
-@@ -652,6 +675,28 @@ public class ChunkTracker extends StoredObject {
+@@ -652,6 +672,28 @@ public class ChunkTracker extends StoredObject {
          candidates.forEach(this::sendRedstoneUpdate);
      }
  
@@ -146,7 +97,7 @@ index 22d69c90..228d0c88 100644
      private void refreshNeighboringRedstoneBorders(final int chunkX, final int chunkZ) {
          final boolean westLoaded = this.chunkLight.containsKey(ChunkPosition.chunkKey(chunkX - 1, chunkZ));
          final boolean eastLoaded = this.chunkLight.containsKey(ChunkPosition.chunkKey(chunkX + 1, chunkZ));
-@@ -1178,7 +1223,7 @@ public class ChunkTracker extends StoredObject {
+@@ -1178,7 +1220,7 @@ public class ChunkTracker extends StoredObject {
                          for (int x = 0; x < 16; x++) {
                              final int javaId = remappedBlockPalette.idAt(x, y, z);
                              final BlockState state = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(javaId);
@@ -185,5 +136,3 @@ index 293015a6..362e4cfc 100644
          final BedrockDataPalette palette = new BedrockDataPalette();
 -- 
 2.55.0
-
-
