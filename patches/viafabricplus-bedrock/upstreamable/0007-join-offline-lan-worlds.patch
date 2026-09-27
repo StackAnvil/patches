@@ -1,0 +1,1116 @@
+From ba66925a3c8c8893396dde8a6ce0044635cb72fb Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 13:38:54 +0200
+Subject: [PATCH] feat(bedrock): join offline LAN worlds
+
+Probe NetherNet and RakNet on the local network and show compatible worlds in a separate account-free screen. Parse the retail 1.26.51 NetherNet layout 7 advertisement so authentication flags and the nonce come from the host instead of LAN assumptions.
+
+For self-signed worlds, create one identity before the NetherNet offer and pass the same token to ViaBedrock login. Keep the selected transport, responder, network ID, nonce, and login mode on the connection. RakNet pongs have no auth flags, so the screen requires an explicit offline-login choice for those worlds.
+---
+ .../appearance/ViaFabricPlusSkinProvider.java |   4 +-
+ .../core/connection/MixinConnectScreen_1.java |   6 +
+ .../core/connection/MixinConnection.java      |  50 +++-
+ .../connection/MixinServerNameResolver.java   |   7 +
+ .../core/integration/MixinVFPScreen.java      |   7 +-
+ .../bedrock/lan/BedrockLanAddress.java        |  35 +++
+ .../bedrock/lan/BedrockLanDiscovery.java      | 279 ++++++++++++++++++
+ .../bedrock/lan/BedrockLanIdentity.java       |  57 ++++
+ .../lan/BedrockLanInetSocketAddress.java      |  25 ++
+ .../bedrock/lan/BedrockLanSession.java        |  19 ++
+ .../bedrock/lan/BedrockLanWorld.java          |  33 +++
+ .../network/BedrockConnectionUtil.java        |  11 +-
+ .../bedrock/screen/BedrockLanScreen.java      | 199 +++++++++++++
+ .../viafabricplus-bedrock/lang/en_us.json     |  10 +
+ .../bedrock/lan/BedrockLanDiscoveryTest.java  | 111 +++++++
+ 15 files changed, 848 insertions(+), 5 deletions(-)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanAddress.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanDiscovery.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanIdentity.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanInetSocketAddress.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanSession.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanWorld.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockLanScreen.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanDiscoveryTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java
+index 0808013..41713cf 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java
+@@ -23,6 +23,7 @@ package com.viaversion.viafabricplus.bedrock.appearance;
+ 
+ import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
+ import com.viaversion.viafabricplus.bedrock.friends.BedrockFriendsService;
++import com.viaversion.viafabricplus.bedrock.lan.BedrockLanSession;
+ import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
+ import com.viaversion.viaversion.api.connection.UserConnection;
+ import java.io.IOException;
+@@ -63,7 +64,8 @@ public final class ViaFabricPlusSkinProvider extends SkinProvider {
+         } catch (IOException e) {
+             ViaFabricPlusBedrock.impl().logger().warn("Could not load the selected Bedrock appearance; using Steve", e);
+         }
+-        final String nonce = BedrockFriendsService.nonceFor(user.getChannel().remoteAddress());
++        final BedrockLanSession lan = user.get(BedrockLanSession.class);
++        final String nonce = lan == null ? BedrockFriendsService.nonceFor(user.getChannel().remoteAddress()) : lan.nonce();
+         if (nonce != null) {
+             claims.put("Nonce", nonce);
+         }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnectScreen_1.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnectScreen_1.java
+index 0a761a7..c5a9a15 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnectScreen_1.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnectScreen_1.java
+@@ -27,6 +27,8 @@ import com.llamalad7.mixinextras.sugar.Local;
+ import com.viaversion.viafabricplus.ViaFabricPlus;
+ import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
+ import com.viaversion.viafabricplus.bedrock.injection.access.IEventLoopGroupHolder;
++import com.viaversion.viafabricplus.bedrock.lan.BedrockLanSession;
++import com.viaversion.viafabricplus.bedrock.lan.BedrockLanWorld;
+ import com.viaversion.viafabricplus.injection.access.core.IConnection;
+ import com.viaversion.viaversion.api.connection.UserConnection;
+ import java.io.IOException;
+@@ -67,6 +69,10 @@ public abstract class MixinConnectScreen_1 {
+         }
+ 
+         final UserConnection connection = ((IConnection) clientConnection).viaFabricPlus$getUserConnection();
++        final BedrockLanSession lan = connection.get(BedrockLanSession.class);
++        if (lan != null && lan.address().authMode() == BedrockLanWorld.AuthMode.SELF_SIGNED) {
++            return; // The identity used by NetherNet signaling is already stored for ViaBedrock login.
++        }
+         final BedrockAuthManager account = ViaFabricPlusBedrock.impl().account().get();
+         if (account == null) {
+             ViaFabricPlusBedrock.impl().logger().warn("Could not get Bedrock account. Joining online mode servers will not work!");
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnection.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnection.java
+index d153bc1..a5b44bd 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnection.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnection.java
+@@ -29,6 +29,11 @@ import com.llamalad7.mixinextras.sugar.ref.LocalRef;
+ import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
+ import com.viaversion.viafabricplus.bedrock.friends.BedrockFriendsService;
+ import com.viaversion.viafabricplus.bedrock.injection.access.IEventLoopGroupHolder;
++import com.viaversion.viafabricplus.bedrock.lan.BedrockLanAddress;
++import com.viaversion.viafabricplus.bedrock.lan.BedrockLanIdentity;
++import com.viaversion.viafabricplus.bedrock.lan.BedrockLanInetSocketAddress;
++import com.viaversion.viafabricplus.bedrock.lan.BedrockLanSession;
++import com.viaversion.viafabricplus.bedrock.lan.BedrockLanWorld;
+ import com.viaversion.viafabricplus.bedrock.protocoltranslator.netty.RakNetPingEncapsulationCodec;
+ import com.viaversion.viafabricplus.bedrock.protocoltranslator.network.NetherNetInetSocketAddress;
+ import com.viaversion.viafabricplus.bedrock.protocoltranslator.network.NetherNetHttpAddress;
+@@ -64,16 +69,19 @@ import java.net.InetSocketAddress;
+ import java.net.SocketAddress;
+ import java.io.IOException;
+ import net.minecraft.network.Connection;
++import net.minecraft.client.Minecraft;
+ import net.minecraft.network.HandlerNames;
+ import net.minecraft.network.protocol.Packet;
+ import net.minecraft.server.network.EventLoopGroupHolder;
+ import net.raphimc.viabedrock.api.BedrockProtocolVersion;
+ import net.raphimc.viabedrock.netty.PacketCodec;
+ import net.raphimc.viabedrock.netty.raknet.MessageCodec;
++import net.raphimc.viabedrock.protocol.storage.AuthData;
+ import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
+ import net.raphimc.minecraftauth.bedrock.model.MinecraftMultiplayerToken;
+ import org.cloudburstmc.netty.channel.raknet.RakChannelFactory;
+ import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Unique;
+ import org.spongepowered.asm.mixin.injection.At;
+ import org.spongepowered.asm.mixin.injection.Inject;
+ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+@@ -82,6 +90,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+ @Mixin(value = Connection.class, priority = 1001) // Apply after ViaFabricPlus' own connection mixin
+ public abstract class MixinConnection extends SimpleChannelInboundHandler<Packet<?>> {
+ 
++    @Unique
++    private BedrockLanSession viaFabricPlusBedrock$pendingLanSession;
++
++    @Unique
++    private AuthData viaFabricPlusBedrock$pendingLanIdentity;
++
+     @Inject(method = "channelInactive", at = @At("HEAD"))
+     private void leaveFriendWorld(final ChannelHandlerContext context, final CallbackInfo ci) {
+         BedrockFriendsService.leaveIfCurrent(context.channel().remoteAddress());
+@@ -89,6 +103,15 @@ public abstract class MixinConnection extends SimpleChannelInboundHandler<Packet
+ 
+     @Override
+     public void channelRegistered(final ChannelHandlerContext ctx) throws Exception {
++        if (this.viaFabricPlusBedrock$pendingLanSession != null) {
++            final UserConnection user = ((IConnection) this).viaFabricPlus$getUserConnection();
++            user.put(this.viaFabricPlusBedrock$pendingLanSession);
++            if (this.viaFabricPlusBedrock$pendingLanIdentity != null) {
++                user.put(this.viaFabricPlusBedrock$pendingLanIdentity);
++            }
++            this.viaFabricPlusBedrock$pendingLanSession = null;
++            this.viaFabricPlusBedrock$pendingLanIdentity = null;
++        }
+         super.channelRegistered(ctx);
+         if (BedrockProtocolVersion.BEDROCK_LATEST.equals(((IConnection) this).viaFabricPlus$getTargetVersion())) { // Call channelActive manually when the channel is registered
+             this.channelActive(ctx);
+@@ -116,13 +139,30 @@ public abstract class MixinConnection extends SimpleChannelInboundHandler<Packet
+             return original.call(instance, channelTypeClass);
+         }
+ 
++        final BedrockLanAddress lanAddress;
++        if (address instanceof BedrockLanInetSocketAddress rakNetLanAddress) {
++            lanAddress = rakNetLanAddress.lanAddress();
++        } else if (address instanceof NetherNetInetSocketAddress netherNetAddress
++            && netherNetAddress.getNetherNetAddress() instanceof BedrockLanAddress selected) {
++            lanAddress = selected;
++        } else {
++            lanAddress = null;
++        }
++        final MixinConnection mixinConnection = (MixinConnection) (Object) clientConnection;
++        if (lanAddress != null) {
++            mixinConnection.viaFabricPlusBedrock$pendingLanSession = new BedrockLanSession(lanAddress);
++            if (lanAddress.authMode() == BedrockLanWorld.AuthMode.SELF_SIGNED) {
++                mixinConnection.viaFabricPlusBedrock$pendingLanIdentity = BedrockLanIdentity.create(Minecraft.getInstance().getUser().getName());
++            }
++        }
++
+         if (address instanceof final NetherNetInetSocketAddress netherNetAddress) {
+             final SocketAddress remote = netherNetAddress.getNetherNetAddress();
+             final BedrockAuthManager account = ViaFabricPlusBedrock.impl().account().get();
+             final NetherNetClientSignaling signaling;
+             if (remote instanceof NetherNetHttpAddress) {
+                 signaling = new NetherNetHTTPClientSignaling();
+-            } else if (remote instanceof NetherNetLanAddress) {
++            } else if (remote instanceof NetherNetLanAddress || remote instanceof BedrockLanAddress) {
+                 signaling = new NetherNetDiscoverySignaling();
+             } else {
+                 if (account == null) {
+@@ -139,7 +179,11 @@ public abstract class MixinConnection extends SimpleChannelInboundHandler<Packet
+                     : new NetherNetXboxSignaling(authorizationHeader);
+             }
+ 
+-            if (account != null) {
++            if (lanAddress != null && lanAddress.authMode() == BedrockLanWorld.AuthMode.SELF_SIGNED) {
++                final AuthData authData = mixinConnection.viaFabricPlusBedrock$pendingLanIdentity;
++                instance.option(NetherChannelOption.NETHER_CLIENT_IDENTITY,
++                    OperatorIdentity.fromToken(authData.getSessionKeyPair(), authData.getMultiplayerToken(), "self"));
++            } else if (account != null) {
+                 try {
+                     final MinecraftMultiplayerToken token = account.getMinecraftMultiplayerToken().refresh();
+                     instance.option(NetherChannelOption.NETHER_CLIENT_IDENTITY,
+@@ -171,6 +215,8 @@ public abstract class MixinConnection extends SimpleChannelInboundHandler<Packet
+                     connectAddress = new InetSocketAddress(httpAddress.host(), httpAddress.port());
+                 } else if (remote instanceof NetherNetLanAddress lanAddress) {
+                     connectAddress = new InetSocketAddress(lanAddress.host(), lanAddress.port());
++                } else if (remote instanceof BedrockLanAddress lanAddress) {
++                    connectAddress = lanAddress.world().responder();
+                 } else {
+                     connectAddress = remote;
+                 }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinServerNameResolver.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinServerNameResolver.java
+index 5444e77..574e73c 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinServerNameResolver.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinServerNameResolver.java
+@@ -23,6 +23,9 @@ package com.viaversion.viafabricplus.bedrock.injection.mixin.core.connection;
+ 
+ import com.viaversion.viafabricplus.ViaFabricPlus;
+ import com.viaversion.viafabricplus.bedrock.injection.access.IServerAddress;
++import com.viaversion.viafabricplus.bedrock.lan.BedrockLanAddress;
++import com.viaversion.viafabricplus.bedrock.lan.BedrockLanInetSocketAddress;
++import com.viaversion.viafabricplus.bedrock.lan.BedrockLanWorld;
+ import com.viaversion.viafabricplus.bedrock.protocoltranslator.network.NetherNetInetSocketAddress;
+ import java.net.InetSocketAddress;
+ import java.net.SocketAddress;
+@@ -69,6 +72,10 @@ public abstract class MixinServerNameResolver {
+ 
+                 @Override
+                 public @NonNull InetSocketAddress asInetSocketAddress() {
++                    if (netherNetAddress instanceof BedrockLanAddress lan
++                        && lan.world().transport() == BedrockLanWorld.Transport.RAKNET) {
++                        return new BedrockLanInetSocketAddress(lan);
++                    }
+                     return new NetherNetInetSocketAddress(netherNetAddress);
+                 }
+             }));
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinVFPScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinVFPScreen.java
+index 804113e..f65c1a8 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinVFPScreen.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinVFPScreen.java
+@@ -23,6 +23,7 @@ package com.viaversion.viafabricplus.bedrock.injection.mixin.core.integration;
+ 
+ import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
+ import com.viaversion.viafabricplus.bedrock.screen.BedrockFriendsScreen;
++import com.viaversion.viafabricplus.bedrock.screen.BedrockLanScreen;
+ import com.viaversion.viafabricplus.bedrock.screen.BedrockRealmsScreen;
+ import com.viaversion.viafabricplus.screen.base.VFPScreen;
+ import com.viaversion.viafabricplus.screen.impl.ViaFabricPlusScreen;
+@@ -57,13 +58,17 @@ public abstract class MixinVFPScreen {
+             friendsBuilder.tooltip(Tooltip.create(Component.translatable("bedrock_realms.viafabricplus.warning")));
+         }
+         final Button friends = friendsBuilder.build();
++        final Button lan = Button.builder(Component.translatable("bedrock_lan.viafabricplus.button"),
++            _ -> new BedrockLanScreen().open((Screen) (Object) this)).build();
+         // The realms screen connects to a server, which is not possible while already being connected to one
+         realms.active = !missingAccount && Minecraft.getInstance().getConnection() == null;
+         friends.active = !missingAccount;
++        lan.active = Minecraft.getInstance().getConnection() == null;
+ 
+-        final Button[] result = Arrays.copyOf(buttons, buttons.length + 2);
++        final Button[] result = Arrays.copyOf(buttons, buttons.length + 3);
+         result[buttons.length] = realms;
+         result[buttons.length + 1] = friends;
++        result[buttons.length + 2] = lan;
+         return result;
+     }
+ 
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanAddress.java b/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanAddress.java
+new file mode 100644
+index 0000000..6ef4842
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanAddress.java
+@@ -0,0 +1,35 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2023-2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.lan;
++
++import java.net.SocketAddress;
++
++/** Keeps discovery metadata and the chosen login mode with one connection attempt. */
++public final class BedrockLanAddress extends SocketAddress {
++
++    private final BedrockLanWorld world;
++    private final BedrockLanWorld.AuthMode authMode;
++
++    public BedrockLanAddress(final BedrockLanWorld world, final BedrockLanWorld.AuthMode authMode) {
++        this.world = world;
++        this.authMode = authMode;
++    }
++
++    public BedrockLanWorld world() {
++        return this.world;
++    }
++
++    public BedrockLanWorld.AuthMode authMode() {
++        return this.authMode;
++    }
++
++    @Override
++    public String toString() {
++        return this.world.responder().toString();
++    }
++
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanDiscovery.java b/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanDiscovery.java
+new file mode 100644
+index 0000000..46ad363
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanDiscovery.java
+@@ -0,0 +1,279 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2023-2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.lan;
++
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import java.io.IOException;
++import java.net.DatagramPacket;
++import java.net.DatagramSocket;
++import java.net.Inet4Address;
++import java.net.InetAddress;
++import java.net.InetSocketAddress;
++import java.net.InterfaceAddress;
++import java.net.NetworkInterface;
++import java.net.SocketTimeoutException;
++import java.nio.charset.StandardCharsets;
++import java.security.SecureRandom;
++import java.util.ArrayList;
++import java.util.Enumeration;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.HexFormat;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.TimeUnit;
++import org.cloudburstmc.netty.channel.nethernet.NetherNetConstants;
++import org.jetbrains.annotations.Nullable;
++
++/** Probes both Bedrock LAN transports without using an Xbox session. */
++public final class BedrockLanDiscovery {
++
++    private static final int NETHERNET_PORT = 7551;
++    private static final int RAKNET_PORT = 19132;
++    private static final int MAX_PACKET_SIZE = 8192;
++    private static final long SCAN_DURATION_NANOS = TimeUnit.SECONDS.toNanos(3);
++    private static final byte[] RAKNET_MAGIC = HexFormat.of().parseHex("00ffff00fefefefefdfdfdfd12345678");
++    private static final SecureRandom RANDOM = new SecureRandom();
++
++    private BedrockLanDiscovery() {
++    }
++
++    public static CompletableFuture<List<BedrockLanWorld>> discover() {
++        final CompletableFuture<List<BedrockLanWorld>> netherNet = CompletableFuture.supplyAsync(() -> probe(true));
++        final CompletableFuture<List<BedrockLanWorld>> rakNet = CompletableFuture.supplyAsync(() -> probe(false));
++        return netherNet.thenCombine(rakNet, (first, second) -> {
++            final List<BedrockLanWorld> worlds = new ArrayList<>(first);
++            worlds.addAll(second);
++            return List.copyOf(worlds);
++        });
++    }
++
++    private static List<BedrockLanWorld> probe(final boolean netherNet) {
++        final Map<Long, BedrockLanWorld> worlds = new HashMap<>();
++        final int port = netherNet ? NETHERNET_PORT : RAKNET_PORT;
++        try (DatagramSocket socket = new DatagramSocket(0)) {
++            socket.setBroadcast(true);
++            socket.setSoTimeout(250);
++            final byte[] request = netherNet ? netherNetRequest() : rakNetRequest();
++            for (InetAddress target : broadcastAddresses()) {
++                socket.send(new DatagramPacket(request, request.length, target, port));
++            }
++            final long deadline = System.nanoTime() + SCAN_DURATION_NANOS;
++            while (System.nanoTime() < deadline) {
++                final DatagramPacket reply = new DatagramPacket(new byte[MAX_PACKET_SIZE], MAX_PACKET_SIZE);
++                try {
++                    socket.receive(reply);
++                } catch (SocketTimeoutException ignored) {
++                    continue;
++                }
++                final InetSocketAddress responder = new InetSocketAddress(reply.getAddress(), reply.getPort());
++                final BedrockLanWorld world = netherNet
++                    ? readNetherNetResponse(reply.getData(), reply.getLength(), responder)
++                    : readRakNetResponse(reply.getData(), reply.getLength(), responder);
++                if (world != null) {
++                    final BedrockLanWorld previous = worlds.get(world.networkId());
++                    if (previous == null || previous.responder().getAddress().isLoopbackAddress()
++                        && !world.responder().getAddress().isLoopbackAddress()) {
++                        worlds.put(world.networkId(), world);
++                    }
++                }
++            }
++        } catch (Exception ignored) {
++            // An unavailable interface or transport must not hide results from the other probe.
++        }
++        return List.copyOf(worlds.values());
++    }
++
++    private static Set<InetAddress> broadcastAddresses() throws IOException {
++        final Set<InetAddress> addresses = new HashSet<>();
++        addresses.add(InetAddress.getByName("127.0.0.1"));
++        final Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
++        while (interfaces != null && interfaces.hasMoreElements()) {
++            final NetworkInterface network = interfaces.nextElement();
++            if (!network.isUp() || network.isLoopback()) {
++                continue;
++            }
++            for (InterfaceAddress address : network.getInterfaceAddresses()) {
++                if (address.getAddress() instanceof Inet4Address && address.getBroadcast() != null) {
++                    addresses.add(address.getBroadcast());
++                }
++            }
++        }
++        return addresses;
++    }
++
++    private static byte[] netherNetRequest() throws Exception {
++        final ByteBuf data = Unpooled.buffer(18);
++        try {
++            data.writeShortLE(0).writeLongLE(RANDOM.nextLong()).writeZero(8);
++            return NetherNetConstants.encryptDiscoveryPacket(data);
++        } finally {
++            data.release();
++        }
++    }
++
++    private static byte[] rakNetRequest() {
++        final ByteBuf data = Unpooled.buffer(33);
++        try {
++            data.writeByte(1).writeLong(System.currentTimeMillis()).writeBytes(RAKNET_MAGIC).writeLong(RANDOM.nextLong());
++            final byte[] request = new byte[data.readableBytes()];
++            data.readBytes(request);
++            return request;
++        } finally {
++            data.release();
++        }
++    }
++
++    static @Nullable BedrockLanWorld readNetherNetResponse(final byte[] packet, final int length,
++                                                             final InetSocketAddress responder) {
++        if (length < 50 || length > MAX_PACKET_SIZE) {
++            return null;
++        }
++        final ByteBuf encrypted = Unpooled.wrappedBuffer(packet, 0, length);
++        try {
++            final ByteBuf response = NetherNetConstants.decryptDiscoveryPacket(encrypted);
++            if (response == null) {
++                return null;
++            }
++            try {
++                if (response.readableBytes() < 22 || response.readUnsignedShortLE() != 1) {
++                    return null;
++                }
++                final long networkId = response.readLongLE();
++                response.skipBytes(8);
++                final int hexLength = response.readIntLE();
++                if (networkId == 0 || hexLength < 2 || hexLength > 4096 || (hexLength & 1) != 0
++                    || response.readableBytes() != hexLength) {
++                    return null;
++                }
++                final byte[] hex = new byte[hexLength];
++                response.readBytes(hex);
++                final byte[] advertisement = HexFormat.of().parseHex(new String(hex, StandardCharsets.US_ASCII));
++                return readNetherNetAdvertisement(advertisement, networkId, responder);
++            } finally {
++                response.release();
++            }
++        } catch (Exception ignored) {
++            return null;
++        } finally {
++            encrypted.release();
++        }
++    }
++
++    static @Nullable BedrockLanWorld readNetherNetAdvertisement(final byte[] advertisement, final long networkId,
++                                                                 final InetSocketAddress responder) {
++        final ByteBuf data = Unpooled.wrappedBuffer(advertisement);
++        try {
++            // Layout 7 was captured from retail Bedrock 1.26.51. Older layouts do not advertise auth capability.
++            if (data.readUnsignedByte() != 7) {
++                return null;
++            }
++            final String motd = readString(data);
++            final int protocol = readZigZag(data);
++            final String version = readString(data);
++            final String levelName = readString(data);
++            final int players = readZigZag(data);
++            final int maxPlayers = readZigZag(data);
++            readZigZag(data); // game mode
++            readBoolean(data); // editor world
++            readBoolean(data); // hardcore
++            final boolean online = readBoolean(data);
++            final boolean selfSigned = readBoolean(data);
++            final String nonce = readString(data);
++            readZigZag(data); // connection type
++            if (data.isReadable() || protocol <= 0 || players < 0 || maxPlayers <= 0 || players > maxPlayers
++                || !online && !selfSigned) {
++                return null;
++            }
++            return new BedrockLanWorld(BedrockLanWorld.Transport.NETHERNET, responder, networkId,
++                levelName.isBlank() ? motd : levelName, version, protocol, players, maxPlayers,
++                online, selfSigned, nonce.isEmpty() ? null : nonce);
++        } catch (RuntimeException ignored) {
++            return null;
++        } finally {
++            data.release();
++        }
++    }
++
++    static @Nullable BedrockLanWorld readRakNetResponse(final byte[] packet, final int length,
++                                                         final InetSocketAddress responder) {
++        final ByteBuf data = Unpooled.wrappedBuffer(packet, 0, length);
++        try {
++            if (length < 37 || data.readUnsignedByte() != 0x1c) {
++                return null;
++            }
++            data.skipBytes(8);
++            final long networkId = data.readLong();
++            for (byte value : RAKNET_MAGIC) {
++                if (data.readByte() != value) {
++                    return null;
++                }
++            }
++            final int textLength = data.readUnsignedShort();
++            if (textLength < 5 || textLength > 1024 || data.readableBytes() != textLength) {
++                return null;
++            }
++            final String[] fields = data.readCharSequence(textLength, StandardCharsets.UTF_8).toString().split(";", -1);
++            if (fields.length < 6 || !fields[0].equals("MCPE")) {
++                return null;
++            }
++            final int protocol = Integer.parseInt(fields[2]);
++            final int players = Integer.parseInt(fields[4]);
++            final int maxPlayers = Integer.parseInt(fields[5]);
++            if (protocol <= 0 || players < 0 || maxPlayers <= 0 || players > maxPlayers) {
++                return null;
++            }
++            // RakNet pongs have no authentication capability or nonce fields. Both capability flags remain unknown.
++            return new BedrockLanWorld(BedrockLanWorld.Transport.RAKNET, responder, networkId,
++                fields[1], fields[3], protocol, players, maxPlayers, false, false, null);
++        } catch (RuntimeException ignored) {
++            return null;
++        } finally {
++            data.release();
++        }
++    }
++
++    private static boolean readBoolean(final ByteBuf data) {
++        final int value = data.readUnsignedByte();
++        if (value > 1) {
++            throw new IllegalArgumentException("Invalid LAN boolean");
++        }
++        return value == 1;
++    }
++
++    private static int readZigZag(final ByteBuf data) {
++        final int value = readVarInt(data);
++        return value >>> 1 ^ -(value & 1);
++    }
++
++    private static int readVarInt(final ByteBuf data) {
++        int result = 0;
++        for (int shift = 0; shift < 35; shift += 7) {
++            final int value = data.readUnsignedByte();
++            if (shift == 28 && (value & 0xF0) != 0) {
++                throw new IllegalArgumentException("LAN varint overflow");
++            }
++            result |= (value & 0x7F) << shift;
++            if ((value & 0x80) == 0) {
++                return result;
++            }
++        }
++        throw new IllegalArgumentException("LAN varint too long");
++    }
++
++    private static String readString(final ByteBuf data) {
++        final int length = readVarInt(data);
++        if (length < 0 || length > 256 || length > data.readableBytes()) {
++            throw new IllegalArgumentException("Invalid LAN string length");
++        }
++        return data.readCharSequence(length, StandardCharsets.UTF_8).toString();
++    }
++
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanIdentity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanIdentity.java
+new file mode 100644
+index 0000000..6285136
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanIdentity.java
+@@ -0,0 +1,57 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2023-2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.lan;
++
++import io.jsonwebtoken.Claims;
++import io.jsonwebtoken.Jwts;
++import java.nio.charset.StandardCharsets;
++import java.security.KeyPair;
++import java.time.Instant;
++import java.time.temporal.ChronoUnit;
++import java.util.Base64;
++import java.util.Date;
++import java.util.Locale;
++import java.util.UUID;
++import net.raphimc.viabedrock.api.util.CryptUtil;
++import net.raphimc.viabedrock.api.util.Fnv1;
++import net.raphimc.viabedrock.protocol.storage.AuthData;
++
++/** Creates ViaBedrock's self-signed login identity before NetherNet prepares its offer. */
++public final class BedrockLanIdentity {
++
++    private BedrockLanIdentity() {
++    }
++
++    public static AuthData create(final String username) {
++        final Instant now = Instant.now();
++        final KeyPair keyPair = CryptUtil.generateEcdsa384KeyPair();
++        final String publicKey = Base64.getEncoder().encodeToString(keyPair.getPublic().getEncoded());
++        final long rawXuid = Fnv1.fnv1_64(username.getBytes(StandardCharsets.UTF_8));
++        final String xuid = String.valueOf(Math.abs(rawXuid));
++        final UUID selfSignedId = UUID.nameUUIDFromBytes(("pocket-auth-1-xuid:" + xuid).getBytes(StandardCharsets.UTF_8));
++        final String token = Jwts.builder()
++            .signWith(keyPair.getPrivate(), Jwts.SIG.ES384)
++            .header().add("x5u", publicKey).and()
++            .claim(Claims.AUDIENCE, "api://auth-minecraft-services/multiplayer")
++            .claim("cpk", publicKey)
++            .claim("leguuid", selfSignedId)
++            .claim("mid", Long.toHexString(rawXuid).toUpperCase(Locale.ROOT))
++            .claim("nid", "")
++            .claim("nname", "")
++            .claim("pid", "")
++            .claim("pname", "")
++            .claim("xid", xuid)
++            .claim("xname", username)
++            .issuedAt(Date.from(now))
++            .expiration(Date.from(now.plus(365, ChronoUnit.DAYS)))
++            .compact();
++        final AuthData authData = new AuthData(token, keyPair);
++        authData.setSelfSignedId(selfSignedId);
++        return authData;
++    }
++
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanInetSocketAddress.java b/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanInetSocketAddress.java
+new file mode 100644
+index 0000000..99b63ce
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanInetSocketAddress.java
+@@ -0,0 +1,25 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2023-2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.lan;
++
++import java.net.InetSocketAddress;
++
++/** Carries a RakNet LAN selection through vanilla's address resolver. */
++public final class BedrockLanInetSocketAddress extends InetSocketAddress {
++
++    private final BedrockLanAddress lanAddress;
++
++    public BedrockLanInetSocketAddress(final BedrockLanAddress lanAddress) {
++        super(lanAddress.world().responder().getAddress(), lanAddress.world().responder().getPort());
++        this.lanAddress = lanAddress;
++    }
++
++    public BedrockLanAddress lanAddress() {
++        return this.lanAddress;
++    }
++
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanSession.java b/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanSession.java
+new file mode 100644
+index 0000000..d70afae
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanSession.java
+@@ -0,0 +1,19 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2023-2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.lan;
++
++import com.viaversion.viaversion.api.connection.StorableObject;
++import org.jetbrains.annotations.Nullable;
++
++/** Per-connection metadata used by signaling, login, and client data. */
++public record BedrockLanSession(BedrockLanAddress address) implements StorableObject {
++
++    public @Nullable String nonce() {
++        return this.address.world().nonce();
++    }
++
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanWorld.java b/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanWorld.java
+new file mode 100644
+index 0000000..377d8cb
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanWorld.java
+@@ -0,0 +1,33 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2023-2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.lan;
++
++import java.net.InetSocketAddress;
++import org.jetbrains.annotations.Nullable;
++
++/** A verified LAN reply and the connection details supplied by that reply. */
++public record BedrockLanWorld(Transport transport, InetSocketAddress responder, long networkId,
++                              String name, String version, int protocol, int players, int maxPlayers,
++                              boolean acceptsOnlineAuth, boolean acceptsSelfSignedAuth, @Nullable String nonce) {
++
++    public enum Transport {
++        NETHERNET, RAKNET
++    }
++
++    public enum AuthMode {
++        ONLINE, SELF_SIGNED
++    }
++
++    public boolean compatible(final int supportedProtocol) {
++        return this.protocol == supportedProtocol;
++    }
++
++    public boolean full() {
++        return this.maxPlayers > 0 && this.players >= this.maxPlayers;
++    }
++
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/BedrockConnectionUtil.java b/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/BedrockConnectionUtil.java
+index f492427..1e4bd13 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/BedrockConnectionUtil.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/BedrockConnectionUtil.java
+@@ -22,6 +22,7 @@
+ package com.viaversion.viafabricplus.bedrock.protocoltranslator.network;
+ 
+ import com.viaversion.viafabricplus.bedrock.injection.access.IServerAddress;
++import com.viaversion.viafabricplus.bedrock.lan.BedrockLanAddress;
+ import com.viaversion.viafabricplus.injection.access.core.IServerData;
+ import java.net.SocketAddress;
+ import net.minecraft.client.Minecraft;
+@@ -38,10 +39,18 @@ public final class BedrockConnectionUtil {
+      * @param address the NetherNet address of the world
+      */
+     public static void connectNetherNet(final SocketAddress address) {
++        connect(address, "Bedrock NetherNet " + address);
++    }
++
++    public static void connectLan(final BedrockLanAddress address) {
++        connect(address, address.world().name());
++    }
++
++    private static void connect(final SocketAddress address, final String name) {
+         final ServerAddress serverAddress = ServerAddress.parseString("nethernet.viafabricplus.localhost");
+         ((IServerAddress) (Object) serverAddress).viaFabricPlusBedrock$setNetherNetAddress(address);
+ 
+-        final ServerData entry = new ServerData("Bedrock NetherNet " + address, serverAddress.getHost(), ServerData.Type.OTHER);
++        final ServerData entry = new ServerData(name, serverAddress.getHost(), ServerData.Type.OTHER);
+         ((IServerData) entry).viaFabricPlus$forceVersion(BedrockProtocolVersion.BEDROCK_LATEST);
+ 
+         ConnectScreen.startConnecting(Minecraft.getInstance().gui.screen(), Minecraft.getInstance(), serverAddress, entry, false, null);
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockLanScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockLanScreen.java
+new file mode 100644
+index 0000000..7a6efec
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockLanScreen.java
+@@ -0,0 +1,199 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2023-2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.screen;
++
++import com.viaversion.viafabricplus.bedrock.lan.BedrockLanAddress;
++import com.viaversion.viafabricplus.bedrock.lan.BedrockLanDiscovery;
++import com.viaversion.viafabricplus.bedrock.lan.BedrockLanWorld;
++import com.viaversion.viafabricplus.bedrock.lan.BedrockLanWorld.AuthMode;
++import com.viaversion.viafabricplus.bedrock.protocoltranslator.network.BedrockConnectionUtil;
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import com.viaversion.viafabricplus.screen.base.VFPScreen;
++import com.viaversion.viafabricplus.screen.base.list.VFPListEntry;
++import com.viaversion.viafabricplus.screen.base.list.VFPTextEntry;
++import java.util.Comparator;
++import java.util.List;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.Font;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.gui.components.Button;
++import net.minecraft.network.chat.Component;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import org.jspecify.annotations.NonNull;
++
++/** LAN worlds use direct discovery and are available without an Xbox account. */
++public final class BedrockLanScreen extends VFPScreen {
++
++    public static final Component TITLE = Component.translatable("screen.viafabricplus.bedrock_lan");
++
++    private static final int SECONDARY_COLOR = 0xFFB8B8B8;
++    private List<BedrockLanWorld> worlds = List.of();
++    private boolean scanning;
++    private boolean scanFailed;
++    private int scanGeneration;
++    private SlotList list;
++    private Button joinButton;
++    private Button loginButton;
++    private Button refreshButton;
++    private AuthMode authMode = AuthMode.SELF_SIGNED;
++    private BedrockLanWorld selectedWorld;
++
++    public BedrockLanScreen() {
++        super(TITLE, true);
++    }
++
++    @Override
++    protected void init() {
++        this.list = this.addRenderableWidget(new SlotList(this.minecraft, this.width, this.height, 87, FOOTER_HEIGHT,
++            (this.font.lineHeight + 2) * 3));
++        this.addRenderableOnly((graphics, mouseX, mouseY, delta) -> this.renderScreenTitle(graphics));
++        this.joinButton = Button.builder(Component.translatable("bedrock_lan.viafabricplus.join"), _ -> this.join()).build();
++        this.loginButton = Button.builder(Component.empty(), _ -> this.toggleLogin()).build();
++        this.refreshButton = Button.builder(Component.translatable("bedrock_lan.viafabricplus.refresh"), _ -> this.scan()).build();
++        this.addFooter(this.joinButton, this.loginButton, this.refreshButton);
++        super.init();
++        if (this.scanGeneration == 0) {
++            this.scan();
++        }
++    }
++
++    @Override
++    public void tick() {
++        super.tick();
++        final BedrockLanWorld world = this.selected();
++        if (world != this.selectedWorld) {
++            this.selectedWorld = world;
++            this.authMode = this.preferredMode(world);
++        }
++        final boolean accountPresent = ViaFabricPlusBedrock.impl().account().get() != null;
++        final boolean canJoin = world != null && world.compatible(ProtocolConstants.BEDROCK_PROTOCOL_VERSION)
++            && !world.full() && Minecraft.getInstance().getConnection() == null
++            && (this.authMode == AuthMode.SELF_SIGNED
++                && (world.transport() == BedrockLanWorld.Transport.RAKNET || world.acceptsSelfSignedAuth())
++                || this.authMode == AuthMode.ONLINE && accountPresent
++                    && (world.transport() == BedrockLanWorld.Transport.RAKNET || world.acceptsOnlineAuth()));
++        this.joinButton.active = canJoin;
++        this.loginButton.active = world != null && (world.transport() == BedrockLanWorld.Transport.RAKNET
++            || accountPresent && world.acceptsOnlineAuth() && world.acceptsSelfSignedAuth());
++        this.loginButton.setMessage(Component.translatable(world != null && world.transport() == BedrockLanWorld.Transport.RAKNET
++            && this.authMode == AuthMode.ONLINE && !accountPresent ? "bedrock_lan.viafabricplus.try_offline_login"
++            : this.authMode == AuthMode.SELF_SIGNED ? "bedrock_lan.viafabricplus.offline_login"
++                : "bedrock_lan.viafabricplus.xbox_login"));
++        this.refreshButton.active = !this.scanning;
++    }
++
++    private void scan() {
++        if (this.scanning) {
++            return;
++        }
++        this.scanning = true;
++        this.scanFailed = false;
++        final int generation = ++this.scanGeneration;
++        BedrockLanDiscovery.discover().whenCompleteAsync((results, error) -> {
++            if (generation != this.scanGeneration) {
++                return;
++            }
++            this.scanning = false;
++            this.scanFailed = error != null;
++            if (error == null) {
++                this.worlds = results.stream().filter(world -> world.compatible(ProtocolConstants.BEDROCK_PROTOCOL_VERSION))
++                    .sorted(Comparator.comparing(BedrockLanWorld::name, String.CASE_INSENSITIVE_ORDER)).toList();
++            } else {
++                ViaFabricPlusBedrock.impl().logger().warn("Could not scan for Bedrock LAN worlds", error);
++            }
++            if (Minecraft.getInstance().gui.screen() == this) {
++                this.rebuildWidgets();
++            }
++        }, Minecraft.getInstance());
++        this.rebuildWidgets();
++    }
++
++    private BedrockLanWorld selected() {
++        return this.list != null && this.list.getFocused() instanceof WorldEntry entry ? entry.world : null;
++    }
++
++    private AuthMode preferredMode(final BedrockLanWorld world) {
++        if (world == null || world.transport() == BedrockLanWorld.Transport.RAKNET) {
++            return AuthMode.ONLINE;
++        }
++        if (world.acceptsSelfSignedAuth()) {
++            return AuthMode.SELF_SIGNED;
++        }
++        return AuthMode.ONLINE;
++    }
++
++    private void toggleLogin() {
++        this.authMode = this.authMode == AuthMode.ONLINE ? AuthMode.SELF_SIGNED : AuthMode.ONLINE;
++    }
++
++    private void join() {
++        final BedrockLanWorld world = this.selected();
++        if (world != null && this.joinButton.active) {
++            BedrockConnectionUtil.connectLan(new BedrockLanAddress(world, this.authMode));
++        }
++    }
++
++    private final class SlotList extends ActionList {
++
++        private SlotList(final Minecraft minecraft, final int width, final int height, final int top,
++                         final int bottom, final int entryHeight) {
++            super(minecraft, width, height, top, bottom, entryHeight);
++            if (BedrockLanScreen.this.worlds.isEmpty()) {
++                this.addEntry(new VFPTextEntry(Component.translatable(BedrockLanScreen.this.scanning
++                    ? "bedrock_lan.viafabricplus.scanning" : BedrockLanScreen.this.scanFailed
++                        ? "bedrock_lan.viafabricplus.scan_failed" : "bedrock_lan.viafabricplus.empty")));
++            } else {
++                BedrockLanScreen.this.worlds.forEach(world -> this.addEntry(new WorldEntry(world)));
++            }
++        }
++
++        @Override
++        protected boolean activate(final VFPListEntry entry) {
++            if (entry instanceof WorldEntry) {
++                BedrockLanScreen.this.join();
++                return true;
++            }
++            return false;
++        }
++
++        @Override
++        public int getRowWidth() {
++            return Math.min(352, this.width - 20);
++        }
++
++    }
++
++    private static final class WorldEntry extends VFPListEntry {
++
++        private final BedrockLanWorld world;
++
++        private WorldEntry(final BedrockLanWorld world) {
++            this.world = world;
++        }
++
++        @Override
++        public @NonNull Component getNarration() {
++            return Component.literal(this.world.name() + ", " + this.world.version() + ", "
++                + this.world.players() + "/" + this.world.maxPlayers());
++        }
++
++        @Override
++        public void mappedRender(final GuiGraphicsExtractor graphics, final int entryWidth, final int entryHeight) {
++            final Font font = Minecraft.getInstance().font;
++            final String players = this.world.players() + "/" + this.world.maxPlayers();
++            final String transport = this.world.transport() == BedrockLanWorld.Transport.NETHERNET ? "NetherNet" : "RakNet";
++            final String details = transport + "  •  " + this.world.version() + "  •  " + this.world.responder().getAddress().getHostAddress();
++            graphics.text(font, font.plainSubstrByWidth(this.world.name(), entryWidth - font.width(players) - 22),
++                SLOT_MARGIN, SLOT_MARGIN + 1, -1);
++            graphics.text(font, players, entryWidth - font.width(players) - SLOT_MARGIN, SLOT_MARGIN + 1, -1);
++            graphics.text(font, font.plainSubstrByWidth(details, entryWidth - SLOT_MARGIN * 2),
++                SLOT_MARGIN, SLOT_MARGIN + font.lineHeight + 4, SECONDARY_COLOR);
++        }
++
++    }
++
++}
+diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
+index b3c9874..5667798 100644
+--- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
++++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
+@@ -15,6 +15,16 @@
+ 
+   "screen.viafabricplus.bedrock_realms": "Bedrock Realms",
+   "screen.viafabricplus.bedrock_friends": "Bedrock Friends",
++  "screen.viafabricplus.bedrock_lan": "Bedrock LAN",
++  "bedrock_lan.viafabricplus.button": "LAN Worlds",
++  "bedrock_lan.viafabricplus.join": "Join world",
++  "bedrock_lan.viafabricplus.refresh": "Refresh",
++  "bedrock_lan.viafabricplus.offline_login": "Offline login",
++  "bedrock_lan.viafabricplus.xbox_login": "Xbox login",
++  "bedrock_lan.viafabricplus.try_offline_login": "Try offline login",
++  "bedrock_lan.viafabricplus.scanning": "Looking for LAN worlds...",
++  "bedrock_lan.viafabricplus.empty": "No compatible LAN worlds found",
++  "bedrock_lan.viafabricplus.scan_failed": "Could not scan the LAN",
+   "screen.viafabricplus.bedrock_party": "Bedrock Party",
+   "screen.viafabricplus.bedrock_dressing_room": "Bedrock Dressing Room",
+   "screen.viafabricplus.accept_invite": "Accept an invitation code",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanDiscoveryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanDiscoveryTest.java
+new file mode 100644
+index 0000000..6b79562
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanDiscoveryTest.java
+@@ -0,0 +1,111 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2023-2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.lan;
++
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import java.net.InetSocketAddress;
++import java.nio.charset.StandardCharsets;
++import java.util.HexFormat;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockLanDiscoveryTest {
++
++    private static final InetSocketAddress RESPONDER = new InetSocketAddress("127.0.0.1", 7551);
++
++    @Test
++    void decodesRetailLayoutSevenCapabilitiesAndNonce() {
++        final byte[] advertisement = advertisement(true, true, "example-nonce");
++        final BedrockLanWorld world = BedrockLanDiscovery.readNetherNetAdvertisement(advertisement, 42, RESPONDER);
++
++        assertNotNull(world);
++        assertEquals(BedrockLanWorld.Transport.NETHERNET, world.transport());
++        assertEquals(RESPONDER, world.responder());
++        assertEquals(42, world.networkId());
++        assertEquals(2193, world.protocol());
++        assertEquals(1, world.players());
++        assertEquals(8, world.maxPlayers());
++        assertTrue(world.acceptsOnlineAuth());
++        assertTrue(world.acceptsSelfSignedAuth());
++        assertEquals("example-nonce", world.nonce());
++    }
++
++    @Test
++    void rejectsUnverifiedOrTruncatedAdvertisements() {
++        final byte[] valid = advertisement(true, true, "example-nonce");
++        valid[0] = 6;
++        assertNull(BedrockLanDiscovery.readNetherNetAdvertisement(valid, 42, RESPONDER));
++        assertNull(BedrockLanDiscovery.readNetherNetAdvertisement(new byte[]{7, 50}, 42, RESPONDER));
++        assertNull(BedrockLanDiscovery.readNetherNetAdvertisement(advertisement(false, false, ""), 42, RESPONDER));
++    }
++
++    @Test
++    void acceptsOnlyACompleteRakNetPong() {
++        final byte[] magic = HexFormat.of().parseHex("00ffff00fefefefefdfdfdfd12345678");
++        final byte[] advertisement = "MCPE;World;2193;1.26.51;1;8;42;Level;Survival".getBytes(StandardCharsets.UTF_8);
++        final ByteBuf data = Unpooled.buffer();
++        try {
++            data.writeByte(0x1c).writeLong(0).writeLong(42).writeBytes(magic)
++                .writeShort(advertisement.length).writeBytes(advertisement);
++            final byte[] packet = new byte[data.readableBytes()];
++            data.readBytes(packet);
++            final BedrockLanWorld world = BedrockLanDiscovery.readRakNetResponse(packet, packet.length, RESPONDER);
++            assertNotNull(world);
++            assertEquals(BedrockLanWorld.Transport.RAKNET, world.transport());
++            assertEquals(2193, world.protocol());
++            assertFalse(world.acceptsOnlineAuth());
++            assertFalse(world.acceptsSelfSignedAuth());
++            assertNull(world.nonce());
++            assertNull(BedrockLanDiscovery.readRakNetResponse(packet, packet.length - 1, RESPONDER));
++        } finally {
++            data.release();
++        }
++    }
++
++    private static byte[] advertisement(final boolean online, final boolean selfSigned, final String nonce) {
++        final ByteBuf data = Unpooled.buffer();
++        try {
++            data.writeByte(7);
++            writeString(data, "World");
++            writeZigZag(data, 2193);
++            writeString(data, "1.26.51");
++            writeString(data, "Level");
++            writeZigZag(data, 1);
++            writeZigZag(data, 8);
++            writeZigZag(data, 1);
++            data.writeBoolean(false).writeBoolean(false).writeBoolean(online).writeBoolean(selfSigned);
++            writeString(data, nonce);
++            writeZigZag(data, 4);
++            final byte[] bytes = new byte[data.readableBytes()];
++            data.readBytes(bytes);
++            return bytes;
++        } finally {
++            data.release();
++        }
++    }
++
++    private static void writeString(final ByteBuf data, final String value) {
++        final byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
++        writeVarInt(data, bytes.length);
++        data.writeBytes(bytes);
++    }
++
++    private static void writeZigZag(final ByteBuf data, final int value) {
++        writeVarInt(data, value << 1 ^ value >> 31);
++    }
++
++    private static void writeVarInt(final ByteBuf data, int value) {
++        while ((value & ~0x7f) != 0) {
++            data.writeByte(value & 0x7f | 0x80);
++            value >>>= 7;
++        }
++        data.writeByte(value);
++    }
++
++}
+-- 
+2.55.0
