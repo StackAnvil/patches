@@ -6,7 +6,7 @@ import { root } from "../model.ts";
 const prefix = "[ViaBedrock Gameplay Probe] ";
 
 export const gameplayCaseIds = [
-  "movement-left", "movement-right", "block-break", "creative-block-break", "block-place", "drop-item", "inventory-script-slot",
+  "movement-left", "movement-right", "block-break", "creative-block-break", "block-place", "tnt-explosion", "water-flow", "drop-item", "inventory-script-slot",
   "creative-select", "creative-replace", "creative-replace-main", "equip-helmet", "equip-offhand", "eat-golden-apple", "entity-attack", "entity-name",
   "map-hold", "command-time", "command-completion", "command-denied", "respawn", "dimension-change",
   "chest-transfer", "chest-rapid-transfer", "chest-pickup-all", "lab-table-then-chest", "chest-boat-transfer", "chest-minecart-transfer", "enchant-basic",
@@ -207,6 +207,14 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
     case "block-break":
     case "creative-block-break":
       await uiMouse(ui, "left", 1200);
+      return;
+    case "tnt-explosion":
+      await uiMouse(ui, "right");
+      await Bun.sleep(6500);
+      return;
+    case "water-flow":
+      await uiMouse(ui, "right");
+      await Bun.sleep(2500);
       return;
     case "block-place":
     case "offhand-block-place":

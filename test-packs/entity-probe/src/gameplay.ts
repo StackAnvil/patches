@@ -138,6 +138,31 @@ define("block-place", "blocks", async (player) => {
   return { passed: placed.length === 1 && remaining === 1, observed: { placed, remaining }, expected: { placed: 1, remaining: 1 } };
 });
 
+define("tnt-explosion", "blocks", async (player) => {
+  await prepareArena(player, GameMode.Creative);
+  blockAt(player.dimension, 0, 1, 2).setType("minecraft:tnt");
+  giveSelected(player, "minecraft:flint_and_steel");
+  return {};
+}, (player) => {
+  const tnt = blockAt(player.dimension, 0, 1, 2).typeId;
+  const crater = [-1, 0, 1].flatMap((x) => [1, 2, 3].map((z) => blockAt(player.dimension, x, -1, z).typeId))
+    .filter((typeId) => typeId === "minecraft:air").length;
+  return { passed: tnt === "minecraft:air" && crater > 0, observed: { tnt, crater, location: player.location },
+    expected: "The lit TNT explodes and removes at least one nearby floor block; inspect Java screenshots for the matching crater." };
+});
+
+define("water-flow", "blocks", async (player) => {
+  await prepareArena(player);
+  blockAt(player.dimension, 0, 1, 2).setType("minecraft:stone");
+  giveSelected(player, "minecraft:water_bucket");
+  return {};
+}, (player) => {
+  const water = [-2, -1, 0, 1, 2].flatMap((x) => [0, 1, 2, 3, 4].flatMap((z) => [0, 1, 2]
+    .map((y) => blockAt(player.dimension, x, y, z).typeId))).filter((typeId) => typeId === "minecraft:water").length;
+  return { passed: water > 1, observed: { water, location: player.location },
+    expected: "The placed water flows into multiple blocks; inspect Java screenshots for the same flow." };
+});
+
 define("offhand-block-place", "blocks", async (player) => {
   await prepareArena(player);
   blockAt(player.dimension, 0, 1, 2).setType("minecraft:stone");
