@@ -1,0 +1,330 @@
+From 01d9bcaf4c735571b321d716907fafa11e21b28e Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 03:58:56 +0200
+Subject: [PATCH] feat(items): translate Java overrides and book data
+
+Apply mapped potion, instrument, and block-state overrides as Java 26.3 components. Preserve Bedrock book pages and metadata, and retain the enchantment glint for an empty enchantment list so item presentation survives translation.
+---
+ .../protocol/rewriter/ItemDataRewriter.java   | 157 +++++++++++++++++-
+ .../protocol/rewriter/ItemRewriter.java       |   5 +-
+ .../rewriter/ItemDataRewriterTest.java        |  93 +++++++++++
+ 3 files changed, 250 insertions(+), 5 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriterTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
+index e21bdddb..3ecc81af 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
+@@ -19,25 +19,176 @@ package net.raphimc.viabedrock.protocol.rewriter;
+ 
+ import com.viaversion.nbt.tag.*;
+ import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.Holder;
+ import com.viaversion.viaversion.api.minecraft.data.StructuredData;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
+ import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
+ import com.viaversion.viaversion.api.minecraft.item.Item;
++import com.viaversion.viaversion.api.minecraft.item.data.BlockStateProperties;
+ import com.viaversion.viaversion.api.minecraft.item.data.Enchantments;
++import com.viaversion.viaversion.api.minecraft.item.data.EnumTypes;
++import com.viaversion.viaversion.api.minecraft.item.data.FilterableComponent;
++import com.viaversion.viaversion.api.minecraft.item.data.FilterableString;
++import com.viaversion.viaversion.api.minecraft.item.data.Instrument1_21_2;
++import com.viaversion.viaversion.api.minecraft.item.data.PotionContents;
++import com.viaversion.viaversion.api.minecraft.item.data.PotionEffect;
++import com.viaversion.viaversion.api.minecraft.item.data.PotionEffectData;
++import com.viaversion.viaversion.api.minecraft.item.data.WritableBook;
++import com.viaversion.viaversion.api.minecraft.item.data.WrittenBook;
++import com.viaversion.viaversion.util.Key;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.util.RegistryUtil;
++import net.raphimc.viabedrock.api.util.TextUtil;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Enchant_Type;
+ import net.raphimc.viabedrock.protocol.model.BedrockItem;
+ 
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
+ import java.util.logging.Level;
+ 
+ public final class ItemDataRewriter {
+ 
++    static void applyJavaOverride(final CompoundTag override, final StructuredDataContainer data, final CompoundTag registries) {
++        final PotionContents potionContents = potionContents(override);
++        if (potionContents != null) {
++            data.set(StructuredDataKey.POTION_CONTENTS1_21_2, potionContents);
++        }
++
++        final BlockStateProperties blockState = blockStateProperties(override.getCompoundTag("BlockStateTag"));
++        if (blockState != null) {
++            data.set(StructuredDataKey.BLOCK_STATE, blockState);
++        }
++
++        if (override.get("instrument") instanceof StringTag instrument) {
++            final CompoundTag instrumentRegistry = registries.getCompoundTag("minecraft:instrument");
++            final int instrumentId = registryIndex(instrumentRegistry, instrument.getValue());
++            if (instrumentId >= 0) {
++                data.set(StructuredDataKey.INSTRUMENT26_1, Holder.<Instrument1_21_2>of(instrumentId));
++            }
++        }
++    }
++
++    static PotionContents potionContents(final CompoundTag override) {
++        Integer potion = null;
++        if (override.get("Potion") instanceof StringTag potionTag) {
++            final int id = enumIndex(EnumTypes.POTION.keys(), potionTag.getValue());
++            if (id >= 0) {
++                potion = id;
++            }
++        }
++
++        final Integer customColor = override.get("CustomPotionColor") instanceof NumberTag color ? color.asInt() : null;
++        final List<PotionEffect> effects = new ArrayList<>();
++        if (override.get("custom_potion_effects") instanceof ListTag<?> customEffects) {
++            for (Tag effectTag : customEffects) {
++                if (!(effectTag instanceof CompoundTag effect) || !(effect.get("id") instanceof StringTag idTag)) {
++                    continue;
++                }
++                final int effectId = enumIndex(EnumTypes.MOB_EFFECT.keys(), idTag.getValue());
++                if (effectId < 0) {
++                    continue;
++                }
++                final int amplifier = effect.get("amplifier") instanceof NumberTag value ? value.asInt() : 0;
++                final int duration = effect.get("duration") instanceof NumberTag value ? value.asInt() : 0;
++                final boolean ambient = effect.get("ambient") instanceof NumberTag value && value.asByte() != 0;
++                final boolean showParticles = !(effect.get("show_particles") instanceof NumberTag value) || value.asByte() != 0;
++                final boolean showIcon = !(effect.get("show_icon") instanceof NumberTag value) || value.asByte() != 0;
++                effects.add(new PotionEffect(effectId, new PotionEffectData(amplifier, duration, ambient, showParticles, showIcon, null)));
++            }
++        }
++
++        return potion == null && customColor == null && effects.isEmpty()
++                ? null : new PotionContents(potion, customColor, effects.toArray(PotionEffect[]::new));
++    }
++
++    static BlockStateProperties blockStateProperties(final CompoundTag blockState) {
++        if (blockState == null || blockState.isEmpty()) {
++            return null;
++        }
++        final Map<String, String> properties = new HashMap<>();
++        for (Map.Entry<String, Tag> entry : blockState.entrySet()) {
++            if (entry.getValue() instanceof StringTag string) {
++                properties.put(entry.getKey(), string.getValue());
++            } else if (entry.getValue() instanceof NumberTag number) {
++                properties.put(entry.getKey(), Integer.toString(number.asInt()));
++            }
++        }
++        return properties.isEmpty() ? null : new BlockStateProperties(properties);
++    }
++
++    static int registryIndex(final CompoundTag registry, final String identifier) {
++        if (registry == null) {
++            return -1;
++        }
++        int index = 0;
++        for (String key : registry.keySet()) {
++            if (Key.of(key).equals(Key.of(identifier))) {
++                return index;
++            }
++            index++;
++        }
++        return -1;
++    }
++
++    private static int enumIndex(final Key[] keys, final String identifier) {
++        final Key key = Key.of(identifier);
++        for (int index = 0; index < keys.length; index++) {
++            if (keys[index].equals(key)) {
++                return index;
++            }
++        }
++        return -1;
++    }
++
++    static WritableBook writableBook(final CompoundTag bedrockTag) {
++        if (!(bedrockTag.get("pages") instanceof ListTag<?> pages)) {
++            return null;
++        }
++        final FilterableString[] javaPages = new FilterableString[Math.min(pages.size(), 100)];
++        for (int index = 0; index < javaPages.length; index++) {
++            final Tag page = pages.get(index);
++            final String text = page instanceof CompoundTag content ? content.getString("text", "") : "";
++            javaPages[index] = new FilterableString(text, null);
++        }
++        return new WritableBook(javaPages);
++    }
++
++    static WrittenBook writtenBook(final CompoundTag bedrockTag) {
++        if (!(bedrockTag.get("pages") instanceof ListTag<?> pages)) {
++            return null;
++        }
++        final FilterableComponent[] javaPages = new FilterableComponent[Math.min(pages.size(), 100)];
++        for (int index = 0; index < javaPages.length; index++) {
++            final Tag page = pages.get(index);
++            final String text = page instanceof CompoundTag content ? content.getString("text", "") : "";
++            javaPages[index] = new FilterableComponent(TextUtil.stringToNbt(text), null);
++        }
++        final FilterableString title = new FilterableString(bedrockTag.getString("title", ""), null);
++        final int generation = bedrockTag.get("generation") instanceof NumberTag value
++                ? Math.max(0, Math.min(value.asInt(), 3)) : 0;
++        return new WrittenBook(title, bedrockTag.getString("author", ""), generation, javaPages, true);
++    }
++
+     // BedrockTag can be null
+-    public static void handleItem(final UserConnection user, final BedrockItem bedrockItem, final CompoundTag bedrockTag, final Item javaItem) {
++    public static void handleItem(final UserConnection user, final String identifier, final BedrockItem bedrockItem, final CompoundTag bedrockTag, final Item javaItem) {
+ 
+         if (bedrockTag != null) {
+ 
++            if (identifier.equals("minecraft:writable_book")) {
++                final WritableBook content = writableBook(bedrockTag);
++                if (content != null) {
++                    javaItem.dataContainer().set(StructuredDataKey.WRITABLE_BOOK_CONTENT, content);
++                }
++            } else if (identifier.equals("minecraft:written_book")) {
++                final WrittenBook content = writtenBook(bedrockTag);
++                if (content != null) {
++                    javaItem.dataContainer().set(StructuredDataKey.WRITTEN_BOOK_CONTENT, content);
++                }
++            }
++
+             if (bedrockTag.get("Damage") instanceof NumberTag durability) {
+                 javaItem.dataContainer().set(StructuredDataKey.DAMAGE, durability.asInt());
+             }
+@@ -52,7 +203,9 @@ public final class ItemDataRewriter {
+                     javaEnchantments = enchantmentsData.value();
+                 }
+ 
+-                //TODO: Empty list gives an enchantment glint, but no entries in lore
++                if (enchantments.isEmpty()) {
++                    javaItem.dataContainer().set(StructuredDataKey.ENCHANTMENT_GLINT_OVERRIDE, true);
++                }
+                 for (Tag enchantment : enchantments) {
+                     if (enchantment instanceof CompoundTag compoundTag) {
+                         //id and lvl must be a short. Else bedrock defaults to protection (id 0) and lvl 0 (TODO: implement the fallback)
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
+index d9c2c4cd..ccea932a 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
+@@ -221,8 +221,7 @@ public class ItemRewriter extends StoredObject {
+         if (javaItemMapping != null) {
+             final StructuredDataContainer data = ProtocolConstants.createStructuredDataContainer();
+             if (javaItemMapping.overrideTag() != null) {
+-                // javaTag.setValue(this.overrideTag.copy().getValue());
+-                // TODO: Update: Fix this
++                ItemDataRewriter.applyJavaOverride(javaItemMapping.overrideTag(), data, BedrockProtocol.MAPPINGS.getJavaRegistries());
+             }
+             if (javaItemMapping.name() != null) {
+                 final ResourcePackStorage resourcePackStorage =
+@@ -340,7 +339,7 @@ public class ItemRewriter extends StoredObject {
+             }
+         }
+ 
+-        ItemDataRewriter.handleItem(this.user(), bedrockItem, bedrockTag, javaItem);
++        ItemDataRewriter.handleItem(this.user(), identifier, bedrockItem, bedrockTag, javaItem);
+ 
+         final String tag = BedrockProtocol.MAPPINGS.getBedrockCustomItemTags().get(identifier);
+         if (ITEM_NBT_REWRITERS.containsKey(tag)) {
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriterTest.java
+new file mode 100644
+index 00000000..a30cc237
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriterTest.java
+@@ -0,0 +1,93 @@
++package net.raphimc.viabedrock.protocol.rewriter;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.viaversion.api.minecraft.item.data.BlockStateProperties;
++import com.viaversion.viaversion.api.minecraft.item.data.PotionContents;
++import com.viaversion.viaversion.api.minecraft.item.data.WritableBook;
++import com.viaversion.viaversion.api.minecraft.item.data.WrittenBook;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++class ItemDataRewriterTest {
++
++    @Test
++    void convertsMappedPotionAndCustomEffectsToJavaComponents() {
++        final CompoundTag override = new CompoundTag();
++        override.putString("Potion", "minecraft:long_night_vision");
++        override.putInt("CustomPotionColor", 4013879);
++        final CompoundTag wither = new CompoundTag();
++        wither.putString("id", "minecraft:wither");
++        wither.putInt("amplifier", 1);
++        wither.putInt("duration", 800);
++        final ListTag<CompoundTag> effects = new ListTag<>(CompoundTag.class);
++        effects.add(wither);
++        override.put("custom_potion_effects", effects);
++
++        final PotionContents result = ItemDataRewriter.potionContents(override);
++
++        assertNotNull(result);
++        assertEquals(5, result.potion());
++        assertEquals(4013879, result.customColor());
++        assertEquals(1, result.customEffects().length);
++        assertEquals(19, result.customEffects()[0].effect());
++        assertEquals(1, result.customEffects()[0].effectData().amplifier());
++        assertEquals(800, result.customEffects()[0].effectData().duration());
++    }
++
++    @Test
++    void convertsMappedBlockStateValuesWithoutMutatingSource() {
++        final CompoundTag blockState = new CompoundTag();
++        blockState.putInt("level", 10);
++        blockState.putString("facing", "north");
++
++        final BlockStateProperties result = ItemDataRewriter.blockStateProperties(blockState);
++
++        assertNotNull(result);
++        assertEquals("10", result.properties().get("level"));
++        assertEquals("north", result.properties().get("facing"));
++        assertEquals(10, blockState.getInt("level"));
++        assertNull(ItemDataRewriter.blockStateProperties(new CompoundTag()));
++    }
++
++    @Test
++    void resolvesInstrumentFromOrderedJavaRegistry() {
++        final CompoundTag instruments = new CompoundTag();
++        instruments.put("minecraft:ponder_goat_horn", new CompoundTag());
++        instruments.put("minecraft:sing_goat_horn", new CompoundTag());
++
++        assertEquals(1, ItemDataRewriter.registryIndex(instruments, "minecraft:sing_goat_horn"));
++        assertEquals(-1, ItemDataRewriter.registryIndex(instruments, "minecraft:missing"));
++    }
++
++    @Test
++    void preservesBookPageOrderAndSignedMetadata() {
++        final CompoundTag tag = new CompoundTag();
++        final ListTag<CompoundTag> pages = new ListTag<>(CompoundTag.class);
++        final CompoundTag first = new CompoundTag();
++        first.putString("text", "First page");
++        pages.add(first);
++        final CompoundTag second = new CompoundTag();
++        second.putString("text", "Second page");
++        pages.add(second);
++        tag.put("pages", pages);
++        tag.putString("title", "Field notes");
++        tag.putString("author", "Alex");
++        tag.putInt("generation", 2);
++
++        final WritableBook writable = ItemDataRewriter.writableBook(tag);
++        final WrittenBook written = ItemDataRewriter.writtenBook(tag);
++
++        assertEquals("First page", writable.pages()[0].raw());
++        assertEquals("Second page", writable.pages()[1].raw());
++        assertEquals("Field notes", written.title().raw());
++        assertEquals("Alex", written.author());
++        assertEquals(2, written.generation());
++        assertEquals(2, written.pages().length);
++        assertNotNull(written.pages()[0].raw());
++    }
++
++}
+-- 
+2.55.0

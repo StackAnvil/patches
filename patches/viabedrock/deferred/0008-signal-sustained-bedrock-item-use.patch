@@ -1,0 +1,121 @@
+From f86960eef8598300a3da6bb0e76c2dd7c320480a Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 03:58:50 +0200
+Subject: [PATCH] fix(interaction): signal sustained Bedrock item use
+
+Mark food and other charge or consume actions as starting item use in player input. Let the Bedrock server authoritatively update consumed or replacement stacks, matching the captured native air-use transaction shape.
+---
+ .../protocol/packet/InteractionPackets.java   | 23 ++++++++++++--
+ .../packet/InteractionPacketsTest.java        | 31 +++++++++++++++++++
+ 2 files changed, 51 insertions(+), 3 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/InteractionPacketsTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
+index 4a69f711..45458e5a 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
+@@ -56,10 +56,17 @@ import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
+ import java.util.List;
++import java.util.Set;
+ import java.util.logging.Level;
+ 
+ public final class InteractionPackets {
+ 
++    private static final Set<String> CONTINUOUS_USE_ITEMS = Set.of(
++            "minecraft:bow", "minecraft:crossbow", "minecraft:trident",
++            "minecraft:potion", "minecraft:milk_bucket", "minecraft:ominous_bottle",
++            "minecraft:spyglass", "minecraft:goat_horn", "minecraft:brush"
++    );
++
+     private InteractionPackets() {
+     }
+ 
+@@ -238,7 +245,6 @@ public final class InteractionPackets {
+             wrapper.read(Types.FLOAT); // yaw
+             wrapper.read(Types.FLOAT); // pitch
+ 
+-            // TODO: We need to handle cases where the item changes, or it affect player movement (eg: eating/blocking/etc)
+             if (javaHand < 0 || javaHand >= InteractionHand.values().length) {
+                 wrapper.cancel();
+                 return;
+@@ -249,19 +255,26 @@ public final class InteractionPackets {
+             final BedrockItem usedItem = hand == InteractionHand.OFF_HAND
+                     ? inventoryTracker.getOffhandContainer().getItem(0)
+                     : inventoryContainer.getSelectedHotbarItem();
+-            if (hand == InteractionHand.OFF_HAND && usedItem.isEmpty()) {
++            if (usedItem.isEmpty()) {
+                 wrapper.cancel();
+                 return;
+             }
+ 
+             final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
+-            final int shieldId = wrapper.user().get(ItemRewriter.class).getItems().getOrDefault("minecraft:shield", -1);
++            final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
++            final int shieldId = itemRewriter.getItems().getOrDefault("minecraft:shield", -1);
+             if (usedItem.identifier() == shieldId) {
+                 clientPlayer.setShieldBlockingHand(hand);
+             } else {
+                 clientPlayer.setShieldBlockingHand(null);
+             }
++            final String itemIdentifier = itemRewriter.getItems().inverse().get(usedItem.identifier());
++            if (isContinuousUseItem(itemIdentifier, BedrockProtocol.MAPPINGS.getBedrockItemTags().getOrDefault(itemIdentifier, Set.of()))) {
++                clientPlayer.addAuthInputData(PlayerAuthInputData.StartUsingItem);
++            }
+ 
++            // Bedrock's authoritative inventory update supplies the consumed or replacement item.
++            // Native air-use transactions have no predicted slot actions, even when a rocket is consumed.
+             final BedrockInventoryTransaction inventoryTransaction = new BedrockInventoryTransaction(
+                     0, // legacy request id
+                     null,
+@@ -385,6 +398,10 @@ public final class InteractionPackets {
+ 
+     }
+ 
++    static boolean isContinuousUseItem(final String identifier, final Set<String> tags) {
++        return identifier != null && (tags.contains("minecraft:is_food") || CONTINUOUS_USE_ITEMS.contains(identifier));
++    }
++
+     private static void writeJavaPassengers(final PacketWrapper wrapper,
+                                             final EntityTracker entityTracker, final Entity vehicle) {
+         final List<Entity> passengers = entityTracker.getTrackedPassengers(vehicle);
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/InteractionPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/InteractionPacketsTest.java
+new file mode 100644
+index 00000000..0bf1b705
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/InteractionPacketsTest.java
+@@ -0,0 +1,31 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import org.junit.jupiter.api.Test;
++
++import java.util.Set;
++
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class InteractionPacketsTest {
++
++    @Test
++    void sustainedUseSignalsCoverFoodAndChargeItemsWithoutInstantRockets() {
++        assertTrue(InteractionPackets.isContinuousUseItem("minecraft:apple", Set.of("minecraft:is_food")));
++        assertTrue(InteractionPackets.isContinuousUseItem("minecraft:bow", Set.of()));
++        assertTrue(InteractionPackets.isContinuousUseItem("minecraft:potion", Set.of()));
++        assertFalse(InteractionPackets.isContinuousUseItem("minecraft:firework_rocket", Set.of()));
++        assertFalse(InteractionPackets.isContinuousUseItem("minecraft:shield", Set.of()));
++        assertFalse(InteractionPackets.isContinuousUseItem(null, Set.of()));
++    }
++
++}
+-- 
+2.55.0

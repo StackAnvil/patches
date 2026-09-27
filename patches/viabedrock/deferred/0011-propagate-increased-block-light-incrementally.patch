@@ -1,0 +1,461 @@
+From e9a8ef21fd878711866db0d6d03be118c083592f Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 03:59:09 +0200
+Subject: [PATCH] perf(lighting): propagate increased block light incrementally
+
+Flood-fill new emission into cached light arrays and send only changed sections. Recompute the versioned region when emission falls, opacity changes, or nearby chunk state is incomplete; align light snapshots with waterlogged Java block states.
+---
+ .../api/chunk/light/LightEngine.java          | 123 +++++++++++++++++-
+ .../protocol/storage/ChunkTracker.java        | 122 +++++++++++++++--
+ .../api/chunk/light/LightEngineTest.java      |  99 ++++++++++++++
+ .../protocol/storage/ChunkTrackerTest.java    |  10 ++
+ 4 files changed, 341 insertions(+), 13 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/chunk/light/LightEngineTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/chunk/light/LightEngine.java b/src/main/java/net/raphimc/viabedrock/api/chunk/light/LightEngine.java
+index 7083d930..f4575d23 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/chunk/light/LightEngine.java
++++ b/src/main/java/net/raphimc/viabedrock/api/chunk/light/LightEngine.java
+@@ -58,6 +58,127 @@ public final class LightEngine {
+      * @return The light data of all loaded chunks of the region; {@code null} for unloaded chunks
+      */
+     public static ChunkLight[] computeRegionLight(final int[][][] regionStates, final int sectionCount, final boolean skyLight, final byte[] emissionTable, final byte[] opacityTable) {
++        return computeRegionLight(regionStates, sectionCount, skyLight, emissionTable, opacityTable, false);
++    }
++
++    /** Computes only the center chunk's output without packing the eight neighboring chunks. */
++    public static ChunkLight computeCenterLight(final int[][][] regionStates, final int sectionCount, final boolean skyLight, final byte[] emissionTable, final byte[] opacityTable) {
++        return computeRegionLight(regionStates, sectionCount, skyLight, emissionTable, opacityTable, true)[4];
++    }
++
++    /**
++     * Adds the light contributed by a newly brighter block in the center chunk. The cached light
++     * must represent the region before this one emission increase; opacity must be unchanged.
++     * Other edits, including removing a light source, require a full recomputation.
++     */
++    public static ChunkLight[] brightenBlockLight(final int[][][] regionStates, final int sectionCount,
++                                                   final int sourceX, final int sourceY, final int sourceZ,
++                                                   final int emission, final byte[] opacityTable,
++                                                   final ChunkLight[] previousLights) {
++        if (regionStates.length != 9 || previousLights.length != 9) {
++            throw new IllegalArgumentException("Region and light cache must contain exactly 9 chunks");
++        }
++        final int height = sectionCount << 4;
++        if (height > MAX_HEIGHT || sourceX < 0 || sourceX >= 16 || sourceY < 0 || sourceY >= height
++            || sourceZ < 0 || sourceZ >= 16 || emission < 1 || emission > 15) {
++            throw new IllegalArgumentException("Invalid light source");
++        }
++
++        // Every step loses at least one level, so only a 29-block-high window can be affected.
++        final int minY = Math.max(0, sourceY - emission + 1);
++        final int maxY = Math.min(height - 1, sourceY + emission - 1);
++        final byte[] addedLight = new byte[(maxY - minY + 1) * REGION_SIZE_SQUARED];
++        final int x = sourceX + 16;
++        final int z = sourceZ + 16;
++        addedLight[((sourceY - minY) * REGION_SIZE + z) * REGION_SIZE + x] = (byte) emission;
++        final IntQueue queue = new IntQueue();
++        queue.enqueue(pack(x, sourceY, z));
++        while (!queue.isEmpty()) {
++            final int packed = queue.dequeueInt();
++            final int currentX = packed & 0x3F;
++            final int currentZ = (packed >>> 6) & 0x3F;
++            final int currentY = packed >>> 12;
++            final int level = addedLight[((currentY - minY) * REGION_SIZE + currentZ) * REGION_SIZE + currentX] & 0xFF;
++            if (level <= 1) {
++                continue;
++            }
++            for (final int[] direction : DIRECTIONS) {
++                final int nextX = currentX + direction[0];
++                final int nextY = currentY + direction[1];
++                final int nextZ = currentZ + direction[2];
++                if (nextX < 0 || nextX >= REGION_SIZE || nextY < minY || nextY > maxY
++                    || nextZ < 0 || nextZ >= REGION_SIZE) {
++                    continue;
++                }
++                final int opacity = blockOpacity(regionStates, nextX, nextY, nextZ, opacityTable);
++                if (opacity >= 15) {
++                    continue;
++                }
++                final int nextLevel = level - Math.max(1, opacity);
++                final int nextIndex = ((nextY - minY) * REGION_SIZE + nextZ) * REGION_SIZE + nextX;
++                if (nextLevel > (addedLight[nextIndex] & 0xFF)) {
++                    addedLight[nextIndex] = (byte) nextLevel;
++                    if (nextLevel > 1) {
++                        queue.enqueue(pack(nextX, nextY, nextZ));
++                    }
++                }
++            }
++        }
++
++        final ChunkLight[] result = previousLights.clone();
++        final boolean[][] copiedSections = new boolean[9][];
++        for (int y = minY; y <= maxY; y++) {
++            for (int regionZ = 0; regionZ < REGION_SIZE; regionZ++) {
++                for (int regionX = 0; regionX < REGION_SIZE; regionX++) {
++                    final int level = addedLight[((y - minY) * REGION_SIZE + regionZ) * REGION_SIZE + regionX] & 0xFF;
++                    if (level == 0) {
++                        continue;
++                    }
++                    final int chunkIndex = (regionZ >> 4) * 3 + (regionX >> 4);
++                    final ChunkLight previous = previousLights[chunkIndex];
++                    if (previous == null) {
++                        continue;
++                    }
++                    final int lightSection = (y >> 4) + 1;
++                    final int localX = regionX & 15;
++                    final int localZ = regionZ & 15;
++                    final int byteIndex = ((y & 15) << 7) | (localZ << 3) | (localX >> 1);
++                    final int shift = (localX & 1) << 2;
++                    byte[] section = result[chunkIndex].blockLight(lightSection);
++                    if (section != null && ((section[byteIndex] >>> shift) & 15) >= level) {
++                        continue;
++                    }
++                    if (result[chunkIndex] == previous) {
++                        final ChunkLight copy = new ChunkLight(sectionCount, false);
++                        for (int i = 0; i < previous.skyLightLength(); i++) {
++                            copy.setSkyLight(i, previous.skyLight(i));
++                            copy.setBlockLight(i, previous.blockLight(i));
++                        }
++                        result[chunkIndex] = copy;
++                        copiedSections[chunkIndex] = new boolean[sectionCount + 2];
++                    }
++                    if (!copiedSections[chunkIndex][lightSection]) {
++                        section = section == null ? new byte[LIGHT_LENGTH] : section.clone();
++                        result[chunkIndex].setBlockLight(lightSection, section);
++                        copiedSections[chunkIndex][lightSection] = true;
++                    }
++                    section[byteIndex] = (byte) ((section[byteIndex] & ~(15 << shift)) | (level << shift));
++                }
++            }
++        }
++        return result;
++    }
++
++    private static int blockOpacity(final int[][][] regionStates, final int x, final int y, final int z, final byte[] opacityTable) {
++        final int[][] chunk = regionStates[(z >> 4) * 3 + (x >> 4)];
++        if (chunk == null || chunk[y >> 4] == null) {
++            return 15;
++        }
++        final int state = chunk[y >> 4][((y & 15) << 8) | ((z & 15) << 4) | (x & 15)];
++        return opacityTable[state] & 0xFF;
++    }
++
++    private static ChunkLight[] computeRegionLight(final int[][][] regionStates, final int sectionCount, final boolean skyLight, final byte[] emissionTable, final byte[] opacityTable, final boolean centerOnly) {
+         if (regionStates.length != 9) {
+             throw new IllegalArgumentException("Region must contain exactly 9 chunks");
+         }
+@@ -88,7 +209,7 @@ public final class LightEngine {
+ 
+         final ChunkLight[] results = new ChunkLight[9];
+         for (int chunkIndex = 0; chunkIndex < 9; chunkIndex++) {
+-            if (regionStates[chunkIndex] == null) {
++            if (regionStates[chunkIndex] == null || centerOnly && chunkIndex != 4) {
+                 continue;
+             }
+ 
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+index 835ba830..22d69c90 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+@@ -69,7 +69,6 @@ import java.util.concurrent.Executors;
+ import java.util.concurrent.Semaphore;
+ import java.util.logging.Level;
+ 
+-// TODO: Feature: Incremental light updates instead of whole section recomputations
+ public class ChunkTracker extends StoredObject {
+ 
+     private static final int MAX_SUB_CHUNK_REQUEST_OFFSETS_PER_PACKET = 256;
+@@ -476,8 +475,10 @@ public class ChunkTracker extends StoredObject {
+         }
+         final DataPalette palette = section.palettes(PaletteType.BLOCKS).get(layer);
+         final int prevBlockState = palette.idAt(sectionX, sectionY, sectionZ);
++        final int previousJavaState = this.getJavaBlockState(section, sectionX, sectionY, sectionZ);
+         final String prevTag = blockStateRewriter.tag(prevBlockState);
+         palette.setIdAt(sectionX, sectionY, sectionZ, blockState);
++        final int currentJavaState = this.getJavaBlockState(section, sectionX, sectionY, sectionZ);
+         final String tag = blockStateRewriter.tag(blockState);
+ 
+         int remappedBlockState = this.getJavaBlockState(blockPosition);
+@@ -488,14 +489,10 @@ public class ChunkTracker extends StoredObject {
+ 
+         if (prevBlockState != blockState) {
+             this.invalidateJavaBlockStates(blockPosition.x() >> 4, blockPosition.y() >> 4, blockPosition.z() >> 4);
+-            final int chunkX = blockPosition.x() >> 4;
+-            final int chunkZ = blockPosition.z() >> 4;
+-            final long chunkKey = ChunkPosition.chunkKey(chunkX, chunkZ);
+-            if (this.chunkLight.containsKey(chunkKey)) {
+-                this.lightVersions.merge(chunkKey, 1L, Long::sum);
+-                this.lightDirtyChunks.add(chunkKey);
++            if (changesLight(previousJavaState, currentJavaState,
++                    BedrockProtocol.MAPPINGS.getJavaBlockLightEmission(), BedrockProtocol.MAPPINGS.getJavaBlockOpacity())) {
++                this.updateLightAfterBlockChange(blockPosition, previousJavaState, currentJavaState);
+             }
+-            this.invalidateNearbyLight(chunkX, chunkZ);
+ 
+             if (CustomBlockTags.ITEM_FRAME.equals(tag)) {
+                 entityTracker.spawnItemFrame(blockPosition, blockStateRewriter.blockState(blockState));
+@@ -521,6 +518,86 @@ public class ChunkTracker extends StoredObject {
+         return new IntObjectImmutablePair<>(remappedBlockState, null);
+     }
+ 
++    static boolean changesLight(final int previousState, final int currentState, final byte[] emission, final byte[] opacity) {
++        return emission[previousState] != emission[currentState] || opacity[previousState] != opacity[currentState];
++    }
++
++    private void updateLightAfterBlockChange(final BlockPosition position, final int previousState, final int currentState) {
++        final int chunkX = position.x() >> 4;
++        final int chunkZ = position.z() >> 4;
++        final byte[] emission = BedrockProtocol.MAPPINGS.getJavaBlockLightEmission();
++        final byte[] opacity = BedrockProtocol.MAPPINGS.getJavaBlockOpacity();
++        final int previousEmission = emission[previousState] & 0xFF;
++        final int currentEmission = emission[currentState] & 0xFF;
++        if (opacity[previousState] != opacity[currentState] || currentEmission <= previousEmission) {
++            this.invalidateLightRegion(chunkX, chunkZ);
++            return;
++        }
++
++        // A chunk awaiting its first send or a replacement section may already have changed the
++        // region without updating its neighbors' cached light. Refresh those caches first.
++        for (int dz = -1; dz <= 1; dz++) {
++            for (int dx = -1; dx <= 1; dx++) {
++                final long key = ChunkPosition.chunkKey(chunkX + dx, chunkZ + dz);
++                if (this.dirtyChunks.contains(key) || (this.chunks.containsKey(key) && !this.chunkLight.containsKey(key))) {
++                    this.invalidateLightRegion(chunkX, chunkZ);
++                    return;
++                }
++            }
++        }
++
++        final long[] keys = new long[9];
++        final ChunkLight[] cached = new ChunkLight[9];
++        boolean hasCleanChunk = false;
++        for (int dz = -1; dz <= 1; dz++) {
++            for (int dx = -1; dx <= 1; dx++) {
++                final int index = (dz + 1) * 3 + dx + 1;
++                final long key = keys[index] = ChunkPosition.chunkKey(chunkX + dx, chunkZ + dz);
++                final ChunkLight light = this.chunkLight.get(key);
++                if (light == null) {
++                    continue;
++                }
++                this.lightVersions.merge(key, 1L, Long::sum);
++                if (this.lightDirtyChunks.contains(key) || this.pendingLightComputations.contains(key)) {
++                    this.lightDirtyChunks.add(key);
++                } else {
++                    cached[index] = light;
++                    hasCleanChunk = true;
++                }
++            }
++        }
++        if (!hasCleanChunk) {
++            return;
++        }
++
++        final ChunkLight[] updated = LightEngine.brightenBlockLight(this.snapshotRegionStates(chunkX, chunkZ),
++            this.worldHeight >> 4, position.x() & 15, position.y() - this.minY, position.z() & 15,
++            currentEmission, opacity, cached);
++        for (int i = 0; i < updated.length; i++) {
++            if (cached[i] == null || cached[i] == updated[i]) {
++                continue;
++            }
++            final long key = keys[i];
++            this.chunkLight.put(key, updated[i]);
++            final LightPacketData data = buildDiffLightPacketData(updated[i], cached[i]);
++            final ChunkPosition chunk = new ChunkPosition(key);
++            final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.LIGHT_UPDATE, this.user());
++            packet.write(Types.VAR_INT, chunk.chunkX());
++            packet.write(Types.VAR_INT, chunk.chunkZ());
++            this.writeLightData(packet, data);
++            packet.send(BedrockProtocol.class);
++        }
++    }
++
++    private void invalidateLightRegion(final int chunkX, final int chunkZ) {
++        final long chunkKey = ChunkPosition.chunkKey(chunkX, chunkZ);
++        if (this.chunkLight.containsKey(chunkKey)) {
++            this.lightVersions.merge(chunkKey, 1L, Long::sum);
++            this.lightDirtyChunks.add(chunkKey);
++        }
++        this.invalidateNearbyLight(chunkX, chunkZ);
++    }
++
+     public BedrockChunkSection handleBlockPalette(final BedrockChunkSection section) {
+         this.replaceLegacyBlocks(section);
+         this.resolvePersistentIds(section);
+@@ -718,8 +795,8 @@ public class ChunkTracker extends StoredObject {
+     private ChunkLight computeChunkLight(final int chunkX, final int chunkZ) {
+         final int[][][] regionStates = new int[9][][];
+         regionStates[4] = this.snapshotChunkStates(this.chunks.get(ChunkPosition.chunkKey(chunkX, chunkZ)));
+-        return LightEngine.computeRegionLight(regionStates, this.worldHeight >> 4, this.skyLight,
+-            BedrockProtocol.MAPPINGS.getJavaBlockLightEmission(), BedrockProtocol.MAPPINGS.getJavaBlockOpacity())[4];
++        return LightEngine.computeCenterLight(regionStates, this.worldHeight >> 4, this.skyLight,
++            BedrockProtocol.MAPPINGS.getJavaBlockLightEmission(), BedrockProtocol.MAPPINGS.getJavaBlockOpacity());
+     }
+ 
+     /**
+@@ -760,8 +837,8 @@ public class ChunkTracker extends StoredObject {
+             ChunkLight light = null;
+             Throwable failure = null;
+             try {
+-                light = LightEngine.computeRegionLight(regionStates, this.worldHeight >> 4, this.skyLight,
+-                    BedrockProtocol.MAPPINGS.getJavaBlockLightEmission(), BedrockProtocol.MAPPINGS.getJavaBlockOpacity())[4];
++                light = LightEngine.computeCenterLight(regionStates, this.worldHeight >> 4, this.skyLight,
++                    BedrockProtocol.MAPPINGS.getJavaBlockLightEmission(), BedrockProtocol.MAPPINGS.getJavaBlockOpacity());
+             } catch (final Throwable e) {
+                 failure = e;
+             } finally {
+@@ -847,6 +924,27 @@ public class ChunkTracker extends StoredObject {
+                 }
+             }
+         }
++        if (blockPalettes.size() > 1) {
++            final DataPalette layer1 = blockPalettes.get(1);
++            final int airId = this.bedrockAirId();
++            if (layer1.size() != 1 || layer1.idByIndex(0) != airId) {
++                for (int y = 0; y < 16; y++) {
++                    for (int z = 0; z < 16; z++) {
++                        for (int x = 0; x < 16; x++) {
++                            if (layer0.idAt(x, y, z) == airId || layer1.idAt(x, y, z) == airId
++                                || !CustomBlockTags.WATER.equals(blockStateRewriter.tag(layer1.idAt(x, y, z)))) {
++                                continue;
++                            }
++                            final int index = (y << 8) | (z << 4) | x;
++                            final int waterlogged = blockStateRewriter.waterlog(states[index]);
++                            if (waterlogged != -1) {
++                                states[index] = waterlogged;
++                            }
++                        }
++                    }
++                }
++            }
++        }
+         return states;
+     }
+ 
+diff --git a/src/test/java/net/raphimc/viabedrock/api/chunk/light/LightEngineTest.java b/src/test/java/net/raphimc/viabedrock/api/chunk/light/LightEngineTest.java
+new file mode 100644
+index 00000000..775b9f8c
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/chunk/light/LightEngineTest.java
+@@ -0,0 +1,99 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.api.chunk.light;
++
++import org.junit.jupiter.api.Test;
++
++import java.util.Arrays;
++import java.util.Random;
++
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
++
++class LightEngineTest {
++
++    @Test
++    void centerOnlyOutputMatchesFullRegionAcrossChunkBorders() {
++        final int[][][] region = new int[9][][];
++        for (int i = 0; i < region.length; i++) {
++            region[i] = new int[][]{new int[4096], new int[4096]};
++        }
++        final int[] centerLower = region[4][0];
++        final int[] eastLower = region[5][0];
++        final int[] northUpper = region[1][1];
++        centerLower[(8 << 8) | (8 << 4) | 8] = 1; // opaque obstacle
++        eastLower[(8 << 8) | (8 << 4)] = 2; // emitted light crossing into center
++        Arrays.fill(northUpper, 3); // partially filtering sky above a neighboring chunk
++
++        final byte[] emission = {0, 0, 14, 0};
++        final byte[] opacity = {0, 15, 0, 2};
++        for (boolean skyLight : new boolean[]{false, true}) {
++            final ChunkLight expected = LightEngine.computeRegionLight(region, 2, skyLight, emission, opacity)[4];
++            final ChunkLight actual = LightEngine.computeCenterLight(region, 2, skyLight, emission, opacity);
++            for (int section = 0; section < expected.skyLightLength(); section++) {
++                assertArrayEquals(expected.skyLight(section), actual.skyLight(section));
++                assertArrayEquals(expected.blockLight(section), actual.blockLight(section));
++            }
++        }
++    }
++
++    @Test
++    void incrementalEmissionIncreaseMatchesFullRecomputation() {
++        final byte[] emission = {0, 0, 5, 13, 0};
++        final byte[] opacity = {0, 15, 0, 0, 2};
++        final Random random = new Random(0x51A7E);
++        for (int scenario = 0; scenario < 24; scenario++) {
++            final int[][][] region = new int[9][][];
++            for (int chunk = 0; chunk < region.length; chunk++) {
++                region[chunk] = new int[][]{new int[4096], new int[4096]};
++                for (int section = 0; section < 2; section++) {
++                    final int[] states = region[chunk][section];
++                    for (int i = 0; i < 96; i++) {
++                        states[random.nextInt(states.length)] = random.nextBoolean() ? 1 : 4;
++                    }
++                    states[random.nextInt(states.length)] = 2;
++                }
++            }
++
++            final int sourceX = scenario % 2 == 0 ? 0 : 15;
++            final int sourceZ = scenario % 4 < 2 ? 0 : 15;
++            final int sourceY = scenario % 3 == 0 ? 0 : scenario % 3 == 1 ? 15 : 31;
++            final int sourceIndex = ((sourceY & 15) << 8) | (sourceZ << 4) | sourceX;
++            final int previousSourceState = scenario % 2 == 0 ? 0 : 2;
++            region[4][sourceY >> 4][sourceIndex] = previousSourceState;
++
++            for (boolean skyLight : new boolean[]{false, true}) {
++                final ChunkLight[] before = LightEngine.computeRegionLight(region, 2, skyLight, emission, opacity);
++                final byte[] original = before[4].blockLight((sourceY >> 4) + 1);
++                final byte[] originalCopy = original == null ? null : original.clone();
++                region[4][sourceY >> 4][sourceIndex] = 3;
++
++                final ChunkLight[] actual = LightEngine.brightenBlockLight(region, 2, sourceX, sourceY, sourceZ, 13, opacity, before);
++                final ChunkLight[] expected = LightEngine.computeRegionLight(region, 2, skyLight, emission, opacity);
++                for (int chunk = 0; chunk < 9; chunk++) {
++                    for (int section = 0; section < expected[chunk].skyLightLength(); section++) {
++                        assertArrayEquals(expected[chunk].skyLight(section), actual[chunk].skyLight(section));
++                        assertArrayEquals(expected[chunk].blockLight(section), actual[chunk].blockLight(section));
++                    }
++                }
++                assertArrayEquals(originalCopy, before[4].blockLight((sourceY >> 4) + 1));
++                region[4][sourceY >> 4][sourceIndex] = previousSourceState;
++            }
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
+index 130e48f5..293015a6 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
+@@ -32,6 +32,16 @@ class ChunkTrackerTest {
+         assertEquals(3, section.palette(PaletteType.BLOCKS).idAt(0));
+     }
+ 
++    @Test
++    void onlyLightPropertiesRequireRecomputation() {
++        final byte[] emission = {0, 0, 12, 0};
++        final byte[] opacity = {0, 0, 0, 15};
++
++        assertFalse(ChunkTracker.changesLight(0, 1, emission, opacity));
++        assertTrue(ChunkTracker.changesLight(1, 2, emission, opacity));
++        assertTrue(ChunkTracker.changesLight(1, 3, emission, opacity));
++    }
++
+     private static BedrockChunkSectionImpl sectionWithBlock(final int blockId) {
+         final BedrockChunkSectionImpl section = new BedrockChunkSectionImpl();
+         final BedrockDataPalette palette = new BedrockDataPalette();
+-- 
+2.55.0

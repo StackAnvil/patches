@@ -1,0 +1,169 @@
+From e2747808a2367c5b7c77a4d809bf0ea45357d23b Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 03:58:32 +0200
+Subject: [PATCH] fix(scoreboard): remove score IDs across objectives
+
+Bedrock can remove a score ID without naming an objective. Clear every tracked occurrence and emit the corresponding Java reset packets so stale HUD scores do not survive the removal.
+---
+ .../protocol/packet/HudPackets.java           | 24 ++++--
+ .../protocol/packet/HudPacketsTest.java       | 86 +++++++++++++++++++
+ 2 files changed, 105 insertions(+), 5 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/HudPacketsTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
+index 0f5050c3..a0824a64 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
+@@ -18,6 +18,7 @@
+ package net.raphimc.viabedrock.protocol.packet;
+ 
+ import com.viaversion.viaversion.api.Via;
++import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.minecraft.GameProfile;
+ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+ import com.viaversion.viaversion.api.protocol.remapper.PacketHandlers;
+@@ -269,7 +270,6 @@ public final class HudPackets {
+ 
+                 final String objectiveName;
+                 final ScoreboardEntry entry;
+-                boolean resetAll = false;
+ 
+                 switch (action) {
+                     case Remove -> {
+@@ -277,7 +277,6 @@ public final class HudPackets {
+                             objectiveName = wrapper.read(BedrockTypes.STRING);
+                         } else {
+                             objectiveName = null;
+-                            resetAll = true;
+                         }
+                         entry = null;
+                     }
+@@ -297,9 +296,9 @@ public final class HudPackets {
+                     default -> throw new IllegalStateException("Unhandled ScorePacketEntryAction: " + action);
+                 }
+ 
+-                if (resetAll) {
+-                    // TODO
+-                    return;
++                if (action == ScorePacketEntryAction.Remove) {
++                    removeScoreEntries(scoreboardTracker, wrapper.user(), scoreboardId, objectiveName);
++                    continue;
+                 }
+ 
+                 final ScoreboardObjective objective = scoreboardTracker.getObjective(objectiveName);
+@@ -452,6 +451,21 @@ public final class HudPackets {
+         });
+     }
+ 
++    static void removeScoreEntries(final ScoreboardTracker tracker, final UserConnection user, final long scoreboardId, final String objectiveName) {
++        if (objectiveName != null) {
++            final ScoreboardObjective objective = tracker.getObjective(objectiveName);
++            if (objective != null && objective.getEntry(scoreboardId) != null) {
++                objective.removeEntry(user, scoreboardId);
++            }
++            return;
++        }
++
++        Pair<ScoreboardObjective, ScoreboardEntry> entry;
++        while ((entry = tracker.getEntry(scoreboardId)) != null) {
++            entry.key().removeEntry(user, scoreboardId);
++        }
++    }
++
+     private HudPackets() {
+     }
+ 
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/HudPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/HudPacketsTest.java
+new file mode 100644
+index 00000000..dfd42cd1
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/HudPacketsTest.java
+@@ -0,0 +1,86 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import net.raphimc.viabedrock.api.model.scoreboard.ScoreboardEntry;
++import net.raphimc.viabedrock.api.model.scoreboard.ScoreboardObjective;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.IdentityDefinition_Type;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ObjectiveSortOrder;
++import net.raphimc.viabedrock.protocol.storage.ScoreboardTracker;
++import org.junit.jupiter.api.Test;
++
++import java.util.HashMap;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++class HudPacketsTest {
++
++    @Test
++    void objectiveLessRemovalClearsOnlyTheScoreIdAcrossObjectives() {
++        final ScoreboardTracker tracker = new ScoreboardTracker();
++        final TrackingObjective first = new TrackingObjective("first");
++        final TrackingObjective second = new TrackingObjective("second");
++        first.put(7, "player");
++        first.put(8, "other");
++        second.put(7, "player");
++        tracker.addObjective("first", first);
++        tracker.addObjective("second", second);
++
++        HudPackets.removeScoreEntries(tracker, null, 7, null);
++
++        assertNull(first.getEntry(7));
++        assertNull(second.getEntry(7));
++        assertNotNull(first.getEntry(8));
++    }
++
++    @Test
++    void namedRemovalLeavesOtherObjectivesIntact() {
++        final ScoreboardTracker tracker = new ScoreboardTracker();
++        final TrackingObjective first = new TrackingObjective("first");
++        final TrackingObjective second = new TrackingObjective("second");
++        first.put(7, "player");
++        second.put(7, "player");
++        tracker.addObjective("first", first);
++        tracker.addObjective("second", second);
++
++        HudPackets.removeScoreEntries(tracker, null, 7, "first");
++
++        assertNull(first.getEntry(7));
++        assertNotNull(second.getEntry(7));
++    }
++
++    private static final class TrackingObjective extends ScoreboardObjective {
++
++        private final Map<Long, ScoreboardEntry> entries = new HashMap<>();
++
++        private TrackingObjective(final String name) {
++            super(name, ObjectiveSortOrder.Descending);
++        }
++
++        private void put(final long id, final String name) {
++            this.entries.put(id, new ScoreboardEntry(1, IdentityDefinition_Type.FakePlayer, null, name));
++        }
++
++        @Override
++        public ScoreboardEntry getEntry(final long scoreboardId) {
++            return this.entries.get(scoreboardId);
++        }
++
++        @Override
++        public void removeEntry(final UserConnection user, final long scoreboardId) {
++            this.entries.remove(scoreboardId);
++        }
++
++    }
++
++}
+-- 
+2.55.0

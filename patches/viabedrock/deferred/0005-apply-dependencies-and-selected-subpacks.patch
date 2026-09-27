@@ -1,0 +1,567 @@
+From aada1979306f56dd96c2c8f76e3893440e1e32c7 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 03:58:26 +0200
+Subject: [PATCH] feat(resource-packs): apply dependencies and selected
+ subpacks
+
+Resolve pack order from manifest dependencies while preserving server precedence for unrelated packs. Overlay the server-selected subpack before conversion and key the converted cache by effective content so variants cannot share a stale Java pack.
+---
+ .../api/resourcepack/ResourcePack.java        |  75 +++++++++++--
+ .../api/resourcepack/ResourcePackStack.java   |  75 +++++++++++++
+ .../resourcepack/content/SubpackContent.java  | 104 ++++++++++++++++++
+ .../protocol/packet/ResourcePackPackets.java  |  20 ++--
+ .../protocol/storage/ResourcePackStorage.java |   8 +-
+ .../resourcepack/ResourcePackStackTest.java   |  99 +++++++++++++++++
+ .../http/ConvertedResourcePackCacheTest.java  |  11 ++
+ 7 files changed, 374 insertions(+), 18 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStack.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/content/SubpackContent.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStackTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java
+index fe198f01..ebab0034 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java
+@@ -22,6 +22,7 @@ import com.viaversion.viaversion.libs.gson.JsonElement;
+ import com.viaversion.viaversion.libs.gson.JsonObject;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.resourcepack.content.SubpackContent;
+ import net.raphimc.viabedrock.api.resourcepack.content.ZipContent;
+ 
+ import javax.crypto.Cipher;
+@@ -38,8 +39,6 @@ import java.util.logging.Level;
+ import java.util.stream.Collectors;
+ import java.util.stream.StreamSupport;
+ 
+-// TODO: dependencies handling
+-// TODO: subpack handling
+ public class ResourcePack {
+ 
+     private static final byte[] CONTENTS_JSON_ENCRYPTION_VERSION = new byte[]{(byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x00};
+@@ -49,6 +48,8 @@ public class ResourcePack {
+     private final Key key;
+     private final String name;
+     private final Content content;
++    private final List<Key> dependencies;
++    private final Set<String> subpacks;
+ 
+     public ResourcePack(Content content) {
+         try {
+@@ -69,14 +70,11 @@ public class ResourcePack {
+             }
+             final JsonObject headerObj = manifestJson.getAsJsonObject("header");
+             final UUID id = UUID.fromString(headerObj.get("uuid").getAsString());
+-            final String version;
+-            if (formatVersion >= 3) {
+-                version = headerObj.get("version").getAsString();
+-            } else {
+-                version = StreamSupport.stream(headerObj.getAsJsonArray("version").spliterator(), false).map(JsonElement::getAsString).collect(Collectors.joining("."));
+-            }
++            final String version = versionString(headerObj.get("version"));
+             this.key = new Key(id, version);
+             this.name = headerObj.get("name").getAsString();
++            this.dependencies = parseDependencies(manifestJson);
++            this.subpacks = parseSubpacks(manifestJson);
+             /*if (formatVersion >= 2) { // Technically needed, but not feasible to implement currently
+              *     final Semver minEngineVersion;
+              *     if (formatVersion >= 3) {
+@@ -94,6 +92,63 @@ public class ResourcePack {
+         }
+     }
+ 
++    private ResourcePack(final ResourcePack source, final Content content) {
++        this.key = source.key;
++        this.name = source.name;
++        this.dependencies = source.dependencies;
++        this.subpacks = source.subpacks;
++        this.content = content;
++    }
++
++    private static List<Key> parseDependencies(final JsonObject manifestJson) {
++        if (!manifestJson.has("dependencies")) {
++            return List.of();
++        }
++        return StreamSupport.stream(manifestJson.getAsJsonArray("dependencies").spliterator(), false)
++            .map(JsonElement::getAsJsonObject)
++            .filter(dependency -> dependency.has("uuid") && dependency.has("version")) // Script module dependencies have no UUID.
++            .map(dependency -> new Key(UUID.fromString(dependency.get("uuid").getAsString()), versionString(dependency.get("version"))))
++            .toList();
++    }
++
++    private static Set<String> parseSubpacks(final JsonObject manifestJson) {
++        if (!manifestJson.has("subpacks")) {
++            return Set.of();
++        }
++        return StreamSupport.stream(manifestJson.getAsJsonArray("subpacks").spliterator(), false)
++            .map(JsonElement::getAsJsonObject)
++            .map(subpack -> subpack.get("folder_name").getAsString())
++            .collect(Collectors.toUnmodifiableSet());
++    }
++
++    private static String versionString(final JsonElement version) {
++        if (version.isJsonArray()) {
++            return StreamSupport.stream(version.getAsJsonArray().spliterator(), false).map(JsonElement::getAsString).collect(Collectors.joining("."));
++        }
++        if (version.isJsonObject()) {
++            final JsonObject semver = version.getAsJsonObject();
++            final StringBuilder result = new StringBuilder()
++                .append(semver.get("major").getAsInt()).append('.')
++                .append(semver.get("minor").getAsInt()).append('.')
++                .append(semver.get("patch").getAsInt());
++            if (semver.has("preRelease")) {
++                result.append('-').append(semver.get("preRelease").getAsString());
++            }
++            if (semver.has("buildMeta")) {
++                result.append('+').append(semver.get("buildMeta").getAsString());
++            }
++            return result.toString();
++        }
++        return version.getAsString();
++    }
++
++    public ResourcePack selectSubpack(final String subpackName) {
++        if (!subpackName.isEmpty() && !this.subpacks.contains(subpackName)) {
++            throw new IllegalArgumentException("Unknown subpack '" + subpackName + "' in resource pack " + this.key);
++        }
++        return new ResourcePack(this, new SubpackContent(this.content, subpackName));
++    }
++
+     public void decryptContent(final byte[] contentKey, final String expectedContentId) {
+         try {
+             if (!this.content.contains("contents.json")) {
+@@ -185,6 +240,10 @@ public class ResourcePack {
+         return this.content;
+     }
+ 
++    public List<Key> dependencies() {
++        return this.dependencies;
++    }
++
+     public record Key(UUID id, String version) {
+ 
+         public static Key fromString(final String s) {
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStack.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStack.java
+new file mode 100644
+index 00000000..6d24866c
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStack.java
+@@ -0,0 +1,75 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.api.resourcepack;
++
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.PriorityQueue;
++
++public final class ResourcePackStack {
++
++    private ResourcePackStack() {
++    }
++
++    /** Keep server precedence unless a manifest requires another resource pack below its dependent. */
++    public static List<ResourcePack> orderTopToBottom(final List<ResourcePack> serverOrder) {
++        final Map<ResourcePack.Key, Integer> indexes = new HashMap<>();
++        for (int i = 0; i < serverOrder.size(); i++) {
++            indexes.putIfAbsent(serverOrder.get(i).key(), i);
++        }
++
++        final List<List<Integer>> edges = new ArrayList<>(serverOrder.size());
++        final int[] indegrees = new int[serverOrder.size()];
++        for (int i = 0; i < serverOrder.size(); i++) {
++            edges.add(new ArrayList<>());
++        }
++        for (int i = 0; i < serverOrder.size(); i++) {
++            for (ResourcePack.Key dependency : serverOrder.get(i).dependencies()) {
++                final Integer dependencyIndex = indexes.get(dependency);
++                if (dependencyIndex != null && dependencyIndex != i && !edges.get(i).contains(dependencyIndex)) {
++                    edges.get(i).add(dependencyIndex);
++                    indegrees[dependencyIndex]++;
++                }
++            }
++        }
++
++        final PriorityQueue<Integer> ready = new PriorityQueue<>();
++        for (int i = 0; i < serverOrder.size(); i++) {
++            if (indegrees[i] == 0) {
++                ready.add(i);
++            }
++        }
++        final List<ResourcePack> ordered = new ArrayList<>(serverOrder.size());
++        while (!ready.isEmpty()) {
++            final int index = ready.remove();
++            ordered.add(serverOrder.get(index));
++            for (int dependencyIndex : edges.get(index)) {
++                if (--indegrees[dependencyIndex] == 0) {
++                    ready.add(dependencyIndex);
++                }
++            }
++        }
++        if (ordered.size() != serverOrder.size()) {
++            throw new IllegalStateException("Cyclic resource pack dependencies in server stack");
++        }
++        return ordered;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/SubpackContent.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/SubpackContent.java
+new file mode 100644
+index 00000000..ff7908db
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/SubpackContent.java
+@@ -0,0 +1,104 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.api.resourcepack.content;
++
++import java.util.ArrayList;
++import java.util.LinkedHashSet;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.ConcurrentHashMap;
++
++/** A read-through view of the root pack with one selected subpack overlaid on top. */
++public final class SubpackContent extends Content {
++
++    private static final String SUBPACKS_PATH = "subpacks/";
++
++    private final Content source;
++    private final String selectedPrefix;
++    private final Map<String, byte[]> changes = new ConcurrentHashMap<>();
++
++    public SubpackContent(final Content source, final String selectedSubpack) {
++        this.source = source;
++        this.selectedPrefix = selectedSubpack.isEmpty() ? null : SUBPACKS_PATH + selectedSubpack + '/';
++    }
++
++    @Override
++    public List<String> getFilesShallow(final String path, final String extension) {
++        return this.getFilesDeep(path, extension).stream()
++            .filter(file -> !file.substring(path.length()).contains("/"))
++            .toList();
++    }
++
++    @Override
++    public List<String> getFilesDeep(final String path, final String extension) {
++        final LinkedHashSet<String> files = new LinkedHashSet<>();
++        for (String file : this.source.getFilesDeep(path, extension)) {
++            if (!file.startsWith(SUBPACKS_PATH)) {
++                files.add(file);
++            }
++        }
++        if (this.selectedPrefix != null) {
++            for (String file : this.source.getFilesDeep(this.selectedPrefix + path, extension)) {
++                files.add(file.substring(this.selectedPrefix.length()));
++            }
++        }
++        for (String file : this.changes.keySet()) {
++            if (file.startsWith(path) && file.endsWith(extension)) {
++                files.add(file);
++            }
++        }
++        return new ArrayList<>(files);
++    }
++
++    @Override
++    public boolean contains(final String path) {
++        if (path.startsWith(SUBPACKS_PATH)) {
++            return false;
++        }
++        return this.changes.containsKey(path) || this.selectedPrefix != null && this.source.contains(this.selectedPrefix + path) || this.source.contains(path);
++    }
++
++    @Override
++    public byte[] get(final String path) {
++        if (path.startsWith(SUBPACKS_PATH)) {
++            return null;
++        }
++        final byte[] changed = this.changes.get(path);
++        if (changed != null) {
++            return changed;
++        }
++        if (this.selectedPrefix != null) {
++            final byte[] selected = this.source.get(this.selectedPrefix + path);
++            if (selected != null) {
++                return selected;
++            }
++        }
++        return this.source.get(path);
++    }
++
++    @Override
++    public boolean put(final String path, final byte[] data) {
++        if (path.startsWith(SUBPACKS_PATH)) {
++            throw new IllegalArgumentException("Cannot write to a subpack path through the selected pack view: " + path);
++        }
++        final boolean existed = this.contains(path);
++        this.changes.put(path, data);
++        return existed;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
+index 983fa938..376a1a04 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
+@@ -72,7 +72,7 @@ public final class ResourcePackPackets {
+                 final String version = wrapper.read(BedrockTypes.STRING); // pack version
+                 wrapper.read(BedrockTypes.UNSIGNED_LONG_LE); // pack size
+                 final byte[] contentKey = wrapper.read(BedrockTypes.BYTE_ARRAY); // content key
+-                wrapper.read(BedrockTypes.STRING); // subpack names
++                wrapper.read(BedrockTypes.STRING); // selected subpack name (stack selection is authoritative)
+                 final String contentId = wrapper.read(BedrockTypes.STRING); // content identity
+                 wrapper.read(Types.BOOLEAN); // has scripts
+                 wrapper.read(Types.BOOLEAN); // is addon pack
+@@ -122,10 +122,11 @@ public final class ResourcePackPackets {
+ 
+             wrapper.read(Types.BOOLEAN); // resource pack required
+             final ResourcePack.Key[] keys = new ResourcePack.Key[wrapper.read(BedrockTypes.UNSIGNED_VAR_INT)]; // resource packs size
++            final String[] subpackNames = new String[keys.length];
+             for (int i = 0; i < keys.length; i++) {
+                 final UUID id = UUID.fromString(wrapper.read(BedrockTypes.STRING)); // id
+                 final String version = wrapper.read(BedrockTypes.STRING); // version
+-                wrapper.read(BedrockTypes.STRING); // subpack name
++                subpackNames[i] = wrapper.read(BedrockTypes.STRING); // selected subpack name
+                 keys[i] = new ResourcePack.Key(id, version);
+             }
+             wrapper.read(BedrockTypes.STRING); // base game version
+@@ -149,14 +150,18 @@ public final class ResourcePackPackets {
+                         BedrockProtocol.kickForIllegalState(user, "One of the server resource packs failed to load. Try again later.", error);
+                     } else {
+                         try {
+-                            finishStack(user, loadStateTracker, keys);
++                            finishStack(user, loadStateTracker, keys, subpackNames);
+                         } catch (final Throwable e) {
+                             BedrockProtocol.kickForIllegalState(user, "Failed to prepare the server resource packs.", e);
+                         }
+                     }
+                 }, user.getChannel().eventLoop());
+             } else {
+-                finishStack(user, loadStateTracker, keys);
++                try {
++                    finishStack(user, loadStateTracker, keys, subpackNames);
++                } catch (final Throwable e) {
++                    BedrockProtocol.kickForIllegalState(user, "Failed to prepare the server resource packs.", e);
++                }
+             }
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.RESOURCE_PACK_DATA_INFO, null, wrapper -> {
+@@ -226,14 +231,15 @@ public final class ResourcePackPackets {
+         });
+     }
+ 
+-    private static void finishStack(final UserConnection user, final ResourcePackLoadStateTracker loadStateTracker, final ResourcePack.Key[] keys) {
++    private static void finishStack(final UserConnection user, final ResourcePackLoadStateTracker loadStateTracker, final ResourcePack.Key[] keys, final String[] subpackNames) {
+         if (user.get(ResourcePackLoadStateTracker.class) != loadStateTracker) {
+             return;
+         }
+         user.remove(ResourcePackLoadStateTracker.class);
+         loadStateTracker.loadUnrequestedResourcePacks(keys);
+         final List<ResourcePack> resourcePacks = new ArrayList<>();
+-        for (ResourcePack.Key key : keys) {
++        for (int i = 0; i < keys.length; i++) {
++            final ResourcePack.Key key = keys[i];
+             final ResourcePack resourcePack = loadStateTracker.getResourcePack(key);
+             if (resourcePack != null) {
+                 final ResourcePackLoadStateTracker.Info info = loadStateTracker.getRequest(key);
+@@ -245,7 +251,7 @@ public final class ResourcePackPackets {
+                         ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to save resource pack: " + resourcePack.key(), e);
+                     }
+                 }
+-                resourcePacks.add(resourcePack);
++                resourcePacks.add(resourcePack.selectSubpack(subpackNames[i]));
+             } else {
+                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing resource pack: " + key);
+             }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
+index ecf081ed..d3dc4315 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
+@@ -19,6 +19,7 @@ package net.raphimc.viabedrock.protocol.storage;
+ 
+ import com.viaversion.viaversion.api.connection.StorableObject;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePackStack;
+ import net.raphimc.viabedrock.api.resourcepack.definition.*;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ 
+@@ -47,13 +48,14 @@ public class ResourcePackStorage implements StorableObject {
+     private final RenderControllerDefinitions renderControllers;
+ 
+     public ResourcePackStorage(final List<ResourcePack> resourcePacksTopToBottom) {
++        final List<ResourcePack> orderedPacks = ResourcePackStack.orderTopToBottom(resourcePacksTopToBottom);
+         if (BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks() != null) { // null if ran from ResourcePackConverterTest
+             this.packStackBottomToTop.addAll(BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks());
+         }
+-        for (int i = resourcePacksTopToBottom.size() - 1; i >= 0; i--) {
+-            this.packStackBottomToTop.add(resourcePacksTopToBottom.get(i));
++        for (int i = orderedPacks.size() - 1; i >= 0; i--) {
++            this.packStackBottomToTop.add(orderedPacks.get(i));
+         }
+-        this.packStackTopToBottom.addAll(resourcePacksTopToBottom);
++        this.packStackTopToBottom.addAll(orderedPacks);
+         if (BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks() != null) { // null if ran from ResourcePackConverterTest
+             for (int i = BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks().size() - 1; i >= 0; i--) {
+                 this.packStackTopToBottom.add(BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks().get(i));
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStackTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStackTest.java
+new file mode 100644
+index 00000000..ef36588e
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackStackTest.java
+@@ -0,0 +1,99 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.api.resourcepack;
++
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import org.junit.jupiter.api.Test;
++
++import java.nio.charset.StandardCharsets;
++import java.util.List;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class ResourcePackStackTest {
++
++    @Test
++    void dependenciesLoadBelowDependentsWithoutReorderingIndependentPacks() {
++        final ResourcePack base = pack(UUID.randomUUID(), null);
++        final ResourcePack dependent = pack(UUID.randomUUID(), base.key());
++        final ResourcePack independent = pack(UUID.randomUUID(), null);
++
++        assertEquals(List.of(dependent, base, independent), ResourcePackStack.orderTopToBottom(List.of(base, dependent, independent)));
++        assertEquals(List.of(independent, dependent, base), ResourcePackStack.orderTopToBottom(List.of(independent, dependent, base)));
++    }
++
++    @Test
++    void dependenciesOutsideTheResourceStackDoNotChangeItsOrder() {
++        final ResourcePack dependent = pack(UUID.randomUUID(), new ResourcePack.Key(UUID.randomUUID(), "1.0.0"));
++        final ResourcePack independent = pack(UUID.randomUUID(), null);
++
++        assertEquals(List.of(dependent, independent), ResourcePackStack.orderTopToBottom(List.of(dependent, independent)));
++    }
++
++    @Test
++    void formatThreeDependencyVersionObjectMatchesPackVersion() {
++        final ResourcePack base = pack(UUID.randomUUID(), null);
++        final InMemoryContent content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":3,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":\"1.0.0\",\"name\":\"test\"},\"dependencies\":[{\"module_name\":\"@minecraft/server\",\"version\":\"1.0.0\"},{\"uuid\":\"" + base.id() + "\",\"version\":{\"major\":1,\"minor\":0,\"patch\":0}}]}");
++        final ResourcePack dependent = new ResourcePack(content);
++
++        assertEquals(List.of(dependent, base), ResourcePackStack.orderTopToBottom(List.of(base, dependent)));
++    }
++
++    @Test
++    void cyclicResourcePackDependenciesAreRejected() {
++        final UUID firstId = UUID.randomUUID();
++        final UUID secondId = UUID.randomUUID();
++        final ResourcePack first = pack(firstId, new ResourcePack.Key(secondId, "1.0.0"));
++        final ResourcePack second = pack(secondId, new ResourcePack.Key(firstId, "1.0.0"));
++
++        assertThrows(IllegalStateException.class, () -> ResourcePackStack.orderTopToBottom(List.of(first, second)));
++    }
++
++    @Test
++    void selectedSubpackOverridesRootWithoutChangingSourcePack() {
++        final InMemoryContent content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":3,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":\"1.0.0\",\"name\":\"test\"},\"subpacks\":[{\"folder_name\":\"small\",\"name\":\"Small\"},{\"folder_name\":\"large\",\"name\":\"Large\"}]}");
++        content.putString("textures/root.png", "root");
++        content.putString("textures/unchanged.png", "unchanged");
++        content.putString("subpacks/small/textures/root.png", "small");
++        content.putString("subpacks/large/textures/root.png", "large");
++        content.putString("subpacks/large/textures/extra.png", "extra");
++        final ResourcePack source = new ResourcePack(content);
++
++        final ResourcePack selected = source.selectSubpack("large");
++        assertArrayEquals("large".getBytes(StandardCharsets.UTF_8), selected.content().get("textures/root.png"));
++        assertArrayEquals("unchanged".getBytes(StandardCharsets.UTF_8), selected.content().get("textures/unchanged.png"));
++        assertTrue(selected.content().getFilesDeep("textures/", ".png").contains("textures/extra.png"));
++        assertFalse(selected.content().getFilesDeep("", "").stream().anyMatch(path -> path.startsWith("subpacks/")));
++        assertArrayEquals("root".getBytes(StandardCharsets.UTF_8), source.content().get("textures/root.png"));
++        final ResourcePack noSubpack = source.selectSubpack("");
++        assertArrayEquals("root".getBytes(StandardCharsets.UTF_8), noSubpack.content().get("textures/root.png"));
++        assertFalse(noSubpack.content().getFilesDeep("", "").stream().anyMatch(path -> path.startsWith("subpacks/")));
++        assertThrows(IllegalArgumentException.class, () -> source.selectSubpack("unknown"));
++    }
++
++    private static ResourcePack pack(final UUID id, final ResourcePack.Key dependency) {
++        final InMemoryContent content = new InMemoryContent();
++        final String dependencyJson = dependency == null ? "" : ",\"dependencies\":[{\"uuid\":\"" + dependency.id() + "\",\"version\":[1,0,0]}]";
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"uuid\":\"" + id + "\",\"version\":[1,0,0],\"name\":\"test\"}" + dependencyJson + "}");
++        return new ResourcePack(content);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
+index 1d6e4090..bd05f72a 100644
+--- a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
+@@ -52,6 +52,17 @@ class ConvertedResourcePackCacheTest {
+         assertNotEquals(ConvertedResourcePackCache.fingerprint(List.of(original)), ConvertedResourcePackCache.fingerprint(List.of(updated)));
+     }
+ 
++    @Test
++    void selectedSubpackChangesCacheIdentity() {
++        final InMemoryContent content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":3,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":\"1.0.0\",\"name\":\"test\"},\"subpacks\":[{\"folder_name\":\"a\"},{\"folder_name\":\"b\"}]}");
++        content.put("subpacks/a/assets/example", new byte[]{1});
++        content.put("subpacks/b/assets/example", new byte[]{2});
++        final ResourcePack source = new ResourcePack(content);
++
++        assertNotEquals(ConvertedResourcePackCache.fingerprint(List.of(source.selectSubpack("a"))), ConvertedResourcePackCache.fingerprint(List.of(source.selectSubpack("b"))));
++    }
++
+     @Test
+     void sourceCacheDoesNotReuseAnotherAdvertisedContentIdentity() throws Exception {
+         final UUID id = UUID.randomUUID();
+-- 
+2.55.0

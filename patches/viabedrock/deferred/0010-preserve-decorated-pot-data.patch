@@ -1,0 +1,160 @@
+From 1b824963201a8e9dae0d5c7f18277edfcc77f511 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 03:59:02 +0200
+Subject: [PATCH] fix(block-entities): preserve decorated pot data
+
+Translate Bedrock sherds to the named-side item templates read by the Java 26.3 client, and pass through contained item and loot data. The previous placeholder dropped all decorated pot content.
+---
+ .../DecoratedPotBlockEntityRewriter.java      | 77 +++++++++++++------
+ .../DecoratedPotBlockEntityRewriterTest.java  | 38 +++++++++
+ 2 files changed, 93 insertions(+), 22 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/DecoratedPotBlockEntityRewriterTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/DecoratedPotBlockEntityRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/DecoratedPotBlockEntityRewriter.java
+index 36ad6b10..7c3d0049 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/DecoratedPotBlockEntityRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/DecoratedPotBlockEntityRewriter.java
+@@ -18,42 +18,75 @@
+ package net.raphimc.viabedrock.protocol.rewriter.blockentity;
+ 
+ import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.nbt.tag.NumberTag;
++import com.viaversion.nbt.tag.StringTag;
++import com.viaversion.nbt.tag.Tag;
+ import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.minecraft.blockentity.BlockEntity;
+ import com.viaversion.viaversion.api.minecraft.blockentity.BlockEntityImpl;
+ import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.BedrockMappingData;
+ import net.raphimc.viabedrock.protocol.rewriter.BlockEntityRewriter;
+ 
++import java.util.Map;
++import java.util.function.Function;
++
+ public class DecoratedPotBlockEntityRewriter implements BlockEntityRewriter.Rewriter {
+ 
++    private static final String[] SIDES = {"back", "left", "right", "front"};
++
+     @Override
+     public BlockEntity toJava(final UserConnection user, final BedrockBlockEntity bedrockBlockEntity) {
+-        //final CompoundTag bedrockTag = bedrockBlockEntity.tag();
++        final CompoundTag bedrockTag = bedrockBlockEntity.tag();
+         final CompoundTag javaTag = new CompoundTag();
+ 
+-        // TODO: 26.3
+-        /*final ListTag<StringTag> bedrockSherds = bedrockTag.getListTag("sherds", StringTag.class);
+-         * if (bedrockSherds != null) {
+-         *     final ListTag<StringTag> javaSherds = new ListTag<>(StringTag.class);
+-         *     for (StringTag bedrockSherd : bedrockSherds) {
+-         *         final String bedrockIdentifier = bedrockSherd.getValue();
+-         *         final BedrockMappingData.JavaItemMapping itemMapping = BedrockProtocol.MAPPINGS.getBedrockToJavaMetaItems().getOrDefault(bedrockIdentifier, Collections.emptyMap()).getOrDefault(null, null);
+-         *         if (itemMapping != null) {
+-         *             javaSherds.add(new StringTag(itemMapping.identifier()));
+-         *         } else if (bedrockIdentifier.isEmpty()) {
+-         *             javaSherds.add(new StringTag("minecraft:brick"));
+-         *         } else {
+-         *             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing item: " + bedrockIdentifier);
+-         *             javaSherds.add(new StringTag("minecraft:brick"));
+-         *         }
+-         *     }
+-         *     javaTag.put("sherds", javaSherds);
+-         * }
+-         * this.copyItem(user, bedrockTag, javaTag, "item");
+-         * this.copy(bedrockTag, javaTag, "LootTable", StringTag.class);
+-         * this.copy(bedrockTag, javaTag, "LootTableSeed", IntTag.class);*/
++        if (bedrockTag.get("sherds") instanceof ListTag<?> bedrockSherds) {
++            final CompoundTag sherds = rewriteSherds(bedrockSherds, this::javaSherd);
++            if (sherds != null) {
++                javaTag.put("sherds", sherds);
++            }
++        }
++        this.copyItem(user, bedrockTag, javaTag, "item");
++        this.copy(bedrockTag, javaTag, "LootTable", StringTag.class);
++        if (bedrockTag.get("LootTableSeed") instanceof NumberTag seed) {
++            javaTag.putLong("LootTableSeed", seed.asLong());
++        }
+ 
+         return new BlockEntityImpl(bedrockBlockEntity.packedXZ(), bedrockBlockEntity.y(), -1, javaTag);
+     }
+ 
++    static CompoundTag rewriteSherds(final ListTag<?> bedrockSherds, final Function<String, String> itemMapping) {
++        if (bedrockSherds.size() != SIDES.length) {
++            return null;
++        }
++        final CompoundTag javaSherds = new CompoundTag();
++        for (int index = 0; index < SIDES.length; index++) {
++            final Tag sherd = bedrockSherds.get(index);
++            if (!(sherd instanceof StringTag identifier) || identifier.getValue().isEmpty()) {
++                continue;
++            }
++            final String javaIdentifier = itemMapping.apply(identifier.getValue());
++            if (javaIdentifier == null || javaIdentifier.equals("minecraft:brick")) {
++                continue;
++            }
++            final CompoundTag item = new CompoundTag();
++            item.putString("id", javaIdentifier);
++            javaSherds.put(SIDES[index], item);
++        }
++        return javaSherds;
++    }
++
++    private String javaSherd(final String identifier) {
++        final Map<Integer, BedrockMappingData.JavaItemMapping> metaMappings = BedrockProtocol.MAPPINGS.getBedrockToJavaMetaItems().get(identifier);
++        if (metaMappings != null) {
++            final BedrockMappingData.JavaItemMapping mapping = metaMappings.get(null);
++            if (mapping != null) {
++                return mapping.identifier();
++            }
++        }
++        return BedrockProtocol.MAPPINGS.getJavaItems().containsKey(identifier) ? identifier : null;
++    }
++
+ }
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/DecoratedPotBlockEntityRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/DecoratedPotBlockEntityRewriterTest.java
+new file mode 100644
+index 00000000..02972a8f
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/DecoratedPotBlockEntityRewriterTest.java
+@@ -0,0 +1,38 @@
++package net.raphimc.viabedrock.protocol.rewriter.blockentity;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.nbt.tag.StringTag;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++class DecoratedPotBlockEntityRewriterTest {
++
++    @Test
++    void convertsFourBedrockSherdsToJava26SideTemplates() {
++        final ListTag<StringTag> bedrockSherds = new ListTag<>(StringTag.class);
++        bedrockSherds.add(new StringTag("minecraft:angler_pottery_sherd"));
++        bedrockSherds.add(new StringTag("minecraft:brick"));
++        bedrockSherds.add(new StringTag("minecraft:archer_pottery_sherd"));
++        bedrockSherds.add(new StringTag(""));
++
++        final CompoundTag result = DecoratedPotBlockEntityRewriter.rewriteSherds(bedrockSherds, identifier -> identifier);
++
++        assertEquals("minecraft:angler_pottery_sherd", result.getCompoundTag("back").getString("id"));
++        assertFalse(result.contains("left"));
++        assertEquals("minecraft:archer_pottery_sherd", result.getCompoundTag("right").getString("id"));
++        assertFalse(result.contains("front"));
++    }
++
++    @Test
++    void ignoresIncompleteSherdData() {
++        final ListTag<StringTag> bedrockSherds = new ListTag<>(StringTag.class);
++        bedrockSherds.add(new StringTag("minecraft:angler_pottery_sherd"));
++
++        assertNull(DecoratedPotBlockEntityRewriter.rewriteSherds(bedrockSherds, identifier -> identifier));
++    }
++
++}
+-- 
+2.55.0

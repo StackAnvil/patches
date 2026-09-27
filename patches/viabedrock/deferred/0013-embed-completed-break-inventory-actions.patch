@@ -1,0 +1,700 @@
+From 07c7c8971fff315de841190a8cb04e78ab05adc8 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 04:00:05 +0200
+Subject: [PATCH] fix(mining): embed completed-break inventory actions
+
+Send MineBlock requests or legacy destroy transactions in PLAYER_AUTH_INPUT at the break tick, including the matching input flags. Predict damage for tagged vanilla tools and accept authoritative durability only for the same held stack. Handle creative start actions and suppress redundant mining swings; server correction remains authoritative for instant breaks.
+---
+ .../api/model/entity/ClientPlayerEntity.java  |  30 ++++
+ .../inventory/ItemStackRequestAction.java     |  10 +-
+ .../protocol/packet/ClientPlayerPackets.java  | 167 +++++++++++++++---
+ .../storage/InventoryRequestTracker.java      |  83 +++++++++
+ .../types/inventory/ItemStackActionType.java  |   4 +
+ .../packet/ClientPlayerPacketsTest.java       |  61 +++++++
+ .../InventoryRequestTrackerMiningTest.java    |  55 ++++++
+ .../types/inventory/ItemStackCodecTest.java   |  10 ++
+ 8 files changed, 398 insertions(+), 22 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerMiningTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
+index 870cbfaf..567fe9eb 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
+@@ -39,6 +39,8 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand
+ import net.raphimc.viabedrock.protocol.model.EntityAttribute;
+ import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
+ import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
++import net.raphimc.viabedrock.protocol.model.inventory.BedrockInventoryTransaction;
+ import net.raphimc.viabedrock.protocol.rewriter.GameTypeRewriter;
+ import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
+ import net.raphimc.viabedrock.protocol.storage.CommandsStorage;
+@@ -70,6 +72,8 @@ public class ClientPlayerEntity extends PlayerEntity {
+     private boolean prevOnGround;
+     private final Set<PlayerAuthInputData> authInputData = EnumSet.noneOf(PlayerAuthInputData.class);
+     private final List<AuthInputBlockAction> authInputBlockActions = new ArrayList<>();
++    private ItemStackRequestInfo authInputItemStackRequest;
++    private BedrockInventoryTransaction authInputItemInteraction;
+     private Set<InputFlag> inputFlags = EnumSet.noneOf(InputFlag.class);
+     private Set<InputFlag> prevInputFlags = EnumSet.noneOf(InputFlag.class);
+     private boolean horizontalCollision;
+@@ -525,6 +529,32 @@ public class ClientPlayerEntity extends PlayerEntity {
+         this.blockBreakingInfo = blockBreakingInfo;
+     }
+ 
++    public ItemStackRequestInfo authInputItemStackRequest() {
++        return this.authInputItemStackRequest;
++    }
++
++    public void setAuthInputItemStackRequest(final ItemStackRequestInfo request) {
++        this.authInputItemStackRequest = request;
++        if (request != null) {
++            this.authInputData.add(PlayerAuthInputData.PerformItemStackRequest);
++        } else {
++            this.authInputData.remove(PlayerAuthInputData.PerformItemStackRequest);
++        }
++    }
++
++    public BedrockInventoryTransaction authInputItemInteraction() {
++        return this.authInputItemInteraction;
++    }
++
++    public void setAuthInputItemInteraction(final BedrockInventoryTransaction transaction) {
++        this.authInputItemInteraction = transaction;
++        if (transaction != null) {
++            this.authInputData.add(PlayerAuthInputData.PerformItemInteraction);
++        } else {
++            this.authInputData.remove(PlayerAuthInputData.PerformItemInteraction);
++        }
++    }
++
+     public void setRequestedDismount(final boolean requestedDismount) {
+         this.requestedDismount = requestedDismount;
+     }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestAction.java b/src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestAction.java
+index 61d4e8be..809781b6 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestAction.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestAction.java
+@@ -14,7 +14,7 @@ import net.raphimc.viabedrock.protocol.model.BedrockItem;
+ 
+ import java.util.List;
+ 
+-public sealed interface ItemStackRequestAction permits ItemStackRequestAction.TakeAction, ItemStackRequestAction.PlaceAction, ItemStackRequestAction.SwapAction, ItemStackRequestAction.DropAction, ItemStackRequestAction.DestroyAction, ItemStackRequestAction.ConsumeAction, ItemStackRequestAction.BeaconPaymentAction, ItemStackRequestAction.CraftRecipeAction, ItemStackRequestAction.CraftRecipeOptionalAction, ItemStackRequestAction.CraftResultsDeprecatedAction {
++public sealed interface ItemStackRequestAction permits ItemStackRequestAction.TakeAction, ItemStackRequestAction.PlaceAction, ItemStackRequestAction.SwapAction, ItemStackRequestAction.DropAction, ItemStackRequestAction.DestroyAction, ItemStackRequestAction.ConsumeAction, ItemStackRequestAction.BeaconPaymentAction, ItemStackRequestAction.MineBlockAction, ItemStackRequestAction.CraftRecipeAction, ItemStackRequestAction.CraftRecipeOptionalAction, ItemStackRequestAction.CraftResultsDeprecatedAction {
+ 
+     ItemStackRequestActionType getType();
+ 
+@@ -76,6 +76,14 @@ public sealed interface ItemStackRequestAction permits ItemStackRequestAction.Ta
+         }
+     }
+ 
++    record MineBlockAction(int hotbarSlot, int predictedDurability, int stackNetworkId)
++            implements ItemStackRequestAction {
++        @Override
++        public ItemStackRequestActionType getType() {
++            return ItemStackRequestActionType.ScreenHUDMineBlock;
++        }
++    }
++
+     record CraftRecipeAction(int recipeNetworkId, int numberOfRequestedCrafts)
+             implements ItemStackRequestAction {
+         @Override
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+index 7a54faaf..1bdd1009 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+@@ -17,6 +17,9 @@
+  */
+ package net.raphimc.viabedrock.protocol.packet;
+ 
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.IntTag;
++import com.viaversion.nbt.tag.NumberTag;
+ import com.viaversion.viaversion.api.minecraft.BlockPosition;
+ import com.viaversion.viaversion.api.minecraft.Vector3d;
+ import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
+@@ -54,11 +57,14 @@ import net.raphimc.viabedrock.protocol.model.inventory.BedrockInventoryTransacti
+ import net.raphimc.viabedrock.protocol.model.inventory.InventoryActionData;
+ import net.raphimc.viabedrock.protocol.model.inventory.InventorySource;
+ import net.raphimc.viabedrock.protocol.model.inventory.InventoryTransactionData;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
+ import net.raphimc.viabedrock.protocol.rewriter.GameTypeRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.InventoryTransactionRewriter;
+ import net.raphimc.viabedrock.protocol.storage.*;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import net.raphimc.viabedrock.protocol.types.inventory.ItemStackRequestType;
+ 
+ import java.util.Locale;
+ import java.util.List;
+@@ -97,6 +103,92 @@ public final class ClientPlayerPackets {
+         }
+     }
+ 
++    static void queueStartDestroyAction(final ClientPlayerEntity clientPlayer,
++            final BlockPosition position, final Direction direction, final boolean creative) {
++        clientPlayer.setBlockBreakingInfo(creative ? null
++                : new ClientPlayerEntity.BlockBreakingInfo(position, direction));
++        clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(
++                creative ? PlayerActionType.CreativeDestroyBlock : PlayerActionType.StartDestroyBlock,
++                position, direction.ordinal()));
++    }
++
++    static BedrockItem predictedMinedItem(final BedrockItem item,
++                                          final boolean damageableWithoutTag) {
++        if (item.isEmpty()) {
++            return null;
++        }
++        final int damage;
++        if (item.tag() != null && item.tag().get("Damage") instanceof NumberTag currentDamage) {
++            damage = currentDamage.asInt();
++        } else if (damageableWithoutTag) {
++            damage = 0;
++        } else {
++            return null;
++        }
++        final BedrockItem predicted = item.copy();
++        final CompoundTag tag = predicted.tag() != null ? predicted.tag() : new CompoundTag();
++        tag.put("Damage", new IntTag(damage + 1));
++        predicted.setTag(tag);
++        return predicted;
++    }
++
++    private static boolean damageableMiningItem(final BedrockItem item,
++                                                final ItemRewriter itemRewriter) {
++        final String identifier = itemRewriter.getItems().inverse().get(item.identifier());
++        final Set<String> tags = BedrockProtocol.MAPPINGS.getBedrockItemTags()
++                .getOrDefault(identifier, Set.of());
++        return tags.contains("minecraft:is_tool") || tags.contains("minecraft:is_shears");
++    }
++
++    private static void queueMineBlockRequest(final ClientPlayerEntity player,
++                                              final InventoryTracker inventory,
++                                              final InventoryRequestTracker requests,
++                                              final ItemRewriter itemRewriter) {
++        if (player.authInputItemStackRequest() != null || requests.hasPending()
++                || requests.hasPendingMineBlockRequest()) {
++            return;
++        }
++        final InventoryContainer hotbar = inventory.getInventoryContainer();
++        final BedrockItem held = hotbar.getSelectedHotbarItem();
++        final BedrockItem predicted = predictedMinedItem(
++                held, damageableMiningItem(held, itemRewriter));
++        if (predicted == null || held.netId() == null || held.netId() <= 0) {
++            return;
++        }
++        final int slot = Byte.toUnsignedInt(hotbar.getSelectedHotbarSlot());
++        player.setAuthInputItemStackRequest(new ItemStackRequestInfo(
++                requests.nextRequestId(),
++                List.of(new ItemStackRequestAction.MineBlockAction(
++                        slot, predicted.tag().getIntTag("Damage").asInt(), held.netId())),
++                List.of(), TextProcessingEventOrigin.unknown));
++    }
++
++    private static void queueLegacyDestroyTransaction(final ClientPlayerEntity player,
++                                                       final InventoryTracker inventory,
++                                                       final ChunkTracker chunks,
++                                                       final BlockPosition position,
++                                                       final Direction direction,
++                                                       final ItemRewriter itemRewriter) {
++        final InventoryContainer hotbar = inventory.getInventoryContainer();
++        final int slot = Byte.toUnsignedInt(hotbar.getSelectedHotbarSlot());
++        final BedrockItem held = hotbar.getSelectedHotbarItem();
++        final BedrockItem predicted = predictedMinedItem(
++                held, damageableMiningItem(held, itemRewriter));
++        final List<InventoryActionData> actions = predicted == null ? List.of()
++                : List.of(new InventoryActionData(
++                        new InventorySource(InventorySourceType.Container_Inventory,
++                                ContainerID.CONTAINER_ID_INVENTORY.getValue(),
++                                InventorySourceFlags.No_Flag),
++                        slot, held, predicted));
++        player.setAuthInputItemInteraction(new BedrockInventoryTransaction(
++                0, null, actions, ComplexInventoryTransaction_Type.ItemUseTransaction,
++                new InventoryTransactionData.UseItemTransactionData(
++                        ItemUseActionType.Destroy, ItemUseTriggerType.Player_Input,
++                        position, direction.ordinal(), slot, HandSlot.Mainhand, held,
++                        player.position(), Position3f.ZERO, chunks.getBlockState(position),
++                        ItemUsePredictedResult.Success, ItemUseClientCooldownState.Off)));
++    }
++
+     static Entity predictedVehicle(final EntityTracker entityTracker, final ClientPlayerEntity clientPlayer) {
+         final Entity vehicle = entityTracker.getEntityByRid(clientPlayer.mountEntityRuntimeId());
+         if (vehicle == null || !(vehicle.javaType().isOrHasParent(EntityTypes26_3.ABSTRACT_BOAT)
+@@ -363,43 +455,54 @@ public final class ClientPlayerPackets {
+ 
+             final boolean isMining = action == PlayerActionAction.START_DESTROY_BLOCK || action == PlayerActionAction.ABORT_DESTROY_BLOCK || action == PlayerActionAction.STOP_DESTROY_BLOCK || action == PlayerActionAction.CHANGE_DESTROY_DIRECTION;
+             if (isMining && (gameSession.isImmutableWorld() || !clientPlayer.abilities().getBooleanValue(AbilitiesIndex.Mine))) {
+-                // TODO: Prevent breaking and cancel any packets that would be sent (swing, player action)
++                clientPlayer.cancelNextSwingPacket();
+                 PacketFactory.sendJavaBlockUpdate(wrapper.user(), position, chunkTracker.getJavaBlockState(position));
+                 PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
+                 return;
+             }
+ 
+-            // TODO: Block breaking: Send correct inventory transactions
+-
+             switch (action) {
+                 case START_DESTROY_BLOCK -> {
+                     clientPlayer.sendSwingPacketToServer();
+                     clientPlayer.cancelNextSwingPacket();
+-                    clientPlayer.setBlockBreakingInfo(new ClientPlayerEntity.BlockBreakingInfo(position, direction));
+                     // TODO: Handle instant breaking
+-                    // TODO: Handle creative mode mining
+                     // TODO: Test breaking fire
+-                    // TODO: The java client keeps spamming swing packets while waiting for the block break cooldown. Those need to be cancelled
+-
+-                    clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.StartDestroyBlock, position, direction.ordinal()));
++                    queueStartDestroyAction(clientPlayer, position, direction,
++                            clientPlayer.javaGameMode() == GameMode.CREATIVE);
++                    if (clientPlayer.javaGameMode() == GameMode.CREATIVE) {
++                        chunkTracker.handleBlockChange(position, 0, chunkTracker.bedrockAirId());
++                        PacketFactory.sendJavaBlockUpdate(wrapper.user(), position, ProtocolConstants.JAVA_AIR_ID);
++                    }
+                 }
+                 case CHANGE_DESTROY_DIRECTION -> updateDestroyDirection(clientPlayer, position, direction, gameSession.isBlockBreakingServerAuthoritative());
+                 case ABORT_DESTROY_BLOCK -> {
+                     clientPlayer.setBlockBreakingInfo(null);
+-                    clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, 0/*TODO: Figure this value out*/));
++                    clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, direction.ordinal()));
+                 }
+                 case STOP_DESTROY_BLOCK -> {
+                     clientPlayer.cancelNextSwingPacket();
+                     clientPlayer.setBlockBreakingInfo(null);
+ 
++                    if (clientPlayer.javaGameMode() == GameMode.CREATIVE) {
++                        break;
++                    }
++
+                     if (!gameSession.isBlockBreakingServerAuthoritative()) {
++                        queueLegacyDestroyTransaction(clientPlayer,
++                                wrapper.user().get(InventoryTracker.class), chunkTracker,
++                                position, direction,
++                                wrapper.user().get(ItemRewriter.class));
+                         clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.StopDestroyBlock));
+                         clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.CrackBlock, position, direction.ordinal()));
+-                        clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, 0));
++                        clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, direction.ordinal()));
+                     } else {
++                        queueMineBlockRequest(clientPlayer,
++                                wrapper.user().get(InventoryTracker.class),
++                                wrapper.user().get(InventoryRequestTracker.class),
++                                wrapper.user().get(ItemRewriter.class));
+                         clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.ContinueDestroyBlock, position, direction.ordinal()));
+                         clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.PredictDestroyBlock, position, direction.ordinal()));
+-                        clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, 0));
++                        clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.AbortDestroyBlock, position, direction.ordinal()));
+                     }
+ 
+                     chunkTracker.handleBlockChange(position, 0, chunkTracker.bedrockAirId());
+@@ -565,6 +668,8 @@ public final class ClientPlayerPackets {
+ 
+             if (!clientPlayer.isInitiallySpawned() || clientPlayer.isDead()) {
+                 clientPlayer.setShieldBlockingHand(null);
++                clientPlayer.setAuthInputItemInteraction(null);
++                clientPlayer.setAuthInputItemStackRequest(null);
+                 wrapper.cancel();
+                 return;
+             }
+@@ -670,8 +775,23 @@ public final class ClientPlayerPackets {
+             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().y()); // interact yaw
+             wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, (long) clientPlayer.age()); // tick
+             wrapper.write(BedrockTypes.POSITION_3F, velocity); // delta
+-            wrapper.write(Types.BOOLEAN, false); // no item interaction
+-            wrapper.write(Types.BOOLEAN, false); // no item stack request
++            final BedrockInventoryTransaction itemInteraction = clientPlayer.authInputItemInteraction();
++            wrapper.write(Types.BOOLEAN, itemInteraction != null);
++            if (itemInteraction != null) {
++                wrapper.write(wrapper.user().get(InventoryTransactionRewriter.class)
++                        .getInventoryTransactionType(), itemInteraction);
++            }
++            final ItemStackRequestInfo itemStackRequest = clientPlayer.authInputItemStackRequest();
++            wrapper.write(Types.BOOLEAN, itemStackRequest != null);
++            if (itemStackRequest != null) {
++                wrapper.write(new ItemStackRequestType(
++                        wrapper.user().get(ItemRewriter.class).stackRequestResultType()),
++                        itemStackRequest);
++                final ItemStackRequestAction.MineBlockAction mining =
++                        (ItemStackRequestAction.MineBlockAction) itemStackRequest.actions().get(0);
++                wrapper.user().get(InventoryRequestTracker.class).addMineBlockRequest(
++                        itemStackRequest.requestId(), mining.hotbarSlot(), mining.stackNetworkId());
++            }
+             final boolean hasBlockActions = clientPlayer.authInputData().contains(PlayerAuthInputData.PerformBlockActions);
+             wrapper.write(Types.BOOLEAN, hasBlockActions);
+             if (hasBlockActions) {
+@@ -698,6 +818,8 @@ public final class ClientPlayerPackets {
+ 
+             clientPlayer.authInputData().clear();
+             clientPlayer.authInputBlockActions().clear();
++            clientPlayer.setAuthInputItemInteraction(null);
++            clientPlayer.setAuthInputItemStackRequest(null);
+         });
+         protocol.registerServerbound(ServerboundPackets26_3.PLAYER_ABILITIES, null, wrapper -> {
+             wrapper.cancel();
+@@ -736,19 +858,22 @@ public final class ClientPlayerPackets {
+                 return;
+             }
+ 
++            if (clientPlayer.blockBreakingInfo() != null) {
++                wrapper.cancel();
++                if (!gameSession.isBlockBreakingServerAuthoritative()) {
++                    final ClientPlayerEntity.BlockBreakingInfo breaking = clientPlayer.blockBreakingInfo();
++                    clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(
++                            PlayerActionType.CrackBlock, breaking.position(), breaking.direction().ordinal()));
++                }
++                return;
++            }
++
+             wrapper.write(Types.UNSIGNED_BYTE, (short) AnimatePacketPayload_Action.Swing.getValue()); // action
+             wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, clientPlayer.runtimeId()); // entity runtime id
+             wrapper.write(BedrockTypes.FLOAT_LE, 0F); // data
+             wrapper.write(BedrockTypes.OPTIONAL_STRING, ActorSwingSource.Attack.name().toLowerCase(Locale.ROOT)); // swing source // TODO: 1.21.130
+ 
+-            if (clientPlayer.blockBreakingInfo() != null) {
+-                if (!gameSession.isBlockBreakingServerAuthoritative()) {
+-                    final ClientPlayerEntity.BlockBreakingInfo blockBreakingInfo = clientPlayer.blockBreakingInfo();
+-                    clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(PlayerActionType.CrackBlock, blockBreakingInfo.position(), blockBreakingInfo.direction().ordinal()));
+-                }
+-            } else {
+-                clientPlayer.addAuthInputData(PlayerAuthInputData.MissedSwing);
+-            }
++            clientPlayer.addAuthInputData(PlayerAuthInputData.MissedSwing);
+         });
+     }
+ 
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
+index 52340327..32d7e4f4 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
+@@ -21,14 +21,18 @@ import com.viaversion.viaversion.api.connection.StoredObject;
+ import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+ import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.IntTag;
+ import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectOpenHashMap;
+ 
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.model.container.Container;
++import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
+ import net.raphimc.viabedrock.api.util.PacketFactory;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InteractPacketPayload_Action;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemStackNetResult;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
+ import net.raphimc.viabedrock.protocol.model.BedrockItem;
+@@ -55,6 +59,7 @@ public class InventoryRequestTracker extends StoredObject {
+     private final ArrayDeque<QueuedInteraction> queuedInteractions = new ArrayDeque<>();
+     private int requestIdCounter = -1;
+     private long pendingSinceNanos;
++    private MineBlockRequest mineBlockRequest;
+ 
+     public InventoryRequestTracker(final UserConnection user) {
+         super(user);
+@@ -77,6 +82,19 @@ public class InventoryRequestTracker extends StoredObject {
+         return !this.requests.isEmpty();
+     }
+ 
++    public boolean hasPendingMineBlockRequest() {
++        return this.mineBlockRequest != null;
++    }
++
++    public void addMineBlockRequest(final int requestId, final int hotbarSlot,
++                                    final int stackNetworkId) {
++        if (this.mineBlockRequest != null) {
++            throw new IllegalStateException("A mining request is already pending");
++        }
++        this.mineBlockRequest = new MineBlockRequest(
++                requestId, hotbarSlot, stackNetworkId, System.nanoTime());
++    }
++
+     public boolean queueClick(final Container container, final int revision, final short slot,
+                               final byte button, final ContainerInput action) {
+         return this.queueInteraction(new QueuedClick(container, revision, slot, button, action));
+@@ -111,6 +129,11 @@ public class InventoryRequestTracker extends StoredObject {
+     }
+ 
+     public void tick() {
++        if (this.mineBlockRequest != null
++                && System.nanoTime() - this.mineBlockRequest.sentAtNanos()
++                >= RESPONSE_TIMEOUT_NANOS) {
++            this.mineBlockRequest = null;
++        }
+         if (!this.hasPending()) {
+             return;
+         }
+@@ -174,6 +197,13 @@ public class InventoryRequestTracker extends StoredObject {
+     }
+ 
+     public void handleResponse(final ItemStackResponseInfo response) {
++        if (this.mineBlockRequest != null
++                && this.mineBlockRequest.requestId() == response.requestId()) {
++            final MineBlockRequest request = this.mineBlockRequest;
++            this.mineBlockRequest = null;
++            this.handleMineBlockResponse(request, response);
++            return;
++        }
+         if (this.recovery.isActive() && this.requests.containsKey(response.requestId())) {
+             // The original screen has been closed. Its response cannot restore a complete
+             // player inventory or cursor, and its slot IDs may now refer to another screen.
+@@ -253,6 +283,56 @@ public class InventoryRequestTracker extends StoredObject {
+         PacketFactory.sendJavaContainerSetContent(this.user(), tracker.getInventoryContainer());
+     }
+ 
++    private void handleMineBlockResponse(final MineBlockRequest request,
++                                         final ItemStackResponseInfo response) {
++        if (response.result() != ItemStackNetResult.Success) {
++            return;
++        }
++        final InventoryContainer inventory = this.user().get(InventoryTracker.class)
++                .getInventoryContainer();
++        final BedrockItem current = inventory.getItem(request.hotbarSlot());
++        for (ItemStackResponseContainerInfo containerInfo : response.containers()) {
++            final ContainerEnumName name = containerInfo.containerName().name();
++            if (name != ContainerEnumName.CombinedHotbarAndInventoryContainer
++                    && name != ContainerEnumName.HotbarContainer
++                    && name != ContainerEnumName.InventoryContainer) {
++                continue;
++            }
++            for (ItemStackResponseSlotInfo slotInfo : containerInfo.slots()) {
++                if (Byte.toUnsignedInt(slotInfo.slot()) != request.hotbarSlot()) {
++                    continue;
++                }
++                final BedrockItem corrected = correctedMineBlockItem(
++                        current, request.stackNetworkId(), slotInfo);
++                if (corrected == null) {
++                    return;
++                }
++                inventory.setItem(request.hotbarSlot(), corrected);
++                PacketFactory.sendJavaContainerSetContent(this.user(), inventory);
++                return;
++            }
++        }
++    }
++
++    static BedrockItem correctedMineBlockItem(final BedrockItem current,
++                                              final int expectedNetId,
++                                              final ItemStackResponseSlotInfo slotInfo) {
++        if (current.isEmpty() || !java.util.Objects.equals(current.netId(), expectedNetId)) {
++            return null;
++        }
++        if (slotInfo.amount() == 0) {
++            return BedrockItem.empty();
++        }
++        final BedrockItem corrected = current.copy();
++        corrected.setAmount(Byte.toUnsignedInt(slotInfo.amount()));
++        corrected.setNetId(slotInfo.itemNetId());
++        final CompoundTag tag = corrected.tag() != null
++                ? corrected.tag() : new CompoundTag();
++        tag.put("Damage", new IntTag(slotInfo.durability()));
++        corrected.setTag(tag);
++        return corrected;
++    }
++
+     void drainQueuedInteractions() {
+         final InventoryTracker tracker = this.user().get(InventoryTracker.class);
+         while (!this.hasPending() && !this.queuedInteractions.isEmpty()) {
+@@ -283,6 +363,9 @@ public class InventoryRequestTracker extends StoredObject {
+         return false;
+     }
+ 
++    private record MineBlockRequest(int requestId, int hotbarSlot, int stackNetworkId,
++                                    long sentAtNanos) { }
++
+     private sealed interface QueuedInteraction permits QueuedClick, QueuedButtonClick {
+ 
+         Container container();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackActionType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackActionType.java
+index 5c3a110d..0346efba 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackActionType.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackActionType.java
+@@ -64,6 +64,10 @@ public final class ItemStackActionType extends Type<ItemStackRequestAction> {
+         } else if (value instanceof ItemStackRequestAction.BeaconPaymentAction action) {
+             BedrockTypes.VAR_INT.write(buffer, action.primaryEvent());
+             BedrockTypes.VAR_INT.write(buffer, action.secondaryEvent());
++        } else if (value instanceof ItemStackRequestAction.MineBlockAction action) {
++            BedrockTypes.VAR_INT.write(buffer, action.hotbarSlot());
++            BedrockTypes.VAR_INT.write(buffer, action.predictedDurability());
++            BedrockTypes.INT_LE.write(buffer, action.stackNetworkId());
+         } else if (value instanceof ItemStackRequestAction.CraftRecipeAction action) {
+             BedrockTypes.UNSIGNED_VAR_INT.write(buffer, action.recipeNetworkId());
+             buffer.writeByte(action.numberOfRequestedCrafts());
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
+index ad55fc55..e63849ad 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
+@@ -9,6 +9,8 @@
+  */
+ package net.raphimc.viabedrock.protocol.packet;
+ 
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.IntTag;
+ import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.minecraft.BlockPosition;
+ import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
+@@ -17,20 +19,79 @@ import net.raphimc.viabedrock.api.model.entity.Entity;
+ import net.raphimc.viabedrock.protocol.data.enums.Direction;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerActionType;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputData;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.TextProcessingEventOrigin;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
+ import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
+ import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
+ import org.junit.jupiter.api.Test;
+ 
+ import java.lang.reflect.Proxy;
+ import java.util.UUID;
++import java.util.List;
+ 
+ import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertNull;
+ import static org.junit.jupiter.api.Assertions.assertTrue;
+ 
+ class ClientPlayerPacketsTest {
+ 
++    @Test
++    void creativeMiningBreaksOnStartWhileSurvivalTracksProgress() {
++        final BlockPosition position = new BlockPosition(3, 64, 5);
++        final ClientPlayerEntity creative = player();
++        ClientPlayerPackets.queueStartDestroyAction(creative, position, Direction.NORTH, true);
++        assertEquals(PlayerActionType.CreativeDestroyBlock,
++                creative.authInputBlockActions().get(0).action());
++        assertNull(creative.blockBreakingInfo());
++
++        final ClientPlayerEntity survival = player();
++        ClientPlayerPackets.queueStartDestroyAction(survival, position, Direction.NORTH, false);
++        assertEquals(PlayerActionType.StartDestroyBlock,
++                survival.authInputBlockActions().get(0).action());
++        assertEquals(position, survival.blockBreakingInfo().position());
++    }
++
++    @Test
++    void miningPredictionDamagesHeldToolCopy() {
++        final CompoundTag tag = new CompoundTag();
++        tag.put("Damage", new IntTag(9));
++        final BedrockItem held = new BedrockItem(1, (short) 0, (byte) 1, tag);
++
++        final BedrockItem predicted = ClientPlayerPackets.predictedMinedItem(held, true);
++
++        assertEquals(9, held.tag().getIntTag("Damage").asInt());
++        assertEquals(10, predicted.tag().getIntTag("Damage").asInt());
++        assertNull(ClientPlayerPackets.predictedMinedItem(new BedrockItem(2), false));
++    }
++
++    @Test
++    void pristineDurableToolStartsAtOneDamage() {
++        final BedrockItem pristine = new BedrockItem(1);
++
++        final BedrockItem predicted = ClientPlayerPackets.predictedMinedItem(pristine, true);
++
++        assertNull(pristine.tag());
++        assertEquals(1, predicted.tag().getIntTag("Damage").asInt());
++    }
++
++    @Test
++    void miningRequestSetsAndClearsTheAuthInputPresenceFlag() {
++        final ClientPlayerEntity player = player();
++        final ItemStackRequestInfo request = new ItemStackRequestInfo(-3,
++                List.of(new ItemStackRequestAction.MineBlockAction(0, 1, 12)),
++                List.of(), TextProcessingEventOrigin.unknown);
++
++        player.setAuthInputItemStackRequest(request);
++        assertTrue(player.authInputData().contains(PlayerAuthInputData.PerformItemStackRequest));
++
++        player.setAuthInputItemStackRequest(null);
++        assertFalse(player.authInputData().contains(PlayerAuthInputData.PerformItemStackRequest));
++    }
++
+     @Test
+     void changingDestroyFaceUpdatesActiveMiningAndForwardsServerAuthoritativeInput() {
+         final ClientPlayerEntity player = player();
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerMiningTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerMiningTest.java
+new file mode 100644
+index 00000000..08924c54
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerMiningTest.java
+@@ -0,0 +1,55 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.IntTag;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseSlotInfo;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNotSame;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++class InventoryRequestTrackerMiningTest {
++
++    @Test
++    void acceptedMiningResponseUpdatesDurabilityWithoutMutatingPriorItem() {
++        final CompoundTag tag = new CompoundTag();
++        tag.put("Damage", new IntTag(5));
++        final BedrockItem held = new BedrockItem(1, (short) 0, (byte) 1, tag);
++        held.setNetId(12);
++        final ItemStackResponseSlotInfo response =
++                new ItemStackResponseSlotInfo((byte) 2, (byte) 2, (byte) 1,
++                        13, "", null, 6);
++
++        final BedrockItem corrected =
++                InventoryRequestTracker.correctedMineBlockItem(held, 12, response);
++
++        assertNotSame(held, corrected);
++        assertEquals(5, held.tag().getIntTag("Damage").asInt());
++        assertEquals(6, corrected.tag().getIntTag("Damage").asInt());
++        assertEquals(13, corrected.netId());
++    }
++
++    @Test
++    void staleMiningResponseCannotDamageReplacedTool() {
++        final BedrockItem replacement = new BedrockItem(1);
++        replacement.setNetId(29);
++        final ItemStackResponseSlotInfo oldResponse =
++                new ItemStackResponseSlotInfo((byte) 2, (byte) 2, (byte) 1,
++                        13, "", null, 6);
++
++        assertNull(InventoryRequestTracker.correctedMineBlockItem(
++                replacement, 12, oldResponse));
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackCodecTest.java b/src/test/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackCodecTest.java
+index 31f1d85b..87bdb1af 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackCodecTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackCodecTest.java
+@@ -154,6 +154,16 @@ class ItemStackCodecTest {
+         assertArrayEquals(new byte[]{13, 15, 42, 3, 0, 0, 0}, bytes(buffer));
+     }
+ 
++    @Test
++    void protocol2193MineBlockUsesHudActionAndLittleEndianNetId() {
++        final ItemStackActionType type = new ItemStackActionType(
++                new BedrockItemType(0, new Int2ObjectOpenHashMap<>(), false));
++        final ByteBuf buffer = Unpooled.buffer();
++        type.write(buffer, new ItemStackRequestAction.MineBlockAction(4, 12, 0x12345678));
++
++        assertArrayEquals(new byte[]{9, 11, 8, 24, 0x78, 0x56, 0x34, 0x12}, bytes(buffer));
++    }
++
+     @Test
+     void protocol2193TakeRequestUsesLiveSlotEncoding() {
+         final ItemStackRequestType type = new ItemStackRequestType(
+-- 
+2.55.0
