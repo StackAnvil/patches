@@ -1,0 +1,316 @@
+From 9587ab74eb7838757271db4744d698b8f2709a95 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 17:35:43 +0200
+Subject: [PATCH] feat(viabedrock): retain Bedrock creative catalog entries
+
+Preserve creative groups and exact entry identities so client UI can reflect the connected Bedrock server catalog and duplicate Java fallback items still resolve to the intended Bedrock item. Resync creative slot contents after sending transactions to avoid local ghost items reported by testers.
+---
+ .../protocol/model/CreativeCatalog.java       | 95 +++++++++++++++++++
+ .../protocol/packet/InventoryPackets.java     | 28 ++++--
+ .../protocol/rewriter/ItemRewriter.java       | 29 ++----
+ .../protocol/model/CreativeCatalogTest.java   | 56 +++++++++++
+ 4 files changed, 181 insertions(+), 27 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/CreativeCatalog.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/CreativeCatalog.java b/src/main/java/net/raphimc/viabedrock/protocol/model/CreativeCatalog.java
+new file mode 100644
+index 00000000..882f1ee7
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/CreativeCatalog.java
+@@ -0,0 +1,95 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.IntTag;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
++import com.viaversion.viaversion.api.minecraft.item.Item;
++import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectMap;
++import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectOpenHashMap;
++
++import java.util.ArrayList;
++import java.util.List;
++
++/** The creative inventory advertised by one Bedrock server connection. */
++public final class CreativeCatalog {
++
++    private static final String ENTRY_KEY = "viabedrock:creative_entry";
++    private static final CreativeCatalog EMPTY = new CreativeCatalog(List.of(), List.of());
++
++    private final List<Group> groups;
++    private final List<Entry> entries;
++    private final Int2ObjectMap<Entry> byEntryId = new Int2ObjectOpenHashMap<>();
++    private final Int2ObjectMap<Entry> byJavaItemId = new Int2ObjectOpenHashMap<>();
++
++    public CreativeCatalog(final List<Group> groups, final List<Entry> entries) {
++        this.groups = List.copyOf(groups);
++        final List<Entry> marked = new ArrayList<>(entries.size());
++        for (final Entry entry : entries) {
++            final Item javaItem = entry.javaItem().copy();
++            final CompoundTag data = javaItem.dataContainer().get(StructuredDataKey.CUSTOM_DATA);
++            final CompoundTag markedData = data != null ? data.copy() : new CompoundTag();
++            markedData.putInt(ENTRY_KEY, entry.netId());
++            javaItem.dataContainer().set(StructuredDataKey.CUSTOM_DATA, markedData);
++
++            final Entry markedEntry = new Entry(entry.netId(), entry.groupIndex(), entry.bedrockItem().copy(),
++                    javaItem, entry.bedrockOnly(), entry.canonical());
++            marked.add(markedEntry);
++            this.byEntryId.put(entry.netId(), markedEntry);
++            final Entry previous = this.byJavaItemId.get(javaItem.identifier());
++            if (previous == null || markedEntry.canonical()) {
++                this.byJavaItemId.put(javaItem.identifier(), markedEntry);
++            }
++        }
++        this.entries = List.copyOf(marked);
++    }
++
++    public static CreativeCatalog empty() {
++        return EMPTY;
++    }
++
++    public List<Group> groups() {
++        return this.groups;
++    }
++
++    public List<Entry> entries() {
++        return this.entries;
++    }
++
++    public boolean containsJavaItem(final int identifier) {
++        return this.byJavaItemId.containsKey(identifier);
++    }
++
++    public BedrockItem creativeItem(final Item javaItem) {
++        final CompoundTag data = javaItem.dataContainer().get(StructuredDataKey.CUSTOM_DATA);
++        final int entryId = data != null && data.get(ENTRY_KEY) instanceof IntTag id ? id.asInt() : 0;
++        final Entry entry = entryId != 0 ? this.byEntryId.get(entryId) : this.byJavaItemId.get(javaItem.identifier());
++        if (entry == null || entry.javaItem().identifier() != javaItem.identifier()) {
++            return null;
++        }
++        final BedrockItem result = entry.bedrockItem().copy();
++        result.setAmount(javaItem.amount());
++        return result;
++    }
++
++    public record Group(int category, String name, Item icon) {
++    }
++
++    public record Entry(int netId, int groupIndex, BedrockItem bedrockItem, Item javaItem,
++                        boolean bedrockOnly, boolean canonical) {
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+index d63a04e1..51cc37c4 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+@@ -77,6 +77,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.EquipmentSlot;
+ import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.CreativeCatalog;
+ import net.raphimc.viabedrock.protocol.model.FullContainerName;
+ import net.raphimc.viabedrock.protocol.model.inventory.BedrockInventoryTransaction;
+ import net.raphimc.viabedrock.protocol.model.inventory.InventoryActionData;
+@@ -94,6 +95,7 @@ import net.raphimc.viabedrock.protocol.types.recipe.CraftingDataReader;
+ 
+ import java.util.ArrayList;
+ import java.util.List;
++import java.util.Objects;
+ import java.util.logging.Level;
+ 
+ public final class InventoryPackets {
+@@ -109,22 +111,33 @@ public final class InventoryPackets {
+             wrapper.cancel();
+             final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
+             final int groups = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
++            final List<CreativeCatalog.Group> creativeGroups = new ArrayList<>(groups);
+             for (int i = 0; i < groups; i++) {
+-                wrapper.read(Types.UNSIGNED_BYTE); // category
+-                wrapper.read(BedrockTypes.STRING); // name
+-                readCreativeItem(wrapper, itemRewriter); // icon
++                final int category = wrapper.read(Types.UNSIGNED_BYTE);
++                final String name = wrapper.read(BedrockTypes.STRING);
++                final BedrockItem icon = readCreativeItem(wrapper, itemRewriter);
++                creativeGroups.add(new CreativeCatalog.Group(category, name, itemRewriter.javaItem(icon)));
+             }
+ 
+-            itemRewriter.clearCreativeItems();
+             final int entries = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
++            final List<CreativeCatalog.Entry> creativeEntries = new ArrayList<>(entries);
+             for (int i = 0; i < entries; i++) {
+-                wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // creative net ID
++                final int netId = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+                 final BedrockItem item = readCreativeItem(wrapper, itemRewriter);
+-                wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // group index
++                final int groupIndex = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+                 if (!item.isEmpty()) {
+-                    itemRewriter.addCreativeItem(item);
++                    final Item javaItem = itemRewriter.javaItem(item);
++                    if (javaItem.isEmpty()) {
++                        continue;
++                    }
++                    final String bedrockName = itemRewriter.getItems().inverse().get(item.identifier());
++                    final String javaName = BedrockProtocol.MAPPINGS.getJavaItems().inverse().get(javaItem.identifier());
++                    final boolean canonical = Objects.equals(bedrockName, javaName);
++                    creativeEntries.add(new CreativeCatalog.Entry(netId, groupIndex, item, javaItem,
++                            !canonical, canonical));
+                 }
+             }
++            itemRewriter.setCreativeCatalog(creativeGroups, creativeEntries);
+         });
+         protocol.registerClientbound(
+                 ClientboundBedrockPackets.CONTAINER_OPEN,
+@@ -1191,6 +1204,7 @@ public final class InventoryPackets {
+                     packet.write(wrapper.user().get(InventoryTransactionRewriter.class).getInventoryTransactionType(), transaction);
+                     packet.sendToServer(BedrockProtocol.class);
+                     target.setItem(slot, creativeItem.copy());
++                    PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventory);
+                 });
+         protocol.registerServerbound(
+                 ServerboundPackets26_3.CUSTOM_CLICK_ACTION,
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
+index ccea932a..03b874a0 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
+@@ -48,6 +48,7 @@ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
+ import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomItemTags;
+ import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.CreativeCatalog;
+ import net.raphimc.viabedrock.protocol.model.ItemEntry;
+ import net.raphimc.viabedrock.protocol.rewriter.item.BundleItemRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomAttachableResourceRewriter;
+@@ -62,8 +63,8 @@ import net.raphimc.viabedrock.protocol.types.item.NetworkItemStackDescriptorType
+ 
+ import java.util.HashMap;
+ import java.util.HashSet;
++import java.util.List;
+ import java.util.Map;
+-import java.util.Objects;
+ import java.util.Set;
+ import java.util.logging.Level;
+ 
+@@ -81,7 +82,7 @@ public class ItemRewriter extends StoredObject {
+     private final Type<BedrockItem> optionalNewItemType;
+     private final Type<BedrockItem[]> newItemArrayType;
+     private final Type<BedrockItem> stackRequestResultType;
+-    private final Int2ObjectMap<BedrockItem> creativeItemStacks = new Int2ObjectOpenHashMap<>();
++    private volatile CreativeCatalog creativeCatalog = CreativeCatalog.empty();
+ 
+     static {
+         // TODO: Add missing item nbt rewriters
+@@ -407,29 +408,17 @@ public class ItemRewriter extends StoredObject {
+                 "Translating Java items to Bedrock is not yet supported");
+     }
+ 
+-    public void clearCreativeItems() {
+-        this.creativeItemStacks.clear();
++    public CreativeCatalog creativeCatalog() {
++        return this.creativeCatalog;
+     }
+ 
+-    public void addCreativeItem(final BedrockItem item) {
+-        final Item javaItem = this.javaItem(item);
+-        if (!javaItem.isEmpty()) {
+-            final String bedrockName = this.items.inverse().get(item.identifier());
+-            final String javaName = BedrockProtocol.MAPPINGS.getJavaItems().inverse().get(javaItem.identifier());
+-            if (!this.creativeItemStacks.containsKey(javaItem.identifier()) || Objects.equals(bedrockName, javaName)) {
+-                this.creativeItemStacks.put(javaItem.identifier(), item.copy());
+-            }
+-        }
++    public void setCreativeCatalog(final List<CreativeCatalog.Group> groups,
++                                   final List<CreativeCatalog.Entry> entries) {
++        this.creativeCatalog = new CreativeCatalog(groups, entries);
+     }
+ 
+     public BedrockItem creativeItem(final Item item) {
+-        final BedrockItem creativeItem = this.creativeItemStacks.get(item.identifier());
+-        if (creativeItem == null) {
+-            return null;
+-        }
+-        final BedrockItem result = creativeItem.copy();
+-        result.setAmount(item.amount());
+-        return result;
++        return this.creativeCatalog.creativeItem(item);
+     }
+ 
+     public BedrockItem[] bedrockItems(final Item[] javaItems) {
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java
+new file mode 100644
+index 00000000..e828c501
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/CreativeCatalogTest.java
+@@ -0,0 +1,56 @@
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.viaversion.api.data.FullMappings;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
++import com.viaversion.viaversion.api.minecraft.item.Item;
++import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Field;
++import java.lang.reflect.Proxy;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++class CreativeCatalogTest {
++
++    @Test
++    void resolvesDistinctBedrockEntriesMappedToTheSameJavaItem() throws ReflectiveOperationException {
++        final Item paper = javaItem(1);
++        final CreativeCatalog catalog = new CreativeCatalog(List.of(), List.of(
++                new CreativeCatalog.Entry(11, 0, new BedrockItem(100), paper, true, false),
++                new CreativeCatalog.Entry(12, 0, new BedrockItem(101), paper, true, false)));
++
++        assertEquals(100, catalog.creativeItem(catalog.entries().get(0).javaItem()).identifier());
++        assertEquals(101, catalog.creativeItem(catalog.entries().get(1).javaItem()).identifier());
++        assertEquals(11, catalog.entries().get(0).javaItem().dataContainer().get(StructuredDataKey.CUSTOM_DATA)
++                .getInt("viabedrock:creative_entry"));
++        assertEquals(100, catalog.creativeItem(paper).identifier());
++        assertNull(catalog.creativeItem(javaItem(2)));
++    }
++
++    @Test
++    void prefersCanonicalEntryForUntaggedJavaItems() throws ReflectiveOperationException {
++        final Item mapped = javaItem(2);
++        final CreativeCatalog catalog = new CreativeCatalog(List.of(), List.of(
++                new CreativeCatalog.Entry(21, 0, new BedrockItem(200), mapped, true, false),
++                new CreativeCatalog.Entry(22, 0, new BedrockItem(201), mapped, false, true)));
++
++        assertEquals(201, catalog.creativeItem(mapped).identifier());
++        assertEquals(200, catalog.creativeItem(catalog.entries().get(0).javaItem()).identifier());
++        assertEquals(201, catalog.creativeItem(catalog.entries().get(1).javaItem()).identifier());
++    }
++
++    private static Item javaItem(final int identifier) throws ReflectiveOperationException {
++        final StructuredDataContainer data = new StructuredDataContainer();
++        final FullMappings mappings = (FullMappings) Proxy.newProxyInstance(FullMappings.class.getClassLoader(),
++                new Class<?>[]{FullMappings.class}, (proxy, method, args) -> 0);
++        final Field lookup = StructuredDataContainer.class.getDeclaredField("lookup");
++        lookup.setAccessible(true);
++        lookup.set(data, mappings);
++        return new StructuredItem(identifier, 1, data);
++    }
++
++}
+-- 
+2.55.0
