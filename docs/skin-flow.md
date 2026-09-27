@@ -1,39 +1,31 @@
-# Bedrock skin flow and Character Creator gap
+# Bedrock skins and Character Creator
 
-This note explains why Character Creator skins appear as default skins in the current add-on. It also separates account appearance updates from the skin data sent to a world.
+This note describes the skin paths in the VFP VB Addon. It also explains why saved Character Creator slots cannot yet become the player's skin in a world.
 
-## What the native client sends
+## Skin data in a world
 
-The Bedrock client saved an owned classic skin through an HTTPS `PUT` to `persona-secondary.franchise.minecraft-services.net` after leaving Dressing Room. The request contained `appearanceObjects`, and the service returned HTTP 200. This updates the account appearance. It does not prove that a server or another player received the skin.
+The Bedrock client sends its skin in the client-data JWT during login. The skin includes pixels, geometry, animations, persona pieces, and colors. A connected client can change its skin with `PlayerSkinPacket`.
 
-For a new world connection, the client puts its skin in the login client-data JWT. A private local server recorded these fields from Bedrock 1.26.51:
+A native Bedrock 1.26.51 capture shows that a Character Creator skin can use separate body and animated face models. The face uses a separate image. Bedrock players can have other geometry layouts, so the renderer checks each layout before it installs a custom model.
 
-| Selected appearance | `PersonaSkin` | Image | Geometry | Persona pieces |
-| --- | --- | --- | --- | --- |
-| Birdie Wings classic skin | `false` | 64×64 RGBA | 7,411 bytes | 0 |
-| Default Character Creator character | `true` | 256×256 RGBA | 57,295 bytes | 9 |
+ViaBedrock reads skins from `PlayerListPacket` and `PlayerSkinPacket`. Its current `SkinType.write` now writes the full skin structure and has a round-trip test. The add-on renders supported persona body meshes and a separate animated face. An unsupported geometry layout keeps the normal Java player visible.
 
-The Character Creator sample had 48 geometry bones across two models. It had 12 `poly_mesh` entries and no cubes. These counts describe this sample, not every Character Creator skin.
+## Dressing Room and account data
 
-For a skin change during a connection, Bedrock uses `PlayerSkinPacket`. The server processes that packet and broadcasts it to other clients. See [Mojang's packet reference](https://mojang.github.io/bedrock-protocol-docs/1.26.50-preview.24/packets/player-skin-packet/).
+The add-on's Dressing Room selects Steve, Alex, or an imported classic PNG. `BedrockAppearanceStore` keeps this choice per account. `ViaFabricPlusSkinProvider` places it in the next login JWT. The add-on does not send a live `PlayerSkinPacket` when the player changes this choice.
 
-## What the add-on does today
+The Dressing Room also has an Account slots screen. It reads five saved Character Creator slots from `GET /api/v1.0/appearance/retrieve`. It reads Marketplace entitlements from `GET /api/v1.0/player/inventory`. The screen shows slot occupancy and piece counts. It does not equip a slot.
 
-`BedrockDressingRoomScreen` selects Steve, Alex, or an imported classic PNG. It saves that choice in `BedrockAppearanceStore` and tells the player to join a Bedrock world again. The screen has no Character Creator selection.
+Each saved slot is a recipe with a base, piece IDs, and colors. The account response does not contain the rendered skin pixels or geometry. The native client downloads persona packs and assembles the skin locally. Captured Marketplace persona packs contain encrypted files. The add-on does not have an asset decoder or a compositor for those packs.
 
-At login, `ViaFabricPlusSkinProvider.getClientPlayerSkin` reads that local choice. It replaces the default Steve skin fields in ViaBedrock's client-data JWT. It does not read the native Bedrock account's current Character Creator choice. ViaBedrock builds the JWT in `LoginPackets`.
+Selecting a saved slot in the native Dressing Room can send `PUT /api/v1.0/appearance`. That request updates account data. It does not return an assembled skin. The add-on does not write account slots.
 
-For other players, ViaBedrock reads skin data from `PlayerListPacket` and `PlayerSkinPacket`. Both paths call `ViaFabricPlusSkinProvider.setSkin`. `BedrockPlayerSkins.accept` returns immediately when `skin.persona()` is true. As a result, Character Creator players keep the Java client's fallback appearance.
+## Work still needed
 
-Removing that condition alone is unsafe. `BedrockGeometryParser` reads cube geometry but skips `poly_mesh`. The captured Character Creator sample has no cubes. The current custom renderer would have no body surfaces for that sample. The second geometry model also supplies an animated face, which needs its own texture handling.
+1. Resolve the licensed wardrobe assets for the signed-in account and decode their piece data.
+2. Assemble body and face textures, geometry, animation, and piece claims from a slot recipe.
+3. Preview the assembled character in the Dressing Room and place it in the login JWT.
+4. Send `PlayerSkinPacket` for live changes, then check the result with a second Bedrock client.
+5. Compare rendered characters with the native client for several piece combinations.
 
-The add-on does not send `PlayerSkinPacket` when its Dressing Room changes a skin. Its classic skin takes effect on the next Bedrock login. ViaBedrock's `SkinType.write` is currently marked incomplete, so live skin updates need a protocol writer and round-trip tests first.
-
-## Work needed to close the report
-
-1. Test an imported classic skin with two clients. After the Java client joins, inspect the skin that a Bedrock observer receives in `PlayerListPacket`. Check the skin ID, image, geometry, and cape.
-2. Add support for `poly_mesh` geometry and the animated face data. Then render a Character Creator packet in the Java client and compare it with a native Bedrock screenshot.
-3. Decide how the add-on obtains an account's Character Creator appearance. The HTTPS `appearanceObjects` update contains account selections, but the login JWT also needs rendered skin pixels and geometry. A local classic PNG cannot provide those fields.
-4. If the Dressing Room must update a connected player, implement `SkinType.write` for the current protocol. Send `PlayerSkinPacket` and check that a second Bedrock client receives the change.
-
-Keep login JWTs, raw proxy flows, player textures, and account data under `.stackanvil/`. The private probe for this investigation is in `.stackanvil/captures/20260925t191234-skin-login-probe/`. Do not commit it.
+Keep login JWTs, raw proxy flows, player textures, and account data under `.stackanvil/`. Do not commit them.
