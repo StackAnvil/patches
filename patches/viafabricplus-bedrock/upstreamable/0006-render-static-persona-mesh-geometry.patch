@@ -1,0 +1,445 @@
+From 192e3d6e0926c24193c097373af6419c0d78274b Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 10:44:51 +0200
+Subject: [PATCH] feat(bedrock): render static persona mesh geometry
+
+Render self-contained Character Creator geometry through the Bedrock player model when all six body parts are present. Unsupported animated and split-face layouts retain a visible vanilla fallback rather than installing a blank renderer.
+---
+ .../bedrock/render/BedrockGeometry.java       | 102 ++++++++++++++++-
+ .../bedrock/render/BedrockPlayerSkins.java    | 100 +++++++++++++++--
+ .../render/BedrockPersonaGeometryTest.java    | 106 ++++++++++++++++++
+ 3 files changed, 300 insertions(+), 8 deletions(-)
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaGeometryTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
+index d0265c4..e012b4b 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
+@@ -18,6 +18,9 @@
+ 
+ package com.viaversion.viafabricplus.bedrock.render;
+ 
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import java.util.ArrayList;
+ import java.util.EnumSet;
+ import java.util.HashMap;
+ import java.util.List;
+@@ -35,11 +38,13 @@ import org.cube.converter.model.element.Parent;
+ import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
+ import org.cube.converter.util.element.UVMap;
+ import org.cube.converter.util.element.UVMap.UVType;
++import org.joml.Vector3f;
+ 
+ /** Builds client models from the geometry that ViaBedrock has already parsed. */
+ public final class BedrockGeometry {
+ 
+     private static final float DEGREES_TO_RADIANS = (float) (Math.PI / 180D);
++    private static final int MAX_MESH_FACES = 16_384;
+     private static final List<Direction> CUBE_FACES = List.of(
+         Direction.DOWN, Direction.UP, Direction.WEST, Direction.NORTH, Direction.EAST, Direction.SOUTH
+     );
+@@ -58,10 +63,20 @@ public final class BedrockGeometry {
+     }
+ 
+     public static PlayerModel playerModel(final BedrockGeometryModel geometry, final boolean slim) {
+-        return new PlayerModel(root(geometry, true), slim);
++        return playerModel(geometry, slim, Map.of());
++    }
++
++    public static PlayerModel playerModel(final BedrockGeometryModel geometry, final boolean slim,
++                                          final Map<String, JsonObject> meshes) {
++        return new PlayerModel(root(geometry, true, meshes), slim);
+     }
+ 
+     private static ModelPart root(final BedrockGeometryModel geometry, final boolean player) {
++        return root(geometry, player, Map.of());
++    }
++
++    private static ModelPart root(final BedrockGeometryModel geometry, final boolean player,
++                                  final Map<String, JsonObject> meshes) {
+         final Map<String, Bone> bones = new HashMap<>();
+         final float textureWidth = geometry.getTextureSize().getX();
+         final float textureHeight = geometry.getTextureSize().getY();
+@@ -74,6 +89,10 @@ public final class BedrockGeometry {
+             for (Cube cube : parent.getCubes().values()) {
+                 children.put("cube_" + cubeNumber++, cubePart(cube, parent, textureWidth, textureHeight));
+             }
++            final JsonObject mesh = meshes.get(parent.getName());
++            if (mesh != null) {
++                children.put("mesh", meshPart(mesh, parent, textureWidth, textureHeight));
++            }
+             bones.put(parent.getName(), new Bone(parent, part, children));
+         }
+ 
+@@ -130,6 +149,87 @@ public final class BedrockGeometry {
+         return new ModelPart(List.of(), roots);
+     }
+ 
++    static ModelPart meshPart(final JsonObject mesh, final Parent bone, final float textureWidth, final float textureHeight) {
++        final JsonArray positions = mesh.getAsJsonArray("positions");
++        final JsonArray normals = mesh.getAsJsonArray("normals");
++        final JsonArray uvs = mesh.getAsJsonArray("uvs");
++        final var faces = mesh.get("polys");
++        if (positions == null || normals == null || uvs == null || faces == null) {
++            throw new IllegalArgumentException("Incomplete Bedrock poly mesh");
++        }
++        final boolean normalized = mesh.has("normalized_uvs") && mesh.get("normalized_uvs").getAsBoolean();
++        final List<ModelPart.Cube> cubes = new ArrayList<>();
++        if (faces.isJsonArray()) {
++            if (faces.getAsJsonArray().size() > MAX_MESH_FACES) {
++                throw new IllegalArgumentException("Bedrock poly mesh exceeds face limit");
++            }
++            for (var face : faces.getAsJsonArray()) {
++                cubes.add(meshFace(face.getAsJsonArray(), positions, normals, uvs, bone,
++                    normalized ? 1F : textureWidth, normalized ? 1F : textureHeight));
++            }
++        } else {
++            final int corners = switch (faces.getAsString()) {
++                case "tri_list" -> 3;
++                case "quad_list" -> 4;
++                default -> throw new IllegalArgumentException("Unknown Bedrock poly mesh layout");
++            };
++            if (positions.size() != normals.size() || positions.size() != uvs.size() || positions.size() % corners != 0) {
++                throw new IllegalArgumentException("Invalid Bedrock poly mesh vertex lists");
++            }
++            if (positions.size() / corners > MAX_MESH_FACES) {
++                throw new IllegalArgumentException("Bedrock poly mesh exceeds face limit");
++            }
++            for (int start = 0; start < positions.size(); start += corners) {
++                final JsonArray face = new JsonArray();
++                for (int i = 0; i < corners; i++) {
++                    final JsonArray indices = new JsonArray();
++                    indices.add(start + i);
++                    indices.add(start + i);
++                    indices.add(start + i);
++                    face.add(indices);
++                }
++                cubes.add(meshFace(face, positions, normals, uvs, bone,
++                    normalized ? 1F : textureWidth, normalized ? 1F : textureHeight));
++            }
++        }
++        return new ModelPart(cubes, Map.of());
++    }
++
++    private static ModelPart.Cube meshFace(final JsonArray face, final JsonArray positions, final JsonArray normals,
++                                           final JsonArray uvs, final Parent bone, final float width, final float height) {
++        if (face.size() != 3 && face.size() != 4) {
++            throw new IllegalArgumentException("Bedrock poly mesh face must have three or four vertices");
++        }
++        final ModelPart.Vertex[] vertices = new ModelPart.Vertex[4];
++        final Vector3f normal = new Vector3f();
++        for (int i = 0; i < face.size(); i++) {
++            final JsonArray indices = face.get(i).getAsJsonArray();
++            if (indices.size() != 3) {
++                throw new IllegalArgumentException("Invalid Bedrock poly mesh indices");
++            }
++            final JsonArray position = positions.get(indices.get(0).getAsInt()).getAsJsonArray();
++            final JsonArray direction = normals.get(indices.get(1).getAsInt()).getAsJsonArray();
++            final JsonArray uv = uvs.get(indices.get(2).getAsInt()).getAsJsonArray();
++            vertices[i] = new ModelPart.Vertex(
++                position.get(0).getAsFloat() - bone.getPivot().getX(),
++                bone.getPivot().getY() - position.get(1).getAsFloat(),
++                position.get(2).getAsFloat() - bone.getPivot().getZ(),
++                uv.get(0).getAsFloat() / width, uv.get(1).getAsFloat() / height
++            );
++            normal.add(direction.get(0).getAsFloat(), -direction.get(1).getAsFloat(), direction.get(2).getAsFloat());
++        }
++        if (face.size() == 3) {
++            vertices[3] = vertices[2];
++        }
++        if (normal.lengthSquared() == 0F) {
++            throw new IllegalArgumentException("Bedrock poly mesh face has no normal");
++        }
++        normal.normalize();
++        final ModelPart.Cube cube = new ModelPart.Cube(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, 1, 1, Set.of(Direction.NORTH));
++        cube.polygons[0] = new ModelPart.Polygon(vertices, normal);
++        return cube;
++    }
++
+     private static ModelPart cubePart(final Cube cube, final Parent bone, final float textureWidth, final float textureHeight) {
+         final float pivotX = cube.getPivot().getX();
+         final float pivotY = cube.getPivot().getY();
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
+index 0daed6c..aea6ef3 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
+@@ -22,6 +22,7 @@ import com.mojang.blaze3d.platform.NativeImage;
+ import com.viaversion.viafabricplus.ViaFabricPlus;
+ import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
+ import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.libs.gson.JsonArray;
+ import com.viaversion.viaversion.libs.gson.JsonObject;
+ import com.viaversion.viaversion.libs.gson.JsonParser;
+ import java.awt.image.BufferedImage;
+@@ -54,7 +55,7 @@ public final class BedrockPlayerSkins {
+     }
+ 
+     public static void accept(final UserConnection connection, final UUID playerUuid, final SkinData skin) {
+-        if (skin == null || skin.skinData() == null || skin.persona() || !supportedImage(skin.skinData())) {
++        if (skin == null || skin.skinData() == null || !supportedImage(skin.skinData())) {
+             return;
+         }
+         Minecraft.getInstance().execute(() -> {
+@@ -66,6 +67,12 @@ public final class BedrockPlayerSkins {
+                 PLAYER_BY_TEXTURE.remove(previous.bodyId);
+                 release(previous);
+             }
++            final Geometry geometry = geometry(skin);
++            if (skin.persona() && geometry == null) {
++                // A persona can contain a separate animated face or unsupported mesh
++                // layout. Keep the Java player visible with its ordinary fallback.
++                return;
++            }
+             final Identifier bodyId = textureId(playerUuid, "body");
+             register(bodyId, skin.skinData());
+             final Identifier capeId = supportedImage(skin.capeData()) ? textureId(playerUuid, "cape") : null;
+@@ -76,7 +83,6 @@ public final class BedrockPlayerSkins {
+             final PlayerModelType modelType = slim ? PlayerModelType.SLIM : PlayerModelType.WIDE;
+             final PlayerSkin playerSkin = PlayerSkin.insecure(new ClientAsset.ResourceTexture(bodyId, bodyId),
+                 capeId == null ? null : new ClientAsset.ResourceTexture(capeId, capeId), null, modelType);
+-            final BedrockGeometryModel geometry = geometry(skin);
+             APPEARANCES.put(playerUuid, new Appearance(playerSkin, geometry, slim, bodyId, capeId));
+             PLAYER_BY_TEXTURE.put(bodyId, playerUuid);
+         });
+@@ -93,7 +99,8 @@ public final class BedrockPlayerSkins {
+             return null;
+         }
+         if (appearance.renderer == null || appearance.rendererEpoch != rendererEpoch) {
+-            appearance.renderer = new BedrockPlayerRenderer(rendererContext, BedrockGeometry.playerModel(appearance.geometry, appearance.slim), appearance.slim);
++            appearance.renderer = new BedrockPlayerRenderer(rendererContext,
++                BedrockGeometry.playerModel(appearance.geometry.model(), appearance.slim, appearance.geometry.meshes()), appearance.slim);
+             appearance.rendererEpoch = rendererEpoch;
+         }
+         return appearance.renderer;
+@@ -156,8 +163,11 @@ public final class BedrockPlayerSkins {
+         }
+     }
+ 
+-    private static BedrockGeometryModel geometry(final SkinData skin) {
++    private static Geometry geometry(final SkinData skin) {
+         final String name = geometryName(skin);
++        if (skin.persona()) {
++            return personaGeometry(name, skin.geometryData(), skin.animations(), skin.animationData());
++        }
+         if ("geometry.humanoid.custom".equalsIgnoreCase(name) || "geometry.humanoid.customSlim".equalsIgnoreCase(name)) {
+             // These are Bedrock's standard Steve and Alex models. Minecraft's
+             // player renderer already knows their exact UVs and overlay layout.
+@@ -169,24 +179,100 @@ public final class BedrockPlayerSkins {
+         try {
+             final JsonObject data = JsonParser.parseString(skin.geometryData()).getAsJsonObject();
+             final List<BedrockGeometryModel> models = BedrockGeometryModel.fromJson(data);
+-            return models.stream().filter(model -> model.getIdentifier().equals(name)).findFirst()
++            final BedrockGeometryModel model = models.stream().filter(value -> value.getIdentifier().equals(name)).findFirst()
+                 .orElseGet(() -> models.isEmpty() ? null : models.getFirst());
++            return model == null ? null : new Geometry(model, Map.of());
+         } catch (RuntimeException e) {
+             ViaFabricPlusBedrock.impl().logger().warn("Failed to parse Bedrock player geometry", e);
+             return null;
+         }
+     }
+ 
++    static Geometry personaGeometry(final String name, final String geometryData,
++                                    final List<SkinData.AnimationData> animations, final String animationData) {
++        if (geometryData == null || geometryData.isBlank() || !animations.isEmpty()
++            || animationData != null && !animationData.isBlank() && !"null".equalsIgnoreCase(animationData)
++            && !"{}".equals(animationData.strip())) {
++            return null;
++        }
++        try {
++            final JsonObject data = JsonParser.parseString(geometryData).getAsJsonObject();
++            final JsonArray models = data.getAsJsonArray("minecraft:geometry");
++            if (models == null || models.size() != 1) {
++                return null;
++            }
++            final JsonObject model = models.get(0).getAsJsonObject().deepCopy();
++            if (!name.equals(model.getAsJsonObject("description").get("identifier").getAsString())) {
++                return null;
++            }
++            final Map<String, JsonObject> meshes = new HashMap<>();
++            final Map<String, Boolean> surfaces = new HashMap<>();
++            for (var entry : model.getAsJsonArray("bones")) {
++                final JsonObject bone = entry.getAsJsonObject();
++                final String boneName = bone.get("name").getAsString();
++                if (!bone.has("pivot")) {
++                    bone.add("pivot", zeroVector());
++                }
++                if (!bone.has("rotation")) {
++                    bone.add("rotation", zeroVector());
++                }
++                if (bone.has("poly_mesh")) {
++                    meshes.put(boneName, bone.getAsJsonObject("poly_mesh"));
++                }
++                if (bone.has("cubes")) {
++                    for (var cubeEntry : bone.getAsJsonArray("cubes")) {
++                        final JsonObject cube = cubeEntry.getAsJsonObject();
++                        if (!cube.has("pivot")) {
++                            cube.add("pivot", bone.getAsJsonArray("pivot").deepCopy());
++                        }
++                        if (!cube.has("rotation")) {
++                            cube.add("rotation", zeroVector());
++                        }
++                    }
++                }
++                surfaces.put(boneName.toLowerCase(Locale.ROOT).replace("_", ""),
++                    bone.has("poly_mesh") || bone.has("cubes") && !bone.getAsJsonArray("cubes").isEmpty());
++            }
++            for (String part : List.of("head", "body", "rightarm", "leftarm", "rightleg", "leftleg")) {
++                if (!surfaces.getOrDefault(part, false)) {
++                    return null;
++                }
++            }
++            final JsonObject normalized = new JsonObject();
++            final JsonArray selected = new JsonArray();
++            selected.add(model);
++            normalized.add("minecraft:geometry", selected);
++            final BedrockGeometryModel parsed = BedrockGeometryModel.fromJson(normalized).getFirst();
++            // Parse the polygons now so a malformed skin never installs a blank renderer.
++            BedrockGeometry.playerModel(parsed, false, meshes);
++            return new Geometry(parsed, Map.copyOf(meshes));
++        } catch (RuntimeException e) {
++            ViaFabricPlusBedrock.impl().logger().warn("Failed to parse Bedrock persona geometry", e);
++            return null;
++        }
++    }
++
++    private static JsonArray zeroVector() {
++        final JsonArray vector = new JsonArray();
++        vector.add(0);
++        vector.add(0);
++        vector.add(0);
++        return vector;
++    }
++
++    record Geometry(BedrockGeometryModel model, Map<String, JsonObject> meshes) {
++    }
++
+     private static final class Appearance {
+         private final PlayerSkin skin;
+-        private final BedrockGeometryModel geometry;
++        private final Geometry geometry;
+         private final boolean slim;
+         private final Identifier bodyId;
+         private final Identifier capeId;
+         private AvatarRenderer<?> renderer;
+         private long rendererEpoch;
+ 
+-        private Appearance(final PlayerSkin skin, final BedrockGeometryModel geometry, final boolean slim,
++        private Appearance(final PlayerSkin skin, final Geometry geometry, final boolean slim,
+                            final Identifier bodyId, final Identifier capeId) {
+             this.skin = skin;
+             this.geometry = geometry;
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaGeometryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaGeometryTest.java
+new file mode 100644
+index 0000000..d6bdf5a
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaGeometryTest.java
+@@ -0,0 +1,106 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import java.util.List;
++import net.minecraft.util.RandomSource;
++import org.cube.converter.model.element.Parent;
++import org.cube.converter.util.element.Position3V;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++final class BedrockPersonaGeometryTest {
++
++    @Test
++    void buildsIndexedMeshFacesWithBedrockPivotsAndNormalizedUvs() {
++        final JsonObject mesh = mesh();
++        final var bone = new Parent("head", new Position3V(2, 24, 0), Position3V.zero());
++        final var part = BedrockGeometry.meshPart(mesh, bone, 256, 256);
++        final var face = part.getRandomCube(RandomSource.create()).polygons[0];
++
++        assertEquals(4, face.vertices().length);
++        assertEquals(-2, face.vertices()[0].x());
++        assertEquals(1, face.vertices()[0].y());
++        assertEquals(0.5F, face.vertices()[0].u());
++        assertEquals(0.25F, face.vertices()[0].v());
++        assertEquals(-1F, face.normal().y());
++    }
++
++    @Test
++    void installsOnlyCompleteStaticPersonaGeometry() {
++        final JsonObject model = new JsonObject();
++        final JsonObject description = new JsonObject();
++        description.addProperty("identifier", "geometry.test.persona");
++        description.addProperty("texture_width", 256);
++        description.addProperty("texture_height", 256);
++        model.add("description", description);
++        final JsonArray bones = new JsonArray();
++        for (String name : List.of("head", "body", "rightarm", "leftarm", "rightleg", "leftleg")) {
++            final JsonObject bone = new JsonObject();
++            bone.addProperty("name", name);
++            bone.add("poly_mesh", mesh());
++            bones.add(bone);
++        }
++        model.add("bones", bones);
++        final JsonObject data = new JsonObject();
++        final JsonArray models = new JsonArray();
++        models.add(model);
++        data.add("minecraft:geometry", models);
++
++        assertNotNull(BedrockPlayerSkins.personaGeometry("geometry.test.persona", data.toString(), List.of(), ""));
++        models.add(model.deepCopy());
++        assertNull(BedrockPlayerSkins.personaGeometry("geometry.test.persona", data.toString(), List.of(), ""));
++        models.remove(1);
++        bones.remove(0);
++        assertNull(BedrockPlayerSkins.personaGeometry("geometry.test.persona", data.toString(), List.of(), ""));
++    }
++
++    private static JsonObject mesh() {
++        final JsonObject mesh = new JsonObject();
++        mesh.addProperty("normalized_uvs", true);
++        final JsonArray positions = new JsonArray();
++        positions.add(vector(0, 23, 0));
++        positions.add(vector(1, 23, 0));
++        positions.add(vector(1, 24, 0));
++        positions.add(vector(0, 24, 0));
++        mesh.add("positions", positions);
++        final JsonArray normals = new JsonArray();
++        normals.add(vector(0, 1, 0));
++        mesh.add("normals", normals);
++        final JsonArray uvs = new JsonArray();
++        uvs.add(vector(0.5F, 0.25F));
++        uvs.add(vector(0.75F, 0.25F));
++        uvs.add(vector(0.75F, 0.5F));
++        uvs.add(vector(0.5F, 0.5F));
++        mesh.add("uvs", uvs);
++        final JsonArray polygon = new JsonArray();
++        for (int i = 0; i < 4; i++) {
++            final JsonArray indices = new JsonArray();
++            indices.add(i);
++            indices.add(0);
++            indices.add(i);
++            polygon.add(indices);
++        }
++        final JsonArray polygons = new JsonArray();
++        polygons.add(polygon);
++        mesh.add("polys", polygons);
++        return mesh;
++    }
++
++    private static JsonArray vector(final float... values) {
++        final JsonArray vector = new JsonArray();
++        for (float value : values) {
++            vector.add(value);
++        }
++        return vector;
++    }
++}
+-- 
+2.55.0
