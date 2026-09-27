@@ -1,0 +1,380 @@
+From ddc1f6c0ac37cf52c886777dc8651838e3e5d7a0 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 11:49:41 +0200
+Subject: [PATCH] fix(inventory): confirm survival offhand transfers from
+ Bedrock
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Bedrock 2193 rejects Java cursor-to-offhand item stack requests, while a normal player UI to offhand inventory transaction is accepted. Send that transaction only for an empty offhand slot, then clear Java’s cursor only after Bedrock reports the matching item and count in offhand. Bedrock assigns a new stack net ID during this move, so the completion check uses item data rather than requiring the old ID. Timeout recovery reopens inventory and waits for authoritative cursor and offhand contents.
+---
+ .../api/model/container/Container.java        |  9 ++-
+ .../container/player/OffhandContainer.java    |  3 +-
+ .../protocol/packet/InventoryPackets.java     | 57 ++++++++++++--
+ .../storage/InventoryRequestTracker.java      | 74 ++++++++++++++++++-
+ .../protocol/packet/InventoryPacketsTest.java | 23 ++++++
+ .../storage/InventoryRequestTrackerTest.java  | 22 ++++++
+ 6 files changed, 179 insertions(+), 9 deletions(-)
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
+index ba507552..1ab264c9 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
+@@ -118,8 +118,10 @@ public abstract class Container {
+ 
+         clickContext.snapshot(this);
+ 
+-        final List<ItemStackRequestAction> itemActions =
+-            switch (action) {
++        final List<ItemStackRequestAction> itemActions;
++        inventoryRequestTracker.setPredictingClick(true);
++        try {
++            itemActions = switch (action) {
+                 case PICKUP ->
+                     this.singletonAction(
+                                     this.handlePickupClick(clickContext, javaSlot, button));
+@@ -134,6 +136,9 @@ public abstract class Container {
+                 case PICKUP_ALL -> this.handlePickupAllClick(clickContext, javaSlot);
+                 default -> List.of();
+             };
++        } finally {
++            inventoryRequestTracker.setPredictingClick(false);
++        }
+ 
+         if (itemActions.isEmpty()) {
+             return false;
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/player/OffhandContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/player/OffhandContainer.java
+index 3332127e..e6dbec61 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/container/player/OffhandContainer.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/container/player/OffhandContainer.java
+@@ -30,6 +30,7 @@ import net.raphimc.viabedrock.protocol.model.BedrockItem;
+ import net.raphimc.viabedrock.protocol.model.FullContainerName;
+ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+ import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
+ public class OffhandContainer extends InventorySubContainer {
+@@ -57,7 +58,7 @@ public class OffhandContainer extends InventorySubContainer {
+     protected void onSlotChanged(
+             final int slot, final BedrockItem oldItem, final BedrockItem newItem) {
+         super.onSlotChanged(slot, oldItem, newItem);
+-        if (slot == 0) {
++        if (slot == 0 && !this.user.get(InventoryRequestTracker.class).isPredictingClick()) {
+             final PacketWrapper mobEquipment =
+                     PacketWrapper.create(ServerboundBedrockPackets.MOB_EQUIPMENT, this.user);
+             mobEquipment.write(
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+index 13c2bd35..ab908b24 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+@@ -387,6 +387,8 @@ public final class InventoryPackets {
+                         container.markServerUpdate();
+                         wrapper.user().get(InventoryRequestTracker.class)
+                                 .handleAuthoritativeContent(container);
++                        wrapper.user().get(InventoryRequestTracker.class)
++                                .handleLegacyOffhandUpdate(container);
+                         if (container.type() == ContainerType.HUD) {
+                             inventoryTracker.getInventoryContainer().updateCraftingOutput();
+                         }
+@@ -419,6 +421,13 @@ public final class InventoryPackets {
+                         container.markServerUpdate();
+                         wrapper.user().get(InventoryRequestTracker.class)
+                                 .handleAuthoritativeSlot(container, slot);
++                        if (wrapper.user().get(InventoryRequestTracker.class)
++                                .handleLegacyOffhandUpdate(container)) {
++                            wrapper.setPacketType(ClientboundPackets26_3.CONTAINER_SET_CONTENT);
++                            PacketFactory.writeJavaContainerSetContent(
++                                    wrapper, inventoryTracker.getInventoryContainer());
++                            return;
++                        }
+                         if (container.type() == ContainerType.HUD
+                                 && ((slot >= 28 && slot <= 31) || slot == 50)) {
+                             inventoryTracker.getInventoryContainer().refreshCraftingOutput();
+@@ -980,10 +989,13 @@ public final class InventoryPackets {
+                     }
+                     final Container container =
+                             inventoryTracker.getContainerServerbound((byte) containerId);
++                    final InventoryRequestTracker requestTracker =
++                            wrapper.user().get(InventoryRequestTracker.class);
++                    if (requestTracker.isRecoveringLegacyOffhand()) {
++                        return;
++                    }
+                     if (container == null) {
+                         if (containerId == ContainerID.CONTAINER_ID_INVENTORY.getValue()) {
+-                            final InventoryRequestTracker requestTracker =
+-                                    wrapper.user().get(InventoryRequestTracker.class);
+                             final boolean requestOpen = !requestTracker.isWaitingForInventoryOpen();
+                             if (!requestTracker.queueInventoryOpenClick(
+                                     revision, slot, button, action)) {
+@@ -1006,13 +1018,28 @@ public final class InventoryPackets {
+                         wrapper.cancel();
+                         return;
+                     }
+-                    final InventoryRequestTracker requestTracker = wrapper.user().get(InventoryRequestTracker.class);
+-                    if (requestTracker.hasPending()) {
++                    if (requestTracker.hasPending() || requestTracker.isWaitingForLegacyOffhand()) {
+                         if (!requestTracker.queueClick(container, revision, slot, button, action)) {
+                             PacketFactory.sendJavaContainerSetContent(wrapper.user(), container);
+                         }
+                         return;
+                     }
++                    if (container instanceof InventoryContainer
++                            && slot == 45 && button == 0 && action == ContainerInput.PICKUP) {
++                        final BedrockItem cursor = inventoryTracker.getHudContainer().getItem(0);
++                        final BedrockItem offhand = inventoryTracker.getOffhandContainer().getItem(0);
++                        if (!cursor.isEmpty() && offhand.isEmpty()) {
++                            final BedrockInventoryTransaction transaction =
++                                    legacyOffhandTransaction(cursor);
++                            requestTracker.awaitLegacyOffhand(cursor);
++                            final PacketWrapper packet = PacketWrapper.create(
++                                    ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper.user());
++                            packet.write(wrapper.user().get(InventoryTransactionRewriter.class)
++                                    .getInventoryTransactionType(), transaction);
++                            packet.sendToServer(BedrockProtocol.class);
++                            return;
++                        }
++                    }
+                     if (!container.handleClick(revision, slot, button, action)) {
+                         if (container.type() != ContainerType.INVENTORY) {
+                             PacketFactory.sendJavaContainerSetContent(
+@@ -1068,7 +1095,10 @@ public final class InventoryPackets {
+                         return;
+                     }
+                     final InventoryRequestTracker requestTracker = wrapper.user().get(InventoryRequestTracker.class);
+-                    if (requestTracker.hasPending()) {
++                    if (requestTracker.isRecoveringLegacyOffhand()) {
++                        return;
++                    }
++                    if (requestTracker.hasPending() || requestTracker.isWaitingForLegacyOffhand()) {
+                         if (!requestTracker.queueButtonClick(container, button)) {
+                             PacketFactory.sendJavaContainerSetContent(wrapper.user(), container);
+                         }
+@@ -1349,6 +1379,23 @@ public final class InventoryPackets {
+                 new InventoryTransactionData.NormalTransactionData());
+     }
+ 
++    static BedrockInventoryTransaction legacyOffhandTransaction(final BedrockItem cursor) {
++        final InventorySource playerUi = new InventorySource(
++                InventorySourceType.Container_Inventory,
++                ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue(),
++                InventorySourceFlags.No_Flag);
++        final InventorySource offhand = new InventorySource(
++                InventorySourceType.Container_Inventory,
++                ContainerID.CONTAINER_ID_OFFHAND.getValue(),
++                InventorySourceFlags.No_Flag);
++        return new BedrockInventoryTransaction(
++                0, null, List.of(
++                        new InventoryActionData(playerUi, 0, cursor, BedrockItem.empty()),
++                        new InventoryActionData(offhand, 0, BedrockItem.empty(), cursor)),
++                ComplexInventoryTransaction_Type.NormalTransaction,
++                new InventoryTransactionData.NormalTransactionData());
++    }
++
+     private static BedrockItem readCreativeItem(final PacketWrapper wrapper, final ItemRewriter itemRewriter)
+             throws InformativeException {
+         return readCreativeItem(wrapper, itemRewriter.getItems().getOrDefault("minecraft:shield", 0));
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
+index de395f03..f1a3ccb5 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
+@@ -61,8 +61,11 @@ public class InventoryRequestTracker extends StoredObject {
+     private final PendingInventoryOpenClicks pendingInventoryOpenClicks =
+             new PendingInventoryOpenClicks();
+     private int requestIdCounter = -1;
++    private boolean predictingClick;
+     private long pendingSinceNanos;
+     private MineBlockRequest mineBlockRequest;
++    private PendingLegacyOffhand pendingLegacyOffhand;
++    private boolean recoveringLegacyOffhand;
+ 
+     public InventoryRequestTracker(final UserConnection user) {
+         super(user);
+@@ -85,6 +88,42 @@ public class InventoryRequestTracker extends StoredObject {
+         return !this.requests.isEmpty();
+     }
+ 
++    public boolean isPredictingClick() {
++        return this.predictingClick;
++    }
++
++    public boolean isWaitingForLegacyOffhand() {
++        return this.pendingLegacyOffhand != null;
++    }
++
++    public boolean isRecoveringLegacyOffhand() {
++        return this.recoveringLegacyOffhand;
++    }
++
++    public void awaitLegacyOffhand(final BedrockItem item) {
++        if (this.pendingLegacyOffhand != null) {
++            throw new IllegalStateException("An offhand transfer is already pending");
++        }
++        this.pendingLegacyOffhand = new PendingLegacyOffhand(item.copy(), System.nanoTime());
++    }
++
++    public boolean handleLegacyOffhandUpdate(final Container container) {
++        if (this.pendingLegacyOffhand == null
++                || container != this.user().get(InventoryTracker.class).getOffhandContainer()
++                || !this.pendingLegacyOffhand.matches(container.getItem(0))) {
++            return false;
++        }
++        this.pendingLegacyOffhand = null;
++        final InventoryTracker tracker = this.user().get(InventoryTracker.class);
++        tracker.getHudContainer().setItem(0, BedrockItem.empty());
++        this.drainQueuedInteractions();
++        return true;
++    }
++
++    public void setPredictingClick(final boolean predictingClick) {
++        this.predictingClick = predictingClick;
++    }
++
+     public boolean hasPendingMineBlockRequest() {
+         return this.mineBlockRequest != null;
+     }
+@@ -159,6 +198,23 @@ public class InventoryRequestTracker extends StoredObject {
+     }
+ 
+     public void tick() {
++        if (this.pendingLegacyOffhand != null
++                && System.nanoTime() - this.pendingLegacyOffhand.sentAtNanos()
++                >= RESPONSE_TIMEOUT_NANOS) {
++            this.pendingLegacyOffhand = null;
++            this.clearQueuedInteractions();
++            final InventoryTracker tracker = this.user().get(InventoryTracker.class);
++            this.recoveringLegacyOffhand = true;
++            this.recovery.begin(System.nanoTime(), false, true);
++            tracker.closeScreenForInventoryRecovery();
++            final PacketWrapper interact = PacketWrapper.create(ServerboundBedrockPackets.INTERACT, this.user());
++            interact.write(Types.UNSIGNED_BYTE,
++                    (short) InteractPacketPayload_Action.OpenInventory.getValue());
++            interact.write(BedrockTypes.UNSIGNED_VAR_LONG,
++                    this.user().get(EntityTracker.class).getClientPlayer().runtimeId());
++            interact.write(BedrockTypes.OPTIONAL_POSITION_3F, null);
++            interact.sendToServer(BedrockProtocol.class);
++        }
+         if (this.pendingInventoryOpenClicks.expire(
+                 System.nanoTime(), RESPONSE_TIMEOUT_NANOS)) {
+             PacketFactory.sendJavaContainerSetContent(this.user(),
+@@ -170,6 +226,11 @@ public class InventoryRequestTracker extends StoredObject {
+             this.mineBlockRequest = null;
+         }
+         if (!this.hasPending()) {
++            if (this.recoveringLegacyOffhand
++                    && this.recovery.hasTimedOut(System.nanoTime(), RECOVERY_TIMEOUT_NANOS)) {
++                BedrockProtocol.kickForIllegalState(this.user(),
++                        "Offhand state could not be synchronized with the Bedrock server. Reconnect to refresh your items.");
++            }
+             return;
+         }
+         final long now = System.nanoTime();
+@@ -214,12 +275,13 @@ public class InventoryRequestTracker extends StoredObject {
+ 
+     private void noteAuthoritativeUpdate(
+             final Container container, final boolean fullContent, final int slot) {
+-        if (!this.recovery.isActive() || !this.hasPending()) {
++        if (!this.recovery.isActive() || (!this.hasPending() && !this.recoveringLegacyOffhand)) {
+             return;
+         }
+         final InventoryTracker tracker = this.user().get(InventoryTracker.class);
+         if (this.recovery.observe(container, tracker.getHudContainer(), fullContent, slot)) {
+             this.requests.clear();
++            this.recoveringLegacyOffhand = false;
+             this.resetRecovery();
+             tracker.getInventoryContainer().updateCraftingOutput();
+             PacketFactory.sendJavaContainerSetContent(this.user(), tracker.getInventoryContainer());
+@@ -401,6 +463,16 @@ public class InventoryRequestTracker extends StoredObject {
+     private record MineBlockRequest(int requestId, int hotbarSlot, int stackNetworkId,
+                                     long sentAtNanos) { }
+ 
++    record PendingLegacyOffhand(BedrockItem item, long sentAtNanos) {
++
++        boolean matches(final BedrockItem observed) {
++            return !observed.isEmpty()
++                    && !this.item.isDifferent(observed)
++                    && this.item.amount() == observed.amount();
++        }
++
++    }
++
+     static final class PendingInventoryOpenClicks {
+ 
+         private final ArrayDeque<InventoryOpenClick> clicks = new ArrayDeque<>();
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
+index cf8d3ac8..2ef923a4 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
+@@ -81,6 +81,29 @@ class InventoryPacketsTest {
+         BedrockTypes.BYTE_ARRAY.write(buffer, userData);
+     }
+ 
++    @Test
++    void legacyOffhandTransferMovesTheAuthoritativePlayerUiCursor() {
++        final BedrockItem shield = new BedrockItem(358);
++        shield.setAmount(1);
++        shield.setNetId(17);
++
++        final BedrockInventoryTransaction transaction =
++                InventoryPackets.legacyOffhandTransaction(shield);
++        assertEquals(2, transaction.actions().size());
++        final InventoryActionData take = transaction.actions().get(0);
++        final InventoryActionData place = transaction.actions().get(1);
++        assertEquals(InventorySourceType.Container_Inventory, take.source().type());
++        assertEquals(ContainerID.CONTAINER_ID_PLAYER_ONLY_UI.getValue(), take.source().containerId());
++        assertEquals(0, take.slot());
++        assertSame(shield, take.fromItem());
++        assertTrue(take.toItem().isEmpty());
++        assertEquals(InventorySourceType.Container_Inventory, place.source().type());
++        assertEquals(ContainerID.CONTAINER_ID_OFFHAND.getValue(), place.source().containerId());
++        assertEquals(0, place.slot());
++        assertTrue(place.fromItem().isEmpty());
++        assertSame(shield, place.toItem());
++    }
++
+     @Test
+     void entityBackedGenericContainerKeepsTheWireTypeAndUsesEntitySlots() {
+         final UserConnection user = (UserConnection) Proxy.newProxyInstance(
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java
+index d49cd8e2..f3932732 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java
+@@ -17,6 +17,7 @@
+  */
+ package net.raphimc.viabedrock.protocol.storage;
+ 
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
+ import org.junit.jupiter.api.Test;
+ 
+@@ -65,4 +66,25 @@ class InventoryRequestTrackerTest {
+         assertTrue(pending.isEmpty());
+     }
+ 
++    @Test
++    void legacyOffhandAcceptsReassignedNetIdForSameStack() {
++        final BedrockItem shield = new BedrockItem(358);
++        shield.setAmount(1);
++        shield.setNetId(12);
++        final InventoryRequestTracker.PendingLegacyOffhand pending =
++                new InventoryRequestTracker.PendingLegacyOffhand(shield, 0);
++
++        final BedrockItem accepted = shield.copy();
++        assertTrue(pending.matches(accepted));
++
++        accepted.setNetId(13);
++        assertTrue(pending.matches(accepted));
++        accepted.setNetId(12);
++        accepted.setAmount(2);
++        assertFalse(pending.matches(accepted));
++        accepted.setAmount(1);
++        accepted.setIdentifier(359);
++        assertFalse(pending.matches(accepted));
++    }
++
+ }
+-- 
+2.55.0
+
+

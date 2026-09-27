@@ -1,0 +1,202 @@
+From 17a17be410b9f7ba5662983d349f0f633efda598 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 11:25:13 +0200
+Subject: [PATCH] fix(inventory): preserve creative item user data
+
+Read the full 2193 creative item descriptor, including fields after an empty group icon, and decode its user data with the same item codec used for normal stacks. This preserves firework flight NBT when a creative item is dragged into the inventory.
+---
+ .../protocol/packet/InventoryPackets.java     | 25 ++++++++---
+ .../protocol/types/item/BedrockItemType.java  | 12 +++--
+ .../protocol/packet/InventoryPacketsTest.java | 44 +++++++++++++++++++
+ 3 files changed, 72 insertions(+), 9 deletions(-)
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+index 810c04a6..18528e83 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+@@ -50,6 +50,8 @@ import com.viaversion.viaversion.libs.mcstructs.text.components.StringComponent;
+ import com.viaversion.viaversion.libs.mcstructs.text.components.TranslationComponent;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
+ 
+ import net.lenni0451.mcstructs_bedrock.forms.Form;
+ import net.lenni0451.mcstructs_bedrock.forms.elements.*;
+@@ -87,6 +89,7 @@ import net.raphimc.viabedrock.protocol.rewriter.InventoryTransactionRewriter;
+ import net.raphimc.viabedrock.protocol.storage.*;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ import net.raphimc.viabedrock.protocol.types.InventoryTypes;
++import net.raphimc.viabedrock.protocol.types.item.BedrockItemType;
+ import net.raphimc.viabedrock.protocol.types.recipe.CraftingDataReader;
+ 
+ import java.util.ArrayList;
+@@ -104,19 +107,19 @@ public final class InventoryPackets {
+     public static void register(final BedrockProtocol protocol) {
+         protocol.registerClientbound(ClientboundBedrockPackets.CREATIVE_CONTENT, null, wrapper -> {
+             wrapper.cancel();
++            final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
+             final int groups = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+             for (int i = 0; i < groups; i++) {
+                 wrapper.read(Types.UNSIGNED_BYTE); // category
+                 wrapper.read(BedrockTypes.STRING); // name
+-                readCreativeItem(wrapper); // icon
++                readCreativeItem(wrapper, itemRewriter); // icon
+             }
+ 
+-            final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
+             itemRewriter.clearCreativeItems();
+             final int entries = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+             for (int i = 0; i < entries; i++) {
+                 wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // creative net ID
+-                final BedrockItem item = readCreativeItem(wrapper);
++                final BedrockItem item = readCreativeItem(wrapper, itemRewriter);
+                 wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // group index
+                 if (!item.isEmpty()) {
+                     itemRewriter.addCreativeItem(item);
+@@ -1332,12 +1335,18 @@ public final class InventoryPackets {
+                 new InventoryTransactionData.NormalTransactionData());
+     }
+ 
+-    private static BedrockItem readCreativeItem(final PacketWrapper wrapper) throws InformativeException {
++    private static BedrockItem readCreativeItem(final PacketWrapper wrapper, final ItemRewriter itemRewriter)
++            throws InformativeException {
++        return readCreativeItem(wrapper, itemRewriter.getItems().getOrDefault("minecraft:shield", 0));
++    }
++
++    static BedrockItem readCreativeItem(final PacketWrapper wrapper, final int blockingId)
++            throws InformativeException {
+         final int id = wrapper.read(BedrockTypes.VAR_INT);
+         final int amount = wrapper.read(BedrockTypes.UNSIGNED_SHORT_LE);
+         final int data = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+         final int blockRuntimeId = wrapper.read(BedrockTypes.VAR_INT);
+-        wrapper.read(BedrockTypes.BYTE_ARRAY); // user data
++        final byte[] userData = wrapper.read(BedrockTypes.BYTE_ARRAY);
+         if (id == 0) {
+             return BedrockItem.empty();
+         }
+@@ -1345,6 +1354,12 @@ public final class InventoryPackets {
+         item.setAmount(amount);
+         item.setData(data);
+         item.setBlockRuntimeId(blockRuntimeId);
++        final ByteBuf buffer = Unpooled.wrappedBuffer(userData);
++        try {
++            BedrockItemType.readUserData(buffer, item, blockingId);
++        } finally {
++            buffer.release();
++        }
+         return item;
+     }
+ 
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java
+index 5bad4270..64fcb078 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/types/item/BedrockItemType.java
+@@ -65,10 +65,16 @@ public class BedrockItemType extends Type<BedrockItem> {
+         }
+ 
+         final ByteBuf userData = buffer.readSlice(BedrockTypes.UNSIGNED_VAR_INT.read(buffer));
++        readUserData(userData, item, this.blockingId);
++
++        return item;
++    }
++
++    public static void readUserData(final ByteBuf userData, final BedrockItem item, final int blockingId) {
+         try {
+             final short marker = userData.readShortLE();
+             if (marker == 0) {
+-                return item;
++                return;
+             } else if (marker != -1) { // Bedrock client crashes if marker isn't -1
+                 throw new IllegalStateException("Expected -1 marker but got " + marker);
+             }
+@@ -77,15 +83,13 @@ public class BedrockItemType extends Type<BedrockItem> {
+                 item.setTag((CompoundTag) BedrockTypes.TAG_LE.read(userData));
+                 item.setCanPlace(BedrockTypes.UTF8_STRING_ARRAY.read(userData));
+                 item.setCanBreak(BedrockTypes.UTF8_STRING_ARRAY.read(userData));
+-                if (item.identifier() == this.blockingId) {
++                if (item.identifier() == blockingId) {
+                     item.setBlockingTicks(userData.readLongLE());
+                 }
+             }
+         } catch (final IndexOutOfBoundsException ignored) {
+             // Bedrock client stops reading at whatever point and loads whatever it has read successfully
+         }
+-
+-        return item;
+     }
+ 
+     @Override
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
+index 736c22a7..75d090f3 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
+@@ -15,6 +15,11 @@
+ package net.raphimc.viabedrock.protocol.packet;
+ 
+ import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.exception.InformativeException;
++import com.viaversion.nbt.tag.CompoundTag;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
+ 
+ import net.raphimc.viabedrock.api.model.container.ChestContainer;
+ import net.raphimc.viabedrock.api.model.entity.Entity;
+@@ -25,6 +30,8 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySou
+ import net.raphimc.viabedrock.protocol.model.BedrockItem;
+ import net.raphimc.viabedrock.protocol.model.inventory.BedrockInventoryTransaction;
+ import net.raphimc.viabedrock.protocol.model.inventory.InventoryActionData;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
+ import org.junit.jupiter.api.Test;
+ 
+ import java.lang.reflect.Proxy;
+@@ -37,6 +44,43 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
+ 
+ class InventoryPacketsTest {
+ 
++    @Test
++    void creativeDescriptorsConsumeEmptyIconBeforeTaggedFirework() throws InformativeException {
++        final CompoundTag fireworks = new CompoundTag();
++        fireworks.putByte("Flight", (byte) 1);
++        final CompoundTag tag = new CompoundTag();
++        tag.put("Fireworks", fireworks);
++
++        final ByteBuf userData = Unpooled.buffer();
++        userData.writeShortLE(-1);
++        userData.writeByte(1);
++        BedrockTypes.TAG_LE.write(userData, tag);
++        BedrockTypes.UTF8_STRING_ARRAY.write(userData, new String[0]);
++        BedrockTypes.UTF8_STRING_ARRAY.write(userData, new String[0]);
++
++        final ByteBuf descriptors = Unpooled.buffer();
++        writeCreativeDescriptor(descriptors, 0, new byte[0]);
++        final byte[] fireworkData = new byte[userData.readableBytes()];
++        userData.readBytes(fireworkData);
++        writeCreativeDescriptor(descriptors, 529, fireworkData);
++        final PacketWrapper wrapper = new PacketWrapperImpl(0, descriptors, null);
++
++        assertTrue(InventoryPackets.readCreativeItem(wrapper, 0).isEmpty());
++        final BedrockItem firework = InventoryPackets.readCreativeItem(wrapper, 0);
++        assertEquals(529, firework.identifier());
++        assertEquals(1, firework.tag().getCompoundTag("Fireworks").getByte("Flight"));
++        assertEquals(0, descriptors.readableBytes());
++    }
++
++    private static void writeCreativeDescriptor(
++            final ByteBuf buffer, final int id, final byte[] userData) {
++        BedrockTypes.VAR_INT.write(buffer, id);
++        buffer.writeShortLE(1);
++        BedrockTypes.UNSIGNED_VAR_INT.write(buffer, 0);
++        BedrockTypes.VAR_INT.write(buffer, 0);
++        BedrockTypes.BYTE_ARRAY.write(buffer, userData);
++    }
++
+     @Test
+     void entityBackedGenericContainerKeepsTheWireTypeAndUsesEntitySlots() {
+         final UserConnection user = (UserConnection) Proxy.newProxyInstance(
+-- 
+2.55.0
+
+

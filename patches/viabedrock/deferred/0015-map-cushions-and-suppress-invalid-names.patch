@@ -1,0 +1,110 @@
+From 5e56f34513e003e47dc787df7f42f4b5e5b39855 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 10:14:43 +0200
+Subject: [PATCH] fix(entities): map cushions and suppress invalid names
+
+Bedrock dye variants use the reverse order from Java, and generic NAME metadata on dropped items and projectiles can override their rendering. Translate the cushion color and avoid names on those entity types.
+---
+ .../rewriter/EntityMetadataRewriter.java      | 27 +++++++++++++++++++
+ .../rewriter/EntityMetadataRewriterTest.java  | 24 +++++++++++++++++
+ 2 files changed, 51 insertions(+)
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
+index 1d546d7f..bd10fdaa 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
+@@ -62,11 +62,17 @@ public final class EntityMetadataRewriter {
+ 
+         switch (id) {
+             case NAME -> {
++                if (!shouldTranslateName(entity)) {
++                    break;
++                }
+                 final String name = entityData.value();
+                 final Tag javaName = name.isEmpty() ? null : TextUtil.stringToNbt(name);
+                 javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME), VersionedTypes.V26_3.entityDataTypes().optionalComponentType, javaName));
+             }
+             case NAMETAG_ALWAYS_SHOW -> {
++                if (!shouldTranslateName(entity)) {
++                    break;
++                }
+                 final boolean alwaysShow = readNumber(entityData).intValue() != 0;
+                 javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME_VISIBLE), VersionedTypes.V26_3.entityDataTypes().booleanType, alwaysShow));
+             }
+@@ -282,6 +288,14 @@ public final class EntityMetadataRewriter {
+                 final int variant = readNumber(entityData).intValue();
+ 
+                 switch (entity.javaType()) {
++                    case CUSHION -> {
++                        final int color = cushionColor(variant);
++                        if (color >= 0) {
++                            javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.COLOR), VersionedTypes.V26_3.entityDataTypes().dyeColorType, color));
++                        } else {
++                            ViaBedrock.getPlatform().getLogger().warning("Unknown cushion variant " + variant + " for entity " + entity.type());
++                        }
++                    }
+                     case WOLF -> {
+                         final int javaVariant = switch (variant) {
+                             case 0 -> 4; // PALE
+@@ -925,6 +939,19 @@ public final class EntityMetadataRewriter {
+         return -1;
+     }
+ 
++    static boolean shouldTranslateName(final Entity entity) {
++        // Bedrock uses NAME for an item's label and a projectile's source item. Java
++        // treats it as a visible custom entity name, even when nothing was renamed.
++        return !entity.javaType().is(EntityTypes26_3.ITEM)
++                && !entity.javaType().isOrHasParent(EntityTypes26_3.PROJECTILE);
++    }
++
++    static int cushionColor(final int bedrockVariant) {
++        // Bedrock's cushion render controller orders dyes black to white. Java's
++        // DyeColor metadata uses white to black, so the indexes are reversed.
++        return bedrockVariant >= 0 && bedrockVariant < 16 ? 15 - bedrockVariant : -1;
++    }
++
+     static byte beeFlags(final Set<ActorFlags> flags, final boolean hasNectar) {
+         byte javaFlags = 0;
+         if (flags.contains(ActorFlags.ANGRY)) {
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java
+index 00b94595..9adbb3fe 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java
+@@ -11,9 +11,33 @@ import org.junit.jupiter.api.Test;
+ import java.util.Set;
+ 
+ import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
+ 
+ class EntityMetadataRewriterTest {
+ 
++    @Test
++    void omitsBedrockItemAndProjectileLabelsFromJavaCustomNames() {
++        for (final EntityTypes26_3 type : new EntityTypes26_3[] {EntityTypes26_3.ITEM, EntityTypes26_3.EGG, EntityTypes26_3.ARROW}) {
++            final Entity entity = new Entity(null, 1, 1, type.identifier(), 1, null, type);
++            assertFalse(EntityMetadataRewriter.shouldTranslateName(entity), type.name());
++        }
++
++        for (final EntityTypes26_3 type : new EntityTypes26_3[] {EntityTypes26_3.PLAYER, EntityTypes26_3.SHEEP, EntityTypes26_3.CUSHION}) {
++            final Entity entity = new Entity(null, 1, 1, type.identifier(), 1, null, type);
++            assertTrue(EntityMetadataRewriter.shouldTranslateName(entity), type.name());
++        }
++    }
++
++    @Test
++    void reversesBedrockCushionVariantsForJavaDyeColors() {
++        for (int bedrockVariant = 0; bedrockVariant < 16; bedrockVariant++) {
++            assertEquals(15 - bedrockVariant, EntityMetadataRewriter.cushionColor(bedrockVariant));
++        }
++        assertEquals(-1, EntityMetadataRewriter.cushionColor(-1));
++        assertEquals(-1, EntityMetadataRewriter.cushionColor(16));
++    }
++
+     @Test
+     void mapsBlockingAndItemUseToJavaActiveHandFlags() {
+         assertEquals((byte) 0, EntityMetadataRewriter.livingUseFlags(Set.of(), true));
+-- 
+2.55.0
+
+

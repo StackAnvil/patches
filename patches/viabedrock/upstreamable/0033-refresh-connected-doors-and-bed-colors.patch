@@ -1,0 +1,189 @@
+From f5f8c05bf51983ce169a099fd11b111d4a83aaa0 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 10:37:24 +0200
+Subject: [PATCH] fix(world): refresh connected doors and bed colors
+
+Bedrock can change a door lower half without updating its upper half, and a bed color can change while the base block runtime ID stays the same. Derive the upper door open state from the lower half, emit its Java update, and recompute block-entity-derived block states on repeated updates.
+---
+ .../protocol/packet/WorldPackets.java         |  2 +
+ .../protocol/storage/ChunkTracker.java        | 77 +++++++++++++++----
+ .../protocol/storage/ChunkTrackerTest.java    | 10 +++
+ 3 files changed, 73 insertions(+), 16 deletions(-)
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+index 8e72b28b..76317578 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+@@ -92,6 +92,7 @@ public final class WorldPackets {
+ 
+         wrapper.write(Types.VAR_INT, remappedBlock.keyInt()); // block state
+         chunkTracker.sendNearbyRedstoneUpdates(List.of(position));
++        chunkTracker.sendUpperDoorUpdates(List.of(position));
+ 
+         if (remappedBlock.value() != null) {
+             wrapper.send(BedrockProtocol.class);
+@@ -476,6 +477,7 @@ public final class WorldPackets {
+                 PacketFactory.sendJavaBlockEntityData(wrapper.user(), entry.getKey(), entry.getValue());
+             }
+             chunkTracker.sendNearbyRedstoneUpdates(changedPositions);
++            chunkTracker.sendUpperDoorUpdates(changedPositions);
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.BLOCK_ENTITY_DATA, ClientboundPackets26_3.BLOCK_ENTITY_DATA, new PacketHandlers() {
+             @Override
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+index 22d69c90..228d0c88 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+@@ -234,6 +234,12 @@ public class ChunkTracker extends StoredObject {
+     public int getJavaBlockState(final BlockPosition blockPosition) {
+         final int javaId = this.getUnconnectedJavaBlockState(blockPosition);
+         final BlockState state = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(javaId);
++        if (isUpperDoor(state)) {
++            final BlockPosition lowerPosition = new BlockPosition(blockPosition.x(), blockPosition.y() - 1, blockPosition.z());
++            final BlockState lowerState = this.getUnconnectedJavaBlockStateModel(lowerPosition);
++            final BlockState connected = connectUpperDoor(state, lowerState);
++            return BedrockProtocol.MAPPINGS.getJavaBlockStates().getOrDefault(connected, javaId);
++        }
+         if (!RedstoneWireConnections.isWire(state)) {
+             return javaId;
+         }
+@@ -243,6 +249,20 @@ public class ChunkTracker extends StoredObject {
+         return BedrockProtocol.MAPPINGS.getJavaBlockStates().get(connected);
+     }
+ 
++    private static boolean isUpperDoor(final BlockState state) {
++        return state != null && state.identifier().endsWith("_door") && state.hasProperty("half", "upper");
++    }
++
++    static BlockState connectUpperDoor(final BlockState upper, final BlockState lower) {
++        if (!isUpperDoor(upper) || lower == null || !lower.hasProperty("half", "lower")
++                || !lower.properties().containsKey("open")
++                || !upper.namespacedIdentifier().equals(lower.namespacedIdentifier())) {
++            return upper;
++        }
++        // Bedrock's upper half can retain a closed open_bit while the lower half opens.
++        return upper.withProperty("open", lower.properties().get("open"));
++    }
++
+     public boolean isRedstoneWire(final BlockPosition position) {
+         return RedstoneWireConnections.isWire(this.getUnconnectedJavaBlockStateModel(position));
+     }
+@@ -487,7 +507,8 @@ public class ChunkTracker extends StoredObject {
+             entityTracker.removeItemFrame(blockPosition);
+         }
+ 
+-        if (prevBlockState != blockState) {
++        final boolean stateChanged = prevBlockState != blockState;
++        if (stateChanged) {
+             this.invalidateJavaBlockStates(blockPosition.x() >> 4, blockPosition.y() >> 4, blockPosition.z() >> 4);
+             if (changesLight(previousJavaState, currentJavaState,
+                     BedrockProtocol.MAPPINGS.getJavaBlockLightEmission(), BedrockProtocol.MAPPINGS.getJavaBlockOpacity())) {
+@@ -496,22 +517,24 @@ public class ChunkTracker extends StoredObject {
+ 
+             if (CustomBlockTags.ITEM_FRAME.equals(tag)) {
+                 entityTracker.spawnItemFrame(blockPosition, blockStateRewriter.blockState(blockState));
+-            } else if (BlockEntityRewriter.isBlockEntity(tag)) {
+-                final BedrockBlockEntity bedrockBlockEntity = this.getBlockEntity(blockPosition);
+-                BlockEntity javaBlockEntity = null;
+-                if (bedrockBlockEntity != null) {
+-                    javaBlockEntity = BlockEntityRewriter.toJava(this.user(), blockState, bedrockBlockEntity);
+-                    if (javaBlockEntity instanceof BlockEntityWithBlockState blockEntityWithBlockState) {
+-                        remappedBlockState = blockEntityWithBlockState.blockState();
+-                    }
+-                } else if (BedrockProtocol.MAPPINGS.getJavaBlockEntities().containsKey(tag)) {
+-                    final int javaType = BedrockProtocol.MAPPINGS.getJavaBlockEntities().get(tag);
+-                    javaBlockEntity = new BlockEntityImpl(BlockEntity.pack(sectionX, sectionZ), (short) blockPosition.y(), javaType, new CompoundTag());
+-                }
++            }
++        }
+ 
+-                if (javaBlockEntity != null && javaBlockEntity.tag() != null) {
+-                    return new IntObjectImmutablePair<>(remappedBlockState, javaBlockEntity);
++        if (BlockEntityRewriter.isBlockEntity(tag)) {
++            final BedrockBlockEntity bedrockBlockEntity = this.getBlockEntity(blockPosition);
++            BlockEntity javaBlockEntity = null;
++            if (bedrockBlockEntity != null) {
++                javaBlockEntity = BlockEntityRewriter.toJava(this.user(), blockState, bedrockBlockEntity);
++                if (javaBlockEntity instanceof BlockEntityWithBlockState blockEntityWithBlockState) {
++                    remappedBlockState = blockEntityWithBlockState.blockState();
+                 }
++            } else if (stateChanged && BedrockProtocol.MAPPINGS.getJavaBlockEntities().containsKey(tag)) {
++                final int javaType = BedrockProtocol.MAPPINGS.getJavaBlockEntities().get(tag);
++                javaBlockEntity = new BlockEntityImpl(BlockEntity.pack(sectionX, sectionZ), (short) blockPosition.y(), javaType, new CompoundTag());
++            }
++
++            if (stateChanged && javaBlockEntity != null && javaBlockEntity.tag() != null) {
++                return new IntObjectImmutablePair<>(remappedBlockState, javaBlockEntity);
+             }
+         }
+ 
+@@ -652,6 +675,28 @@ public class ChunkTracker extends StoredObject {
+         candidates.forEach(this::sendRedstoneUpdate);
+     }
+ 
++    public void sendUpperDoorUpdates(final Collection<BlockPosition> changedPositions) {
++        final Set<BlockPosition> changed = new HashSet<>(changedPositions);
++        for (BlockPosition position : changedPositions) {
++            final BlockState lower = this.getUnconnectedJavaBlockStateModel(position);
++            if (lower == null || !lower.identifier().endsWith("_door") || !lower.hasProperty("half", "lower")) {
++                continue;
++            }
++            final BlockPosition upperPosition = new BlockPosition(position.x(), position.y() + 1, position.z());
++            if (changed.contains(upperPosition)) {
++                continue;
++            }
++            final BlockState upper = this.getUnconnectedJavaBlockStateModel(upperPosition);
++            if (!isUpperDoor(upper) || !upper.namespacedIdentifier().equals(lower.namespacedIdentifier())) {
++                continue;
++            }
++            final PacketWrapper update = PacketWrapper.create(ClientboundPackets26_3.BLOCK_UPDATE, this.user());
++            update.write(Types.BLOCK_POSITION1_14, upperPosition);
++            update.write(Types.VAR_INT, this.getJavaBlockState(upperPosition));
++            update.send(BedrockProtocol.class);
++        }
++    }
++
+     private void refreshNeighboringRedstoneBorders(final int chunkX, final int chunkZ) {
+         final boolean westLoaded = this.chunkLight.containsKey(ChunkPosition.chunkKey(chunkX - 1, chunkZ));
+         final boolean eastLoaded = this.chunkLight.containsKey(ChunkPosition.chunkKey(chunkX + 1, chunkZ));
+@@ -1178,7 +1223,7 @@ public class ChunkTracker extends StoredObject {
+                         for (int x = 0; x < 16; x++) {
+                             final int javaId = remappedBlockPalette.idAt(x, y, z);
+                             final BlockState state = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(javaId);
+-                            if (RedstoneWireConnections.isWire(state)) {
++                            if (RedstoneWireConnections.isWire(state) || isUpperDoor(state)) {
+                                 final BlockPosition position = new BlockPosition((chunk.getX() << 4) + x,
+                                         this.minY + (idx << 4) + y, (chunk.getZ() << 4) + z);
+                                 remappedBlockPalette.setIdAt(x, y, z, this.getJavaBlockState(position));
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
+index 293015a6..362e4cfc 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
+@@ -12,6 +12,7 @@ package net.raphimc.viabedrock.protocol.storage;
+ import com.viaversion.viaversion.api.minecraft.chunks.PaletteType;
+ import net.raphimc.viabedrock.api.chunk.datapalette.BedrockDataPalette;
+ import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSectionImpl;
++import net.raphimc.viabedrock.api.model.BlockState;
+ import org.junit.jupiter.api.Test;
+ 
+ import static org.junit.jupiter.api.Assertions.assertEquals;
+@@ -42,6 +43,15 @@ class ChunkTrackerTest {
+         assertTrue(ChunkTracker.changesLight(1, 3, emission, opacity));
+     }
+ 
++    @Test
++    void upperDoorCopiesOpenStateFromLowerHalf() {
++        final BlockState upper = BlockState.fromString("minecraft:oak_door[facing=north,half=upper,hinge=right,open=false,powered=false]");
++        final BlockState lower = BlockState.fromString("minecraft:oak_door[facing=north,half=lower,hinge=left,open=true,powered=false]");
++
++        assertEquals(upper.withProperty("open", "true"), ChunkTracker.connectUpperDoor(upper, lower));
++        assertEquals(upper, ChunkTracker.connectUpperDoor(upper, BlockState.fromString("minecraft:iron_door[half=lower,open=true]")));
++    }
++
+     private static BedrockChunkSectionImpl sectionWithBlock(final int blockId) {
+         final BedrockChunkSectionImpl section = new BedrockChunkSectionImpl();
+         final BedrockDataPalette palette = new BedrockDataPalette();
+-- 
+2.55.0
+
+

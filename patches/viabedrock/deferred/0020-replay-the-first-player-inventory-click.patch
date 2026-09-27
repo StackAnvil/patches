@@ -1,0 +1,288 @@
+From a21fe12cd4b11699dd55d0189c981ffc75319f63 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 11:27:51 +0200
+Subject: [PATCH] fix(inventory): replay the first player inventory click
+
+Java can open its inventory before Bedrock acknowledges OpenInventory. Queue those early clicks and replay them in order once the Bedrock container opens, with bounded queueing and a timeout that resynchronizes the Java view.
+---
+ .../protocol/packet/InventoryPackets.java     | 48 +++++++-----
+ .../storage/InventoryRequestTracker.java      | 78 +++++++++++++++++++
+ .../storage/InventoryRequestTrackerTest.java  | 68 ++++++++++++++++
+ 3 files changed, 175 insertions(+), 19 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+index a89a2e27..13c2bd35 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+@@ -197,12 +197,12 @@ public final class InventoryPackets {
+                     }
+                     switch (screenType) {
+                         case INVENTORY -> {
+-                            inventoryTracker.setCurrentContainer(
+-                                    new InventoryContainer(
+-                                            wrapper.user(),
+-                                            containerId,
+-                                            position,
+-                                            inventoryTracker.getInventoryContainer()));
++                            final InventoryContainer playerInventory = new InventoryContainer(
++                                    wrapper.user(), containerId, position,
++                                    inventoryTracker.getInventoryContainer());
++                            inventoryTracker.setCurrentContainer(playerInventory);
++                            wrapper.user().get(InventoryRequestTracker.class)
++                                    .handleInventoryOpen(playerInventory);
+                             wrapper.cancel();
+                             return;
+                         }
+@@ -982,19 +982,25 @@ public final class InventoryPackets {
+                             inventoryTracker.getContainerServerbound((byte) containerId);
+                     if (container == null) {
+                         if (containerId == ContainerID.CONTAINER_ID_INVENTORY.getValue()) {
+-                            // Bedrock client can send multiple OpenInventory requests if the server
+-                            // doesn't respond, so this is fine here
+-                            final PacketWrapper interact =
+-                                    PacketWrapper.create(
+-                                            ServerboundBedrockPackets.INTERACT, wrapper.user());
+-                            interact.write(Types.UNSIGNED_BYTE,
+-                                    (short) InteractPacketPayload_Action.OpenInventory.getValue());
+-                            interact.write(BedrockTypes.UNSIGNED_VAR_LONG,
+-                                    wrapper.user().get(EntityTracker.class).getClientPlayer().runtimeId());
+-                            interact.write(BedrockTypes.OPTIONAL_POSITION_3F, null);
+-                            interact.sendToServer(BedrockProtocol.class);
+-                            PacketFactory.sendJavaContainerSetContent(
+-                                    wrapper.user(), inventoryTracker.getInventoryContainer());
++                            final InventoryRequestTracker requestTracker =
++                                    wrapper.user().get(InventoryRequestTracker.class);
++                            final boolean requestOpen = !requestTracker.isWaitingForInventoryOpen();
++                            if (!requestTracker.queueInventoryOpenClick(
++                                    revision, slot, button, action)) {
++                                PacketFactory.sendJavaContainerSetContent(
++                                        wrapper.user(), inventoryTracker.getInventoryContainer());
++                                return;
++                            }
++                            if (requestOpen) {
++                                final PacketWrapper interact = PacketWrapper.create(
++                                        ServerboundBedrockPackets.INTERACT, wrapper.user());
++                                interact.write(Types.UNSIGNED_BYTE,
++                                        (short) InteractPacketPayload_Action.OpenInventory.getValue());
++                                interact.write(BedrockTypes.UNSIGNED_VAR_LONG,
++                                        wrapper.user().get(EntityTracker.class).getClientPlayer().runtimeId());
++                                interact.write(BedrockTypes.OPTIONAL_POSITION_3F, null);
++                                interact.sendToServer(BedrockProtocol.class);
++                            }
+                         }
+ 
+                         wrapper.cancel();
+@@ -1242,6 +1248,10 @@ public final class InventoryPackets {
+                                     final Container container =
+                                             inventoryTracker.getContainerServerbound(containerId);
+                                     if (container == null) {
++                                        if (containerId == ContainerID.CONTAINER_ID_INVENTORY.getValue()) {
++                                            wrapper.user().get(InventoryRequestTracker.class)
++                                                    .clearQueuedInteractions();
++                                        }
+                                         wrapper.cancel();
+                                         return;
+                                     }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
+index 32d7e4f4..de395f03 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
+@@ -43,6 +43,7 @@ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
+ import java.util.ArrayDeque;
+ import java.util.HashSet;
++import java.util.List;
+ import java.util.Set;
+ import java.util.concurrent.TimeUnit;
+ import java.util.logging.Level;
+@@ -57,6 +58,8 @@ public class InventoryRequestTracker extends StoredObject {
+             new Int2ObjectOpenHashMap<>();
+     private final InventoryRequestRecovery recovery = new InventoryRequestRecovery();
+     private final ArrayDeque<QueuedInteraction> queuedInteractions = new ArrayDeque<>();
++    private final PendingInventoryOpenClicks pendingInventoryOpenClicks =
++            new PendingInventoryOpenClicks();
+     private int requestIdCounter = -1;
+     private long pendingSinceNanos;
+     private MineBlockRequest mineBlockRequest;
+@@ -100,6 +103,32 @@ public class InventoryRequestTracker extends StoredObject {
+         return this.queueInteraction(new QueuedClick(container, revision, slot, button, action));
+     }
+ 
++    public boolean isWaitingForInventoryOpen() {
++        return !this.pendingInventoryOpenClicks.isEmpty();
++    }
++
++    public boolean queueInventoryOpenClick(final int revision, final short slot,
++                                           final byte button, final ContainerInput action) {
++        return this.pendingInventoryOpenClicks.add(
++                new InventoryOpenClick(revision, slot, button, action), System.nanoTime());
++    }
++
++    public void handleInventoryOpen(final Container container) {
++        for (final InventoryOpenClick click : this.pendingInventoryOpenClicks.drain()) {
++            if (this.hasPending()) {
++                if (!this.queueClick(container, click.revision(), click.slot(),
++                        click.button(), click.action())) {
++                    this.clearQueuedInteractions();
++                    PacketFactory.sendJavaContainerSetContent(this.user(), container);
++                    return;
++                }
++            } else if (!container.handleClick(
++                    click.revision(), click.slot(), click.button(), click.action())) {
++                PacketFactory.sendJavaContainerSetContent(this.user(), container);
++            }
++        }
++    }
++
+     public boolean queueButtonClick(final Container container, final int button) {
+         return this.queueInteraction(new QueuedButtonClick(container, button));
+     }
+@@ -115,6 +144,7 @@ public class InventoryRequestTracker extends StoredObject {
+ 
+     public void clearQueuedInteractions() {
+         this.queuedInteractions.clear();
++        this.pendingInventoryOpenClicks.clear();
+     }
+ 
+     public InventoryRequestStorage getRequest(final int requestId) {
+@@ -129,6 +159,11 @@ public class InventoryRequestTracker extends StoredObject {
+     }
+ 
+     public void tick() {
++        if (this.pendingInventoryOpenClicks.expire(
++                System.nanoTime(), RESPONSE_TIMEOUT_NANOS)) {
++            PacketFactory.sendJavaContainerSetContent(this.user(),
++                    this.user().get(InventoryTracker.class).getInventoryContainer());
++        }
+         if (this.mineBlockRequest != null
+                 && System.nanoTime() - this.mineBlockRequest.sentAtNanos()
+                 >= RESPONSE_TIMEOUT_NANOS) {
+@@ -366,6 +401,49 @@ public class InventoryRequestTracker extends StoredObject {
+     private record MineBlockRequest(int requestId, int hotbarSlot, int stackNetworkId,
+                                     long sentAtNanos) { }
+ 
++    static final class PendingInventoryOpenClicks {
++
++        private final ArrayDeque<InventoryOpenClick> clicks = new ArrayDeque<>();
++        private long firstClickAtNanos;
++
++        boolean add(final InventoryOpenClick click, final long now) {
++            if (this.clicks.size() >= MAX_QUEUED_INTERACTIONS) {
++                this.clear();
++                return false;
++            }
++            if (this.clicks.isEmpty()) {
++                this.firstClickAtNanos = now;
++            }
++            this.clicks.addLast(click);
++            return true;
++        }
++
++        boolean isEmpty() {
++            return this.clicks.isEmpty();
++        }
++
++        List<InventoryOpenClick> drain() {
++            final List<InventoryOpenClick> pending = List.copyOf(this.clicks);
++            this.clear();
++            return pending;
++        }
++
++        boolean expire(final long now, final long timeoutNanos) {
++            if (this.clicks.isEmpty() || now - this.firstClickAtNanos < timeoutNanos) {
++                return false;
++            }
++            this.clear();
++            return true;
++        }
++
++        void clear() {
++            this.clicks.clear();
++            this.firstClickAtNanos = 0;
++        }
++    }
++
++    record InventoryOpenClick(int revision, short slot, byte button, ContainerInput action) { }
++
+     private sealed interface QueuedInteraction permits QueuedClick, QueuedButtonClick {
+ 
+         Container container();
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java
+new file mode 100644
+index 00000000..d49cd8e2
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java
+@@ -0,0 +1,68 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class InventoryRequestTrackerTest {
++
++    @Test
++    void inventoryClicksWaitForOpenInOrderAndExpireWhenItNeverArrives() {
++        final InventoryRequestTracker.PendingInventoryOpenClicks pending =
++                new InventoryRequestTracker.PendingInventoryOpenClicks();
++        final InventoryRequestTracker.InventoryOpenClick first =
++                new InventoryRequestTracker.InventoryOpenClick(1, (short) 37, (byte) 0,
++                        ContainerInput.PICKUP);
++        final InventoryRequestTracker.InventoryOpenClick second =
++                new InventoryRequestTracker.InventoryOpenClick(2, (short) 45, (byte) 0,
++                        ContainerInput.PICKUP);
++
++        assertTrue(pending.add(first, 100));
++        assertTrue(pending.add(second, 101));
++        assertFalse(pending.expire(104, 5));
++        assertEquals(List.of(first, second), pending.drain());
++        assertTrue(pending.isEmpty());
++
++        assertTrue(pending.add(first, 200));
++        assertTrue(pending.expire(205, 5));
++        assertTrue(pending.isEmpty());
++    }
++
++    @Test
++    void inventoryOpenQueueRejectsUnboundedOptimisticClicks() {
++        final InventoryRequestTracker.PendingInventoryOpenClicks pending =
++                new InventoryRequestTracker.PendingInventoryOpenClicks();
++        final InventoryRequestTracker.InventoryOpenClick click =
++                new InventoryRequestTracker.InventoryOpenClick(0, (short) 36, (byte) 0,
++                        ContainerInput.PICKUP);
++
++        for (int i = 0; i < 32; i++) {
++            assertTrue(pending.add(click, i));
++        }
++        assertFalse(pending.add(click, 32));
++        assertTrue(pending.isEmpty());
++    }
++
++}
+-- 
+2.55.0
+
+

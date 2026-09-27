@@ -1,0 +1,353 @@
+From 55e464e2fb803a1c58283880b53e1ace967b8f32 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 12:05:02 +0200
+Subject: [PATCH] fix(world): load and apply editable gamerules in Java options
+
+Java 26.3 waits for a GAME_RULE_VALUES response before showing its in-world rules screen. Return the matching rules received from Bedrock and translate validated edits into Bedrock command requests. Omit rules whose behavior or value type differs between editions, and respect the Bedrock editable flag.
+---
+ .../protocol/packet/ClientPlayerPackets.java  |  6 +-
+ .../protocol/packet/PlayPackets.java          | 43 +++++++++
+ .../protocol/storage/GameRuleMappings.java    | 92 +++++++++++++++++++
+ .../protocol/storage/GameRulesStorage.java    | 10 ++
+ .../protocol/packet/PlayPacketsTest.java      | 44 +++++++++
+ .../storage/GameRuleMappingsTest.java         | 48 ++++++++++
+ 6 files changed, 242 insertions(+), 1 deletion(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/GameRuleMappings.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayPacketsTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/GameRuleMappingsTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+index 899ed7f7..97c403b1 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+@@ -314,7 +314,11 @@ public final class ClientPlayerPackets {
+                     wrapper.write(Types.BYTE, (byte) PlayerRespawnState.ClientReadyToSpawn.getValue()); // state
+                     wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, clientPlayer.runtimeId()); // entity runtime id
+                 }
+-                case REQUEST_STATS, REQUEST_GAMERULE_VALUES -> wrapper.cancel();
++                case REQUEST_STATS -> wrapper.cancel();
++                case REQUEST_GAMERULE_VALUES -> {
++                    wrapper.cancel();
++                    PlayPackets.sendJavaGameRuleValues(wrapper.user());
++                }
+                 default -> throw new IllegalStateException("Unhandled ClientCommandAction: " + action);
+             }
+         });
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/PlayPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/PlayPackets.java
+index 651642da..ad56b55e 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/PlayPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/PlayPackets.java
+@@ -18,6 +18,7 @@
+ package net.raphimc.viabedrock.protocol.packet;
+ 
+ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.protocol.remapper.PacketHandlers;
+ import com.viaversion.viaversion.api.type.Types;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
+@@ -25,10 +26,16 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.CommandOriginType;
++import net.raphimc.viabedrock.protocol.model.CommandOriginData;
+ import net.raphimc.viabedrock.protocol.storage.BlobCache;
+ import net.raphimc.viabedrock.protocol.storage.GameRulesStorage;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
++import java.util.Map;
++import java.util.UUID;
++
+ public final class PlayPackets {
+ 
+     public static void register(final BedrockProtocol protocol) {
+@@ -78,6 +85,27 @@ public final class PlayPackets {
+             wrapper.user().get(GameRulesStorage.class).updateGameRules(wrapper.read(BedrockTypes.GAME_RULE_ARRAY)); // game rules
+         });
+ 
++        protocol.registerServerbound(ServerboundPackets26_3.SET_GAME_RULE, null, wrapper -> {
++            wrapper.cancel();
++            final GameRulesStorage gameRules = wrapper.user().get(GameRulesStorage.class);
++            final int count = wrapper.read(Types.VAR_INT);
++            for (int i = 0; i < count; i++) {
++                final String javaName = wrapper.read(Types.STRING);
++                final String value = wrapper.read(Types.STRING);
++                final String command = gameRules.toBedrockGameRuleCommand(javaName, value);
++                if (command == null) {
++                    continue;
++                }
++
++                final PacketWrapper request = PacketWrapper.create(ServerboundBedrockPackets.COMMAND_REQUEST, wrapper.user());
++                request.write(BedrockTypes.STRING, command);
++                request.write(BedrockTypes.COMMAND_ORIGIN_DATA, new CommandOriginData(CommandOriginType.Player, UUID.randomUUID(), ""));
++                request.write(Types.BOOLEAN, false);
++                request.write(BedrockTypes.STRING, ProtocolConstants.BEDROCK_COMMAND_VERSION);
++                request.sendToServer(BedrockProtocol.class);
++            }
++        });
++
+         protocol.registerServerbound(ServerboundPackets26_3.CLIENT_INFORMATION, ServerboundBedrockPackets.REQUEST_CHUNK_RADIUS, MultiStatePackets.CLIENT_SETTINGS_HANDLER);
+         protocol.registerServerbound(ServerboundPackets26_3.CUSTOM_PAYLOAD, null, MultiStatePackets.CUSTOM_PAYLOAD_HANDLER);
+         protocol.registerServerbound(ServerboundPackets26_3.PING_REQUEST, null, wrapper -> {
+@@ -88,6 +116,21 @@ public final class PlayPackets {
+         });
+     }
+ 
++    static void sendJavaGameRuleValues(final UserConnection user) {
++        final Map<String, String> values = user.get(GameRulesStorage.class).getJavaGameRuleValues();
++        final PacketWrapper response = PacketWrapper.create(ClientboundPackets26_3.GAME_RULE_VALUES, user);
++        writeJavaGameRuleValues(response, values);
++        response.send(BedrockProtocol.class);
++    }
++
++    static void writeJavaGameRuleValues(final PacketWrapper response, final Map<String, String> values) {
++        response.write(Types.VAR_INT, values.size());
++        for (Map.Entry<String, String> entry : values.entrySet()) {
++            response.write(Types.STRING, entry.getKey());
++            response.write(Types.STRING, entry.getValue());
++        }
++    }
++
+     private PlayPackets() {
+     }
+ 
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRuleMappings.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRuleMappings.java
+new file mode 100644
+index 00000000..f4df37f9
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRuleMappings.java
+@@ -0,0 +1,92 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import net.raphimc.viabedrock.protocol.model.GameRule;
++
++import java.util.Collection;
++import java.util.HashMap;
++import java.util.Locale;
++import java.util.Map;
++
++final class GameRuleMappings {
++
++    private static final Map<String, String> BEDROCK_TO_JAVA = Map.ofEntries(
++            Map.entry("commandblockoutput", "command_block_output"),
++            Map.entry("commandblocksenabled", "command_blocks_work"),
++            Map.entry("dodaylightcycle", "advance_time"),
++            Map.entry("doweathercycle", "advance_weather"),
++            Map.entry("dotiledrops", "block_drops"),
++            Map.entry("doentitydrops", "entity_drops"),
++            Map.entry("domobloot", "mob_drops"),
++            Map.entry("domobspawning", "spawn_mobs"),
++            Map.entry("drowningdamage", "drowning_damage"),
++            Map.entry("falldamage", "fall_damage"),
++            Map.entry("firedamage", "fire_damage"),
++            Map.entry("freezedamage", "freeze_damage"),
++            Map.entry("doimmediaterespawn", "immediate_respawn"),
++            Map.entry("keepinventory", "keep_inventory"),
++            Map.entry("dolimitedcrafting", "limited_crafting"),
++            Map.entry("locatorbar", "locator_bar"),
++            Map.entry("mobgriefing", "mob_griefing"),
++            Map.entry("naturalregeneration", "natural_health_regeneration"),
++            Map.entry("playerssleepingpercentage", "players_sleeping_percentage"),
++            Map.entry("projectilescanbreakblocks", "projectiles_can_break_blocks"),
++            Map.entry("pvp", "pvp"),
++            Map.entry("randomtickspeed", "random_tick_speed"),
++            Map.entry("sendcommandfeedback", "send_command_feedback"),
++            Map.entry("showdeathmessages", "show_death_messages"),
++            Map.entry("spawnradius", "respawn_radius"),
++            Map.entry("tntexplodes", "tnt_explodes"),
++            Map.entry("tntexplosiondropdecay", "tnt_explosion_drop_decay")
++    );
++
++    private static final Map<String, String> JAVA_TO_BEDROCK = BEDROCK_TO_JAVA.entrySet().stream()
++            .collect(java.util.stream.Collectors.toUnmodifiableMap(entry -> "minecraft:" + entry.getValue(), Map.Entry::getKey));
++
++    static Map<String, String> toJavaValues(final Collection<GameRule> gameRules) {
++        final Map<String, String> values = new HashMap<>();
++        for (GameRule rule : gameRules) {
++            final String javaName = BEDROCK_TO_JAVA.get(rule.name().toLowerCase(Locale.ROOT));
++            if (javaName != null && rule.editable() && (rule.value() instanceof Boolean || rule.value() instanceof Integer)) {
++                values.put("minecraft:" + javaName, rule.value().toString());
++            }
++        }
++        return values;
++    }
++
++    static String command(final Map<String, GameRule> gameRules, final String javaName, final String value) {
++        final String bedrockName = JAVA_TO_BEDROCK.get(javaName);
++        final GameRule rule = gameRules.get(bedrockName);
++        if (rule == null || !rule.editable() || !validValue(rule.value(), value)) {
++            return null;
++        }
++        return "/gamerule " + rule.name() + " " + value;
++    }
++
++    private static boolean validValue(final Object currentValue, final String value) {
++        if (currentValue instanceof Boolean) {
++            return "true".equals(value) || "false".equals(value);
++        }
++        if (currentValue instanceof Integer) {
++            try {
++                Integer.parseInt(value);
++                return true;
++            } catch (final NumberFormatException ignored) {
++                return false;
++            }
++        }
++        return false;
++    }
++
++    private GameRuleMappings() {
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRulesStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRulesStorage.java
+index 9dcfed5b..74cb1090 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRulesStorage.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRulesStorage.java
+@@ -38,6 +38,7 @@ public class GameRulesStorage extends StoredObject {
+     // Maybe important: recipesUnlock, showRecipeMessages, showBorderEffect
+ 
+     private final Map<String, Object> gameRules = new HashMap<>(BedrockProtocol.MAPPINGS.getBedrockGameRules());
++    private final Map<String, GameRule> receivedGameRules = new HashMap<>();
+ 
+     public GameRulesStorage(final UserConnection user, final GameRule[] gameRules) {
+         super(user);
+@@ -49,6 +50,7 @@ public class GameRulesStorage extends StoredObject {
+         final State state = this.user().getProtocolInfo().getServerState();
+         for (GameRule gameRule : gameRules) {
+             if (gameRule.value() != null) {
++                this.receivedGameRules.put(gameRule.name().toLowerCase(Locale.ROOT), gameRule);
+                 final Object previousValue = this.gameRules.put(gameRule.name().toLowerCase(Locale.ROOT), gameRule.value());
+                 if (previousValue == null) {
+                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received unknown game rule: " + gameRule.name());
+@@ -73,4 +75,12 @@ public class GameRulesStorage extends StoredObject {
+         return (T) this.gameRules.get(name.toLowerCase(Locale.ROOT));
+     }
+ 
++    public Map<String, String> getJavaGameRuleValues() {
++        return GameRuleMappings.toJavaValues(this.receivedGameRules.values());
++    }
++
++    public String toBedrockGameRuleCommand(final String javaName, final String value) {
++        return GameRuleMappings.command(this.receivedGameRules, javaName, value);
++    }
++
+ }
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayPacketsTest.java
+new file mode 100644
+index 00000000..6ac6def7
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayPacketsTest.java
+@@ -0,0 +1,44 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import org.junit.jupiter.api.Test;
++
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class PlayPacketsTest {
++
++    @Test
++    void writesTheWorldOptionsResponseExpectedByJava263() throws Exception {
++        final PacketWrapper wrapper = new PacketWrapperImpl(ClientboundPackets26_3.GAME_RULE_VALUES, null, null);
++        PlayPackets.writeJavaGameRuleValues(wrapper, Map.of("minecraft:advance_time", "false"));
++
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            wrapper.writeToBuffer(buffer);
++            assertEquals(ClientboundPackets26_3.GAME_RULE_VALUES.getId(), Types.VAR_INT.read(buffer));
++            assertEquals(1, Types.VAR_INT.read(buffer));
++            assertEquals("minecraft:advance_time", Types.STRING.read(buffer));
++            assertEquals("false", Types.STRING.read(buffer));
++            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/GameRuleMappingsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/GameRuleMappingsTest.java
+new file mode 100644
+index 00000000..ceaf77fb
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/GameRuleMappingsTest.java
+@@ -0,0 +1,48 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import net.raphimc.viabedrock.protocol.model.GameRule;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++class GameRuleMappingsTest {
++
++    @Test
++    void mapsOnlyEditableRulesWithCompatibleJavaTypes() {
++        final List<GameRule> rules = List.of(
++                new GameRule("doDayLightCycle", true, false),
++                new GameRule("randomTickSpeed", true, 4),
++                new GameRule("keepInventory", false, true),
++                new GameRule("customRule", true, true));
++
++        assertEquals(Map.of("minecraft:advance_time", "false", "minecraft:random_tick_speed", "4"),
++                GameRuleMappings.toJavaValues(rules));
++    }
++
++    @Test
++    void acceptsOnlyKnownEditableRuleChangesWithValidValues() {
++        final GameRule rule = new GameRule("doDayLightCycle", true, true);
++        final Map<String, GameRule> rules = Map.of("dodaylightcycle", rule);
++
++        assertEquals("/gamerule doDayLightCycle false",
++                GameRuleMappings.command(rules, "minecraft:advance_time", "false"));
++        assertNull(GameRuleMappings.command(rules, "minecraft:advance_time", "false; stop"));
++        assertNull(GameRuleMappings.command(rules, "minecraft:keep_inventory", "false"));
++        assertNull(GameRuleMappings.command(Map.of("dodaylightcycle", new GameRule("doDayLightCycle", false, true)),
++                "minecraft:advance_time", "false"));
++    }
++
++}
+-- 
+2.55.0
+
+

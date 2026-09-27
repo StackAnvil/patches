@@ -1,0 +1,261 @@
+From 8989d77e789539273392afb0a5528585e5721f6c Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 10:37:36 +0200
+Subject: [PATCH] fix(interaction): acknowledge block placement after server
+ updates
+
+Java acknowledges a predicted placement before the Bedrock server has applied it, which can leave the client showing a temporary ghost block. Track the clicked and placed positions, wait briefly after an authoritative update, and use a bounded timeout when no update arrives.
+---
+ .../protocol/packet/InteractionPackets.java   | 12 ++-
+ .../protocol/packet/WorldPackets.java         |  2 +
+ .../storage/BlockPredictionQueue.java         | 80 +++++++++++++++++++
+ .../protocol/storage/ChunkTracker.java        | 16 ++++
+ .../storage/BlockPredictionQueueTest.java     | 57 +++++++++++++
+ 5 files changed, 164 insertions(+), 3 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/BlockPredictionQueue.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/BlockPredictionQueueTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
+index d72086ba..c256792d 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
+@@ -300,9 +300,15 @@ public final class InteractionPackets {
+             final boolean insideBlock = wrapper.read(Types.BOOLEAN); // inside block
+             wrapper.read(Types.BOOLEAN); // world border, this doesn't exist on Bedrock.
+ 
+-            // Send back block changed ack with the sequence, this will help with ghost blocks.
+-            PacketFactory.sendJavaBlockChangedAck(wrapper.user(), wrapper.read(Types.VAR_INT));
+-
++            final int sequence = wrapper.read(Types.VAR_INT);
++            final Direction direction = Direction.getFromVerticalId(faceInt);
++            if (direction == null || (hand == InteractionHand.OFF_HAND
++                    && wrapper.user().get(InventoryTracker.class).getOffhandContainer().getItem(0).isEmpty())) {
++                PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
++                return;
++            }
++            final BlockPosition placedPosition = insideBlock ? position : position.getRelative(direction.blockFace());
++            wrapper.user().get(ChunkTracker.class).trackBlockPrediction(sequence, position, placedPosition);
+             sendUseItemOnBlock(wrapper.user(), hand, position, faceInt, clickPosition, insideBlock);
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.INVENTORY_TRANSACTION, null, wrapper -> {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+index 76317578..5413e749 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+@@ -93,6 +93,7 @@ public final class WorldPackets {
+         wrapper.write(Types.VAR_INT, remappedBlock.keyInt()); // block state
+         chunkTracker.sendNearbyRedstoneUpdates(List.of(position));
+         chunkTracker.sendUpperDoorUpdates(List.of(position));
++        chunkTracker.observeBlockUpdates(List.of(position));
+ 
+         if (remappedBlock.value() != null) {
+             wrapper.send(BedrockProtocol.class);
+@@ -478,6 +479,7 @@ public final class WorldPackets {
+             }
+             chunkTracker.sendNearbyRedstoneUpdates(changedPositions);
+             chunkTracker.sendUpperDoorUpdates(changedPositions);
++            chunkTracker.observeBlockUpdates(changedPositions);
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.BLOCK_ENTITY_DATA, ClientboundPackets26_3.BLOCK_ENTITY_DATA, new PacketHandlers() {
+             @Override
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/BlockPredictionQueue.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/BlockPredictionQueue.java
+new file mode 100644
+index 00000000..59307abb
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/BlockPredictionQueue.java
+@@ -0,0 +1,80 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++
++import java.util.Collection;
++import java.util.NavigableMap;
++import java.util.Set;
++import java.util.TreeMap;
++import java.util.concurrent.TimeUnit;
++
++final class BlockPredictionQueue {
++
++    private static final long UPDATE_SETTLE_NANOS = TimeUnit.MILLISECONDS.toNanos(50);
++    private static final long RESPONSE_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(1);
++
++    private final NavigableMap<Integer, Prediction> predictions = new TreeMap<>();
++
++    void add(final int sequence, final Set<BlockPosition> positions, final long now) {
++        if (sequence > 0) {
++            this.predictions.put(sequence, new Prediction(positions, now + RESPONSE_TIMEOUT_NANOS));
++        }
++    }
++
++    void observeUpdates(final Collection<BlockPosition> positions, final long now) {
++        for (Prediction prediction : this.predictions.values()) {
++            if (prediction.readyAt != Long.MAX_VALUE) {
++                continue;
++            }
++            for (BlockPosition position : positions) {
++                if (prediction.positions.contains(position)) {
++                    prediction.readyAt = now + UPDATE_SETTLE_NANOS;
++                    break;
++                }
++            }
++        }
++    }
++
++    int pollAcknowledgement(final long now) {
++        int sequence = -1;
++        while (!this.predictions.isEmpty()) {
++            final Prediction first = this.predictions.firstEntry().getValue();
++            if (now < first.readyAt && now < first.deadline) {
++                break;
++            }
++            sequence = this.predictions.pollFirstEntry().getKey();
++        }
++        return sequence;
++    }
++
++    private static final class Prediction {
++
++        private final Set<BlockPosition> positions;
++        private final long deadline;
++        private long readyAt = Long.MAX_VALUE;
++
++        private Prediction(final Set<BlockPosition> positions, final long deadline) {
++            this.positions = Set.copyOf(positions);
++            this.deadline = deadline;
++        }
++
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+index 228d0c88..66a0a5f3 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+@@ -51,6 +51,7 @@ import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSection;
+ import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSectionImpl;
+ import net.raphimc.viabedrock.api.model.BedrockBlockState;
+ import net.raphimc.viabedrock.api.model.BlockState;
++import net.raphimc.viabedrock.api.util.PacketFactory;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+@@ -100,6 +101,7 @@ public class ChunkTracker extends StoredObject {
+     private final PriorityQueue<SubChunkPosition> subChunkRequests = new PriorityQueue<>(this::compareSubChunkRequests);
+     private final Set<SubChunkPosition> queuedSubChunkRequests = new HashSet<>();
+     private final Set<SubChunkPosition> pendingSubChunks = new HashSet<>();
++    private final BlockPredictionQueue blockPredictions = new BlockPredictionQueue();
+ 
+     private int centerX = 0;
+     private int centerZ = 0;
+@@ -471,6 +473,16 @@ public class ChunkTracker extends StoredObject {
+         return true;
+     }
+ 
++    public void trackBlockPrediction(final int sequence, final BlockPosition clickedPosition, final BlockPosition placedPosition) {
++        final Set<BlockPosition> positions = clickedPosition.equals(placedPosition)
++                ? Set.of(clickedPosition) : Set.of(clickedPosition, placedPosition);
++        this.blockPredictions.add(sequence, positions, System.nanoTime());
++    }
++
++    public void observeBlockUpdates(final Collection<BlockPosition> positions) {
++        this.blockPredictions.observeUpdates(positions, System.nanoTime());
++    }
++
+     public IntObjectPair<BlockEntity> handleBlockChange(final BlockPosition blockPosition, final int layer, final int blockState) {
+         final BedrockChunkSection section = this.getChunkSection(blockPosition);
+         if (section == null) {
+@@ -1033,6 +1045,10 @@ public class ChunkTracker extends StoredObject {
+     }
+ 
+     public void tick() {
++        final int acknowledgedSequence = this.blockPredictions.pollAcknowledgement(System.nanoTime());
++        if (acknowledgedSequence > 0) {
++            PacketFactory.sendJavaBlockChangedAck(this.user(), acknowledgedSequence);
++        }
+         // Keep request preparation and Java chunk sends within the same per-tick time budget.
+         final long deadline = System.nanoTime() + 30_000_000L;
+         if (this.user().get(EntityTracker.class) != null && this.user().get(EntityTracker.class).getClientPlayer().isInitiallySpawned()) {
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/BlockPredictionQueueTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/BlockPredictionQueueTest.java
+new file mode 100644
+index 00000000..4f3eadab
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/BlockPredictionQueueTest.java
+@@ -0,0 +1,57 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++import java.util.Set;
++import java.util.concurrent.TimeUnit;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class BlockPredictionQueueTest {
++
++    @Test
++    void waitsForServerUpdateAndAcknowledgesInSequenceOrder() {
++        final BlockPredictionQueue queue = new BlockPredictionQueue();
++        final BlockPosition first = new BlockPosition(1, 64, 1);
++        final BlockPosition second = new BlockPosition(2, 64, 1);
++        final long now = TimeUnit.SECONDS.toNanos(10);
++        queue.add(5, Set.of(first), now);
++        queue.add(6, Set.of(second), now);
++
++        queue.observeUpdates(List.of(second), now + 1);
++        assertEquals(-1, queue.pollAcknowledgement(now + TimeUnit.MILLISECONDS.toNanos(100)));
++        queue.observeUpdates(List.of(first), now + TimeUnit.MILLISECONDS.toNanos(120));
++        assertEquals(-1, queue.pollAcknowledgement(now + TimeUnit.MILLISECONDS.toNanos(140)));
++        assertEquals(6, queue.pollAcknowledgement(now + TimeUnit.MILLISECONDS.toNanos(180)));
++    }
++
++    @Test
++    void expiresInteractionsWithoutBlockUpdates() {
++        final BlockPredictionQueue queue = new BlockPredictionQueue();
++        final long now = TimeUnit.SECONDS.toNanos(10);
++        queue.add(7, Set.of(new BlockPosition(1, 64, 1)), now);
++
++        assertEquals(-1, queue.pollAcknowledgement(now + TimeUnit.MILLISECONDS.toNanos(999)));
++        assertEquals(7, queue.pollAcknowledgement(now + TimeUnit.SECONDS.toNanos(1)));
++    }
++
++}
+-- 
+2.55.0
+
+

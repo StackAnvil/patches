@@ -1,0 +1,69 @@
+From 8300d116d55bcf67aad68581a8ac41722d31f1ce Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sun, 27 Sep 2026 10:14:38 +0200
+Subject: [PATCH] fix(mining): send creative break through player action packet
+
+Bedrock rejects CreativeDestroyBlock inside PlayerAuthInputPacket and disconnects the client. Keep start and predict actions in the auth input, then send CreativeDestroyBlock through PlayerActionPacket where the server accepts it.
+---
+ .../protocol/packet/ClientPlayerPackets.java     | 16 +++++++++++-----
+ .../protocol/packet/ClientPlayerPacketsTest.java |  6 +++---
+ 2 files changed, 14 insertions(+), 8 deletions(-)
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+index 8f720884..78ef2c13 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+@@ -108,8 +108,12 @@ public final class ClientPlayerPackets {
+         clientPlayer.setBlockBreakingInfo(creative ? null
+                 : new ClientPlayerEntity.BlockBreakingInfo(position, direction));
+         clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(
+-                creative ? PlayerActionType.CreativeDestroyBlock : PlayerActionType.StartDestroyBlock,
+-                position, direction.ordinal()));
++                PlayerActionType.StartDestroyBlock, position, direction.ordinal()));
++        if (creative) {
++            // CreativeDestroyBlock is only valid in PlayerActionPacket, not PlayerAuthInputPacket.
++            clientPlayer.addAuthInputBlockAction(new ClientPlayerEntity.AuthInputBlockAction(
++                    PlayerActionType.PredictDestroyBlock, position, direction.ordinal()));
++        }
+     }
+ 
+     static BedrockItem predictedMinedItem(final BedrockItem item,
+@@ -472,9 +476,11 @@ public final class ClientPlayerPackets {
+                     clientPlayer.cancelNextSwingPacket();
+                     // TODO: Handle instant breaking
+                     // TODO: Test breaking fire
+-                    queueStartDestroyAction(clientPlayer, position, direction,
+-                            clientPlayer.javaGameMode() == GameMode.CREATIVE);
+-                    if (clientPlayer.javaGameMode() == GameMode.CREATIVE) {
++                    final boolean creative = clientPlayer.javaGameMode() == GameMode.CREATIVE;
++                    queueStartDestroyAction(clientPlayer, position, direction, creative);
++                    if (creative) {
++                        clientPlayer.sendPlayerActionPacketToServer(
++                                PlayerActionType.CreativeDestroyBlock, position, direction.ordinal());
+                         chunkTracker.handleBlockChange(position, 0, chunkTracker.bedrockAirId());
+                         PacketFactory.sendJavaBlockUpdate(wrapper.user(), position, ProtocolConstants.JAVA_AIR_ID);
+                     }
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
+index e63849ad..6d93f8b9 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
+@@ -40,12 +40,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
+ class ClientPlayerPacketsTest {
+ 
+     @Test
+-    void creativeMiningBreaksOnStartWhileSurvivalTracksProgress() {
++    void creativeMiningPredictsTheBreakWithoutQueuingCreativeAction() {
+         final BlockPosition position = new BlockPosition(3, 64, 5);
+         final ClientPlayerEntity creative = player();
+         ClientPlayerPackets.queueStartDestroyAction(creative, position, Direction.NORTH, true);
+-        assertEquals(PlayerActionType.CreativeDestroyBlock,
+-                creative.authInputBlockActions().get(0).action());
++        assertEquals(List.of(PlayerActionType.StartDestroyBlock, PlayerActionType.PredictDestroyBlock),
++                creative.authInputBlockActions().stream().map(ClientPlayerEntity.AuthInputBlockAction::action).toList());
+         assertNull(creative.blockBreakingInfo());
+ 
+         final ClientPlayerEntity survival = player();
+-- 
+2.55.0
+
+
