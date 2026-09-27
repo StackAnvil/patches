@@ -1,6 +1,6 @@
 # Publish the VFP Bedrock add-on
 
-This guide is for StackAnvil maintainers who publish the patched ViaFabricPlus Bedrock add-on. The listing text is in [`publishing/vfp-vb-addon-description.md`](../publishing/vfp-vb-addon-description.md). The release workflow uploads only the add-on JAR.
+This guide is for StackAnvil maintainers who publish the patched ViaFabricPlus Bedrock add-on. The listing text is in [`publishing/vfp-vb-addon-description.md`](../publishing/vfp-vb-addon-description.md). After the GitHub release is created, the release workflow uploads the add-on JAR to Modrinth and CurseForge.
 
 The [private Modrinth draft](https://modrinth.com/mod/stackanvil-bedrock-addon) is owned by `pistonmaster`. Its project ID is `opL7gK2I`. It has a beta version of the verified `stack-v0.1.4` add-on JAR, with Fabric 26.3 and ViaFabricPlus marked as a required dependency. Its AI-assisted text, fork, and local skin import disclosures are saved. It uses the maintainer's hand-drawn icon and has not been submitted for review.
 
@@ -42,14 +42,13 @@ The repository secrets `MODRINTH_TOKEN` and `CURSEFORGE_TOKEN` are configured. T
 
 ## Upload a release
 
-1. Build and publish a StackAnvil GitHub release. The release includes the add-on JAR and `viafabricplus-bedrock-manifest.json`.
-2. Review the release notes. The workflow uses them as the changelog on both platforms.
-3. Open the **Publish VFP Bedrock add-on** workflow in GitHub Actions.
-4. Enter the existing `stack-v...` release tag and select the destination.
-5. Run the workflow. It validates the JAR against the build manifest before upload.
-6. Review the uploaded version on each platform after moderation. Confirm the Minecraft version, Fabric loader, dependency, and client environment.
+1. Run the **Release full stacks** workflow or push a `stack-v...` tag. The workflow builds the stack and creates a GitHub release.
+2. Wait for the add-on publishing job. It downloads the release JAR and manifest, validates the JAR, and uploads it to both platforms.
+3. Review the uploaded version on each platform after moderation. Confirm the Minecraft version, Fabric loader, dependency, and client environment.
 
-The workflow marks uploads as **beta** because StackAnvil builds are experimental. If one platform fails, select only that platform for a retry. Check its project first so that you do not upload a duplicate version.
+The workflow uses the GitHub release notes as the changelog on both platforms. It marks uploads as **beta** because StackAnvil builds are experimental.
+
+If one platform fails, inspect its project for the release version. Then run **Publish VFP Bedrock add-on** with the same release tag and only that platform. This avoids a duplicate upload to the other platform.
 
 Releases before this publishing setup do not contain the required manifest. Use a new release for the first automated upload. The private Modrinth `stack-v0.1.4` version was uploaded through the site after separately verifying its JAR digest against the GitHub release.
 
