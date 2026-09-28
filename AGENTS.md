@@ -7,6 +7,11 @@ This repository stores patch files and the tools that apply them. The generated 
 - Read `patches/<project>/series.json` before changing a stack. Apply `setup`, then `upstreamable`, then `deferred` in that order.
 - Keep `setup` limited to StackAnvil build identity, dependency routing, and compatibility. Never include it in an upstream PR.
 - Give each upstream-sized change one commit and one `.patch` file. Only the first `upstreamable` patch is the north-star PR. It must apply to the pinned upstream base without `setup`.
+- Before adding a patch, inspect earlier patches that introduced the affected code or behavior.
+- If a change fixes or broadens the same feature, edit its owning patch and make the shared design general.
+- Do not leave a later patch that only repairs or generalizes an earlier patch when both form one upstream-sized change.
+- Keep changes separate when they are independently reviewable, have different upstream owners, or need different prerequisites.
+- After folding a patch into an earlier one, remove its patch file and `series.json` entry. Replay and test the full stack.
 - Keep each upstreamable patch's purpose in its commit body. Before creating or updating its upstream PR, add a non-empty `.pr.md` file beside the patch with the same base filename for PR-specific context and testing.
 - Use `deferred` only when another upstream PR already covers the change. Record a non-empty reason with a link to that PR in `series.json`. Never include deferred patches in our upstream PR branches.
 - Explain non-obvious choices in the patch commit body. The commit body becomes part of the exported patch and helps reviewers maintain it later.
