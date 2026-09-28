@@ -1,0 +1,423 @@
+From b4183bec5d1c8c89a718204c87bc012a37cc1c15 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 28 Sep 2026 10:56:50 +0200
+Subject: [PATCH] feat(entities): animate numeric looping Bedrock bones
+
+Read direct animations selected by unconditional entity scripts and apply numeric position and rotation keyframes to custom entity model parts. Sample from the entity render age so poses interpolate between ticks and reset before each draw. Leave Molang, animation controllers, and other unsupported channels untouched until their state can be evaluated correctly.
+---
+ .../render/BedrockEntityAnimation.java        | 221 ++++++++++++++++++
+ .../bedrock/render/BedrockEntityRenderer.java |  22 ++
+ .../bedrock/render/BedrockGeometry.java       |   9 +
+ .../render/BedrockEntityAnimationTest.java    |  91 ++++++++
+ 4 files changed, 343 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimation.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimationTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimation.java
+new file mode 100644
+index 0000000..0bc1cc4
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimation.java
+@@ -0,0 +1,221 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.function.Function;
++import net.minecraft.client.model.geom.ModelPart;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.cube.converter.data.bedrock.BedrockEntityData;
++
++/** A numeric, looping Bedrock animation. MoLang and animation controllers are intentionally excluded. */
++record BedrockEntityAnimation(float length, Map<String, Bone> bones) {
++
++    private static final float DEGREES_TO_RADIANS = (float) (Math.PI / 180D);
++
++    static Map<String, BedrockEntityAnimation> load(final ResourcePackStorage packs) {
++        final Map<String, BedrockEntityAnimation> animations = new HashMap<>();
++        for (var pack : packs.getPackStackBottomToTop()) {
++            for (String path : pack.content().getFilesDeep("animations/", ".json")) {
++                try {
++                    final JsonObject definitions = pack.content().getJson(path).getAsJsonObject("animations");
++                    if (definitions == null) {
++                        continue;
++                    }
++                    for (var entry : definitions.entrySet()) {
++                        final BedrockEntityAnimation animation = parse(entry.getValue().getAsJsonObject());
++                        if (animation == null) {
++                            animations.remove(entry.getKey());
++                        } else {
++                            animations.put(entry.getKey(), animation);
++                        }
++                    }
++                } catch (RuntimeException ignored) {
++                    // An invalid file must not prevent other packs from providing animations.
++                }
++            }
++        }
++        return Map.copyOf(animations);
++    }
++
++    static List<BedrockEntityAnimation> select(final Map<String, BedrockEntityAnimation> library, final BedrockEntityData entity) {
++        final List<BedrockEntityAnimation> selected = new ArrayList<>();
++        for (var animate : entity.getScripts().animates()) {
++            if (!animate.expression().isBlank()) {
++                continue;
++            }
++            final String identifier = entity.getAnimations().get(animate.name());
++            if (identifier == null) {
++                continue;
++            }
++            final BedrockEntityAnimation animation = library.get(identifier);
++            if (animation != null) {
++                selected.add(animation);
++            }
++        }
++        return List.copyOf(selected);
++    }
++
++    static BedrockEntityAnimation parse(final JsonObject json) {
++        if (!json.has("loop") || !json.get("loop").getAsBoolean()
++            || json.has("anim_time_update") || json.has("blend_weight") || json.has("override_previous_animation")
++            || json.has("start_delay") || json.has("loop_delay")) {
++            return null;
++        }
++        final JsonObject boneData = json.getAsJsonObject("bones");
++        if (boneData == null) {
++            return null;
++        }
++        final Map<String, Bone> bones = new HashMap<>();
++        float lastFrame = 0F;
++        for (var entry : boneData.entrySet()) {
++            if (!entry.getValue().isJsonObject()) {
++                return null;
++            }
++            final JsonObject channels = entry.getValue().getAsJsonObject();
++            for (String channel : channels.keySet()) {
++                if (!channel.equals("position") && !channel.equals("rotation")) {
++                    return null;
++                }
++            }
++            final Channel position = channels.has("position") ? Channel.parse(channels.get("position")) : null;
++            final Channel rotation = channels.has("rotation") ? Channel.parse(channels.get("rotation")) : null;
++            if (channels.has("position") && position == null || channels.has("rotation") && rotation == null) {
++                return null;
++            }
++            if (position != null || rotation != null) {
++                bones.put(entry.getKey(), new Bone(position, rotation));
++                lastFrame = Math.max(lastFrame, Math.max(position == null ? 0F : position.lastFrame(), rotation == null ? 0F : rotation.lastFrame()));
++            }
++        }
++        if (bones.isEmpty()) {
++            return null;
++        }
++        final float length = json.has("animation_length") ? json.get("animation_length").getAsFloat() : lastFrame > 0F ? lastFrame : 1F;
++        if (!Float.isFinite(length) || length <= 0F || length < lastFrame) {
++            return null;
++        }
++        return new BedrockEntityAnimation(length, Map.copyOf(bones));
++    }
++
++    void apply(final ModelPart root, final float seconds) {
++        final float time = seconds % this.length;
++        final Function<String, ModelPart> lookup = root.createPartLookup();
++        for (var entry : this.bones.entrySet()) {
++            final ModelPart part = lookup.apply(entry.getKey());
++            if (part == null) {
++                continue;
++            }
++            final Bone bone = entry.getValue();
++            if (bone.position != null) {
++                final Vec3 position = bone.position.sample(time);
++                part.x += position.x;
++                part.y -= position.y;
++                part.z += position.z;
++            }
++            if (bone.rotation != null) {
++                final Vec3 rotation = bone.rotation.sample(time);
++                part.xRot += rotation.x * DEGREES_TO_RADIANS;
++                part.yRot += rotation.y * DEGREES_TO_RADIANS;
++                part.zRot += rotation.z * DEGREES_TO_RADIANS;
++            }
++        }
++    }
++
++    private record Bone(Channel position, Channel rotation) {
++    }
++
++    private record Vec3(float x, float y, float z) {
++
++        private static Vec3 parse(final JsonElement value) {
++            if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isNumber()) {
++                final float number = value.getAsFloat();
++                return Float.isFinite(number) ? new Vec3(number, number, number) : null;
++            }
++            if (!value.isJsonArray() || value.getAsJsonArray().size() != 1 && value.getAsJsonArray().size() != 3) {
++                return null;
++            }
++            final var array = value.getAsJsonArray();
++            for (JsonElement component : array) {
++                if (!component.isJsonPrimitive() || !component.getAsJsonPrimitive().isNumber() || !Float.isFinite(component.getAsFloat())) {
++                    return null;
++                }
++            }
++            if (array.size() == 1) {
++                final float number = array.get(0).getAsFloat();
++                return new Vec3(number, number, number);
++            }
++            return new Vec3(array.get(0).getAsFloat(), array.get(1).getAsFloat(), array.get(2).getAsFloat());
++        }
++
++        private Vec3 interpolate(final Vec3 next, final float fraction) {
++            return new Vec3(
++                this.x + (next.x - this.x) * fraction,
++                this.y + (next.y - this.y) * fraction,
++                this.z + (next.z - this.z) * fraction
++            );
++        }
++
++    }
++
++    private record Keyframe(float time, Vec3 value) {
++    }
++
++    private record Channel(List<Keyframe> keyframes) {
++
++        private static Channel parse(final JsonElement value) {
++            if (!value.isJsonObject()) {
++                final Vec3 vector = Vec3.parse(value);
++                return vector == null ? null : new Channel(List.of(new Keyframe(0F, vector)));
++            }
++            final List<Keyframe> frames = new ArrayList<>();
++            for (var entry : value.getAsJsonObject().entrySet()) {
++                final float time;
++                try {
++                    time = Float.parseFloat(entry.getKey());
++                } catch (NumberFormatException ignored) {
++                    return null;
++                }
++                final Vec3 vector = Vec3.parse(entry.getValue());
++                if (!Float.isFinite(time) || time < 0F || vector == null) {
++                    return null;
++                }
++                frames.add(new Keyframe(time, vector));
++            }
++            if (frames.isEmpty()) {
++                return null;
++            }
++            frames.sort(Comparator.comparingDouble(Keyframe::time));
++            return new Channel(List.copyOf(frames));
++        }
++
++        private float lastFrame() {
++            return this.keyframes.getLast().time;
++        }
++
++        private Vec3 sample(final float time) {
++            Keyframe previous = this.keyframes.getFirst();
++            for (int i = 1; i < this.keyframes.size(); i++) {
++                final Keyframe next = this.keyframes.get(i);
++                if (time < next.time) {
++                    final float fraction = Math.clamp((time - previous.time) / (next.time - previous.time), 0F, 1F);
++                    return previous.value.interpolate(next.value, fraction);
++                }
++                previous = next;
++            }
++            return previous.value;
++        }
++
++    }
++
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
+index 3f6070c..1e0bbba 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
+@@ -50,6 +50,8 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+ 
+     private final Map<String, Model<EntityRenderState>> models = new HashMap<>();
+     private final Map<RenderData, List<RenderedModel>> resolvedModelSets = new HashMap<>();
++    private final Map<String, List<BedrockEntityAnimation>> selectedAnimations = new HashMap<>();
++    private Map<String, BedrockEntityAnimation> animationLibrary;
+     private ResourcePackStorage currentPacks;
+ 
+     public BedrockEntityRenderer(final EntityRendererProvider.Context context) {
+@@ -76,11 +78,14 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+             return;
+         }
+         state.models = List.of();
++        state.animations = List.of();
+         final UserConnection connection = ViaFabricPlus.api().userConnection();
+         if (connection == null || !connection.has(ResourcePackStorage.class)) {
+             this.currentPacks = null;
+             this.models.clear();
+             this.resolvedModelSets.clear();
++            this.selectedAnimations.clear();
++            this.animationLibrary = null;
+             return;
+         }
+         final RenderData renderData = CustomEntityRenderStore.get(entity.getUUID());
+@@ -92,8 +97,20 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+             this.currentPacks = packs;
+             this.models.clear();
+             this.resolvedModelSets.clear();
++            this.selectedAnimations.clear();
++            this.animationLibrary = null;
+         }
+         state.models = this.resolvedModelSets.computeIfAbsent(renderData, data -> this.resolveModels(data, packs));
++        state.animations = this.selectedAnimations.computeIfAbsent(renderData.identifier(), identifier -> {
++            final var definition = packs.getEntities().get(identifier);
++            if (definition == null || definition.entityData().getScripts().animates().isEmpty()) {
++                return List.of();
++            }
++            if (this.animationLibrary == null) {
++                this.animationLibrary = BedrockEntityAnimation.load(packs);
++            }
++            return BedrockEntityAnimation.select(this.animationLibrary, definition.entityData());
++        });
+         state.yaw = entity.getYRot();
+     }
+ 
+@@ -155,7 +172,12 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+ 
+     public static final class State extends EntityRenderState {
+         private List<RenderedModel> models = List.of();
++        private List<BedrockEntityAnimation> animations = List.of();
+         private float yaw;
++
++        List<BedrockEntityAnimation> animations() {
++            return this.animations;
++        }
+     }
+ 
+     private record RenderedModel(Model<EntityRenderState> model, RenderType renderType) {
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
+index e012b4b..5f2452f 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
+@@ -59,6 +59,15 @@ public final class BedrockGeometry {
+ 
+     public static Model<EntityRenderState> entityModel(final BedrockGeometryModel geometry) {
+         return new Model<>(root(geometry, false), RenderTypes::entityTranslucent) {
++            @Override
++            public void setupAnim(final EntityRenderState state) {
++                this.resetPose();
++                if (state instanceof BedrockEntityRenderer.State bedrockState) {
++                    for (BedrockEntityAnimation animation : bedrockState.animations()) {
++                        animation.apply(this.root, state.ageInTicks / 20F);
++                    }
++                }
++            }
+         };
+     }
+ 
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimationTest.java
+new file mode 100644
+index 0000000..afa1aab
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimationTest.java
+@@ -0,0 +1,91 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import java.util.List;
++import java.util.Map;
++import net.minecraft.client.model.geom.ModelPart;
++import org.cube.converter.data.bedrock.BedrockEntityData;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++final class BedrockEntityAnimationTest {
++
++    @Test
++    void interpolatesAndLoopsBoneRotationAndPosition() {
++        final BedrockEntityAnimation animation = BedrockEntityAnimation.parse(json("""
++            {
++              "loop": true,
++              "animation_length": 2,
++              "bones": {
++                "tail": {
++                  "rotation": {"0": [0, 0, 0], "1": [0, 90, 0], "2": [0, 0, 0]},
++                  "position": {"0": [0, 0, 0], "1": [2, 4, 6], "2": [0, 0, 0]}
++                }
++              }
++            }
++            """));
++        assertNotNull(animation);
++
++        final ModelPart tail = new ModelPart(List.of(), Map.of());
++        tail.setPos(3F, 5F, 7F);
++        final ModelPart root = new ModelPart(List.of(), Map.of("tail", tail));
++
++        animation.apply(root, 0.5F);
++        assertEquals(4F, tail.x);
++        assertEquals(3F, tail.y);
++        assertEquals(10F, tail.z);
++        assertEquals((float) Math.PI / 4F, tail.yRot, 0.0001F);
++
++        tail.setPos(3F, 5F, 7F);
++        tail.setRotation(0F, 0F, 0F);
++        animation.apply(root, 2.5F);
++        assertEquals(4F, tail.x);
++        assertEquals(3F, tail.y);
++        assertEquals(10F, tail.z);
++        assertEquals((float) Math.PI / 4F, tail.yRot, 0.0001F);
++    }
++
++    @Test
++    void selectsOnlyUnconditionalAnimationAliases() {
++        final BedrockEntityAnimation animation = BedrockEntityAnimation.parse(json("""
++            {"loop": true, "bones": {"tail": {"rotation": [0, 15, 0]}}}
++            """));
++        assertNotNull(animation);
++        final var scripts = new BedrockEntityData.Scripts(List.of(), List.of(),
++            new BedrockEntityData.Scripts.Scale("1", "1", "1", "1"), List.of(
++                new BedrockEntityData.Scripts.Animate("idle", ""),
++                new BedrockEntityData.Scripts.Animate("walk", "query.modified_move_speed")
++            ));
++        final var entity = new BedrockEntityData("test:mob", scripts, List.of(), Map.of(),
++            Map.of("idle", "animation.test.idle", "walk", "animation.test.walk"), Map.of(), Map.of());
++
++        assertEquals(List.of(animation), BedrockEntityAnimation.select(Map.of(
++            "animation.test.idle", animation, "animation.test.walk", animation
++        ), entity));
++    }
++
++    @Test
++    void rejectsExpressionsAndCustomTimeUpdates() {
++        assertNull(BedrockEntityAnimation.parse(json("""
++            {"loop": true, "bones": {"tail": {"rotation": ["query.life_time * 20", 0, 0]}}}
++            """)));
++        assertNull(BedrockEntityAnimation.parse(json("""
++            {"loop": true, "anim_time_update": "query.modified_distance_moved", "bones": {"tail": {"rotation": [0, 15, 0]}}}
++            """)));
++    }
++
++    private static JsonObject json(final String source) {
++        return JsonParser.parseString(source).getAsJsonObject();
++    }
++
++}
+-- 
+2.55.0

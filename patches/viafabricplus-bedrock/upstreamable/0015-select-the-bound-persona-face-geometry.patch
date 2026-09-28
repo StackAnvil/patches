@@ -1,0 +1,205 @@
+From 18ca2d0ba52aaa294673e51b12ea89bee5a4a4cb Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 28 Sep 2026 10:56:49 +0200
+Subject: [PATCH] fix(bedrock): select the bound persona face geometry
+
+The skin resource patch can identify the animated face model explicitly. Use that identifier when multiple face definitions share a geometry payload so the renderer does not choose an unrelated face or drop a valid skin. Keep the existing unique-face fallback for skins without a face binding.
+---
+ .../bedrock/render/BedrockPlayerSkins.java    | 19 ++++--
+ .../render/BedrockPersonaGeometryTest.java    | 68 +++++++++++++------
+ 2 files changed, 59 insertions(+), 28 deletions(-)
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
+index 9bd4fe0..ad795c6 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
+@@ -170,9 +170,15 @@ public final class BedrockPlayerSkins {
+     }
+ 
+     private static String geometryName(final SkinData skin) {
++        return geometryName(skin.skinResourcePatch(), "default");
++    }
++
++    static String geometryName(final String resourcePatch, final String binding) {
+         try {
+-            return JsonParser.parseString(skin.skinResourcePatch()).getAsJsonObject()
+-                .getAsJsonObject("geometry").get("default").getAsString();
++            final var geometry = JsonParser.parseString(resourcePatch).getAsJsonObject().getAsJsonObject("geometry");
++            final var name = geometry.get(binding);
++            return name != null && name.isJsonPrimitive() && name.getAsJsonPrimitive().isString()
++                ? name.getAsString() : "";
+         } catch (RuntimeException e) {
+             return "";
+         }
+@@ -181,7 +187,8 @@ public final class BedrockPlayerSkins {
+     private static Geometry geometry(final SkinData skin) {
+         final String name = geometryName(skin);
+         if (skin.persona()) {
+-            return personaGeometry(name, skin.geometryData(), skin.skinData(), skin.animations());
++            return personaGeometry(name, geometryName(skin.skinResourcePatch(), "animated_face"),
++                skin.geometryData(), skin.skinData(), skin.animations());
+         }
+         if ("geometry.humanoid.custom".equalsIgnoreCase(name) || "geometry.humanoid.customSlim".equalsIgnoreCase(name)) {
+             // These are Bedrock's standard Steve and Alex models. Minecraft's
+@@ -203,8 +210,8 @@ public final class BedrockPlayerSkins {
+         }
+     }
+ 
+-    static Geometry personaGeometry(final String name, final String geometryData, final BufferedImage skinImage,
+-                                    final List<SkinData.AnimationData> animations) {
++    static Geometry personaGeometry(final String name, final String faceName, final String geometryData,
++                                    final BufferedImage skinImage, final List<SkinData.AnimationData> animations) {
+         if (name.isBlank() || geometryData == null || geometryData.isBlank() || !supportedImage(skinImage)) {
+             return null;
+         }
+@@ -226,7 +233,7 @@ public final class BedrockPlayerSkins {
+                         return null;
+                     }
+                     body = model.deepCopy();
+-                } else if (identifier.startsWith("geometry.animated_face_")) {
++                } else if (faceName.isEmpty() ? identifier.startsWith("geometry.animated_face_") : faceName.equals(identifier)) {
+                     if (face != null) {
+                         return null;
+                     }
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaGeometryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaGeometryTest.java
+index a722d20..88e06cb 100644
+--- a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaGeometryTest.java
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaGeometryTest.java
+@@ -58,12 +58,12 @@ final class BedrockPersonaGeometryTest {
+         models.add(model);
+         data.add("minecraft:geometry", models);
+ 
+-        assertNotNull(BedrockPlayerSkins.personaGeometry("geometry.test.persona", data.toString(), bodyImage(), List.of()));
++        assertNotNull(BedrockPlayerSkins.personaGeometry("geometry.test.persona", "", data.toString(), bodyImage(), List.of()));
+         models.add(model.deepCopy());
+-        assertNull(BedrockPlayerSkins.personaGeometry("geometry.test.persona", data.toString(), bodyImage(), List.of()));
++        assertNull(BedrockPlayerSkins.personaGeometry("geometry.test.persona", "", data.toString(), bodyImage(), List.of()));
+         models.remove(1);
+         bones.remove(0);
+-        assertNull(BedrockPlayerSkins.personaGeometry("geometry.test.persona", data.toString(), bodyImage(), List.of()));
++        assertNull(BedrockPlayerSkins.personaGeometry("geometry.test.persona", "", data.toString(), bodyImage(), List.of()));
+     }
+ 
+     @Test
+@@ -71,25 +71,20 @@ final class BedrockPersonaGeometryTest {
+         final JsonObject body = personaModel("geometry.test.persona");
+         final JsonArray bodyBones = body.getAsJsonArray("bones");
+         bodyBones.get(0).getAsJsonObject().remove("poly_mesh");
+-        final JsonObject face = personaModel("geometry.animated_face_test");
+-        final JsonArray faceBones = face.getAsJsonArray("bones");
+-        for (int index = faceBones.size() - 1; index > 0; index--) {
+-            faceBones.remove(index);
+-        }
+         final JsonObject data = new JsonObject();
+         final JsonArray models = new JsonArray();
+         models.add(body);
+-        models.add(face);
++        models.add(faceModel("geometry.animated_face_test"));
+         data.add("minecraft:geometry", models);
+         final BufferedImage faceImage = new BufferedImage(256, 256, BufferedImage.TYPE_INT_ARGB);
+         final List<SkinData.AnimationData> animations = List.of(new SkinData.AnimationData(faceImage, 1, 1F, 1));
+ 
+         final BedrockPlayerSkins.Geometry geometry = BedrockPlayerSkins.personaGeometry(
+-            "geometry.test.persona", data.toString(), bodyImage(), animations);
++            "geometry.test.persona", "", data.toString(), bodyImage(), animations);
+ 
+         assertNotNull(geometry);
+         assertNotNull(geometry.face());
+-        assertNull(BedrockPlayerSkins.personaGeometry("geometry.test.persona", data.toString(), bodyImage(), List.of()));
++        assertNull(BedrockPlayerSkins.personaGeometry("geometry.test.persona", "", data.toString(), bodyImage(), List.of()));
+     }
+ 
+     @Test
+@@ -102,7 +97,7 @@ final class BedrockPersonaGeometryTest {
+         data.add("minecraft:geometry", models);
+ 
+         final BedrockPlayerSkins.Geometry geometry = BedrockPlayerSkins.personaGeometry(
+-            "geometry.test.persona", data.toString(), bodyImage(), List.of());
++            "geometry.test.persona", "", data.toString(), bodyImage(), List.of());
+ 
+         assertNotNull(geometry);
+         assertEquals("geometry.test.persona", geometry.model().getIdentifier());
+@@ -114,27 +109,47 @@ final class BedrockPersonaGeometryTest {
+         final JsonArray models = new JsonArray();
+         models.add(personaModel("geometry.unused.variant"));
+         models.add(personaModel("geometry.test.persona"));
+-        final JsonObject face = personaModel("geometry.animated_face_test");
+-        final JsonArray faceBones = face.getAsJsonArray("bones");
+-        for (int index = faceBones.size() - 1; index > 0; index--) {
+-            faceBones.remove(index);
+-        }
+-        models.add(face);
++        models.add(faceModel("geometry.animated_face_test"));
+         final JsonObject data = new JsonObject();
+         data.add("minecraft:geometry", models);
+         final BufferedImage faceImage = new BufferedImage(256, 256, BufferedImage.TYPE_INT_ARGB);
+         final List<SkinData.AnimationData> animations = List.of(new SkinData.AnimationData(faceImage, 1, 1F, 1));
+ 
+         final BedrockPlayerSkins.Geometry geometry = BedrockPlayerSkins.personaGeometry(
+-            "geometry.test.persona", data.toString(), bodyImage(), animations);
++            "geometry.test.persona", "", data.toString(), bodyImage(), animations);
+ 
+         assertNotNull(geometry);
+         assertNotNull(geometry.face());
+         final BufferedImage invalidFaceImage = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
+-        assertNull(BedrockPlayerSkins.personaGeometry("geometry.test.persona", data.toString(), bodyImage(),
++        assertNull(BedrockPlayerSkins.personaGeometry("geometry.test.persona", "", data.toString(), bodyImage(),
+             List.of(new SkinData.AnimationData(invalidFaceImage, 1, 1F, 1))));
+         models.add(personaModel("geometry.animated_face_other"));
+-        assertNull(BedrockPlayerSkins.personaGeometry("geometry.test.persona", data.toString(), bodyImage(), animations));
++        assertNull(BedrockPlayerSkins.personaGeometry("geometry.test.persona", "", data.toString(), bodyImage(), animations));
++    }
++
++    @Test
++    void selectsAnimatedFaceNamedByResourcePatch() {
++        final JsonArray models = new JsonArray();
++        models.add(personaModel("geometry.test.persona"));
++        models.add(faceModel("geometry.animated_face_unused"));
++        models.add(faceModel("geometry.animated_face_selected"));
++        final JsonObject data = new JsonObject();
++        data.add("minecraft:geometry", models);
++        final String resourcePatch = "{\"geometry\":{\"default\":\"geometry.test.persona\","
++            + "\"animated_face\":\"geometry.animated_face_selected\"}}";
++        final BufferedImage faceImage = new BufferedImage(256, 256, BufferedImage.TYPE_INT_ARGB);
++        final List<SkinData.AnimationData> animations = List.of(new SkinData.AnimationData(faceImage, 1, 1F, 1));
++
++        final BedrockPlayerSkins.Geometry geometry = BedrockPlayerSkins.personaGeometry(
++            BedrockPlayerSkins.geometryName(resourcePatch, "default"),
++            BedrockPlayerSkins.geometryName(resourcePatch, "animated_face"),
++            data.toString(), bodyImage(), animations);
++
++        assertNotNull(geometry);
++        assertNotNull(geometry.face());
++        assertEquals("geometry.animated_face_selected", geometry.face().model().getIdentifier());
++        assertNull(BedrockPlayerSkins.personaGeometry("geometry.test.persona", "geometry.animated_face_missing",
++            data.toString(), bodyImage(), animations));
+     }
+ 
+     @Test
+@@ -144,7 +159,7 @@ final class BedrockPersonaGeometryTest {
+         models.add(personaModel("geometry.test.persona"));
+         data.add("minecraft:geometry", models);
+ 
+-        assertNull(BedrockPlayerSkins.personaGeometry("geometry.test.persona", data.toString(),
++        assertNull(BedrockPlayerSkins.personaGeometry("geometry.test.persona", "", data.toString(),
+             new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB), List.of()));
+     }
+ 
+@@ -152,6 +167,15 @@ final class BedrockPersonaGeometryTest {
+         return new BufferedImage(256, 256, BufferedImage.TYPE_INT_ARGB);
+     }
+ 
++    private static JsonObject faceModel(final String identifier) {
++        final JsonObject face = personaModel(identifier);
++        final JsonArray bones = face.getAsJsonArray("bones");
++        for (int index = bones.size() - 1; index > 0; index--) {
++            bones.remove(index);
++        }
++        return face;
++    }
++
+     private static JsonObject personaModel(final String identifier) {
+         final JsonObject model = new JsonObject();
+         final JsonObject description = new JsonObject();
+-- 
+2.55.0

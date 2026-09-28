@@ -1,0 +1,506 @@
+From 4a17db73fd4ba5fca4e09837498340960abad9e3 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 28 Sep 2026 10:38:26 +0200
+Subject: [PATCH] feat(blocks): render textured Bedrock full cubes
+
+Bedrock custom block states previously all used the coarse-dirt fallback. Convert terrain atlas textures into distinct Java note-block models and assign those states only to opaque full cubes with one material and no visual permutations. This preserves the normal fallback for geometry and materials the converter cannot represent, and invalidates cached packs so existing downloads receive the new models.
+---
+ .../definition/TextureDefinitions.java        |  54 ++++++++
+ .../http/ConvertedResourcePackCache.java      |   3 +
+ .../protocol/packet/JoinPackets.java          |   2 +-
+ .../protocol/rewriter/BlockStateRewriter.java |  56 +++++++-
+ .../rewriter/ResourcePackRewriter.java        |   2 +
+ .../CustomBlockResourceRewriter.java          | 127 ++++++++++++++++++
+ .../protocol/storage/ResourcePackStorage.java |   6 +
+ .../CustomBlockModelSelectionTest.java        |  84 ++++++++++++
+ 8 files changed, 332 insertions(+), 2 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitions.java
+index ba8c2db5..56c12e58 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitions.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextureDefinitions.java
+@@ -29,9 +29,33 @@ import java.util.logging.Level;
+ public class TextureDefinitions {
+ 
+     private final Map<String, List<ItemTextureDefinition>> itemTextures = new HashMap<>();
++    private final Map<String, String> terrainTextures = new HashMap<>();
++    private final Set<String> serverTerrainTextures = new HashSet<>();
+ 
+     public TextureDefinitions(final ResourcePackStorage resourcePackStorage) {
+         for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
++            if (pack.content().contains("textures/terrain_texture.json")) {
++                try {
++                    final JsonObject terrainTexture = pack.content().getJson("textures/terrain_texture.json");
++                    final JsonObject textureData = terrainTexture.getAsJsonObject("texture_data");
++                    if (textureData != null) {
++                        for (Map.Entry<String, JsonElement> entry : textureData.entrySet()) {
++                            if (!entry.getValue().isJsonObject()) {
++                                continue;
++                            }
++                            final String path = firstTexturePath(entry.getValue().getAsJsonObject().get("textures"));
++                            if (path != null) {
++                                this.terrainTextures.put(entry.getKey(), path);
++                                if (resourcePackStorage.isServerPack(pack)) {
++                                    this.serverTerrainTextures.add(entry.getKey());
++                                }
++                            }
++                        }
++                    }
++                } catch (final Throwable e) {
++                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse terrain_texture.json in pack " + pack.key(), e);
++                }
++            }
+             if (pack.content().contains("textures/item_texture.json")) {
+                 try {
+                     final JsonObject itemTexture = pack.content().getJson("textures/item_texture.json");
+@@ -63,6 +87,36 @@ public class TextureDefinitions {
+         return Collections.unmodifiableMap(this.itemTextures);
+     }
+ 
++    public Map<String, String> terrainTextures() {
++        return Collections.unmodifiableMap(this.terrainTextures);
++    }
++
++    public Set<String> serverTerrainTextures() {
++        return Collections.unmodifiableSet(this.serverTerrainTextures);
++    }
++
++    private static String firstTexturePath(final JsonElement textures) {
++        if (textures == null || textures.isJsonNull()) {
++            return null;
++        }
++        if (textures.isJsonPrimitive()) {
++            return textures.getAsString();
++        }
++        if (textures.isJsonArray() && !textures.getAsJsonArray().isEmpty()) {
++            return firstTexturePath(textures.getAsJsonArray().get(0));
++        }
++        if (textures.isJsonObject()) {
++            final JsonObject texture = textures.getAsJsonObject();
++            if (texture.has("path")) {
++                return texture.get("path").getAsString();
++            }
++            if (texture.has("variations")) {
++                return firstTexturePath(texture.get("variations"));
++            }
++        }
++        return null;
++    }
++
+     public record ItemTextureDefinition(String name, String texturePath) {
+     }
+ 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
+index 2ce52fb7..b1729ff7 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
+@@ -47,6 +47,8 @@ import java.util.logging.Level;
+ 
+ public class ConvertedResourcePackCache {
+ 
++    private static final String CONVERSION_VERSION = "custom-full-block-models-1";
++
+     private final Path directory;
+     private final ViaBedrockConfig.PackCacheMode mode;
+     private final ExecutorService executor = Executors.newFixedThreadPool(Math.max(1, Math.min(2, Runtime.getRuntime().availableProcessors())), task -> {
+@@ -142,6 +144,7 @@ public class ConvertedResourcePackCache {
+         final MessageDigest digest = digest("SHA-256");
+         try (var output = new DataOutputStream(new DigestOutputStream(OutputStream.nullOutputStream(), digest))) {
+             writeString(output, ViaBedrock.IMPL_VERSION);
++            writeString(output, CONVERSION_VERSION);
+             for (ResourcePack pack : packs) {
+                 writeString(output, pack.key().toString());
+                 final List<String> paths = new ArrayList<>(pack.content().getFilesDeep("", ""));
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+index 3f385268..94729034 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+@@ -383,7 +383,7 @@ public final class JoinPackets {
+ 
+                 wrapper.user().put(new JoinGameStorage(levelName, difficulty, rainLevel, lightningLevel, dayCycleStopTime, chunkTickRange));
+                 wrapper.user().put(new GameRulesStorage(wrapper.user(), gameRules));
+-                wrapper.user().put(new BlockStateRewriter(blockProperties, hashedRuntimeBlockIds));
++                wrapper.user().put(new BlockStateRewriter(blockProperties, hashedRuntimeBlockIds, resourcePackStorage));
+                 wrapper.user().put(new ItemRewriter(wrapper.user(), new ItemEntry[0]));
+                 wrapper.user().put(new ChunkTracker(wrapper.user(), dimension));
+                 final EntityTracker entityTracker = new EntityTracker(wrapper.user());
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
+index 2cb4a79b..a09c776b 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
+@@ -34,6 +34,8 @@ import net.raphimc.viabedrock.api.util.CombinationUtil;
+ import net.raphimc.viabedrock.api.util.HashedPaletteComparator;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.model.BlockProperties;
++import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockResourceRewriter;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+ 
+ import java.util.*;
+ import java.util.logging.Level;
+@@ -48,7 +50,7 @@ public class BlockStateRewriter implements StorableObject {
+     private final Int2ObjectMap<String> blockStateTags = new Int2ObjectOpenHashMap<>(); // Bedrock
+     private final BlockStateSanitizer blockStateSanitizer;
+ 
+-    public BlockStateRewriter(final BlockProperties[] blockProperties, final boolean hashedRuntimeBlockIds) {
++    public BlockStateRewriter(final BlockProperties[] blockProperties, final boolean hashedRuntimeBlockIds, final ResourcePackStorage resourcePackStorage) {
+         this.blockStateIdMappings.defaultReturnValue(-1);
+         this.legacyBlockStateIdMappings.defaultReturnValue(-1);
+ 
+@@ -58,6 +60,9 @@ public class BlockStateRewriter implements StorableObject {
+         final Map<String, String> blockTags = BedrockProtocol.MAPPINGS.getBedrockCustomBlockTags();
+         final Set<String> bedrockBlockIdentifiers = bedrockBlockStates.stream().map(BedrockBlockState::namespacedIdentifier).collect(Collectors.toSet());
+         final List<BedrockBlockState> customBlockStates = new ArrayList<>();
++        final Map<String, Integer> terrainStates = resourcePackStorage.isLoadedOnJavaClient()
++                ? CustomBlockResourceRewriter.assignedStates(resourcePackStorage) : Map.of();
++        final Map<String, Integer> customJavaStates = new HashMap<>();
+ 
+         final Map<String, CompoundTag> effectiveBlockProperties = new HashMap<>();
+         for (BlockProperties blockProperty : blockProperties) {
+@@ -79,6 +84,11 @@ public class BlockStateRewriter implements StorableObject {
+                 throw new IllegalStateException("Missing menu_category tag for " + blockProperty.getKey());
+             }
+ 
++            final String terrainTexture = fullCubeTexture(blockProperty.getValue());
++            if (terrainTexture != null && terrainStates.containsKey(terrainTexture)) {
++                customJavaStates.put(blockProperty.getKey(), terrainStates.get(terrainTexture));
++            }
++
+             final Map<String, Set<Tag>> propertiesMap = new LinkedHashMap<>();
+             final ListTag<CompoundTag> properties = blockProperty.getValue().getListTag("properties", CompoundTag.class);
+             if (properties != null) { // https://wiki.bedrock.dev/blocks/block-states.html
+@@ -172,6 +182,8 @@ public class BlockStateRewriter implements StorableObject {
+             if (bedrockToJavaBlockStates.containsKey(bedrockBlockState)) {
+                 final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(bedrockBlockState));
+                 this.blockStateIdMappings.put(bedrockId, javaId);
++            } else if (customJavaStates.containsKey(bedrockBlockState.namespacedIdentifier())) {
++                this.blockStateIdMappings.put(bedrockId, customJavaStates.get(bedrockBlockState.namespacedIdentifier()).intValue());
+             } else {
+                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing bedrock -> java block state mapping: " + bedrockBlockState.toBlockStateString());
+                 final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(BedrockBlockState.INFO_UPDATE));
+@@ -192,6 +204,48 @@ public class BlockStateRewriter implements StorableObject {
+         this.blockStateSanitizer = new BlockStateSanitizer(bedrockBlockStates);
+     }
+ 
++    static String fullCubeTexture(final CompoundTag properties) {
++        final ListTag<CompoundTag> permutations = properties.getListTag("permutations", CompoundTag.class);
++        if (permutations != null && !permutations.isEmpty()) {
++            return null;
++        }
++        if (!(properties.get("components") instanceof CompoundTag components)) {
++            return null;
++        }
++        final Tag geometry = components.get("minecraft:geometry");
++        final String geometryName;
++        if (geometry instanceof StringTag name) {
++            geometryName = name.getValue();
++        } else if (geometry instanceof CompoundTag details && details.get("identifier") instanceof StringTag name) {
++            geometryName = name.getValue();
++        } else {
++            return null;
++        }
++        if (!geometryName.equals("minecraft:geometry.full_block") && !geometryName.equals("geometry.full_block")) {
++            return null;
++        }
++        if (!(components.get("minecraft:material_instances") instanceof CompoundTag instances)) {
++            return null;
++        }
++        CompoundTag materials = instances;
++        if (instances.get("materials") instanceof CompoundTag definedMaterials) {
++            if (instances.get("mappings") instanceof CompoundTag mappings && mappings.size() != 0) {
++                return null;
++            }
++            materials = definedMaterials;
++        }
++        if (materials.size() != 1
++                || !(materials.get("*") instanceof CompoundTag material)
++                || !(material.get("texture") instanceof StringTag texture)) {
++            return null;
++        }
++        if (material.get("render_method") instanceof StringTag method
++                && !method.getValue().equals("opaque")) {
++            return null;
++        }
++        return texture.getValue();
++    }
++
+     public int bedrockId(final CompoundTag bedrockBlockStateTag) {
+         final CompoundTag bedrockBlockStateTagClone = bedrockBlockStateTag.copy();
+         try {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
+index 07a19fa9..9b746b0c 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
+@@ -22,6 +22,7 @@ import net.raphimc.viabedrock.api.resourcepack.content.Content;
+ import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
+ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomAttachableResourceRewriter;
++import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockResourceRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomEntityResourceRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.GlyphSheetResourceRewriter;
+@@ -40,6 +41,7 @@ public final class ResourcePackRewriter {
+     static {
+         REWRITERS.add(new GlyphSheetResourceRewriter());
+         REWRITERS.add(new CustomItemTextureResourceRewriter());
++        REWRITERS.add(new CustomBlockResourceRewriter());
+         REWRITERS.add(new CustomAttachableResourceRewriter());
+         REWRITERS.add(new CustomEntityResourceRewriter());
+     }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java
+new file mode 100644
+index 00000000..96c6fa13
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java
+@@ -0,0 +1,127 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
++
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import net.raphimc.viabedrock.api.model.BlockState;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.HashSet;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.function.Consumer;
++import java.util.function.Supplier;
++
++/** Converts Bedrock full-cube terrain textures into unused Java note-block states. */
++public class CustomBlockResourceRewriter implements ResourcePackRewriter.Rewriter {
++
++    public static Map<String, Integer> assignedStates(final ResourcePackStorage storage) {
++        if (storage.getTextures().serverTerrainTextures().isEmpty()) {
++            return Map.of();
++        }
++
++        final Set<BlockState> occupied = new HashSet<>(BedrockProtocol.MAPPINGS.getBedrockToJavaBlockStates().values());
++        final List<Map.Entry<BlockState, Integer>> available = BedrockProtocol.MAPPINGS.getJavaBlockStates().entrySet().stream()
++                .filter(entry -> entry.getKey().namespacedIdentifier().equals("minecraft:note_block"))
++                .filter(entry -> !occupied.contains(entry.getKey()))
++                .sorted(Comparator.comparingInt(entry -> entry.getValue()))
++                .toList();
++
++        final List<String> textures = new ArrayList<>(storage.getTextures().serverTerrainTextures());
++        textures.sort(Comparator.naturalOrder());
++        final Map<String, Integer> result = new LinkedHashMap<>();
++        int next = 0;
++        for (String texture : textures) {
++            if (next == available.size()) {
++                break;
++            }
++            if (findImage(storage, storage.getTextures().terrainTextures().get(texture)) != null) {
++                result.put(texture, available.get(next++).getValue());
++            }
++        }
++        return result;
++    }
++
++    @Override
++    public void submitTasks(final ResourcePackStorage storage, final Consumer<Supplier<Content>> submitter) {
++        final Map<String, Integer> assignments = assignedStates(storage);
++        if (!assignments.isEmpty()) {
++            submitter.accept(() -> convert(storage, assignments));
++        }
++    }
++
++    private static Content convert(final ResourcePackStorage storage, final Map<String, Integer> assignments) {
++        final Content result = new InMemoryContent();
++        final JsonObject variants = new JsonObject();
++        final Map<Integer, String> texturesByState = new LinkedHashMap<>();
++        assignments.forEach((texture, state) -> texturesByState.put(state, texture));
++
++        for (Map.Entry<BlockState, Integer> state : BedrockProtocol.MAPPINGS.getJavaBlockStates().entrySet()) {
++            if (!state.getKey().namespacedIdentifier().equals("minecraft:note_block")) {
++                continue;
++            }
++            final String key = state.getKey().toBlockStateString();
++            final String variant = key.substring(key.indexOf('[') + 1, key.length() - 1);
++            final String texture = texturesByState.get(state.getValue());
++            final JsonObject modelRef = new JsonObject();
++            modelRef.addProperty("model", texture == null ? "minecraft:block/note_block" : "viabedrock:block/custom/slot_" + state.getValue());
++            variants.add(variant, modelRef);
++        }
++
++        for (Map.Entry<String, Integer> assignment : assignments.entrySet()) {
++            final int state = assignment.getValue();
++            final String path = storage.getTextures().terrainTextures().get(assignment.getKey());
++            final Content.LazyImage image = findImage(storage, path);
++            if (image == null) {
++                continue;
++            }
++            result.putPngImage("assets/viabedrock/textures/block/custom/slot_" + state + ".png", image);
++            final JsonObject textures = new JsonObject();
++            textures.addProperty("all", "viabedrock:block/custom/slot_" + state);
++            final JsonObject model = new JsonObject();
++            model.addProperty("parent", "minecraft:block/cube_all");
++            model.add("textures", textures);
++            result.putJson("assets/viabedrock/models/block/custom/slot_" + state + ".json", model);
++        }
++
++        final JsonObject blockstate = new JsonObject();
++        blockstate.add("variants", variants);
++        result.putJson("assets/minecraft/blockstates/note_block.json", blockstate);
++        return result;
++    }
++
++    private static Content.LazyImage findImage(final ResourcePackStorage storage, final String path) {
++        for (ResourcePack pack : storage.getPackStackTopToBottom()) {
++            final Content.LazyImage image = pack.content().getShortnameImage(path);
++            if (image != null) {
++                return image;
++            }
++        }
++        return null;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
+index d3dc4315..3eeae40f 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
+@@ -30,6 +30,7 @@ public class ResourcePackStorage implements StorableObject {
+ 
+     private final Set<ResourcePack> packStackBottomToTop = Collections.newSetFromMap(new LinkedHashMap<>(128, 0.75F, true));
+     private final Set<ResourcePack> packStackTopToBottom = Collections.newSetFromMap(new LinkedHashMap<>(128, 0.75F, false));
++    private final Set<ResourcePack> serverPacks = new HashSet<>();
+ 
+     private boolean loadedOnJavaClient;
+     private final Map<String, Object> converterData = new ConcurrentHashMap<>();
+@@ -49,6 +50,7 @@ public class ResourcePackStorage implements StorableObject {
+ 
+     public ResourcePackStorage(final List<ResourcePack> resourcePacksTopToBottom) {
+         final List<ResourcePack> orderedPacks = ResourcePackStack.orderTopToBottom(resourcePacksTopToBottom);
++        this.serverPacks.addAll(orderedPacks);
+         if (BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks() != null) { // null if ran from ResourcePackConverterTest
+             this.packStackBottomToTop.addAll(BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks());
+         }
+@@ -84,6 +86,10 @@ public class ResourcePackStorage implements StorableObject {
+         return this.packStackTopToBottom;
+     }
+ 
++    public boolean isServerPack(final ResourcePack pack) {
++        return this.serverPacks.contains(pack);
++    }
++
+     public boolean isLoadedOnJavaClient() {
+         return this.loadedOnJavaClient;
+     }
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
+new file mode 100644
+index 00000000..8912c5a5
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
+@@ -0,0 +1,84 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.rewriter;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.ListTag;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++class CustomBlockModelSelectionTest {
++
++    @Test
++    void selectsOpaqueFullCubeTexture() {
++        assertEquals("ruby", BlockStateRewriter.fullCubeTexture(block("minecraft:geometry.full_block", "ruby")));
++
++        final CompoundTag currentProtocol = block("minecraft:geometry.full_block", "ruby");
++        final CompoundTag components = currentProtocol.getCompoundTag("components");
++        final CompoundTag materials = components.getCompoundTag("minecraft:material_instances");
++        final CompoundTag instances = new CompoundTag();
++        instances.put("materials", materials);
++        instances.put("mappings", new CompoundTag());
++        components.put("minecraft:material_instances", instances);
++        assertEquals("ruby", BlockStateRewriter.fullCubeTexture(currentProtocol));
++    }
++
++    @Test
++    void avoidsAssigningOneModelToPermutedOrNonCubeBlocks() {
++        final CompoundTag permuted = block("minecraft:geometry.full_block", "ruby");
++        final ListTag<CompoundTag> permutations = new ListTag<>(CompoundTag.class);
++        permutations.add(new CompoundTag());
++        permuted.put("permutations", permutations);
++        assertNull(BlockStateRewriter.fullCubeTexture(permuted));
++
++        final CompoundTag shaped = block("geometry.ruby_column", "ruby");
++        assertNull(BlockStateRewriter.fullCubeTexture(shaped));
++
++        final CompoundTag blended = block("minecraft:geometry.full_block", "ruby");
++        ((CompoundTag) ((CompoundTag) blended.get("components")).get("minecraft:material_instances"))
++                .getCompoundTag("*").putString("render_method", "blend");
++        assertNull(BlockStateRewriter.fullCubeTexture(blended));
++
++        final CompoundTag multipleFaces = block("minecraft:geometry.full_block", "ruby");
++        final CompoundTag top = new CompoundTag();
++        top.putString("texture", "gold");
++        ((CompoundTag) ((CompoundTag) multipleFaces.get("components")).get("minecraft:material_instances"))
++                .put("up", top);
++        assertNull(BlockStateRewriter.fullCubeTexture(multipleFaces));
++
++        final CompoundTag mappedFaces = block("minecraft:geometry.full_block", "ruby");
++        final CompoundTag components = mappedFaces.getCompoundTag("components");
++        final CompoundTag instances = new CompoundTag();
++        instances.put("materials", components.getCompoundTag("minecraft:material_instances"));
++        final CompoundTag mappings = new CompoundTag();
++        mappings.putString("up", "gold");
++        instances.put("mappings", mappings);
++        components.put("minecraft:material_instances", instances);
++        assertNull(BlockStateRewriter.fullCubeTexture(mappedFaces));
++    }
++
++    private static CompoundTag block(final String geometryName, final String textureName) {
++        final CompoundTag material = new CompoundTag();
++        material.putString("texture", textureName);
++        final CompoundTag materials = new CompoundTag();
++        materials.put("*", material);
++        final CompoundTag geometry = new CompoundTag();
++        geometry.putString("identifier", geometryName);
++        final CompoundTag components = new CompoundTag();
++        components.put("minecraft:geometry", geometry);
++        components.put("minecraft:material_instances", materials);
++        final CompoundTag properties = new CompoundTag();
++        properties.put("components", components);
++        return properties;
++    }
++
++}
+-- 
+2.55.0
