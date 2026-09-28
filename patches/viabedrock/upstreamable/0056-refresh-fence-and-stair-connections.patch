@@ -1,0 +1,377 @@
+From 16fc12f8b893c0d09aed41359f41b043a510db10 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 28 Sep 2026 13:41:15 +0200
+Subject: [PATCH] fix(blocks): refresh fence and stair connections
+
+Bedrock block states omit Java fence connections and stair corner shapes. Derive them from adjacent blocks on chunk load and refresh affected blocks after live updates, including chunk borders.
+---
+ .../protocol/packet/WorldPackets.java         |   6 +-
+ .../protocol/storage/ChunkTracker.java        |  45 +++---
+ .../storage/ConnectedBlockShapes.java         | 133 ++++++++++++++++++
+ .../storage/ConnectedBlockShapesTest.java     |  64 +++++++++
+ 4 files changed, 225 insertions(+), 23 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapes.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapesTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+index ce2a4152..aac1cdda 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+@@ -100,7 +100,7 @@ public final class WorldPackets {
+         if (removedJukebox && !isJukebox(remappedBlock.keyInt())) {
+             WorldEffectPackets.stopJukeboxSong(wrapper.user(), position);
+         }
+-        chunkTracker.sendNearbyRedstoneUpdates(List.of(position));
++        chunkTracker.sendNearbyConnectedUpdates(List.of(position));
+         chunkTracker.sendUpperDoorUpdates(List.of(position));
+         chunkTracker.observeBlockUpdates(List.of(position));
+ 
+@@ -471,7 +471,7 @@ public final class WorldPackets {
+                 for (BlockChangeRecord change : changes) {
+                     final BlockPosition position = new BlockPosition((section.x() << 4) + change.getSectionX(),
+                             (section.y() << 4) + change.getSectionY(), (section.z() << 4) + change.getSectionZ());
+-                    if (chunkTracker.isRedstoneWire(position)) {
++                    if (chunkTracker.isConnectedBlock(position)) {
+                         change.setBlockId(chunkTracker.getJavaBlockState(position));
+                     }
+                 }
+@@ -490,7 +490,7 @@ public final class WorldPackets {
+             for (Map.Entry<BlockPosition, BlockEntity> entry : blockEntities.entrySet()) {
+                 PacketFactory.sendJavaBlockEntityData(wrapper.user(), entry.getKey(), entry.getValue());
+             }
+-            chunkTracker.sendNearbyRedstoneUpdates(changedPositions);
++            chunkTracker.sendNearbyConnectedUpdates(changedPositions);
+             chunkTracker.sendUpperDoorUpdates(changedPositions);
+             chunkTracker.observeBlockUpdates(changedPositions);
+         });
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+index 66a0a5f3..959ada69 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+@@ -190,7 +190,7 @@ public class ChunkTracker extends StoredObject {
+         final PacketWrapper unloadChunk = PacketWrapper.create(ClientboundPackets26_3.FORGET_LEVEL_CHUNK, this.user());
+         unloadChunk.write(Types.CHUNK_POSITION, chunkPos); // chunk position
+         unloadChunk.send(BedrockProtocol.class);
+-        this.refreshNeighboringRedstoneBorders(chunkPos.chunkX(), chunkPos.chunkZ());
++        this.refreshNeighboringConnectedBorders(chunkPos.chunkX(), chunkPos.chunkZ());
+     }
+ 
+     public BedrockChunk getChunk(final int chunkX, final int chunkZ) {
+@@ -242,13 +242,17 @@ public class ChunkTracker extends StoredObject {
+             final BlockState connected = connectUpperDoor(state, lowerState);
+             return BedrockProtocol.MAPPINGS.getJavaBlockStates().getOrDefault(connected, javaId);
+         }
+-        if (!RedstoneWireConnections.isWire(state)) {
+-            return javaId;
++        if (RedstoneWireConnections.isWire(state)) {
++            final BlockState connected = RedstoneWireConnections.shape(blockPosition, state,
++                    this::getUnconnectedJavaBlockStateModel, this::isRedstoneConductor);
++            return BedrockProtocol.MAPPINGS.getJavaBlockStates().get(connected);
+         }
+-
+-        final BlockState connected = RedstoneWireConnections.shape(blockPosition, state,
+-                this::getUnconnectedJavaBlockStateModel, this::isRedstoneConductor);
+-        return BedrockProtocol.MAPPINGS.getJavaBlockStates().get(connected);
++        if (ConnectedBlockShapes.isConnected(state)) {
++            final BlockState connected = ConnectedBlockShapes.shape(blockPosition, state,
++                    this::getUnconnectedJavaBlockStateModel, this::isRedstoneConductor);
++            return BedrockProtocol.MAPPINGS.getJavaBlockStates().getOrDefault(connected, javaId);
++        }
++        return javaId;
+     }
+ 
+     private static boolean isUpperDoor(final BlockState state) {
+@@ -265,8 +269,9 @@ public class ChunkTracker extends StoredObject {
+         return upper.withProperty("open", lower.properties().get("open"));
+     }
+ 
+-    public boolean isRedstoneWire(final BlockPosition position) {
+-        return RedstoneWireConnections.isWire(this.getUnconnectedJavaBlockStateModel(position));
++    public boolean isConnectedBlock(final BlockPosition position) {
++        final BlockState state = this.getUnconnectedJavaBlockStateModel(position);
++        return RedstoneWireConnections.isWire(state) || ConnectedBlockShapes.isConnected(state);
+     }
+ 
+     private int getUnconnectedJavaBlockState(final BlockPosition blockPosition) {
+@@ -666,10 +671,10 @@ public class ChunkTracker extends StoredObject {
+         // Initial lighting uses this chunk alone. Refresh its borders with any loaded neighbors.
+         this.lightDirtyChunks.add(chunkKey);
+         this.invalidateNearbyLight(chunkX, chunkZ);
+-        this.refreshNeighboringRedstoneBorders(chunkX, chunkZ);
++        this.refreshNeighboringConnectedBorders(chunkX, chunkZ);
+     }
+ 
+-    public void sendNearbyRedstoneUpdates(final Collection<BlockPosition> changedPositions) {
++    public void sendNearbyConnectedUpdates(final Collection<BlockPosition> changedPositions) {
+         final Set<BlockPosition> candidates = new HashSet<>();
+         for (BlockPosition changed : changedPositions) {
+             for (int y = -1; y <= 1; y++) {
+@@ -684,7 +689,7 @@ public class ChunkTracker extends StoredObject {
+             }
+         }
+         candidates.removeAll(changedPositions);
+-        candidates.forEach(this::sendRedstoneUpdate);
++        candidates.forEach(this::sendConnectedUpdate);
+     }
+ 
+     public void sendUpperDoorUpdates(final Collection<BlockPosition> changedPositions) {
+@@ -709,7 +714,7 @@ public class ChunkTracker extends StoredObject {
+         }
+     }
+ 
+-    private void refreshNeighboringRedstoneBorders(final int chunkX, final int chunkZ) {
++    private void refreshNeighboringConnectedBorders(final int chunkX, final int chunkZ) {
+         final boolean westLoaded = this.chunkLight.containsKey(ChunkPosition.chunkKey(chunkX - 1, chunkZ));
+         final boolean eastLoaded = this.chunkLight.containsKey(ChunkPosition.chunkKey(chunkX + 1, chunkZ));
+         final boolean northLoaded = this.chunkLight.containsKey(ChunkPosition.chunkKey(chunkX, chunkZ - 1));
+@@ -720,24 +725,24 @@ public class ChunkTracker extends StoredObject {
+         for (int offset = 0; offset < 16; offset++) {
+             for (int y = this.minY; y < this.minY + this.worldHeight; y++) {
+                 if (westLoaded) {
+-                    this.sendRedstoneUpdate(new BlockPosition((chunkX << 4) - 1, y, (chunkZ << 4) + offset));
++                    this.sendConnectedUpdate(new BlockPosition((chunkX << 4) - 1, y, (chunkZ << 4) + offset));
+                 }
+                 if (eastLoaded) {
+-                    this.sendRedstoneUpdate(new BlockPosition((chunkX << 4) + 16, y, (chunkZ << 4) + offset));
++                    this.sendConnectedUpdate(new BlockPosition((chunkX << 4) + 16, y, (chunkZ << 4) + offset));
+                 }
+                 if (northLoaded) {
+-                    this.sendRedstoneUpdate(new BlockPosition((chunkX << 4) + offset, y, (chunkZ << 4) - 1));
++                    this.sendConnectedUpdate(new BlockPosition((chunkX << 4) + offset, y, (chunkZ << 4) - 1));
+                 }
+                 if (southLoaded) {
+-                    this.sendRedstoneUpdate(new BlockPosition((chunkX << 4) + offset, y, (chunkZ << 4) + 16));
++                    this.sendConnectedUpdate(new BlockPosition((chunkX << 4) + offset, y, (chunkZ << 4) + 16));
+                 }
+             }
+         }
+     }
+ 
+-    private void sendRedstoneUpdate(final BlockPosition position) {
++    private void sendConnectedUpdate(final BlockPosition position) {
+         if (!this.chunkLight.containsKey(ChunkPosition.chunkKey(position.x() >> 4, position.z() >> 4))
+-                || !RedstoneWireConnections.isWire(this.getUnconnectedJavaBlockStateModel(position))) {
++                || !this.isConnectedBlock(position)) {
+             return;
+         }
+         final PacketWrapper update = PacketWrapper.create(ClientboundPackets26_3.BLOCK_UPDATE, this.user());
+@@ -1239,7 +1244,7 @@ public class ChunkTracker extends StoredObject {
+                         for (int x = 0; x < 16; x++) {
+                             final int javaId = remappedBlockPalette.idAt(x, y, z);
+                             final BlockState state = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(javaId);
+-                            if (RedstoneWireConnections.isWire(state) || isUpperDoor(state)) {
++                            if (RedstoneWireConnections.isWire(state) || ConnectedBlockShapes.isConnected(state) || isUpperDoor(state)) {
+                                 final BlockPosition position = new BlockPosition((chunk.getX() << 4) + x,
+                                         this.minY + (idx << 4) + y, (chunk.getZ() << 4) + z);
+                                 remappedBlockPalette.setIdAt(x, y, z, this.getJavaBlockState(position));
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapes.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapes.java
+new file mode 100644
+index 00000000..df9b0d0d
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapes.java
+@@ -0,0 +1,133 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import net.raphimc.viabedrock.api.model.BlockState;
++
++import java.util.Map;
++import java.util.function.Function;
++import java.util.function.Predicate;
++
++final class ConnectedBlockShapes {
++
++    private ConnectedBlockShapes() {
++    }
++
++    static boolean isConnected(final BlockState state) {
++        return isFence(state) || isStairs(state);
++    }
++
++    static BlockState shape(final BlockPosition position, final BlockState state,
++            final Function<BlockPosition, BlockState> blockAt, final Predicate<BlockState> fullBlock) {
++        if (isFence(state)) {
++            return state.withProperties(Map.of(
++                    "north", Boolean.toString(connectsFence(state, stateAt(position, Direction.NORTH, blockAt), Direction.NORTH, fullBlock)),
++                    "east", Boolean.toString(connectsFence(state, stateAt(position, Direction.EAST, blockAt), Direction.EAST, fullBlock)),
++                    "south", Boolean.toString(connectsFence(state, stateAt(position, Direction.SOUTH, blockAt), Direction.SOUTH, fullBlock)),
++                    "west", Boolean.toString(connectsFence(state, stateAt(position, Direction.WEST, blockAt), Direction.WEST, fullBlock))));
++        }
++        if (!isStairs(state)) {
++            return state;
++        }
++        final String facingName = state.properties().get("facing");
++        final Direction facing = Direction.from(facingName);
++        if (facing == null) {
++            return state;
++        }
++        final String half = state.properties().get("half");
++        final BlockState front = stateAt(position, facing, blockAt);
++        final Direction frontFacing = stairFacing(front, half);
++        if (frontFacing != null && frontFacing.axis() != facing.axis()
++                && isDifferentStairs(stateAt(position, frontFacing.opposite(), blockAt), facing, half)) {
++            return state.withProperty("shape", frontFacing == facing.left() ? "outer_left" : "outer_right");
++        }
++        final BlockState back = stateAt(position, facing.opposite(), blockAt);
++        final Direction backFacing = stairFacing(back, half);
++        if (backFacing != null && backFacing.axis() != facing.axis()
++                && isDifferentStairs(stateAt(position, backFacing, blockAt), facing, half)) {
++            return state.withProperty("shape", backFacing == facing.left() ? "inner_left" : "inner_right");
++        }
++        return state.withProperty("shape", "straight");
++    }
++
++    static boolean isFence(final BlockState state) {
++        return state != null && state.identifier().endsWith("_fence");
++    }
++
++    static boolean isStairs(final BlockState state) {
++        return state != null && state.identifier().endsWith("_stairs");
++    }
++
++    private static boolean connectsFence(final BlockState fence, final BlockState adjacent,
++            final Direction direction, final Predicate<BlockState> fullBlock) {
++        if (adjacent == null || "air".equals(adjacent.identifier())) {
++            return false;
++        }
++        if (isFence(adjacent)) {
++            return fence.identifier().equals("nether_brick_fence") == adjacent.identifier().equals("nether_brick_fence");
++        }
++        if (adjacent.identifier().endsWith("_fence_gate")) {
++            final Direction gateFacing = Direction.from(adjacent.properties().get("facing"));
++            return gateFacing != null && gateFacing.axis() != direction.axis();
++        }
++        return fullBlock.test(adjacent);
++    }
++
++    private static Direction stairFacing(final BlockState state, final String half) {
++        return isStairs(state) && half != null && half.equals(state.properties().get("half"))
++                ? Direction.from(state.properties().get("facing")) : null;
++    }
++
++    private static boolean isDifferentStairs(final BlockState state, final Direction facing, final String half) {
++        return stairFacing(state, half) != facing;
++    }
++
++    private static BlockState stateAt(final BlockPosition position, final Direction direction,
++            final Function<BlockPosition, BlockState> blockAt) {
++        return blockAt.apply(new BlockPosition(position.x() + direction.dx, position.y(), position.z() + direction.dz));
++    }
++
++    private enum Direction {
++        NORTH(0, -1), EAST(1, 0), SOUTH(0, 1), WEST(-1, 0);
++
++        private final int dx;
++        private final int dz;
++
++        Direction(final int dx, final int dz) {
++            this.dx = dx;
++            this.dz = dz;
++        }
++
++        static Direction from(final String name) {
++            if (name == null) {
++                return null;
++            }
++            try {
++                return valueOf(name.toUpperCase(java.util.Locale.ROOT));
++            } catch (final IllegalArgumentException ignored) {
++                return null;
++            }
++        }
++
++        Direction opposite() {
++            return values()[(this.ordinal() + 2) & 3];
++        }
++
++        Direction left() {
++            return values()[(this.ordinal() + 3) & 3];
++        }
++
++        int axis() {
++            return this.dx == 0 ? 0 : 1;
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapesTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapesTest.java
+new file mode 100644
+index 00000000..30015a73
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapesTest.java
+@@ -0,0 +1,64 @@
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import net.raphimc.viabedrock.api.model.BlockState;
++import org.junit.jupiter.api.Test;
++
++import java.util.HashMap;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class ConnectedBlockShapesTest {
++
++    private static final BlockPosition CENTER = new BlockPosition(0, 64, 0);
++    private static final BlockState AIR = BlockState.fromString("minecraft:air");
++    private final Map<BlockPosition, BlockState> blocks = new HashMap<>();
++
++    @Test
++    void fencesRefreshWhenMatchingNeighborsAppearAndDisappear() {
++        final BlockState fence = BlockState.fromString("minecraft:oak_fence[east=false,north=false,south=false,waterlogged=false,west=false]");
++        this.blocks.put(new BlockPosition(1, 64, 0), fence);
++        assertEquals("true", this.shape(fence).properties().get("east"));
++
++        this.blocks.remove(new BlockPosition(1, 64, 0));
++        assertEquals("false", this.shape(fence.withProperty("east", "true")).properties().get("east"));
++    }
++
++    @Test
++    void fencesConnectToGatesOnlyAcrossTheirOpening() {
++        final BlockState fence = BlockState.fromString("minecraft:oak_fence[east=false,north=false,south=false,waterlogged=false,west=false]");
++        this.blocks.put(new BlockPosition(1, 64, 0), BlockState.fromString("minecraft:oak_fence_gate[facing=north]"));
++        this.blocks.put(new BlockPosition(0, 64, -1), BlockState.fromString("minecraft:oak_fence_gate[facing=north]"));
++        assertEquals("true", this.shape(fence).properties().get("east"));
++        assertEquals("false", this.shape(fence).properties().get("north"));
++    }
++
++    @Test
++    void netherBrickFencesDoNotConnectToWoodenFences() {
++        final BlockState nether = BlockState.fromString("minecraft:nether_brick_fence[east=false,north=false,south=false,waterlogged=false,west=false]");
++        this.blocks.put(new BlockPosition(1, 64, 0), BlockState.fromString("minecraft:oak_fence"));
++        assertEquals("false", this.shape(nether).properties().get("east"));
++
++        this.blocks.put(new BlockPosition(1, 64, 0), nether);
++        assertEquals("true", this.shape(nether).properties().get("east"));
++    }
++
++    @Test
++    void stairCornersUseNeighborFacingAndHalf() {
++        final BlockState stair = BlockState.fromString("minecraft:oak_stairs[facing=north,half=bottom,shape=straight,waterlogged=false]");
++        this.blocks.put(new BlockPosition(0, 64, -1), BlockState.fromString("minecraft:oak_stairs[facing=west,half=bottom]"));
++        assertEquals("outer_left", this.shape(stair).properties().get("shape"));
++
++        this.blocks.clear();
++        this.blocks.put(new BlockPosition(0, 64, 1), BlockState.fromString("minecraft:oak_stairs[facing=east,half=bottom]"));
++        assertEquals("inner_right", this.shape(stair).properties().get("shape"));
++    }
++
++    private BlockState shape(final BlockState state) {
++        return ConnectedBlockShapes.shape(CENTER, state,
++                position -> this.blocks.getOrDefault(position, AIR),
++                block -> "stone".equals(block.identifier()));
++    }
++
++}
+-- 
+2.55.0

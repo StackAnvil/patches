@@ -1,0 +1,131 @@
+From 05b18e1a82511bc1043e361e036317793b8a6d18 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 28 Sep 2026 13:41:31 +0200
+Subject: [PATCH] fix(books): forward Java book edits to Bedrock
+
+Translate page replacement, insertion, deletion, and signing into Bedrock BookEdit operations. Keep the local book pages current so consecutive Java saves do not insert duplicate pages before the server inventory update arrives.
+---
+ .../protocol/packet/InventoryPackets.java     | 85 +++++++++++++++++++
+ 1 file changed, 85 insertions(+)
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+index 4b233b07..b3362e10 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+@@ -18,6 +18,8 @@
+ package net.raphimc.viabedrock.protocol.packet;
+ 
+ import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.nbt.tag.Tag;
+ import com.viaversion.nbt.tag.StringTag;
+ import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.minecraft.BlockPosition;
+@@ -77,6 +79,7 @@ import net.raphimc.viabedrock.protocol.storage.*;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
+ import java.util.ArrayList;
++import java.util.List;
+ import java.util.logging.Level;
+ 
+ public final class InventoryPackets {
+@@ -524,6 +527,56 @@ public final class InventoryPackets {
+                 });
+             }
+         });
++        protocol.registerServerbound(
++                ServerboundPackets26_3.EDIT_BOOK,
++                null,
++                wrapper -> {
++                    wrapper.cancel();
++                    final int slot = wrapper.read(Types.VAR_INT);
++                    final int pageCount = wrapper.read(Types.VAR_INT);
++                    if (pageCount < 0 || pageCount > 100) {
++                        return;
++                    }
++                    final List<String> pages = new ArrayList<>(pageCount);
++                    for (int index = 0; index < pageCount; index++) {
++                        final String page = wrapper.read(Types.STRING);
++                        if (page.length() > 1024) {
++                            return;
++                        }
++                        pages.add(page);
++                    }
++                    final String title = wrapper.read(Types.BOOLEAN) ? wrapper.read(Types.STRING) : null;
++                    if (title != null && title.length() > 32) {
++                        return;
++                    }
++
++                    final InventoryContainer inventory = wrapper.user().get(InventoryTracker.class).getInventoryContainer();
++                    if (slot != inventory.getSelectedHotbarSlot()) {
++                        return;
++                    }
++                    final BedrockItem book = inventory.getItem(slot);
++                    final Integer bookId = wrapper.user().get(ItemRewriter.class).getItems().get("minecraft:writable_book");
++                    if (bookId == null || book.identifier() != bookId) {
++                        return;
++                    }
++                    final List<String> previousPages = new ArrayList<>();
++                    if (book.tag() != null && book.tag().get("pages") instanceof ListTag<?> existingPages) {
++                        for (final Tag page : existingPages) {
++                            previousPages.add(page instanceof CompoundTag content ? content.getString("text", "") : "");
++                        }
++                    }
++                    sendBookEdits(wrapper.user(), slot, previousPages, pages, title);
++                    final CompoundTag updatedTag = book.tag() == null ? new CompoundTag() : book.tag().copy();
++                    final ListTag<CompoundTag> updatedPages = new ListTag<>(CompoundTag.class);
++                    for (final String page : pages) {
++                        final CompoundTag content = new CompoundTag();
++                        content.put("text", new StringTag(page));
++                        content.put("photoname", new StringTag(""));
++                        updatedPages.add(content);
++                    }
++                    updatedTag.put("pages", updatedPages);
++                    book.setTag(updatedTag);
++                });
+         protocol.registerServerbound(ServerboundPackets26_3.SET_CARRIED_ITEM, ServerboundBedrockPackets.MOB_EQUIPMENT, wrapper -> {
+             final short slot = wrapper.read(Types.SHORT); // slot
+             wrapper.user().get(InventoryTracker.class).getInventoryContainer().setSelectedHotbarSlot((byte) slot, wrapper); // slot
+@@ -549,6 +602,38 @@ public final class InventoryPackets {
+         });
+     }
+ 
++    private static void sendBookEdits(final UserConnection user, final int slot,
++            final List<String> previousPages, final List<String> pages, final String title) {
++        for (int index = 0; index < pages.size(); index++) {
++            if (index < previousPages.size() && pages.get(index).equals(previousPages.get(index))) {
++                continue;
++            }
++            final PacketWrapper edit = PacketWrapper.create(ServerboundBedrockPackets.BOOK_EDIT, user);
++            edit.write(BedrockTypes.VAR_INT, slot);
++            edit.write(Types.UNSIGNED_BYTE, (short) (index < previousPages.size() ? 0 : 1));
++            edit.write(BedrockTypes.VAR_INT, index);
++            edit.write(BedrockTypes.STRING, pages.get(index));
++            edit.write(BedrockTypes.STRING, ""); // photo name
++            edit.sendToServer(BedrockProtocol.class);
++        }
++        for (int index = previousPages.size() - 1; index >= pages.size(); index--) {
++            final PacketWrapper edit = PacketWrapper.create(ServerboundBedrockPackets.BOOK_EDIT, user);
++            edit.write(BedrockTypes.VAR_INT, slot);
++            edit.write(Types.UNSIGNED_BYTE, (short) 2); // delete page
++            edit.write(BedrockTypes.VAR_INT, index);
++            edit.sendToServer(BedrockProtocol.class);
++        }
++        if (title != null) {
++            final PacketWrapper finish = PacketWrapper.create(ServerboundBedrockPackets.BOOK_EDIT, user);
++            finish.write(BedrockTypes.VAR_INT, slot);
++            finish.write(Types.UNSIGNED_BYTE, (short) 4); // finalize
++            finish.write(BedrockTypes.STRING, title);
++            finish.write(BedrockTypes.STRING, user.getProtocolInfo().getUsername());
++            finish.write(BedrockTypes.STRING, user.get(AuthData.class).getXuid());
++            finish.sendToServer(BedrockProtocol.class);
++        }
++    }
++
+     private static void addTextToDialog(final UserConnection userConnection, final Dialog dialog, final String text) {
+         if (dialog.getInputs().isEmpty()) {
+             for (String line : BedrockTextUtils.split(text, "\n")) {
+-- 
+2.55.0
+
+
