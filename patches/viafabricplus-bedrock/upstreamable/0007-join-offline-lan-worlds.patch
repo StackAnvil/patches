@@ -1,4 +1,4 @@
-From ba66925a3c8c8893396dde8a6ce0044635cb72fb Mon Sep 17 00:00:00 2001
+From f2e7a0f469351808a4d549f246590d8780298e5d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 13:38:54 +0200
 Subject: [PATCH] feat(bedrock): join offline LAN worlds
@@ -6,10 +6,13 @@ Subject: [PATCH] feat(bedrock): join offline LAN worlds
 Probe NetherNet and RakNet on the local network and show compatible worlds in a separate account-free screen. Parse the retail 1.26.51 NetherNet layout 7 advertisement so authentication flags and the nonce come from the host instead of LAN assumptions.
 
 For self-signed worlds, create one identity before the NetherNet offer and pass the same token to ViaBedrock login. Keep the selected transport, responder, network ID, nonce, and login mode on the connection. RakNet pongs have no auth flags, so the screen requires an explicit offline-login choice for those worlds.
+
+Receive complete NetherNet signaling datagrams and repair iOS LAN answers that omit trailing SDP attributes from their declared length. Otherwise the client can time out before the ICE connection opens even though discovery succeeded.
 ---
  .../appearance/ViaFabricPlusSkinProvider.java |   4 +-
  .../core/connection/MixinConnectScreen_1.java |   6 +
  .../core/connection/MixinConnection.java      |  50 +++-
+ .../connection/MixinNetherNetDiscovery.java   |  46 +++
  .../connection/MixinServerNameResolver.java   |   7 +
  .../core/integration/MixinVFPScreen.java      |   7 +-
  .../bedrock/lan/BedrockLanAddress.java        |  35 +++
@@ -18,19 +21,25 @@ For self-signed worlds, create one identity before the NetherNet offer and pass 
  .../lan/BedrockLanInetSocketAddress.java      |  25 ++
  .../bedrock/lan/BedrockLanSession.java        |  19 ++
  .../bedrock/lan/BedrockLanWorld.java          |  33 +++
+ .../bedrock/lan/NetherNetConnectResponse.java |  49 +++
  .../network/BedrockConnectionUtil.java        |  11 +-
  .../bedrock/screen/BedrockLanScreen.java      | 199 +++++++++++++
  .../viafabricplus-bedrock/lang/en_us.json     |  10 +
+ .../viafabricplus-bedrock.mixins.json         |   1 +
  .../bedrock/lan/BedrockLanDiscoveryTest.java  | 111 +++++++
- 15 files changed, 848 insertions(+), 5 deletions(-)
+ .../lan/NetherNetConnectResponseTest.java     |  53 ++++
+ 19 files changed, 997 insertions(+), 5 deletions(-)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinNetherNetDiscovery.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanAddress.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanDiscovery.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanIdentity.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanInetSocketAddress.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanSession.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanWorld.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/lan/NetherNetConnectResponse.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockLanScreen.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanDiscoveryTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/lan/NetherNetConnectResponseTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java
 index 0808013..41713cf 100644
@@ -197,6 +206,58 @@ index d153bc1..a5b44bd 100644
                  } else {
                      connectAddress = remote;
                  }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinNetherNetDiscovery.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinNetherNetDiscovery.java
+new file mode 100644
+index 0000000..3a9fbe1
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinNetherNetDiscovery.java
+@@ -0,0 +1,46 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2023-2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.injection.mixin.core.connection;
++
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import com.viaversion.viafabricplus.bedrock.lan.NetherNetConnectResponse;
++import io.netty.bootstrap.AbstractBootstrap;
++import io.netty.bootstrap.Bootstrap;
++import io.netty.buffer.ByteBuf;
++import io.netty.channel.ChannelHandler;
++import io.netty.channel.ChannelOption;
++import io.netty.channel.FixedRecvByteBufAllocator;
++import java.net.InetSocketAddress;
++import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetDiscovery;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(value = NetherNetDiscovery.class, remap = false)
++public abstract class MixinNetherNetDiscovery {
++
++    @WrapOperation(method = {"bind(I)V", "bind(Ljava/net/InetSocketAddress;)V"},
++        at = @At(value = "INVOKE", target = "Lio/netty/bootstrap/Bootstrap;handler(Lio/netty/channel/ChannelHandler;)Lio/netty/bootstrap/AbstractBootstrap;"))
++    private AbstractBootstrap<?, ?> receiveCompleteLanSignals(final Bootstrap bootstrap, final ChannelHandler handler,
++                                                                final Operation<AbstractBootstrap<?, ?>> original) {
++        bootstrap.option(ChannelOption.RCVBUF_ALLOCATOR, new FixedRecvByteBufAllocator(65_535));
++        return original.call(bootstrap, handler);
++    }
++
++    @Inject(method = "handleMessage", at = @At("HEAD"))
++    private void repairIncompleteConnectResponse(final ByteBuf packet, final long senderId,
++                                                 final InetSocketAddress sender, final CallbackInfo ci) {
++        final int addedBytes = NetherNetConnectResponse.repairLength(packet);
++        if (addedBytes > 0) {
++            ViaFabricPlusBedrock.impl().logger().warn("Repaired NetherNet LAN response with {} uncounted SDP bytes", addedBytes);
++        }
++    }
++
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinServerNameResolver.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinServerNameResolver.java
 index 5444e77..574e73c 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinServerNameResolver.java
@@ -737,6 +798,61 @@ index 0000000..377d8cb
 +    }
 +
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/lan/NetherNetConnectResponse.java b/src/main/java/com/viaversion/viafabricplus/bedrock/lan/NetherNetConnectResponse.java
+new file mode 100644
+index 0000000..e90206d
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/lan/NetherNetConnectResponse.java
+@@ -0,0 +1,49 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2023-2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.lan;
++
++import io.netty.buffer.ByteBuf;
++import java.nio.charset.StandardCharsets;
++
++/** Repairs the length field on client-hosted LAN answers that omit trailing SDP attributes. */
++public final class NetherNetConnectResponse {
++
++    private static final int HEADER_LENGTH = Long.BYTES + Integer.BYTES;
++
++    private NetherNetConnectResponse() {
++    }
++
++    public static int repairLength(final ByteBuf packet) {
++        final int start = packet.readerIndex();
++        if (packet.readableBytes() < HEADER_LENGTH) {
++            return 0;
++        }
++
++        final int declaredLength = packet.getIntLE(start + Long.BYTES);
++        final int availableLength = packet.readableBytes() - HEADER_LENGTH;
++        if (declaredLength < 0 || declaredLength >= availableLength) {
++            return 0;
++        }
++
++        final int bodyStart = start + HEADER_LENGTH;
++        final String declared = packet.toString(bodyStart, declaredLength, StandardCharsets.UTF_8);
++        if (!declared.startsWith("CONNECTRESPONSE ")) {
++            return 0;
++        }
++
++        final String omitted = packet.toString(bodyStart + declaredLength,
++            availableLength - declaredLength, StandardCharsets.UTF_8);
++        if (!omitted.contains("a=ice-ufrag:") || !omitted.contains("a=ice-pwd:")
++            || !omitted.contains("a=fingerprint:") || !omitted.contains("a=setup:")) {
++            return 0;
++        }
++
++        packet.setIntLE(start + Long.BYTES, availableLength);
++        return availableLength - declaredLength;
++    }
++
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/BedrockConnectionUtil.java b/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/BedrockConnectionUtil.java
 index f492427..1e4bd13 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/BedrockConnectionUtil.java
@@ -995,6 +1111,18 @@ index b3c9874..5667798 100644
    "screen.viafabricplus.bedrock_party": "Bedrock Party",
    "screen.viafabricplus.bedrock_dressing_room": "Bedrock Dressing Room",
    "screen.viafabricplus.accept_invite": "Accept an invitation code",
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index ed12c1b..03b035e 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -15,6 +15,7 @@
+     "core.connection.MixinConnectScreen_1",
+     "core.connection.MixinConnection",
+     "core.connection.MixinConnection_1",
++    "core.connection.MixinNetherNetDiscovery",
+     "core.connection.MixinServerNameResolver",
+     "core.integration.MixinDebugScreenEntries",
+     "core.integration.MixinJoinMultiplayerScreen",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanDiscoveryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanDiscoveryTest.java
 new file mode 100644
 index 0000000..6b79562
@@ -1109,6 +1237,65 @@ index 0000000..6b79562
 +            value >>>= 7;
 +        }
 +        data.writeByte(value);
++    }
++
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/lan/NetherNetConnectResponseTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/lan/NetherNetConnectResponseTest.java
+new file mode 100644
+index 0000000..7e44f40
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/lan/NetherNetConnectResponseTest.java
+@@ -0,0 +1,53 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2023-2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.lan;
++
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import java.nio.charset.StandardCharsets;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++final class NetherNetConnectResponseTest {
++
++    @Test
++    void includesOmittedSdpAttributesInConnectResponseLength() {
++        final String declared = "CONNECTRESPONSE 42 v=0\r\na=candidate:1 1 udp 1 192.168.1.2 5000 typ host\r\n";
++        final String omitted = "a=ice-ufrag:test\r\na=ice-pwd:password\r\na=fingerprint:sha-256 00:11\r\na=setup:active\r\n";
++        final ByteBuf packet = message(declared, omitted);
++        try {
++            assertEquals(omitted.length(), NetherNetConnectResponse.repairLength(packet));
++            assertEquals(declared.length() + omitted.length(), packet.getIntLE(Long.BYTES));
++        } finally {
++            packet.release();
++        }
++    }
++
++    @Test
++    void leavesUnrelatedAndCompleteSignalsAlone() {
++        final String candidate = "CANDIDATEADD 42 candidate:1 1 udp 1 192.168.1.2 5000 typ host";
++        final ByteBuf unrelated = message(candidate, "a=ice-ufrag:test\r\na=ice-pwd:password\r\n"
++            + "a=fingerprint:sha-256 00:11\r\na=setup:active\r\n");
++        final ByteBuf complete = message("CONNECTRESPONSE 42 v=0\r\na=ice-ufrag:test\r\n", "");
++        try {
++            assertEquals(0, NetherNetConnectResponse.repairLength(unrelated));
++            assertEquals(candidate.length(), unrelated.getIntLE(Long.BYTES));
++            assertEquals(0, NetherNetConnectResponse.repairLength(complete));
++        } finally {
++            unrelated.release();
++            complete.release();
++        }
++    }
++
++    private static ByteBuf message(final String declared, final String omitted) {
++        final byte[] bytes = declared.getBytes(StandardCharsets.UTF_8);
++        return Unpooled.buffer().writeLongLE(0).writeIntLE(bytes.length).writeBytes(bytes)
++            .writeBytes(omitted.getBytes(StandardCharsets.UTF_8));
 +    }
 +
 +}
