@@ -7,12 +7,12 @@ const prefix = "[ViaBedrock Gameplay Probe] ";
 
 export const gameplayCaseIds = [
   "movement-left", "movement-right", "block-break", "creative-block-break", "block-place", "tnt-explosion", "water-flow", "drop-item", "inventory-script-slot",
-  "creative-select", "creative-replace", "creative-replace-main", "equip-helmet", "equip-offhand", "eat-golden-apple", "entity-attack", "entity-name",
+  "creative-select", "creative-replace", "creative-replace-main", "creative-replace-twice", "equip-helmet", "equip-offhand", "offhand-remove", "eat-golden-apple", "entity-attack", "entity-name",
   "map-hold", "command-time", "command-completion", "command-denied", "respawn", "dimension-change",
-  "chest-transfer", "chest-rapid-transfer", "chest-pickup-all", "lab-table-then-chest", "chest-boat-transfer", "chest-minecart-transfer", "enchant-basic",
+  "chest-transfer", "chest-rapid-transfer", "chest-pickup-all", "lab-table-then-chest", "chest-boat-transfer", "chest-minecart-transfer", "furnace-quick-move-log", "furnace-quick-move-coal", "enchant-basic",
   "offhand-block-place", "offhand-shield-use", "offhand-elytra-rocket", "mainhand-elytra-rocket", "boat-forward", "minecart-dismount",
   "shield-projectile-baseline", "shield-projectile-block",
-  "crafting-manual-sticks", "crafting-book-sticks",
+  "crafting-manual-sticks", "crafting-book-sticks", "crafting-bulk-sticks",
 ] as const;
 
 export type GameplayCaseId = typeof gameplayCaseIds[number];
@@ -146,6 +146,38 @@ async function craftSticksManually(ui: Ui): Promise<void> {
   await uiKey(ui, "Escape");
 }
 
+async function craftSticksInBulk(ui: Ui): Promise<void> {
+  await uiMouse(ui, "right");
+  await Bun.sleep(500);
+  const window = await javaWindow(ui);
+  await clickGui(ui, window, 176, 166, 16, 150);
+  for (const y of [26, 44]) {
+    for (let count = 0; count < 4; count++) {
+      await clickGui(ui, window, 176, 166, 38, y, "right");
+      await Bun.sleep(150);
+    }
+  }
+  await Bun.sleep(350);
+  await Promise.all([
+    ui(["ui", "key-hold", "Shift_L", "800", "--client", "java"]),
+    (async () => { await Bun.sleep(200); await clickGui(ui, window, 176, 166, 132, 44); })(),
+  ]);
+  await Bun.sleep(500);
+  await uiKey(ui, "Escape");
+}
+
+async function removeOffhandToInventory(ui: Ui): Promise<void> {
+  await uiKey(ui, "e");
+  await Bun.sleep(350);
+  const window = await javaWindow(ui);
+  await clickGui(ui, window, 176, 166, 85, 70);
+  await Bun.sleep(350);
+  await ui(["ui", "screenshot", "offhand-remove-cursor", "--client", "java", "--output-dir", join(root, ".stackanvil", "integration")]);
+  await clickGui(ui, window, 176, 166, 16, 92);
+  await Bun.sleep(500);
+  await uiKey(ui, "Escape");
+}
+
 async function openChest(ui: Ui, sneak = false): Promise<{ width: number; height: number }> {
   const window = await javaWindow(ui);
   const guiX = (window.width - 176 * 2) / 2 + 20;
@@ -196,12 +228,25 @@ async function chestPickupAll(ui: Ui): Promise<void> {
   await uiKey(ui, "Escape");
 }
 
-async function creativeSelect(ui: Ui, mainInventory = false): Promise<void> {
+async function furnaceQuickMove(ui: Ui): Promise<void> {
+  await uiMouse(ui, "right");
+  await Bun.sleep(500);
+  const window = await javaWindow(ui);
+  await Promise.all([
+    ui(["ui", "key-hold", "Shift_L", "800", "--client", "java"]),
+    (async () => { await Bun.sleep(200); await clickGui(ui, window, 176, 166, 16, 150); })(),
+  ]);
+  await Bun.sleep(500);
+  await uiKey(ui, "Escape");
+}
+
+async function creativeSelect(ui: Ui, mainInventory = false, itemName = "nether star"): Promise<void> {
   await uiKey(ui, "e");
   await Bun.sleep(350);
   const window = await javaWindow(ui);
   await clickGui(ui, window, 195, 136, 175, -16);
-  await ui(["ui", "type", "nether star", "--client", "java"]);
+  await ui(["ui", "key", "Control+a", "--client", "java"]);
+  await ui(["ui", "type", itemName, "--client", "java"]);
   await Bun.sleep(350);
   await clickGui(ui, window, 195, 136, 18, 27);
   if (mainInventory) {
@@ -259,6 +304,10 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
     case "chest-minecart-transfer":
       await chestTransfer(ui);
       return;
+    case "furnace-quick-move-log":
+    case "furnace-quick-move-coal":
+      await furnaceQuickMove(ui);
+      return;
     case "enchant-basic": {
       await uiMouse(ui, "right");
       await Bun.sleep(600);
@@ -291,6 +340,9 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
     case "crafting-manual-sticks":
       await craftSticksManually(ui);
       return;
+    case "crafting-bulk-sticks":
+      await craftSticksInBulk(ui);
+      return;
     case "crafting-book-sticks":
       await uiMouse(ui, "right");
       await Bun.sleep(500);
@@ -322,6 +374,12 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
       return;
     case "creative-replace-main":
       await creativeSelect(ui, true);
+      return;
+    case "creative-replace-twice":
+      await creativeSelect(ui);
+      await Bun.sleep(800);
+      await creativeSelect(ui, false, "ender pearl");
+      await Bun.sleep(800);
       return;
     case "eat-golden-apple":
       await uiMouse(ui, "right", 2300);
@@ -359,6 +417,9 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
       return;
     case "equip-offhand":
       await uiKey(ui, "f");
+      return;
+    case "offhand-remove":
+      await removeOffhandToInventory(ui);
       return;
     case "drop-item":
     case "inventory-script-slot":

@@ -402,6 +402,24 @@ define("drop-item", "inventory", async (player) => {
   return { passed: remaining === 3, observed: { remaining }, expected: 3 };
 });
 
+define("offhand-remove", "inventory", async (player) => {
+  await prepareArena(player);
+  equipment(player).setEquipment(EquipmentSlot.Offhand, new ItemStack("minecraft:shield"));
+  await nextTick();
+  if (equipment(player).getEquipment(EquipmentSlot.Offhand)?.typeId !== "minecraft:shield") {
+    throw new Error("Bedrock did not equip the offhand shield.");
+  }
+  return {};
+}, (player) => {
+  const observed = {
+    offhand: equipment(player).getEquipment(EquipmentSlot.Offhand)?.typeId ?? null,
+    inventory: countItem(inventory(player), "minecraft:shield"),
+  };
+  const expected = { offhand: null, inventory: 1 };
+  return { passed: observed.offhand === expected.offhand && observed.inventory === expected.inventory,
+    observed, expected };
+});
+
 define("inventory-script-slot", "inventory", async (player) => {
   await prepareArena(player);
   inventory(player).setItem(0, new ItemStack("minecraft:emerald", 2));
@@ -425,6 +443,32 @@ define("chest-transfer", "inventory", async (player) => {
   const observed = { chest: countItem(chest, "minecraft:emerald"), player: countItem(inventory(player), "minecraft:emerald") };
   return { passed: observed.chest === 0 && observed.player === 4, observed, expected: { chest: 0, player: 4 } };
 });
+
+for (const [id, itemId, initialInput, expectedInput, expectedFuel, expectedPlayer] of [
+  ["furnace-quick-move-log", "minecraft:oak_log", 63, 64, 0, 7],
+  ["furnace-quick-move-coal", "minecraft:coal", 0, 0, 8, 0],
+]) {
+  define(id, "inventory", async (player) => {
+    await prepareArena(player);
+    blockAt(player.dimension, 0, 1, 2).setType("minecraft:furnace");
+    await nextTick();
+    const furnace = blockAt(player.dimension, 0, 1, 2).getComponent("minecraft:inventory")?.container;
+    if (!furnace) throw new Error("Furnace inventory is unavailable.");
+    if (initialInput) furnace.setItem(0, new ItemStack(itemId, initialInput));
+    inventory(player).setItem(0, new ItemStack(itemId, 8));
+    return {};
+  }, (player) => {
+    const furnace = blockAt(player.dimension, 0, 1, 2).getComponent("minecraft:inventory")?.container;
+    if (!furnace) throw new Error("Furnace inventory is unavailable.");
+    const observed = {
+      input: furnace.getItem(0)?.amount ?? 0,
+      fuel: furnace.getItem(1)?.amount ?? 0,
+      player: countItem(inventory(player), itemId),
+    };
+    const expected = { input: expectedInput, fuel: expectedFuel, player: expectedPlayer };
+    return { passed: Object.entries(expected).every(([key, value]) => observed[key] === value), observed, expected };
+  });
+}
 
 define("chest-rapid-transfer", "inventory", async (player) => {
   await prepareArena(player);
@@ -480,6 +524,21 @@ for (const id of ["crafting-manual-sticks", "crafting-book-sticks"]) {
       observed, expected: { planks: 0, sticks: 4 } };
   });
 }
+
+define("crafting-bulk-sticks", "crafting", async (player) => {
+  await prepareArena(player);
+  blockAt(player.dimension, 0, 1, 2).setType("minecraft:crafting_table");
+  inventory(player).setItem(0, new ItemStack("minecraft:oak_planks", 8));
+  return {};
+}, (player) => {
+  const observed = {
+    planks: countItem(inventory(player), "minecraft:oak_planks"),
+    sticks: countItem(inventory(player), "minecraft:stick"),
+  };
+  const expected = { planks: 0, sticks: 16 };
+  return { passed: observed.planks === expected.planks && observed.sticks === expected.sticks,
+    observed, expected };
+});
 
 define("lab-table-then-chest", "inventory", async (player) => {
   await prepareArena(player);
@@ -593,6 +652,23 @@ define("creative-replace-main", "creative", async (player) => {
 }, (player) => {
   const item = inventory(player).getItem(9)?.typeId;
   return { passed: item === "minecraft:nether_star", observed: { item }, expected: "minecraft:nether_star in the first main inventory slot" };
+});
+
+define("creative-replace-twice", "creative", async (player) => {
+  await prepareArena(player, GameMode.Creative);
+  inventory(player).setItem(0, new ItemStack("minecraft:emerald"));
+  return {};
+}, (player) => {
+  const selected = inventory(player).getItem(0);
+  const observed = {
+    selected: selected?.typeId ?? null,
+    amount: selected?.amount ?? 0,
+    emeralds: countItem(inventory(player), "minecraft:emerald"),
+    stars: countItem(inventory(player), "minecraft:nether_star"),
+  };
+  return { passed: observed.selected === "minecraft:ender_pearl" && observed.amount > 0
+      && observed.emeralds === 0 && observed.stars === 0,
+    observed, expected: "The second creative selection replaces the first without restoring the original item." };
 });
 
 define("equip-helmet", "equipment", async (player) => {
