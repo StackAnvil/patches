@@ -1,0 +1,320 @@
+From 53f1b37af061f453e7639b6fbff7d47d58391d1d Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 28 Sep 2026 09:00:35 +0200
+Subject: [PATCH] fix(block-entities): translate moving and extended pistons
+
+Bedrock stores piston extension in the PistonArm block entity and the carried block in a separate MovingBlock entity. Translate both into Java block states and moving-piston data so the client can render the animation and its carried block. The mapping follows fields captured from a native 1.26.51 server and uses the existing block-state sanitizer for carried blocks.
+---
+ .../rewriter/BlockEntityRewriter.java         |   7 +-
+ .../MovingBlockBlockEntityRewriter.java       | 115 ++++++++++++++++++
+ .../PistonBlockEntityRewriter.java            |  45 +++++++
+ .../MovingBlockBlockEntityRewriterTest.java   |  53 ++++++++
+ .../PistonBlockEntityRewriterTest.java        |  38 ++++++
+ 5 files changed, 255 insertions(+), 3 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriter.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/PistonBlockEntityRewriter.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriterTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/PistonBlockEntityRewriterTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockEntityRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockEntityRewriter.java
+index 85dc3b67..e903b7de 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockEntityRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockEntityRewriter.java
+@@ -49,8 +49,8 @@ public final class BlockEntityRewriter {
+         BLOCK_ENTITY_REWRITERS.put(CustomBlockTags.CALIBRATED_SCULK_SENSOR, NOOP_REWRITER);
+         BLOCK_ENTITY_REWRITERS.put(CustomBlockTags.COPPER_GOLEM_STATUE, new CopperGolemStatueBlockEntityRewriter());
+         BLOCK_ENTITY_REWRITERS.put(CustomBlockTags.NOTE_BLOCK, NULL_REWRITER);
+-        BLOCK_ENTITY_REWRITERS.put(CustomBlockTags.PISTON, NOOP_REWRITER);
+-        BLOCK_ENTITY_REWRITERS.put(CustomBlockTags.MOVING_BLOCK, NULL_REWRITER);
++        BLOCK_ENTITY_REWRITERS.put(CustomBlockTags.PISTON, new PistonBlockEntityRewriter());
++        BLOCK_ENTITY_REWRITERS.put(CustomBlockTags.MOVING_BLOCK, new MovingBlockBlockEntityRewriter());
+         BLOCK_ENTITY_REWRITERS.put(CustomBlockTags.SCULK_SENSOR, NOOP_REWRITER);
+         BLOCK_ENTITY_REWRITERS.put(CustomBlockTags.SCULK_SHRIEKER, NOOP_REWRITER);
+ 
+@@ -119,7 +119,8 @@ public final class BlockEntityRewriter {
+             }
+ 
+             if (javaBlockEntity.tag() != null) {
+-                final int typeId = BedrockProtocol.MAPPINGS.getJavaBlockEntities().getOrDefault(tag, -1);
++                final String javaTag = CustomBlockTags.MOVING_BLOCK.equals(tag) ? CustomBlockTags.PISTON : tag;
++                final int typeId = BedrockProtocol.MAPPINGS.getJavaBlockEntities().getOrDefault(javaTag, -1);
+                 if (typeId == -1) {
+                     throw new IllegalStateException("Unknown java block entity type: " + tag);
+                 }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriter.java
+new file mode 100644
+index 00000000..c60d133c
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriter.java
+@@ -0,0 +1,115 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.rewriter.blockentity;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.NumberTag;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import com.viaversion.viaversion.api.minecraft.blockentity.BlockEntity;
++import com.viaversion.viaversion.api.minecraft.blockentity.BlockEntityImpl;
++import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
++import net.raphimc.viabedrock.api.chunk.BlockEntityWithBlockState;
++import net.raphimc.viabedrock.api.model.BlockState;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.enums.Direction;
++import net.raphimc.viabedrock.protocol.rewriter.BlockEntityRewriter;
++import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
++import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
++
++import java.util.Locale;
++import java.util.Map;
++
++public class MovingBlockBlockEntityRewriter implements BlockEntityRewriter.Rewriter {
++
++    @Override
++    public BlockEntity toJava(final UserConnection user, final BedrockBlockEntity bedrockBlockEntity) {
++        final CompoundTag bedrockTag = bedrockBlockEntity.tag();
++        final CompoundTag movingBlock = bedrockTag.getCompoundTag("movingBlock");
++        final BlockPosition pistonPosition = pistonPosition(bedrockTag);
++        if (movingBlock == null || pistonPosition == null) {
++            return null;
++        }
++
++        final ChunkTracker chunkTracker = user.get(ChunkTracker.class);
++        final int pistonId = chunkTracker.getJavaBlockState(pistonPosition);
++        final BlockState pistonState = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(pistonId);
++        if (pistonState == null || !pistonState.properties().containsKey("facing")) {
++            return null;
++        }
++
++        final BlockStateRewriter blockStateRewriter = user.get(BlockStateRewriter.class);
++        final int movedBedrockId = blockStateRewriter.bedrockId(movingBlock);
++        int movedJavaId = blockStateRewriter.javaId(movedBedrockId);
++        if (movedJavaId == -1) {
++            return null;
++        }
++        final CompoundTag extra = bedrockTag.getCompoundTag("movingBlockExtra");
++        if (extra != null && "minecraft:water".equals(extra.getString("name"))) {
++            final int waterloggedId = blockStateRewriter.waterlog(movedJavaId);
++            if (waterloggedId != -1) {
++                movedJavaId = waterloggedId;
++            }
++        }
++        final BlockState javaMovedState = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(movedJavaId);
++        if (javaMovedState == null) {
++            return null;
++        }
++
++        final BedrockBlockEntity pistonEntity = chunkTracker.getBlockEntity(pistonPosition);
++        final CompoundTag javaTag = javaData(bedrockTag, javaMovedState, pistonState, pistonEntity != null ? pistonEntity.tag() : null);
++        final BlockState javaMovingState = movingPistonState(pistonState);
++        final Integer movingId = BedrockProtocol.MAPPINGS.getJavaBlockStates().get(javaMovingState);
++        if (movingId == null) {
++            return null;
++        }
++        final BlockEntity javaBlockEntity = new BlockEntityImpl(bedrockBlockEntity.packedXZ(), bedrockBlockEntity.y(), -1, javaTag);
++        return new BlockEntityWithBlockState(javaBlockEntity, movingId);
++    }
++
++    private static BlockPosition pistonPosition(final CompoundTag tag) {
++        if (tag.get("pistonPosX") instanceof NumberTag x && tag.get("pistonPosY") instanceof NumberTag y
++                && tag.get("pistonPosZ") instanceof NumberTag z) {
++            return new BlockPosition(x.asInt(), y.asInt(), z.asInt());
++        }
++        return null;
++    }
++
++    static BlockState movingPistonState(final BlockState pistonState) {
++        final String type = "sticky_piston".equals(pistonState.identifier()) ? "sticky" : "normal";
++        return new BlockState("moving_piston", Map.of("facing", pistonState.properties().get("facing"), "type", type));
++    }
++
++    static CompoundTag javaData(final CompoundTag movingTag, final BlockState movedState, final BlockState pistonState,
++                                final CompoundTag pistonTag) {
++        final CompoundTag javaState = new CompoundTag();
++        javaState.putString("Name", movedState.namespacedIdentifier());
++        if (!movedState.properties().isEmpty()) {
++            final CompoundTag properties = new CompoundTag();
++            for (Map.Entry<String, String> property : movedState.properties().entrySet()) {
++                properties.putString(property.getKey(), property.getValue());
++            }
++            javaState.put("Properties", properties);
++        }
++
++        final CompoundTag javaTag = new CompoundTag();
++        javaTag.put("blockState", javaState);
++        javaTag.putInt("facing", Direction.valueOf(pistonState.properties().get("facing").toUpperCase(Locale.ROOT)).verticalId());
++        final boolean extending = movingTag.get("expanding") instanceof NumberTag expanding && expanding.asInt() != 0;
++        final float bedrockProgress = pistonTag != null && pistonTag.get("Progress") instanceof NumberTag progressTag
++                ? progressTag.asFloat() : 0f;
++        final float progress = extending ? bedrockProgress : 1f - bedrockProgress;
++        javaTag.putFloat("progress", Math.max(0f, Math.min(1f, progress)));
++        javaTag.putByte("extending", (byte) (extending ? 1 : 0));
++        javaTag.putByte("source", (byte) 0);
++        return javaTag;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/PistonBlockEntityRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/PistonBlockEntityRewriter.java
+new file mode 100644
+index 00000000..2cccb999
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/PistonBlockEntityRewriter.java
+@@ -0,0 +1,45 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.rewriter.blockentity;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.NumberTag;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.blockentity.BlockEntity;
++import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
++import net.raphimc.viabedrock.api.chunk.BlockEntityWithBlockState;
++import net.raphimc.viabedrock.api.model.BlockState;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.rewriter.BlockEntityRewriter;
++import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
++
++public class PistonBlockEntityRewriter implements BlockEntityRewriter.Rewriter {
++
++    @Override
++    public BlockEntity toJava(final UserConnection user, final BedrockBlockEntity bedrockBlockEntity) {
++        final int currentId = user.get(ChunkTracker.class).getJavaBlockState(bedrockBlockEntity.position());
++        final BlockState currentState = BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(currentId);
++        final BlockState pistonState = javaBlockState(currentState, bedrockBlockEntity.tag());
++        final int pistonId = BedrockProtocol.MAPPINGS.getJavaBlockStates().getOrDefault(pistonState, currentId);
++        return new BlockEntityWithBlockState(bedrockBlockEntity.packedXZ(), bedrockBlockEntity.y(), pistonId);
++    }
++
++    static BlockState javaBlockState(final BlockState currentState, final CompoundTag bedrockTag) {
++        if (currentState != null && currentState.properties().containsKey("extended")
++                && bedrockTag.get("State") instanceof NumberTag stateTag) {
++            final int state = stateTag.asInt();
++            if (state >= 0 && state <= 3) {
++                return currentState.withProperty("extended", Boolean.toString(state == 1 || state == 2));
++            }
++        }
++        return currentState;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriterTest.java
+new file mode 100644
+index 00000000..5adbd9a5
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/MovingBlockBlockEntityRewriterTest.java
+@@ -0,0 +1,53 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.rewriter.blockentity;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import net.raphimc.viabedrock.api.model.BlockState;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class MovingBlockBlockEntityRewriterTest {
++
++    @Test
++    void carriesTheNativeMovingBlockAndPistonProgressIntoJava() {
++        final CompoundTag moving = new CompoundTag();
++        moving.putByte("expanding", (byte) 1);
++        final CompoundTag piston = new CompoundTag();
++        piston.putFloat("Progress", 0.5f);
++        final BlockState base = BlockState.fromString("minecraft:sticky_piston[extended=false,facing=east]");
++        final BlockState carried = BlockState.fromString("minecraft:oak_stairs[facing=west,half=bottom,shape=straight,waterlogged=false]");
++
++        final CompoundTag javaData = MovingBlockBlockEntityRewriter.javaData(moving, carried, base, piston);
++        assertEquals("minecraft:oak_stairs", javaData.getCompoundTag("blockState").getString("Name"));
++        assertEquals("west", javaData.getCompoundTag("blockState").getCompoundTag("Properties").getString("facing"));
++        assertEquals(5, javaData.getInt("facing"));
++        assertEquals(0.5f, javaData.getFloat("progress"));
++        assertEquals((byte) 1, javaData.getByte("extending"));
++        assertEquals("sticky", MovingBlockBlockEntityRewriter.movingPistonState(base).properties().get("type"));
++        assertEquals("east", MovingBlockBlockEntityRewriter.movingPistonState(base).properties().get("facing"));
++    }
++
++    @Test
++    void reversesNativeProgressWhenStickyPistonRetracts() {
++        final CompoundTag moving = new CompoundTag();
++        moving.putByte("expanding", (byte) 0);
++        final CompoundTag piston = new CompoundTag();
++        final BlockState base = BlockState.fromString("minecraft:sticky_piston[extended=false,facing=east]");
++
++        piston.putFloat("Progress", 1f);
++        assertEquals(0f, MovingBlockBlockEntityRewriter.javaData(moving, BlockState.fromString("minecraft:stone"), base, piston).getFloat("progress"));
++
++        piston.putFloat("Progress", 0f);
++        assertEquals(1f, MovingBlockBlockEntityRewriter.javaData(moving, BlockState.fromString("minecraft:stone"), base, piston).getFloat("progress"));
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/PistonBlockEntityRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/PistonBlockEntityRewriterTest.java
+new file mode 100644
+index 00000000..e5f88e01
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/PistonBlockEntityRewriterTest.java
+@@ -0,0 +1,38 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.rewriter.blockentity;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import net.raphimc.viabedrock.api.model.BlockState;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class PistonBlockEntityRewriterTest {
++
++    private static final BlockState RETRACTED = BlockState.fromString("minecraft:sticky_piston[extended=false,facing=west]");
++
++    @Test
++    void usesNativePistonArmStatesWithoutChangingDirectionOrStickyType() {
++        final CompoundTag tag = new CompoundTag();
++        tag.putByte("State", (byte) 2);
++        assertEquals(RETRACTED.withProperty("extended", "true"), PistonBlockEntityRewriter.javaBlockState(RETRACTED, tag));
++
++        tag.putByte("State", (byte) 1);
++        assertEquals(RETRACTED.withProperty("extended", "true"), PistonBlockEntityRewriter.javaBlockState(RETRACTED, tag));
++
++        tag.putByte("State", (byte) 3);
++        assertEquals(RETRACTED, PistonBlockEntityRewriter.javaBlockState(RETRACTED, tag));
++
++        tag.putByte("State", (byte) 0);
++        assertEquals(RETRACTED, PistonBlockEntityRewriter.javaBlockState(RETRACTED, tag));
++    }
++
++}
+-- 
+2.55.0
