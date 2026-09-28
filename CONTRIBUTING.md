@@ -1,5 +1,7 @@
 # Contributing to StackAnvil
 
+For a short overview, start with the [StackAnvil contributing guide](https://stackanvil.pistonmaster.net/contributing/).
+
 Thanks for helping. A clear bug report, a build result, or a small patch all help us move a feature toward upstream.
 
 ## Choose a patch group

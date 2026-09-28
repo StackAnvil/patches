@@ -1,0 +1,40 @@
+---
+layout: default
+title: Projects
+nav_order: 3
+description: The five upstream projects in the StackAnvil build.
+---
+
+# Projects
+
+StackAnvil stores patch files in this repository. Generated source checkouts stay under `.worktrees/` on your machine.
+
+| Project | Upstream | JDK | Build command |
+| --- | --- | --- | --- |
+| ViaBedrock | [ViaVersionAddons/ViaBedrock](https://github.com/ViaVersionAddons/ViaBedrock) | 17 | `bun run build viabedrock` |
+| ViaFabricPlus Bedrock add-on | [ViaVersionAddons/viafabricplus-bedrock](https://github.com/ViaVersionAddons/viafabricplus-bedrock) | 25 | `bun run build viafabricplus-bedrock` |
+| CubeConverter | [oryxel1/CubeConverter](https://github.com/oryxel1/CubeConverter/tree/vv-json) | 17 | `bun run build cubeconverter` |
+| ViaFabricPlus | [ViaVersion/ViaFabricPlus](https://github.com/ViaVersion/ViaFabricPlus) | 25 | `bun run build viafabricplus` |
+| ViaProxy | [ViaVersion/ViaProxy](https://github.com/ViaVersion/ViaProxy) | 25 | `bun run build viaproxy` |
+
+## ViaBedrock
+
+The [ViaBedrock patch series](https://github.com/StackAnvil/patches/tree/main/patches/viabedrock) is the core of the Bedrock work. Its initial focused upstream PRs include [#420](https://github.com/ViaVersionAddons/ViaBedrock/pull/420), [#425](https://github.com/ViaVersionAddons/ViaBedrock/pull/425), [#427](https://github.com/ViaVersionAddons/ViaBedrock/pull/427), and [#429](https://github.com/ViaVersionAddons/ViaBedrock/pull/429).
+
+## ViaFabricPlus Bedrock add-on
+
+The [add-on patch series](https://github.com/StackAnvil/patches/tree/main/patches/viafabricplus-bedrock) connects Bedrock support to the Fabric client. Focused upstream PRs include [#7](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/7), [#9](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/9), and [#11](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/11).
+
+## CubeConverter
+
+The [CubeConverter patch series](https://github.com/StackAnvil/patches/tree/main/patches/cubeconverter) builds a library used by ViaBedrock. It builds before dependent projects.
+
+## ViaFabricPlus
+
+The [ViaFabricPlus patch series](https://github.com/StackAnvil/patches/tree/main/patches/viafabricplus) supplies the client base for the Bedrock add-on.
+
+## ViaProxy
+
+The [ViaProxy patch series](https://github.com/StackAnvil/patches/tree/main/patches/viaproxy) builds against the patched ViaBedrock dependency.
+
+The exact dependency order and upstream commits live in [`targets.json`](https://github.com/StackAnvil/patches/blob/main/targets.json).
