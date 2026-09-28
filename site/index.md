@@ -30,7 +30,7 @@ Start with the code you know. Each project has its own pinned upstream commit an
 
 <div class="sa-projects">
   <a href="{{ '/projects/#viabedrock' | relative_url }}"><strong>ViaBedrock</strong><span>Java to Bedrock protocol translation and server support.</span></a>
-  <a href="{{ '/projects/#viafabricplus-bedrock' | relative_url }}"><strong>ViaFabricPlus Bedrock add-on</strong><span>Bedrock connections in the Fabric client.</span></a>
+  <a href="{{ '/projects/#viafabricplus-bedrock-add-on' | relative_url }}"><strong>ViaFabricPlus Bedrock add-on</strong><span>Bedrock connections in the Fabric client.</span></a>
   <a href="{{ '/projects/#cubeconverter' | relative_url }}"><strong>CubeConverter</strong><span>Resource pack conversion used by the Bedrock stack.</span></a>
   <a href="{{ '/projects/#viafabricplus' | relative_url }}"><strong>ViaFabricPlus</strong><span>The client base for the Bedrock add-on.</span></a>
   <a href="{{ '/projects/#viaproxy' | relative_url }}"><strong>ViaProxy</strong><span>A proxy build tested against the patched dependencies.</span></a>
