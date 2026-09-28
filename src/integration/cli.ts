@@ -158,6 +158,17 @@ async function bedrockServer(dir: string, source: string, name: string, entityPr
   const child = service(join(home, "bedrock_server"), [], home, log, { ...process.env, LD_LIBRARY_PATH: home }, true);
   const output = await waitForLog(log, /Server started\./, child);
   if (entityProbe) await waitForLog(log, /\[ViaBedrock Entity Probe\] ready/, child, 30_000);
+  if (resourceProbe) {
+    child.stdin?.write("tickingarea add circle 0 64 0 2 stackanvil_probe\n");
+    await waitForLog(log, /Added ticking area centered/, child, 30_000);
+    let placed = false;
+    for (let attempt = 0; attempt < 10 && !placed; attempt++) {
+      child.stdin?.write("setblock 0 64 0 stackanvil:resource_probe_block\n");
+      await Bun.sleep(1000);
+      placed = (await textFile(log)).includes("Block placed");
+    }
+    if (!placed) throw new Error(`Could not place the custom probe block. Read ${log}.`);
+  }
   const version = /Version:\s*(\d+\.\d+\.\d+)/.exec(output)?.[1];
   if (!version) throw new Error(`Could not read Bedrock server version. Read ${log}.`);
   return { child, log, port, version, transport: /^transport=(.+)$/m.exec(changed)?.[1] ?? "raknet" };
@@ -451,6 +462,9 @@ async function main(): Promise<void> {
         const firstClientLog = !modpackOnly ? await javaJoin(route, false, dir, { ...proxy, log: proxyBedrock.log, proxyLog: proxy.log },
           entityProbe || gameplayCases.length || resourceProbe ? proxyBedrock : undefined, entityProbe, gameplayCases,
           resourceProbe ? { variant: "a", label: "a-first" } : undefined, probeFailures) : "";
+        if (resourceProbe && (await textFile(proxy.log)).includes("Missing bedrock -> java block state mapping: stackanvil:resource_probe_block")) {
+          throw new Error("The custom probe block fell back to an unrelated Java block state.");
+        }
         if (resourceProbe) {
           const firstConversions = convertedPackCount((await textFile(proxy.log)).slice(proxyLogStart) + firstClientLog);
           if (!firstConversions) throw new Error("Resource probe A did not convert its new pack.");

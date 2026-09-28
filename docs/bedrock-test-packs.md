@@ -47,13 +47,15 @@ After the gameplay cases, the runner restarts the Java client and checks that it
 
 ## Resource pack conversion
 
-The [resource probe](../test-packs/resource-probe/resource_pack/manifest.json) replaces the diamond texture with a visible test pattern. Run the cache and rendering test with:
+The [resource probe](../test-packs/resource-probe/resource_pack/manifest.json) replaces the diamond texture and defines a textured custom block. Run the cache and rendering test with:
 
 ```bash
 bun run test:bedrock:resources
 ```
 
 The runner joins with texture A twice. It then restarts ViaProxy against texture B while keeping the same cache directory. It checks that A converts once, the repeat reuses the conversion, and B converts again. It also gives the player a diamond and compares Java inventory screenshots before and after the item appears. The two textures have distinct colors, so each run checks the texture shown by Java.
+
+The runner places the custom block in a loaded Bedrock chunk. It checks the converted Java block model and texture. It also rejects a fallback block-state mapping for that block.
 
 The test writes a unique token into the pack for each run. This prevents a result from an earlier local run from hiding a conversion failure. The runner uses a private server and never edits the source Bedrock installation.
 
