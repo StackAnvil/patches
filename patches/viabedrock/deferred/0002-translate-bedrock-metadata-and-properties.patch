@@ -1,4 +1,4 @@
-From 6a2586aecfe78467ba18c7d8777884a22deb7aa9 Mon Sep 17 00:00:00 2001
+From b15882961995dca70ba6364033790862ebfcbf88 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 00:27:08 +0200
 Subject: [PATCH] feat(entities): translate Bedrock metadata and properties
@@ -8,23 +8,25 @@ Adapt the entity metadata work from ViaBedrock PR #327 to the current protocol a
 Track property definitions across configuration and play, resolve sparse values by their transmitted indices, and translate spawn values and later updates. Map cat variants through the Java registry, preserve sheep wool state across partial updates, and compose bee flags without clearing anger.
 
 Bedrock sends reduced entity scale for several baby species while its renderer compensates with a second multiplier. Java already selects their baby models, so compensate for the verified species on both scale and age updates. Translate Bedrock item-use and blocking flags into Java active-hand metadata so remote shield poses follow the server state.
+
+Map cushion colors, fish variants, boat paddles, and minecart displays with the metadata translation. Suppress names on non-nameable items, projectiles, fireballs, eyes of ender, and experience orbs while preserving names on actors that can legitimately show them.
 ---
  .../viabedrock/api/model/entity/Entity.java   |  35 ++
  .../api/model/entity/LivingEntity.java        |   7 +-
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
  .../data/enums/bedrock/ActorFlags.java        |   6 +-
  .../protocol/model/entity/EntityProperty.java |  40 ++
- .../model/entity/EntityPropertyList.java      |  97 +++++
+ .../model/entity/EntityPropertyList.java      |  97 ++++
  .../protocol/packet/EntityPackets.java        |  33 +-
  .../protocol/packet/JoinPackets.java          |   2 +-
  .../protocol/packet/OtherPlayerPackets.java   |   5 +-
- .../rewriter/EntityMetadataRewriter.java      | 403 ++++++++++++++++--
+ .../rewriter/EntityMetadataRewriter.java      | 505 +++++++++++++++++-
  .../storage/EntityPropertyTracker.java        |  61 +++
  .../entity_flag_molang_query_mappings.json    |   6 +-
- .../enums/bedrock/ActorFlagsMappingTest.java  |  27 ++
- .../model/entity/EntityPropertyListTest.java  |  79 ++++
- .../rewriter/EntityMetadataRewriterTest.java  |  85 ++++
- 15 files changed, 847 insertions(+), 41 deletions(-)
+ .../enums/bedrock/ActorFlagsMappingTest.java  |  27 +
+ .../model/entity/EntityPropertyListTest.java  |  79 +++
+ .../rewriter/EntityMetadataRewriterTest.java  | 151 ++++++
+ 15 files changed, 1013 insertions(+), 43 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityProperty.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyList.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/EntityPropertyTracker.java
@@ -491,10 +493,10 @@ index 5409f303..33c9e98f 100644
                  entityTracker.applyEntityLink(link);
              }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
-index ed40425a..1d546d7f 100644
+index ed40425a..7c5eb9e5 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
-@@ -17,16 +17,32 @@
+@@ -17,29 +17,66 @@
   */
  package net.raphimc.viabedrock.protocol.rewriter;
  
@@ -527,7 +529,10 @@ index ed40425a..1d546d7f 100644
  import net.raphimc.viabedrock.protocol.storage.EntityTracker;
  import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
  
-@@ -36,10 +52,24 @@ import java.util.logging.Level;
+ import java.util.List;
+ import java.util.Set;
++import java.util.function.IntUnaryOperator;
+ import java.util.logging.Level;
  
  public final class EntityMetadataRewriter {
  
@@ -541,18 +546,24 @@ index ed40425a..1d546d7f 100644
  
          switch (id) {
 +            case NAME -> {
++                if (!shouldTranslateName(entity)) {
++                    break;
++                }
 +                final String name = entityData.value();
 +                final Tag javaName = name.isEmpty() ? null : TextUtil.stringToNbt(name);
 +                javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME), VersionedTypes.V26_3.entityDataTypes().optionalComponentType, javaName));
 +            }
 +            case NAMETAG_ALWAYS_SHOW -> {
++                if (!shouldTranslateName(entity)) {
++                    break;
++                }
 +                final boolean alwaysShow = readNumber(entityData).intValue() != 0;
 +                javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME_VISIBLE), VersionedTypes.V26_3.entityDataTypes().booleanType, alwaysShow));
 +            }
              case RESERVED_0, RESERVED_092 -> { // Entity flags mask
                  final Set<ActorFlags> bedrockFlags = entity.entityFlags();
                  byte javaBitMask = 0; // https://minecraft.wiki/w/Java_Edition_protocol/Entity_metadata#Entity
-@@ -67,6 +97,23 @@ public final class EntityMetadataRewriter {
+@@ -67,6 +104,23 @@ public final class EntityMetadataRewriter {
  
                  javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SHARED_FLAGS), VersionedTypes.V26_3.entityDataTypes().byteType, javaBitMask));
  
@@ -576,7 +587,7 @@ index ed40425a..1d546d7f 100644
                  javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SILENT), VersionedTypes.V26_3.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.SILENT)));
                  javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.NO_GRAVITY), VersionedTypes.V26_3.entityDataTypes().booleanType, !bedrockFlags.contains(ActorFlags.HAS_GRAVITY)));
  
-@@ -79,6 +126,16 @@ public final class EntityMetadataRewriter {
+@@ -79,6 +133,16 @@ public final class EntityMetadataRewriter {
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.MOB_FLAGS), VersionedTypes.V26_3.entityDataTypes().byteType, mobBitMask));
                  }
  
@@ -593,7 +604,7 @@ index ed40425a..1d546d7f 100644
                  if (entity.javaType().is(EntityTypes26_3.ALLAY)) {
                      final boolean dancing = bedrockFlags.contains(ActorFlags.DANCING);
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.DANCING), VersionedTypes.V26_3.entityDataTypes().booleanType, dancing));
-@@ -87,6 +144,13 @@ public final class EntityMetadataRewriter {
+@@ -87,6 +151,13 @@ public final class EntityMetadataRewriter {
                  if (entity.javaType().isOrHasParent(EntityTypes26_3.ABSTRACT_AGEABLE)) {
                      final boolean isBaby = bedrockFlags.contains(ActorFlags.BABY);
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.BABY), VersionedTypes.V26_3.entityDataTypes().booleanType, isBaby));
@@ -607,7 +618,7 @@ index ed40425a..1d546d7f 100644
                  }
  
                  if (entity.javaType().is(EntityTypes26_3.AXOLOTL)) {
-@@ -95,36 +159,31 @@ public final class EntityMetadataRewriter {
+@@ -95,36 +166,31 @@ public final class EntityMetadataRewriter {
                  }
  
                  if (entity.javaType().is(EntityTypes26_3.BEE)) {
@@ -653,7 +664,7 @@ index ed40425a..1d546d7f 100644
                          sniffingState = 2;
                      } else if (bedrockFlags.contains(ActorFlags.SNIFFING)) {
                          sniffingState = 3;
-@@ -132,18 +191,20 @@ public final class EntityMetadataRewriter {
+@@ -132,18 +198,20 @@ public final class EntityMetadataRewriter {
                          sniffingState = 4;
                      } else if (bedrockFlags.contains(ActorFlags.DIGGING)) {
                          sniffingState = 5;
@@ -678,7 +689,7 @@ index ed40425a..1d546d7f 100644
                  if (entity.javaType().is(EntityTypes26_3.TURTLE)) { //TODO: Test
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.HAS_EGG), VersionedTypes.V26_3.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.IS_PREGNANT)));
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.LAYING_EGG), VersionedTypes.V26_3.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.LAYING_EGG)));
-@@ -165,8 +226,13 @@ public final class EntityMetadataRewriter {
+@@ -165,8 +233,13 @@ public final class EntityMetadataRewriter {
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.FLAGS), VersionedTypes.V26_3.entityDataTypes().byteType, tamableBitMask));
                  }
  
@@ -694,7 +705,7 @@ index ed40425a..1d546d7f 100644
                  }
  
                  if (entity.javaType().is(EntityTypes26_3.BOGGED)) {
-@@ -182,6 +248,12 @@ public final class EntityMetadataRewriter {
+@@ -182,6 +255,12 @@ public final class EntityMetadataRewriter {
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.IS_IGNITED), VersionedTypes.V26_3.entityDataTypes().booleanType, ignited));
                  }
  
@@ -707,7 +718,32 @@ index ed40425a..1d546d7f 100644
                  if (entity.javaType().is(EntityTypes26_3.ZOGLIN)) {
                      final boolean isBaby = bedrockFlags.contains(ActorFlags.BABY);
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.BABY), VersionedTypes.V26_3.entityDataTypes().booleanType, isBaby));
-@@ -267,6 +339,17 @@ public final class EntityMetadataRewriter {
+@@ -210,6 +289,14 @@ public final class EntityMetadataRewriter {
+                 final int variant = readNumber(entityData).intValue();
+ 
+                 switch (entity.javaType()) {
++                    case CUSHION -> {
++                        final int color = cushionColor(variant);
++                        if (color >= 0) {
++                            javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.COLOR), VersionedTypes.V26_3.entityDataTypes().dyeColorType, color));
++                        } else {
++                            ViaBedrock.getPlatform().getLogger().warning("Unknown cushion variant " + variant + " for entity " + entity.type());
++                        }
++                    }
+                     case WOLF -> {
+                         final int javaVariant = switch (variant) {
+                             case 0 -> 4; // PALE
+@@ -244,8 +331,7 @@ public final class EntityMetadataRewriter {
+                         javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.VARIANT), VersionedTypes.V26_3.entityDataTypes().frogVariantType, javaVariant));
+                     }
+                     case TROPICAL_FISH -> {
+-                        //TODO: Remap tropical fish variants properly
+-                        //javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.TYPE_VARIANT), VersionedTypes.V26_3.entityDataTypes().varIntType, variant));
++                        addTropicalFishVariant(entity, javaEntityData);
+                     }
+                     case PUFFERFISH -> {
+                     } // For some reason bedrock sends the puffed state here as well as in the PUFFED_STATE Actor ID so we ignore this one
+@@ -267,6 +353,17 @@ public final class EntityMetadataRewriter {
                          };
                          javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.VARIANT), VersionedTypes.V26_3.entityDataTypes().varIntType, javaVariant));
                      }
@@ -725,7 +761,11 @@ index ed40425a..1d546d7f 100644
                      case MOOSHROOM -> {
                          final int javaVariant = switch (variant) {
                              case 0 -> 0; // RED
-@@ -304,10 +387,8 @@ public final class EntityMetadataRewriter {
+@@ -301,13 +398,12 @@ public final class EntityMetadataRewriter {
+                 final int javaColorIndex = readNumber(entityData).intValue();
+ 
+                 switch (entity.javaType()) {
++                    case TROPICAL_FISH -> addTropicalFishVariant(entity, javaEntityData);
                      case WOLF, CAT -> {
                          javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.COLLAR_COLOR), VersionedTypes.V26_3.entityDataTypes().varIntType, javaColorIndex));
                      }
@@ -738,7 +778,39 @@ index ed40425a..1d546d7f 100644
                      }
                      default -> {
                          if (javaColorIndex != 0) { // For some reason bedrock seems to send color index 0 for many entities that don't have colors
-@@ -489,7 +570,6 @@ public final class EntityMetadataRewriter {
+@@ -316,6 +412,31 @@ public final class EntityMetadataRewriter {
+                     }
+                 }
+             }
++            case MARK_VARIANT, COLOR_2_INDEX -> {
++                if (entity.javaType().is(EntityTypes26_3.TROPICAL_FISH)) {
++                    addTropicalFishVariant(entity, javaEntityData);
++                }
++            }
++            case ROW_TIME_LEFT, ROW_TIME_RIGHT -> {
++                if (entity.javaType().isOrHasParent(EntityTypes26_3.ABSTRACT_BOAT)) {
++                    final String field = id == ActorDataIds.ROW_TIME_LEFT ? EntityDataFields.PADDLE_LEFT : EntityDataFields.PADDLE_RIGHT;
++                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(field),
++                            VersionedTypes.V26_3.entityDataTypes().booleanType, boatPaddleTurning(entity, id)));
++                }
++            }
++            case DISPLAY_TILE_RUNTIME_ID, CUSTOM_DISPLAY -> {
++                if (entity.javaType().isOrHasParent(EntityTypes26_3.ABSTRACT_MINECART)) {
++                    final int blockState = minecartDisplayBlockState(entity, user.get(BlockStateRewriter.class)::javaId);
++                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_DISPLAY_BLOCK),
++                            VersionedTypes.V26_3.entityDataTypes().optionalBlockStateType, blockState));
++                }
++            }
++            case DISPLAY_OFFSET -> {
++                if (entity.javaType().isOrHasParent(EntityTypes26_3.ABSTRACT_MINECART)) {
++                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.DISPLAY_OFFSET),
++                            VersionedTypes.V26_3.entityDataTypes().varIntType, readNumber(entityData).intValue()));
++                }
++            }
+             case OWNER -> {
+                 final long ownerId = readNumber(entityData).longValue();
+                 if (ownerId == -1) {
+@@ -489,7 +610,6 @@ public final class EntityMetadataRewriter {
                  javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.LEFT_LEG_POSE), VersionedTypes.V26_3.entityDataTypes().rotationsType, leftLegPose));
                  javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.RIGHT_LEG_POSE), VersionedTypes.V26_3.entityDataTypes().rotationsType, rightLegPose));
              }
@@ -746,7 +818,7 @@ index ed40425a..1d546d7f 100644
              case PUFFED_STATE -> {
                  final int javaPuffedState = readNumber(entityData).intValue();
                  if (entity.javaType().is(EntityTypes26_3.PUFFERFISH)) {
-@@ -554,7 +634,7 @@ public final class EntityMetadataRewriter {
+@@ -554,7 +674,7 @@ public final class EntityMetadataRewriter {
              }
              case DATA_WAITING -> {
                  if (entity.javaType().is(EntityTypes26_3.AREA_EFFECT_CLOUD)) {
@@ -755,7 +827,7 @@ index ed40425a..1d546d7f 100644
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.WAITING), VersionedTypes.V26_3.entityDataTypes().booleanType, isWaiting));
                  } else {
                      ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received DATA_WAITING for non-AREA_EFFECT_CLOUD entity " + entity.type());
-@@ -567,6 +647,14 @@ public final class EntityMetadataRewriter {
+@@ -567,6 +687,14 @@ public final class EntityMetadataRewriter {
                      ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received DATA_PARTICLE for non-AREA_EFFECT_CLOUD entity " + entity.type());
                  }
              }
@@ -770,7 +842,7 @@ index ed40425a..1d546d7f 100644
              case INV -> {
                  if (entity.javaType().is(EntityTypes26_3.WITHER)) {
                      final int invulnerabilityTicks = readNumber(entityData).intValue();
-@@ -639,6 +727,19 @@ public final class EntityMetadataRewriter {
+@@ -639,6 +767,19 @@ public final class EntityMetadataRewriter {
                      ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received TARGET for non-GUARDIAN entity " + entity.type() + " with non-zero value " + targetId);
                  }
              }
@@ -790,7 +862,7 @@ index ed40425a..1d546d7f 100644
              case AGENT, BALLOON_ANCHOR -> {
              } // Education edition only, ignore
              default -> {
-@@ -649,6 +750,256 @@ public final class EntityMetadataRewriter {
+@@ -649,6 +790,314 @@ public final class EntityMetadataRewriter {
          return true;
      }
  
@@ -969,6 +1041,22 @@ index ed40425a..1d546d7f 100644
 +        return -1;
 +    }
 +
++    static boolean shouldTranslateName(final Entity entity) {
++        // Bedrock uses NAME for an item's label, a projectile's source item, and
++        // experience orbs. Java treats these as visible custom entity names.
++        return !entity.javaType().is(EntityTypes26_3.ITEM)
++                && !entity.javaType().isOrHasParent(EntityTypes26_3.PROJECTILE)
++                && !entity.javaType().isOrHasParent(EntityTypes26_3.ABSTRACT_FIREBALL)
++                && !entity.javaType().is(EntityTypes26_3.EYE_OF_ENDER)
++                && !entity.javaType().is(EntityTypes26_3.EXPERIENCE_ORB);
++    }
++
++    static int cushionColor(final int bedrockVariant) {
++        // Bedrock's cushion render controller orders dyes black to white. Java's
++        // DyeColor metadata uses white to black, so the indexes are reversed.
++        return bedrockVariant >= 0 && bedrockVariant < 16 ? 15 - bedrockVariant : -1;
++    }
++
 +    static byte beeFlags(final Set<ActorFlags> flags, final boolean hasNectar) {
 +        byte javaFlags = 0;
 +        if (flags.contains(ActorFlags.ANGRY)) {
@@ -999,6 +1087,48 @@ index ed40425a..1d546d7f 100644
 +        final EntityData colorData = entity.entityData().get(ActorDataIds.COLOR_INDEX);
 +        final int color = colorData != null ? readNumber(colorData).intValue() & 0x0F : 0;
 +        return (byte) (color | (entity.entityFlags().contains(ActorFlags.SHEARED) ? 0x10 : 0));
++    }
++
++    private static void addTropicalFishVariant(final Entity entity, final List<EntityData> javaEntityData) {
++        final int variant = tropicalFishVariant(entity);
++        if (variant >= 0) {
++            javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.TYPE_VARIANT),
++                    VersionedTypes.V26_3.entityDataTypes().varIntType, variant));
++        }
++    }
++
++    static int tropicalFishVariant(final Entity entity) {
++        final int base = tropicalFishComponent(entity, ActorDataIds.VARIANT, 1);
++        final int pattern = tropicalFishComponent(entity, ActorDataIds.MARK_VARIANT, 5);
++        final int baseColor = tropicalFishComponent(entity, ActorDataIds.COLOR_INDEX, 15);
++        final int patternColor = tropicalFishComponent(entity, ActorDataIds.COLOR_2_INDEX, 15);
++        if (base < 0 || pattern < 0 || baseColor < 0 || patternColor < 0) {
++            return -1;
++        }
++        return base | pattern << 8 | baseColor << 16 | patternColor << 24;
++    }
++
++    private static int tropicalFishComponent(final Entity entity, final ActorDataIds id, final int maximum) {
++        final EntityData data = entity.entityData().get(id);
++        if (data == null) {
++            return 0;
++        }
++        final int value = readNumber(data).intValue();
++        return value >= 0 && value <= maximum ? value : -1;
++    }
++
++    static boolean boatPaddleTurning(final Entity entity, final ActorDataIds id) {
++        final EntityData data = entity.entityData().get(id);
++        return data != null && readNumber(data).floatValue() > 0f;
++    }
++
++    static int minecartDisplayBlockState(final Entity entity, final IntUnaryOperator bedrockToJavaBlockState) {
++        final EntityData customDisplay = entity.entityData().get(ActorDataIds.CUSTOM_DISPLAY);
++        final EntityData displayTile = entity.entityData().get(ActorDataIds.DISPLAY_TILE_RUNTIME_ID);
++        if (customDisplay == null || displayTile == null || readNumber(customDisplay).intValue() == 0) {
++            return 0;
++        }
++        return Math.max(0, bedrockToJavaBlockState.applyAsInt(readNumber(displayTile).intValue()));
 +    }
 +
 +    private static void updateScale(final Entity entity, final float scale, final List<EntityData> javaEntityData) {
@@ -1251,10 +1381,10 @@ index 00000000..eacc385c
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java
 new file mode 100644
-index 00000000..00b94595
+index 00000000..951e98e2
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,151 @@
 +package net.raphimc.viabedrock.protocol.rewriter;
 +
 +import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
@@ -1268,8 +1398,36 @@ index 00000000..00b94595
 +import java.util.Set;
 +
 +import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
 +
 +class EntityMetadataRewriterTest {
++
++    @Test
++    void omitsBedrockItemProjectileAndExperienceOrbLabelsFromJavaCustomNames() {
++        for (final EntityTypes26_3 type : new EntityTypes26_3[] {
++            EntityTypes26_3.ITEM, EntityTypes26_3.EGG, EntityTypes26_3.ARROW,
++            EntityTypes26_3.FIREBALL, EntityTypes26_3.SMALL_FIREBALL,
++            EntityTypes26_3.EYE_OF_ENDER, EntityTypes26_3.EXPERIENCE_ORB
++        }) {
++            final Entity entity = new Entity(null, 1, 1, type.identifier(), 1, null, type);
++            assertFalse(EntityMetadataRewriter.shouldTranslateName(entity), type.name());
++        }
++
++        for (final EntityTypes26_3 type : new EntityTypes26_3[] {EntityTypes26_3.PLAYER, EntityTypes26_3.SHEEP, EntityTypes26_3.CUSHION}) {
++            final Entity entity = new Entity(null, 1, 1, type.identifier(), 1, null, type);
++            assertTrue(EntityMetadataRewriter.shouldTranslateName(entity), type.name());
++        }
++    }
++
++    @Test
++    void reversesBedrockCushionVariantsForJavaDyeColors() {
++        for (int bedrockVariant = 0; bedrockVariant < 16; bedrockVariant++) {
++            assertEquals(15 - bedrockVariant, EntityMetadataRewriter.cushionColor(bedrockVariant));
++        }
++        assertEquals(-1, EntityMetadataRewriter.cushionColor(-1));
++        assertEquals(-1, EntityMetadataRewriter.cushionColor(16));
++    }
 +
 +    @Test
 +    void mapsBlockingAndItemUseToJavaActiveHandFlags() {
@@ -1337,6 +1495,44 @@ index 00000000..00b94595
 +                    ActorDataIds.RESERVED_0.getValue(), EntityDataTypesBedrock.LONG, 0L));
 +            assertEquals(0.5f, EntityMetadataRewriter.javaScale(baby, 0.5f), type.name());
 +        }
++    }
++
++    @Test
++    void combinesTropicalFishPatternAndColorsAcrossPartialUpdates() {
++        final Entity fish = new Entity(null, 1, 1, EntityTypes26_3.TROPICAL_FISH.identifier(), 1, null, EntityTypes26_3.TROPICAL_FISH);
++        fish.entityData().put(ActorDataIds.VARIANT, new EntityData(ActorDataIds.VARIANT.getValue(), EntityDataTypesBedrock.INT, 1));
++        fish.entityData().put(ActorDataIds.MARK_VARIANT, new EntityData(ActorDataIds.MARK_VARIANT.getValue(), EntityDataTypesBedrock.INT, 4));
++        fish.entityData().put(ActorDataIds.COLOR_INDEX, new EntityData(ActorDataIds.COLOR_INDEX.getValue(), EntityDataTypesBedrock.INT, 3));
++        fish.entityData().put(ActorDataIds.COLOR_2_INDEX, new EntityData(ActorDataIds.COLOR_2_INDEX.getValue(), EntityDataTypesBedrock.INT, 14));
++
++        assertEquals(0x0E030401, EntityMetadataRewriter.tropicalFishVariant(fish));
++
++        fish.entityData().put(ActorDataIds.MARK_VARIANT, new EntityData(ActorDataIds.MARK_VARIANT.getValue(), EntityDataTypesBedrock.INT, 2));
++        assertEquals(0x0E030201, EntityMetadataRewriter.tropicalFishVariant(fish));
++    }
++
++    @Test
++    void translatesBoatPaddleTimesToTurningFlags() {
++        final Entity boat = new Entity(null, 1, 1, EntityTypes26_3.OAK_BOAT.identifier(), 1, null, EntityTypes26_3.OAK_BOAT);
++        assertFalse(EntityMetadataRewriter.boatPaddleTurning(boat, ActorDataIds.ROW_TIME_LEFT));
++
++        boat.entityData().put(ActorDataIds.ROW_TIME_LEFT,
++                new EntityData(ActorDataIds.ROW_TIME_LEFT.getValue(), EntityDataTypesBedrock.FLOAT, 0.4f));
++        assertTrue(EntityMetadataRewriter.boatPaddleTurning(boat, ActorDataIds.ROW_TIME_LEFT));
++        assertFalse(EntityMetadataRewriter.boatPaddleTurning(boat, ActorDataIds.ROW_TIME_RIGHT));
++    }
++
++    @Test
++    void onlyDisplaysMinecartBlockWhenBedrockEnablesIt() {
++        final Entity minecart = new Entity(null, 1, 1, EntityTypes26_3.MINECART.identifier(), 1, null, EntityTypes26_3.MINECART);
++        minecart.entityData().put(ActorDataIds.DISPLAY_TILE_RUNTIME_ID,
++                new EntityData(ActorDataIds.DISPLAY_TILE_RUNTIME_ID.getValue(), EntityDataTypesBedrock.INT, 42));
++        assertEquals(0, EntityMetadataRewriter.minecartDisplayBlockState(minecart, id -> id + 100));
++
++        minecart.entityData().put(ActorDataIds.CUSTOM_DISPLAY,
++                new EntityData(ActorDataIds.CUSTOM_DISPLAY.getValue(), EntityDataTypesBedrock.BYTE, (byte) 1));
++        assertEquals(142, EntityMetadataRewriter.minecartDisplayBlockState(minecart, id -> id + 100));
++        assertEquals(0, EntityMetadataRewriter.minecartDisplayBlockState(minecart, id -> -1));
 +    }
 +
 +}

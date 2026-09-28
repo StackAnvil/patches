@@ -1,18 +1,22 @@
-From e1f5349fcf90df8d5edfb4c17ef9789b3c60ae5a Mon Sep 17 00:00:00 2001
+From 85c15205d4cf329d93466c9e224deeba3b848113 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 11:37:29 +0200
 Subject: [PATCH] fix(sound): reconcile locally predicted interaction and
  mining audio
 
 Java already plays closeable, placement, and mining hit sounds from local prediction. Track the local actions and omit matching Bedrock echoes while keeping events from other actors and positions. Ignore a no-damage attack echo only when it belongs to the player currently mining.
+
+Treat silent Bedrock block destruction events as silent and avoid replaying sounds already predicted by the Java client. Keep placement and mining audio in the same reconciliation path.
 ---
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
+ .../protocol/data/enums/java/LevelEvent.java  |   1 +
  .../protocol/packet/ClientPlayerPackets.java  |   3 +
  .../protocol/packet/InteractionPackets.java   |  15 +-
- .../protocol/packet/WorldEffectPackets.java   |  28 ++--
- .../storage/BlockInteractionSoundTracker.java | 136 ++++++++++++++++++
- .../BlockInteractionSoundTrackerTest.java     | 119 +++++++++++++++
- 6 files changed, 285 insertions(+), 17 deletions(-)
+ .../protocol/packet/WorldEffectPackets.java   |  41 +++--
+ .../storage/BlockInteractionSoundTracker.java | 174 ++++++++++++++++++
+ .../data/custom/level_event_mappings.json     |   2 +-
+ .../BlockInteractionSoundTrackerTest.java     | 146 +++++++++++++++
+ 8 files changed, 364 insertions(+), 19 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTracker.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTrackerTest.java
 
@@ -28,6 +32,18 @@ index 3e72aeeb..e76b2f9a 100644
          user.put(new ResourcePackDownloadTracker());
          user.put(new BlobCache(user));
          user.put(new PacketSyncStorage(user));
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/data/enums/java/LevelEvent.java b/src/main/java/net/raphimc/viabedrock/protocol/data/enums/java/LevelEvent.java
+index c07ba7ce..dfd5e439 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/data/enums/java/LevelEvent.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/data/enums/java/LevelEvent.java
+@@ -83,6 +83,7 @@ public enum LevelEvent {
+     PARTICLES_BEE_GROWTH(2011),
+     PARTICLES_TURTLE_EGG_PLACEMENT(2012),
+     PARTICLES_SMASH_ATTACK(2013),
++    PARTICLES_DESTROY_BLOCK_NO_SOUND(2014),
+     ANIMATION_END_GATEWAY_SPAWN(3000),
+     ANIMATION_DRAGON_SUMMON_ROAR(3001),
+     PARTICLES_ELECTRIC_SPARK(3002),
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 index 899ed7f7..44d20072 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
@@ -54,18 +70,18 @@ index 899ed7f7..44d20072 100644
                      clientPlayer.setBlockBreakingInfo(null);
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-index 554d7d01..47f0fa5e 100644
+index 5dca4499..d3075867 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-@@ -50,6 +50,7 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerActionAct
+@@ -48,6 +48,7 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerActionAction;
  import net.raphimc.viabedrock.protocol.model.BedrockItem;
- import net.raphimc.viabedrock.protocol.model.EntityLink;
  import net.raphimc.viabedrock.protocol.model.Position3f;
 +import net.raphimc.viabedrock.protocol.storage.BlockInteractionSoundTracker;
  import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
  import net.raphimc.viabedrock.protocol.storage.EntityTracker;
  import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
-@@ -307,8 +308,20 @@ public final class InteractionPackets {
+@@ -305,8 +306,20 @@ public final class InteractionPackets {
                  PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
                  return;
              }
@@ -88,7 +104,7 @@ index 554d7d01..47f0fa5e 100644
          });
          protocol.registerClientbound(ClientboundBedrockPackets.INVENTORY_TRANSACTION, null, wrapper -> {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
-index 9ecc8f80..901cfdb3 100644
+index 9ecc8f80..e8289716 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
 @@ -30,6 +30,7 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets
@@ -99,15 +115,16 @@ index 9ecc8f80..901cfdb3 100644
  import net.raphimc.viabedrock.api.model.entity.Entity;
  import net.raphimc.viabedrock.api.resourcepack.definition.SoundDefinitions;
  import net.raphimc.viabedrock.api.resourcepack.definition.TextDefinitions;
-@@ -53,6 +54,7 @@ import net.raphimc.viabedrock.protocol.model.BedrockItem;
+@@ -53,6 +54,8 @@ import net.raphimc.viabedrock.protocol.model.BedrockItem;
  import net.raphimc.viabedrock.protocol.model.Position3f;
  import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
  import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
 +import net.raphimc.viabedrock.protocol.storage.BlockInteractionSoundTracker;
++import net.raphimc.viabedrock.protocol.storage.BlockInteractionSoundTracker.BreakSoundSource;
  import net.raphimc.viabedrock.protocol.storage.BreakingTracker;
  import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
  import net.raphimc.viabedrock.protocol.storage.EntityTracker;
-@@ -206,9 +208,18 @@ public final class WorldEffectPackets {
+@@ -206,9 +209,18 @@ public final class WorldEffectPackets {
              final String entityIdentifier = wrapper.read(BedrockTypes.STRING); // entity identifier
              final boolean isBabyMob = wrapper.read(Types.BOOLEAN); // is baby mob
              final boolean isGlobal = wrapper.read(Types.BOOLEAN); // is global sound
@@ -127,7 +144,7 @@ index 9ecc8f80..901cfdb3 100644
              final boolean globalSound = isGlobal || Float.isNaN(position.x()) || Float.isNaN(position.y()) || Float.isNaN(position.z());
              if (soundEvent.startsWith("record.") && !globalSound) {
                  final String song = soundEvent.substring("record.".length());
-@@ -236,23 +247,8 @@ public final class WorldEffectPackets {
+@@ -236,23 +248,8 @@ public final class WorldEffectPackets {
                      final float pitch = (float) Math.pow(2D, (double) (key - 12) / 12);
                      configuredSound = new SoundDefinitions.ConfiguredSound(noteBlockSound, 1F, 1F, pitch, pitch);
                  }
@@ -151,12 +168,38 @@ index 9ecc8f80..901cfdb3 100644
                      if (configuredSound == null) {
                          if (LEVEL_SOUND_DEBUG_LOG) {
                              ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing level sound event mapping for " + soundEvent + " with entity identifier '" + entityIdentifier + "' and data " + data);
+@@ -268,6 +265,11 @@ public final class WorldEffectPackets {
+                 wrapper.cancel();
+                 return;
+             }
++            if (!globalSound && "break".equals(soundEvent)
++                    && soundTracker.isDuplicateBreakSound(position, data, BreakSoundSource.LEVEL_SOUND_EVENT)) {
++                wrapper.cancel();
++                return;
++            }
+ 
+             wrapper.write(Types.SOUND_EVENT, Holder.of(javaSound.id())); // sound id
+             wrapper.write(Types.VAR_INT, javaSound.category().ordinal()); // category
+@@ -408,7 +410,12 @@ public final class WorldEffectPackets {
+                         }
+                     }
+                     if (levelEventMapping instanceof BedrockMappingData.JavaLevelEvent javaLevelEvent) {
+-                        wrapper.write(Types.INT, javaLevelEvent.levelEvent().getValue()); // event id
++                        final boolean duplicateBreakSound = levelEvent == LevelEvent.ParticlesDestroyBlock
++                                && wrapper.user().get(BlockInteractionSoundTracker.class)
++                                .isDuplicateBreakSound(position, data, BreakSoundSource.LEVEL_EVENT);
++                        wrapper.write(Types.INT, duplicateBreakSound
++                                ? net.raphimc.viabedrock.protocol.data.enums.java.LevelEvent.PARTICLES_DESTROY_BLOCK_NO_SOUND.getValue()
++                                : javaLevelEvent.levelEvent().getValue()); // event id
+                         wrapper.write(Types.BLOCK_POSITION1_14, new BlockPosition(MathUtil.floor(position.x()), MathUtil.floor(position.y()), MathUtil.floor(position.z()))); // position
+                         wrapper.write(Types.INT, switch (levelEvent) {
+                             case ParticlesShoot, ParticlesShootWhiteSmoke -> switch (data % 9) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTracker.java
 new file mode 100644
-index 00000000..3bbdda2f
+index 00000000..e3fbdc46
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTracker.java
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,174 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -181,9 +224,11 @@ index 00000000..3bbdda2f
 +public final class BlockInteractionSoundTracker implements StorableObject {
 +
 +    private static final long MAX_AGE_NANOS = 2_000_000_000L;
++    private static final long BREAK_EVENT_AGE_NANOS = 500_000_000L;
 +    private static final int MAX_PENDING = 8;
 +
 +    private final ArrayDeque<PendingSound> pending = new ArrayDeque<>();
++    private final ArrayDeque<PendingBreakSound> pendingBreakSounds = new ArrayDeque<>();
 +    private final LongSupplier clock;
 +    private BlockPosition miningPosition;
 +
@@ -245,6 +290,34 @@ index 00000000..3bbdda2f
 +        return "hit".equals(event) && position != null && matches(position, this.miningPosition);
 +    }
 +
++    public boolean isDuplicateBreakSound(final Position3f position, final int blockState,
++                                         final BreakSoundSource source) {
++        if (blockState < 0 || position == null || !Float.isFinite(position.x())
++                || !Float.isFinite(position.y()) || !Float.isFinite(position.z())) {
++            return false;
++        }
++        final long now = this.clock.getAsLong();
++        while (!this.pendingBreakSounds.isEmpty()
++                && now - this.pendingBreakSounds.peekFirst().createdAt() > BREAK_EVENT_AGE_NANOS) {
++            this.pendingBreakSounds.removeFirst();
++        }
++        for (final Iterator<PendingBreakSound> iterator = this.pendingBreakSounds.iterator(); iterator.hasNext(); ) {
++            final PendingBreakSound previous = iterator.next();
++            if (previous.blockState() == blockState && previous.source() != source
++                    && matches(position, previous.position())) {
++                iterator.remove();
++                return true;
++            }
++        }
++        if (this.pendingBreakSounds.size() == MAX_PENDING) {
++            this.pendingBreakSounds.removeFirst();
++        }
++        this.pendingBreakSounds.addLast(new PendingBreakSound(
++                new BlockPosition((int) Math.floor(position.x()), (int) Math.floor(position.y()), (int) Math.floor(position.z())),
++                blockState, source, now));
++        return false;
++    }
++
 +    private void record(final BlockPosition position, final BlockPosition alternatePosition, final String event) {
 +        final long now = this.clock.getAsLong();
 +        this.removeExpired(now);
@@ -292,18 +365,40 @@ index 00000000..3bbdda2f
 +    private record PendingSound(BlockPosition position, BlockPosition alternatePosition, String event, long createdAt) {
 +    }
 +
++    private record PendingBreakSound(BlockPosition position, int blockState, BreakSoundSource source, long createdAt) {
++    }
++
++    public enum BreakSoundSource {
++        LEVEL_EVENT,
++        LEVEL_SOUND_EVENT
++    }
++
 +}
+diff --git a/src/main/resources/assets/viabedrock/data/custom/level_event_mappings.json b/src/main/resources/assets/viabedrock/data/custom/level_event_mappings.json
+index be58e0d3..ba8d6b5e 100644
+--- a/src/main/resources/assets/viabedrock/data/custom/level_event_mappings.json
++++ b/src/main/resources/assets/viabedrock/data/custom/level_event_mappings.json
+@@ -148,7 +148,7 @@
+   "ParticlesBreakingEgg": "PARTICLES_EGG_CRACK",
+   "ParticleDestroyEgg": "PARTICLES_WATER_EVAPORATING",
+   "ParticlesEvaporateWater": "PARTICLES_WATER_EVAPORATING",
+-  "ParticlesDestroyBlockNoSound": "PARTICLES_AND_SOUND_BRUSH_BLOCK_COMPLETE",
++  "ParticlesDestroyBlockNoSound": "PARTICLES_DESTROY_BLOCK_NO_SOUND",
+   "ParticlesKnockbackRoar": {
+     "particle": "minecraft:poof",
+     "speed": 0.25,
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTrackerTest.java
 new file mode 100644
-index 00000000..cdc80cc2
+index 00000000..b247b630
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/BlockInteractionSoundTrackerTest.java
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,146 @@
 +package net.raphimc.viabedrock.protocol.storage;
 +
 +import com.viaversion.viaversion.api.minecraft.BlockPosition;
 +import net.raphimc.viabedrock.api.model.BlockState;
 +import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.storage.BlockInteractionSoundTracker.BreakSoundSource;
 +import org.junit.jupiter.api.Test;
 +
 +import java.util.Map;
@@ -313,6 +408,32 @@ index 00000000..cdc80cc2
 +import static org.junit.jupiter.api.Assertions.assertTrue;
 +
 +class BlockInteractionSoundTrackerTest {
++
++    @Test
++    void keepsOneBreakSoundRegardlessOfPacketOrder() {
++        final AtomicLong clock = new AtomicLong();
++        final BlockInteractionSoundTracker tracker = new BlockInteractionSoundTracker(clock::get);
++        final Position3f block = new Position3f(10.5F, 64.5F, 20.5F);
++
++        assertFalse(tracker.isDuplicateBreakSound(block, 12, BreakSoundSource.LEVEL_EVENT));
++        assertTrue(tracker.isDuplicateBreakSound(block, 12, BreakSoundSource.LEVEL_SOUND_EVENT));
++        assertFalse(tracker.isDuplicateBreakSound(block, 12, BreakSoundSource.LEVEL_SOUND_EVENT));
++        assertTrue(tracker.isDuplicateBreakSound(block, 12, BreakSoundSource.LEVEL_EVENT));
++    }
++
++    @Test
++    void leavesOtherBlocksAndDelayedBreaksAudible() {
++        final AtomicLong clock = new AtomicLong();
++        final BlockInteractionSoundTracker tracker = new BlockInteractionSoundTracker(clock::get);
++        final Position3f block = new Position3f(10.5F, 64.5F, 20.5F);
++
++        assertFalse(tracker.isDuplicateBreakSound(block, 12, BreakSoundSource.LEVEL_EVENT));
++        assertFalse(tracker.isDuplicateBreakSound(new Position3f(11.5F, 64.5F, 20.5F), 12,
++                BreakSoundSource.LEVEL_SOUND_EVENT));
++        assertFalse(tracker.isDuplicateBreakSound(block, 13, BreakSoundSource.LEVEL_SOUND_EVENT));
++        clock.set(500_000_001L);
++        assertFalse(tracker.isDuplicateBreakSound(block, 12, BreakSoundSource.LEVEL_SOUND_EVENT));
++    }
 +
 +    @Test
 +    void filtersOnlyMiningSoundsFromTheLocalBlockAndActor() {

@@ -1,24 +1,26 @@
-From 3c20156e59b8129ec38b57212023b0076bae2cec Mon Sep 17 00:00:00 2001
+From e2228f05a15ae664ffc7023cb2eced20ec40266d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:07 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
 
 Import native Bedrock entity and skin rendering from viafabricplus-bedrock PR #9 as an independently reviewable feature patch.
+
+Use vanilla rendering for standard skin geometry, honor alpha-tested custom materials, and submit base renderer name displays for named custom actors.
 ---
  .../friends/FriendWorldSkinProvider.java      |   8 +
  .../render/MixinAbstractClientPlayer.java     |  38 ++++
- .../features/render/MixinCustomEntity.java    |  58 +++++
+ .../features/render/MixinCustomEntity.java    |  59 +++++
  .../render/MixinEntityRenderDispatcher.java   |  93 ++++++++
  .../render/MixinMinecraftSkinLifecycle.java   |  41 ++++
- .../bedrock/render/BedrockEntityRenderer.java | 136 ++++++++++++
+ .../bedrock/render/BedrockEntityRenderer.java | 165 ++++++++++++++
  .../bedrock/render/BedrockGeometry.java       | 209 ++++++++++++++++++
  .../bedrock/render/BedrockPlayerRenderer.java |  33 +++
- .../bedrock/render/BedrockPlayerSkins.java    | 194 ++++++++++++++++
- .../render/CustomEntityRenderStore.java       |  51 +++++
+ .../bedrock/render/BedrockPlayerSkins.java    | 199 +++++++++++++++++
+ .../render/CustomEntityRenderStore.java       |  54 +++++
  .../bedrock/visual/BedrockPlayerImages.java   |   2 +-
  .../viafabricplus-bedrock.mixins.json         |   4 +
  .../render/BedrockEntityRendererTest.java     |  27 +++
- 13 files changed, 893 insertions(+), 1 deletion(-)
+ 13 files changed, 931 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractClientPlayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinCustomEntity.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
@@ -102,10 +104,10 @@ index 0000000..13cd684
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinCustomEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinCustomEntity.java
 new file mode 100644
-index 0000000..d6c7e23
+index 0000000..c196c18
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinCustomEntity.java
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,59 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -148,7 +150,8 @@ index 0000000..d6c7e23
 +    @Inject(method = "evaluateRenderControllerChange", at = @At("RETURN"))
 +    private void publishRenderModels(final CallbackInfoReturnable<Boolean> cir) {
 +        if (cir.getReturnValueZ()) {
-+            CustomEntityRenderStore.update(((CustomEntity) (Object) this).javaUuid(), this.models);
++            final CustomEntity entity = (CustomEntity) (Object) this;
++            CustomEntityRenderStore.update(entity.javaUuid(), entity.type(), this.models);
 +        }
 +    }
 +
@@ -312,10 +315,10 @@ index 0000000..4ac84b7
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 new file mode 100644
-index 0000000..86abe4a
+index 0000000..8f70176
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,165 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -339,6 +342,7 @@ index 0000000..86abe4a
 +import com.mojang.blaze3d.vertex.PoseStack;
 +import com.mojang.math.Axis;
 +import com.viaversion.viafabricplus.ViaFabricPlus;
++import com.viaversion.viafabricplus.bedrock.render.CustomEntityRenderStore.RenderData;
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import java.util.ArrayList;
 +import java.util.HashMap;
@@ -350,6 +354,8 @@ index 0000000..86abe4a
 +import net.minecraft.client.renderer.entity.EntityRenderer;
 +import net.minecraft.client.renderer.entity.EntityRendererProvider;
 +import net.minecraft.client.renderer.entity.state.EntityRenderState;
++import net.minecraft.client.renderer.rendertype.RenderType;
++import net.minecraft.client.renderer.rendertype.RenderTypes;
 +import net.minecraft.client.renderer.state.level.CameraRenderState;
 +import net.minecraft.client.renderer.texture.OverlayTexture;
 +import net.minecraft.resources.Identifier;
@@ -357,13 +363,14 @@ index 0000000..86abe4a
 +import net.raphimc.viabedrock.api.model.entity.CustomEntity;
 +import net.raphimc.viabedrock.api.util.StringUtil;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.cube.converter.data.bedrock.controller.BedrockRenderController;
 +import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
 +
 +/** Renders ViaBedrock custom actors while leaving ordinary interactions invisible. */
 +public final class BedrockEntityRenderer extends EntityRenderer<Interaction, EntityRenderState> {
 +
 +    private final Map<String, Model<EntityRenderState>> models = new HashMap<>();
-+    private final Map<List<CustomEntity.EvaluatedModel>, List<RenderedModel>> resolvedModelSets = new HashMap<>();
++    private final Map<RenderData, List<RenderedModel>> resolvedModelSets = new HashMap<>();
 +    private ResourcePackStorage currentPacks;
 +
 +    public BedrockEntityRenderer(final EntityRendererProvider.Context context) {
@@ -397,8 +404,8 @@ index 0000000..86abe4a
 +            this.resolvedModelSets.clear();
 +            return;
 +        }
-+        final List<CustomEntity.EvaluatedModel> evaluatedModels = CustomEntityRenderStore.get(entity.getUUID());
-+        if (evaluatedModels == null) {
++        final RenderData renderData = CustomEntityRenderStore.get(entity.getUUID());
++        if (renderData == null) {
 +            return;
 +        }
 +        final ResourcePackStorage packs = connection.get(ResourcePackStorage.class);
@@ -407,25 +414,49 @@ index 0000000..86abe4a
 +            this.models.clear();
 +            this.resolvedModelSets.clear();
 +        }
-+        state.models = this.resolvedModelSets.computeIfAbsent(evaluatedModels, models -> this.resolveModels(models, packs));
++        state.models = this.resolvedModelSets.computeIfAbsent(renderData, data -> this.resolveModels(data, packs));
 +        state.yaw = entity.getYRot();
 +    }
 +
 +    private List<RenderedModel> resolveModels(
-+        final List<CustomEntity.EvaluatedModel> evaluatedModels,
++        final RenderData renderData,
 +        final ResourcePackStorage packs
 +    ) {
 +        final List<RenderedModel> resolved = new ArrayList<>();
-+        for (var evaluated : evaluatedModels) {
++        final boolean alphaTest = usesWholeModelAlphaTest(renderData.identifier(), packs);
++        for (var evaluated : renderData.models()) {
 +            final BedrockGeometryModel geometry = packs.getModels().entityModels().get(evaluated.geometryValue());
 +            if (geometry == null) {
 +                continue;
 +            }
 +            final Model<EntityRenderState> model = this.models.computeIfAbsent(evaluated.geometryValue(), _ -> BedrockGeometry.entityModel(geometry));
 +            final String path = "textures/item/entities/" + StringUtil.makeIdentifierValueSafe(evaluated.textureValue().replace("textures/", "")) + ".png";
-+            resolved.add(new RenderedModel(model, Identifier.fromNamespaceAndPath("viabedrock", path)));
++            final Identifier texture = Identifier.fromNamespaceAndPath("viabedrock", path);
++            resolved.add(new RenderedModel(model, alphaTest ? RenderTypes.entityCutout(texture) : RenderTypes.entityTranslucent(texture)));
 +        }
 +        return List.copyOf(resolved);
++    }
++
++    private static boolean usesWholeModelAlphaTest(final String identifier, final ResourcePackStorage packs) {
++        final var definition = packs.getEntities().get(identifier);
++        if (definition == null || definition.entityData().getControllers().isEmpty()) {
++            return false;
++        }
++        for (var selected : definition.entityData().getControllers()) {
++            final BedrockRenderController controller = packs.getRenderControllers().get(selected.identifier());
++            if (controller == null || controller.materialsMap().size() != 1) {
++                return false;
++            }
++            final String expression = controller.materialsMap().get("*");
++            if (expression == null || !expression.regionMatches(true, 0, "Material.", 0, "Material.".length())) {
++                return false;
++            }
++            final String material = definition.entityData().getMaterials().get(expression.substring("Material.".length()));
++            if (!"entity_alphatest".equals(material)) {
++                return false;
++            }
++        }
++        return true;
 +    }
 +
 +    @Override
@@ -438,9 +469,10 @@ index 0000000..86abe4a
 +            poseStack.rotateDegrees(Axis.YP, 180F - state.yaw);
 +            poseStack.scale(-1F, -1F, 1F);
 +            poseStack.translate(0F, -1.5F, 0F);
-+            nodes.submitModel(rendered.model, state, poseStack, rendered.model.renderType(rendered.texture), state.lightCoords, OverlayTexture.NO_OVERLAY, -1);
++            nodes.submitModel(rendered.model, state, poseStack, rendered.renderType, state.lightCoords, OverlayTexture.NO_OVERLAY, -1);
 +            poseStack.popPose();
 +        }
++        super.submit(renderState, poseStack, nodes, camera);
 +    }
 +
 +    public static final class State extends EntityRenderState {
@@ -448,7 +480,7 @@ index 0000000..86abe4a
 +        private float yaw;
 +    }
 +
-+    private record RenderedModel(Model<EntityRenderState> model, Identifier texture) {
++    private record RenderedModel(Model<EntityRenderState> model, RenderType renderType) {
 +    }
 +
 +}
@@ -708,10 +740,10 @@ index 0000000..4b9f121
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 new file mode 100644
-index 0000000..80e5831
+index 0000000..0daed6c
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,199 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -871,13 +903,18 @@ index 0000000..80e5831
 +    }
 +
 +    private static BedrockGeometryModel geometry(final SkinData skin) {
++        final String name = geometryName(skin);
++        if ("geometry.humanoid.custom".equalsIgnoreCase(name) || "geometry.humanoid.customSlim".equalsIgnoreCase(name)) {
++            // These are Bedrock's standard Steve and Alex models. Minecraft's
++            // player renderer already knows their exact UVs and overlay layout.
++            return null;
++        }
 +        if (skin.geometryData() == null || skin.geometryData().isBlank() || "null".equalsIgnoreCase(skin.geometryData())) {
 +            return null;
 +        }
 +        try {
 +            final JsonObject data = JsonParser.parseString(skin.geometryData()).getAsJsonObject();
 +            final List<BedrockGeometryModel> models = BedrockGeometryModel.fromJson(data);
-+            final String name = geometryName(skin);
 +            return models.stream().filter(model -> model.getIdentifier().equals(name)).findFirst()
 +                .orElseGet(() -> models.isEmpty() ? null : models.getFirst());
 +        } catch (RuntimeException e) {
@@ -908,10 +945,10 @@ index 0000000..80e5831
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStore.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStore.java
 new file mode 100644
-index 0000000..8146848
+index 0000000..c3beb07
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStore.java
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,54 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -941,16 +978,16 @@ index 0000000..8146848
 +/** Publishes immutable actor render state across the protocol and render threads. */
 +public final class CustomEntityRenderStore {
 +
-+    private static final Map<UUID, List<CustomEntity.EvaluatedModel>> MODELS = new ConcurrentHashMap<>();
++    private static final Map<UUID, RenderData> MODELS = new ConcurrentHashMap<>();
 +
 +    private CustomEntityRenderStore() {
 +    }
 +
-+    public static void update(final UUID uuid, final List<CustomEntity.EvaluatedModel> models) {
-+        MODELS.put(uuid, List.copyOf(models));
++    public static void update(final UUID uuid, final String identifier, final List<CustomEntity.EvaluatedModel> models) {
++        MODELS.put(uuid, new RenderData(identifier, List.copyOf(models)));
 +    }
 +
-+    public static List<CustomEntity.EvaluatedModel> get(final UUID uuid) {
++    public static RenderData get(final UUID uuid) {
 +        return MODELS.get(uuid);
 +    }
 +
@@ -960,6 +997,9 @@ index 0000000..8146848
 +
 +    public static void clear() {
 +        MODELS.clear();
++    }
++
++    public record RenderData(String identifier, List<CustomEntity.EvaluatedModel> models) {
 +    }
 +
 +}

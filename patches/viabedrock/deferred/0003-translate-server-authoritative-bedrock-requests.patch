@@ -1,4 +1,4 @@
-From d2f558b6ff87c150319839981e25d025b9a8bf6f Mon Sep 17 00:00:00 2001
+From bb7863b7ce8ff1326649a57f8f6076ca5e963625 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 12:56:10 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -48,13 +48,15 @@ Let the entity interaction transaction open unmounted storage vehicles. An extra
 Open plain horse saddle and armor screens through Java's mount menu and route those slots through Bedrock HorseEquipContainer. Keep unsupported mount storage closed until its layout is verified. Assert the OpenInventory wire value accepted by the 1.26.51.1 server in the inventory interaction tests.
 
 Expose Bedrock lecterns through the Java lectern menu using the block entity book and page state. Convert Bedrock two-page spreads to Java page buttons, derive the page count from the book when the block entity omits it, and send a lectern update only when the Bedrock spread changes. Schedule initial content after the menu opens and use a same-page update when Java closes it. Leave take-book disabled until its current Bedrock request semantics are verified.
+
+Use the Bedrock beacon block entity Levels value for Java menu power, and refresh the open menu when block entity data changes. The container-open packet does not carry a strength field; reading server metadata also respects conditions beyond the local block palette.
 ---
  build.gradle                                  |    3 +-
  .../api/model/container/ChestContainer.java   |   52 +-
  .../api/model/container/Container.java        |  965 +++++++++-
  .../api/model/container/HorseContainer.java   |   55 +
  .../model/container/block/AnvilContainer.java |  192 ++
- .../container/block/BeaconContainer.java      |  225 +++
+ .../container/block/BeaconContainer.java      |  246 +++
  .../block/BlastFurnaceContainer.java          |   51 +
  .../block/BrewingStandContainer.java          |   98 +
  .../container/block/CrafterContainer.java     |   88 +
@@ -81,7 +83,7 @@ Expose Bedrock lecterns through the Java lectern menu using the block entity boo
  .../generated/bedrock/CustomBlockTags.java    |    5 +-
  .../protocol/packet/ClientPlayerPackets.java  |   57 +-
  .../protocol/packet/InventoryPackets.java     | 1665 ++++++++++++-----
- .../protocol/packet/WorldPackets.java         |    6 +
+ .../protocol/packet/WorldPackets.java         |   12 +
  .../protocol/rewriter/ItemRewriter.java       |  280 ++-
  .../protocol/rewriter/ItemStackSizes.java     |   59 +
  .../protocol/storage/CraftingDataTracker.java |  202 ++
@@ -103,7 +105,7 @@ Expose Bedrock lecterns through the Java lectern menu using the block entity boo
  .../InventoryRequestTrackerQueueTest.java     |  104 +
  .../storage/InventoryRequestTrackerTest.java  |   91 +
  .../storage/InventoryTrackerTest.java         |  118 ++
- 54 files changed, 7716 insertions(+), 812 deletions(-)
+ 54 files changed, 7743 insertions(+), 812 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/AnvilContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/BeaconContainer.java
@@ -1514,10 +1516,10 @@ index 00000000..628e7e46
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/BeaconContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/BeaconContainer.java
 new file mode 100644
-index 00000000..0524449c
+index 00000000..44462022
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/block/BeaconContainer.java
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,246 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1543,6 +1545,8 @@ index 00000000..0524449c
 +import com.viaversion.viaversion.api.type.Types;
 +import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
 +import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.NumberTag;
 +
 +import net.raphimc.viabedrock.ViaBedrock;
 +import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
@@ -1568,20 +1572,15 @@ index 00000000..0524449c
 +
 +public class BeaconContainer extends Container {
 +
++    private int powerLevel = -1;
++
 +    public BeaconContainer(
 +            final UserConnection user, final byte containerId, final TextComponent title, final BlockPosition position) {
 +        super(user, containerId, ContainerType.BEACON, title, position, 1, CustomBlockTags.BEACON);
 +
-+        final PacketWrapper propertiesPacket =
-+                PacketWrapper.create(ClientboundPackets26_3.CONTAINER_SET_DATA, user);
-+        propertiesPacket.write(Types.VAR_INT, (int) containerId);
-+        propertiesPacket.write(Types.SHORT, (short) 0); // Property ID (Power level)
-+        // TODO: Dynamically set this based on the beacon's current level
-+        propertiesPacket.write(Types.SHORT, (short) 4); // Property Value (0-4)
-+        propertiesPacket.scheduleSend(BedrockProtocol.class);
-+
 +        final ChunkTracker chunkTracker = user.get(ChunkTracker.class);
 +        final BedrockBlockEntity bedrockBlockEntity = chunkTracker.getBlockEntity(position);
++        this.refreshPowerLevel();
 +        if (bedrockBlockEntity != null) {
 +            final int primaryEffect = bedrockBlockEntity.tag().getInt("primary", 0);
 +            final int secondaryEffect = bedrockBlockEntity.tag().getInt("secondary", 0);
@@ -1634,6 +1633,30 @@ index 00000000..0524449c
 +            propertiesPacket3.write(Types.SHORT, (short) javaIdSecondary); // Property Value
 +            propertiesPacket3.scheduleSend(BedrockProtocol.class);
 +        }
++    }
++
++    public void refreshPowerLevel() {
++        final ChunkTracker chunkTracker = this.user.get(ChunkTracker.class);
++        final BedrockBlockEntity blockEntity = chunkTracker.getBlockEntity(this.position());
++        final int nextLevel = powerLevel(blockEntity != null ? blockEntity.tag() : null);
++        if (nextLevel == this.powerLevel) {
++            return;
++        }
++        this.powerLevel = nextLevel;
++
++        final PacketWrapper propertiesPacket =
++                PacketWrapper.create(ClientboundPackets26_3.CONTAINER_SET_DATA, this.user);
++        propertiesPacket.write(Types.VAR_INT, (int) this.javaContainerId());
++        propertiesPacket.write(Types.SHORT, (short) 0);
++        propertiesPacket.write(Types.SHORT, (short) nextLevel);
++        propertiesPacket.scheduleSend(BedrockProtocol.class);
++    }
++
++    static int powerLevel(final CompoundTag tag) {
++        if (tag != null && tag.get("Levels") instanceof NumberTag level) {
++            return Math.max(0, Math.min(4, level.asInt()));
++        }
++        return 0;
 +    }
 +
 +    @Override
@@ -7748,18 +7771,19 @@ index 4b233b07..113c8667 100644
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
-index ce2a4152..18c3732b 100644
+index ce2a4152..478acac9 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
-@@ -45,6 +45,7 @@ import net.raphimc.viabedrock.api.chunk.datapalette.BedrockDataPalette;
+@@ -45,6 +45,8 @@ import net.raphimc.viabedrock.api.chunk.datapalette.BedrockDataPalette;
  import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSection;
  import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSectionImpl;
  import net.raphimc.viabedrock.api.model.BlockState;
++import net.raphimc.viabedrock.api.model.container.block.BeaconContainer;
 +import net.raphimc.viabedrock.api.model.container.block.LecternContainer;
  import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
  import net.raphimc.viabedrock.api.util.PacketFactory;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
-@@ -508,6 +509,11 @@ public final class WorldPackets {
+@@ -508,6 +510,16 @@ public final class WorldPackets {
                      final ChunkTracker chunkTracker = wrapper.user().get(ChunkTracker.class);
                      final BedrockBlockEntity bedrockBlockEntity = new BedrockBlockEntity(wrapper.get(Types.BLOCK_POSITION1_14, 0), (CompoundTag) tag);
                      chunkTracker.addBlockEntity(bedrockBlockEntity);
@@ -7767,6 +7791,11 @@ index ce2a4152..18c3732b 100644
 +                            instanceof LecternContainer lectern
 +                            && bedrockBlockEntity.position().equals(lectern.position())) {
 +                        lectern.updateFromBlockEntity(bedrockBlockEntity.tag());
++                    }
++                    if (wrapper.user().get(InventoryTracker.class).getCurrentContainer()
++                            instanceof BeaconContainer beacon
++                            && bedrockBlockEntity.position().equals(beacon.position())) {
++                        beacon.refreshPowerLevel();
 +                    }
                      wrapper.user().get(EntityTracker.class).updateItemFrame(bedrockBlockEntity.position(), bedrockBlockEntity);
  

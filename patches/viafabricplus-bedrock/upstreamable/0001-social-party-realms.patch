@@ -1,4 +1,4 @@
-From 456339e425a1773577fd43cd9f3fb167e0effe37 Mon Sep 17 00:00:00 2001
+From 53a0675f26bb13200a504cb06b3149bec009967e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:01 +0200
 Subject: [PATCH] feat(bedrock): add social, party, and Realm Hub support
@@ -8,6 +8,8 @@ Bring the Bedrock social and Realms integration into one upstream feature so its
 This adapts the work from viafabricplus-bedrock PR #7. Keep it as one feature patch because the screens share account and social services and should be promoted together.
 
 Clear the friends screen's pending join state after handing off to the connection screen. A disconnect can return to that same screen, where the stale state otherwise keeps Join disabled.
+
+Preserve the selected friend world during list refreshes so the Join action continues to target the item the player chose.
 ---
  build.gradle.kts                              |    3 +-
  .../bedrock/account/BedrockAccount.java       |    2 +
@@ -26,7 +28,7 @@ Clear the friends screen's pending join state after handing off to the connectio
  .../bedrock/screen/ActionList.java            |   56 +
  .../screen/BedrockAchievementsScreen.java     |  194 ++++
  .../screen/BedrockFriendProfileScreen.java    |  193 +++-
- .../bedrock/screen/BedrockFriendsScreen.java  |  202 +++-
+ .../bedrock/screen/BedrockFriendsScreen.java  |  223 +++-
  .../bedrock/screen/BedrockPartyScreen.java    |  855 ++++++++++++++
  .../bedrock/screen/BedrockRealmHubScreen.java | 1000 +++++++++++++++++
  .../screen/BedrockRealmInfoScreen.java        |  100 ++
@@ -76,7 +78,7 @@ Clear the friends screen's pending join state after handing off to the connectio
  .../fallback/achievements@0.5x.icon.png       |  Bin 0 -> 161 bytes
  .../fallback/realms_default_image.jpg         |  Bin 0 -> 190501 bytes
  .../viafabricplus-bedrock/lang/en_us.json     |  107 +-
- 67 files changed, 5491 insertions(+), 279 deletions(-)
+ 67 files changed, 5512 insertions(+), 279 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/party/BedrockPartyChat.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/party/BedrockPartyInvites.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/party/BedrockPartyService.java
@@ -2638,7 +2640,7 @@ index 50ad29c..102d213 100644
      }
  
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockFriendsScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockFriendsScreen.java
-index 891c023..5cd2422 100644
+index 891c023..46e2737 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockFriendsScreen.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockFriendsScreen.java
 @@ -29,12 +29,14 @@ import com.viaversion.viafabricplus.bedrock.friends.BedrockSocialService.FriendR
@@ -2698,7 +2700,35 @@ index 891c023..5cd2422 100644
      private String query = "";
      private boolean requested;
      private boolean friendsLoading;
-@@ -113,13 +125,22 @@ public final class BedrockFriendsScreen extends VFPScreen {
+@@ -98,6 +110,27 @@ public final class BedrockFriendsScreen extends VFPScreen {
+         super(TITLE, true);
+     }
+ 
++    @Override
++    protected void rebuildWidgets() {
++        final VFPListEntry focused = this.list == null ? null : this.list.getFocused();
++        final String worldId = focused instanceof WorldEntry entry ? entry.world.handleId() : null;
++        final String userXuid = focused instanceof UserEntry entry ? entry.user.xuid() : null;
++        super.rebuildWidgets();
++        if (this.list == null || (worldId == null && userXuid == null)) {
++            return;
++        }
++        for (VFPListEntry entry : this.list.children()) {
++            final boolean sameWorld = entry instanceof WorldEntry world && worldId != null
++                && worldId.equals(world.world.handleId());
++            final boolean sameUser = entry instanceof UserEntry user && userXuid != null
++                && userXuid.equals(user.user.xuid());
++            if (sameWorld || sameUser) {
++                this.list.setFocused(entry);
++                break;
++            }
++        }
++    }
++
+     @Override
+     protected void init() {
+         final int tabWidth = Math.min(88, (this.width - 20) / View.values().length);
+@@ -113,13 +146,22 @@ public final class BedrockFriendsScreen extends VFPScreen {
          if (this.view == View.SEARCH) {
              final int width = Math.min(230, this.width - 100);
              final int x = (this.width - width - 72) / 2;
@@ -2723,7 +2753,7 @@ index 891c023..5cd2422 100644
          }
  
          this.list = this.addRenderableWidget(new SlotList(this.minecraft, this.width, this.height,
-@@ -145,14 +166,16 @@ public final class BedrockFriendsScreen extends VFPScreen {
+@@ -145,14 +187,16 @@ public final class BedrockFriendsScreen extends VFPScreen {
          final boolean busy = this.joining || this.mutating;
          this.joinButton.active = !busy && Minecraft.getInstance().getConnection() == null && this.selectedWorld() != null;
          this.profileButton.active = user != null;
@@ -2743,7 +2773,7 @@ index 891c023..5cd2422 100644
          if (System.nanoTime() - this.lastRefresh >= REFRESH_INTERVAL && !busy) {
              this.refresh();
          }
-@@ -160,26 +183,96 @@ public final class BedrockFriendsScreen extends VFPScreen {
+@@ -160,28 +204,98 @@ public final class BedrockFriendsScreen extends VFPScreen {
  
      @Override
      public void renderTitle(final GuiGraphicsExtractor graphics) {
@@ -2788,9 +2818,9 @@ index 891c023..5cd2422 100644
              this.loadRequests();
              this.loadWorlds();
 +            this.loadSelf();
-+        }
-+    }
-+
+         }
+     }
+ 
 +    private void loadSelf() {
 +        final BedrockAuthManager account = ViaFabricPlusBedrock.impl().account().get();
 +        if (account == null || this.selfLoading) {
@@ -2816,7 +2846,7 @@ index 891c023..5cd2422 100644
 +    private void loadDiscovery() {
 +        if (this.discovery == Discovery.RESULTS || this.discoveryResults.containsKey(this.discovery) || this.discoveryLoading) {
 +            return;
-         }
++        }
 +        final BedrockAuthManager account = ViaFabricPlusBedrock.impl().account().get();
 +        if (account == null) {
 +            return;
@@ -2842,10 +2872,12 @@ index 891c023..5cd2422 100644
 +            this.discoveryLoading = false;
 +            this.discoveryErrors.put(category, true);
 +        }));
-     }
- 
++    }
++
      private void loadFriends() {
-@@ -286,6 +379,10 @@ public final class BedrockFriendsScreen extends VFPScreen {
+         final BedrockAuthManager account = ViaFabricPlusBedrock.impl().account().get();
+         if (account == null || this.friendsLoading) {
+@@ -286,6 +400,10 @@ public final class BedrockFriendsScreen extends VFPScreen {
          return this.list.getFocused() instanceof UserEntry entry ? entry.user : null;
      }
  
@@ -2856,7 +2888,7 @@ index 891c023..5cd2422 100644
      private boolean isFriend(final SocialUser user) {
          return user.friend() || this.friends != null && this.friends.stream().anyMatch(friend -> friend.xuid().equals(user.xuid()));
      }
-@@ -328,7 +425,10 @@ public final class BedrockFriendsScreen extends VFPScreen {
+@@ -328,7 +446,10 @@ public final class BedrockFriendsScreen extends VFPScreen {
          }
          this.joining = true;
          BedrockFriendsService.join(account, world)
@@ -2868,7 +2900,7 @@ index 891c023..5cd2422 100644
              .exceptionally(error -> this.fail("Failed to join a Bedrock friend's world", error, () -> {
                  BedrockFriendsService.leaveCurrent();
                  this.joining = false;
-@@ -347,9 +447,10 @@ public final class BedrockFriendsScreen extends VFPScreen {
+@@ -347,9 +468,10 @@ public final class BedrockFriendsScreen extends VFPScreen {
          if (user == null) {
              return;
          }
@@ -2881,7 +2913,7 @@ index 891c023..5cd2422 100644
      }
  
      private void confirmRemove() {
-@@ -407,7 +508,7 @@ public final class BedrockFriendsScreen extends VFPScreen {
+@@ -407,7 +529,7 @@ public final class BedrockFriendsScreen extends VFPScreen {
          return null;
      }
  
@@ -2890,7 +2922,7 @@ index 891c023..5cd2422 100644
  
          private static double scrollAmount;
  
-@@ -418,11 +519,32 @@ public final class BedrockFriendsScreen extends VFPScreen {
+@@ -418,11 +540,32 @@ public final class BedrockFriendsScreen extends VFPScreen {
                  case REQUESTS -> this.addRequests();
                  case SEARCH -> this.addSearch();
                  case WORLDS -> this.addWorlds();
@@ -2923,7 +2955,7 @@ index 891c023..5cd2422 100644
              if (BedrockFriendsScreen.this.friends == null) {
                  this.addEntry(new VFPTextEntry(Component.translatable(BedrockFriendsScreen.this.friendsError
                      ? "bedrock_friends.viafabricplus.load_failed" : "bedrock_friends.viafabricplus.loading")));
-@@ -453,6 +575,19 @@ public final class BedrockFriendsScreen extends VFPScreen {
+@@ -453,6 +596,19 @@ public final class BedrockFriendsScreen extends VFPScreen {
          }
  
          private void addSearch() {
@@ -2943,7 +2975,7 @@ index 891c023..5cd2422 100644
              if (BedrockFriendsScreen.this.searchResults == null) {
                  this.addEntry(new VFPTextEntry(Component.translatable(BedrockFriendsScreen.this.searching
                      ? "bedrock_friends.viafabricplus.searching" : BedrockFriendsScreen.this.searchError
-@@ -518,11 +653,14 @@ public final class BedrockFriendsScreen extends VFPScreen {
+@@ -518,11 +674,14 @@ public final class BedrockFriendsScreen extends VFPScreen {
          @Override
          public void mappedRender(final GuiGraphicsExtractor graphics, final int entryWidth, final int entryHeight) {
              final Font font = Minecraft.getInstance().font;
@@ -2959,7 +2991,7 @@ index 891c023..5cd2422 100644
              final String detail;
              if (world != null) {
                  detail = Component.translatable("bedrock_friends.viafabricplus.playing", world.worldName()).getString();
-@@ -533,15 +671,12 @@ public final class BedrockFriendsScreen extends VFPScreen {
+@@ -533,15 +692,12 @@ public final class BedrockFriendsScreen extends VFPScreen {
                      ? this.user.gamertag() : this.user.presence();
              }
              final int titleY = detail.isBlank() ? (entryHeight - font.lineHeight) / 2 : SLOT_MARGIN + 1;
@@ -2977,7 +3009,7 @@ index 891c023..5cd2422 100644
                      SLOT_MARGIN + font.lineHeight + 4, SECONDARY_COLOR);
              }
          }
-@@ -566,18 +701,19 @@ public final class BedrockFriendsScreen extends VFPScreen {
+@@ -566,18 +722,19 @@ public final class BedrockFriendsScreen extends VFPScreen {
          @Override
          public void mappedRender(final GuiGraphicsExtractor graphics, final int entryWidth, final int entryHeight) {
              final Font font = Minecraft.getInstance().font;
