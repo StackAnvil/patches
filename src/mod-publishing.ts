@@ -5,7 +5,7 @@ import { basename, dirname, join } from "node:path";
 
 const addon = "viafabricplus-bedrock";
 const viaFabricPlusModrinthId = "rIC2XJV4";
-const viaFabricPlusCurseForgeId = "830604";
+const viaFabricPlusCurseForgeId = 830604;
 const stackAnvilModrinthId = "opL7gK2I";
 const stackAnvilCurseForgeId = "1713307";
 
@@ -76,6 +76,7 @@ export function modrinthMetadata(artifact: PublishArtifact, tag: string, project
     dependencies: [{ project_id: viaFabricPlusModrinthId, dependency_type: "required" }],
     game_versions: [artifact.minecraft],
     version_type: "beta",
+    featured: false,
     loaders: ["fabric"],
     environment: "client_only",
     project_id: projectId,
@@ -91,7 +92,7 @@ export function curseForgeMetadata(artifact: PublishArtifact, tag: string, chang
     displayName: `StackAnvil ${tag} (${artifact.version})`,
     gameVersionNames: [artifact.minecraft, "Fabric", "Client"],
     releaseType: "beta",
-    relations: { projects: [{ projectID: viaFabricPlusCurseForgeId, type: "requiredDependency" }] },
+    relations: { projects: [{ slug: "viafabricplus", projectID: viaFabricPlusCurseForgeId, type: "requiredDependency" }] },
   };
 }
 

@@ -27,10 +27,11 @@ test("mod publishing validates the actual build before preparing both platforms"
   expect(modrinth.dependencies).toEqual([{ project_id: "rIC2XJV4", dependency_type: "required" }]);
   expect(modrinth.file_parts).toEqual(["file"]);
   expect(modrinth.version_type).toBe("beta");
+  expect(modrinth.featured).toBe(false);
 
   const curseForge = curseForgeMetadata(artifact, "stack-v1.0.0", "Changes");
   expect(curseForge.gameVersionNames).toEqual([artifact.minecraft, "Fabric", "Client"]);
-  expect(curseForge.relations.projects).toEqual([{ projectID: "830604", type: "requiredDependency" }]);
+  expect(curseForge.relations.projects).toEqual([{ slug: "viafabricplus", projectID: 830604, type: "requiredDependency" }]);
   expect(curseForge.releaseType).toBe("beta");
 });
 
