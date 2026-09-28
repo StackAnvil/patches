@@ -41,7 +41,8 @@ If `stack sync` stops at a conflict, resolve it in the generated checkout, stage
 - Use Conventional Commit messages in the form `<type>(<scope>): <description>`. Add a body for non-trivial changes. Do not bypass Git hooks or Lefthook.
 - Do not create a branch unless the user explicitly asks for one.
 - Run `bun run check` after tooling changes. Add targeted tests for behavior that could lose patch work or change PR contents.
-- Keep `targets.json` dependencies in build order. A downstream build must resolve the StackAnvil JARs that the same run built, including the ViaFabricPlus API artifact.
+- Keep `targets.json` dependencies in build order. A downstream build must resolve the StackAnvil JARs that the same run built.
+- ViaFabricPlus is a pinned upstream dependency in `viafabricplus.json`, not a patch target. Verify its Jenkins build, commit, JAR, API JAR, and Maven POM checksums before building the Bedrock add-on.
 - For Bedrock development, read [the Bedrock source guide](docs/bedrock-development-sources.md). Use beta/preview protocol docs for enum research, then match the target protocol and verify numeric mappings against implementation or captures. Stable protocol pages can contain incorrect enum mappings.
 - Use `bun run lab` and `bun run capture` for local Bedrock and Java tests. Keep their virtual display and zero volume defaults. Desktop input requires an explicit `--allow-focus`. Follow [the capture lab guide](docs/capture-lab.md). Keep credentials, raw flows, screenshots, and JVM dumps private.
 - Do not commit `.worktrees/`, `.stackanvil/`, `dist/`, downloaded servers, credentials, or traffic captures.

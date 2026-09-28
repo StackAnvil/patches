@@ -2,7 +2,7 @@
 layout: default
 title: Projects
 nav_order: 3
-description: The five upstream projects in the StackAnvil build.
+description: Four patch targets and the pinned upstream ViaFabricPlus build.
 ---
 
 # Projects
@@ -14,7 +14,6 @@ StackAnvil stores patch files in this repository. Generated source checkouts sta
 | ViaBedrock | [ViaVersionAddons/ViaBedrock](https://github.com/ViaVersionAddons/ViaBedrock) | 17 | `bun run build viabedrock` |
 | ViaFabricPlus Bedrock add-on | [ViaVersionAddons/viafabricplus-bedrock](https://github.com/ViaVersionAddons/viafabricplus-bedrock) | 25 | `bun run build viafabricplus-bedrock` |
 | CubeConverter | [oryxel1/CubeConverter](https://github.com/oryxel1/CubeConverter/tree/vv-json) | 17 | `bun run build cubeconverter` |
-| ViaFabricPlus | [ViaVersion/ViaFabricPlus](https://github.com/ViaVersion/ViaFabricPlus) | 25 | `bun run build viafabricplus` |
 | ViaProxy | [ViaVersion/ViaProxy](https://github.com/ViaVersion/ViaProxy) | 25 | `bun run build viaproxy` |
 
 ## ViaBedrock
@@ -31,10 +30,10 @@ The [CubeConverter patch series](https://github.com/StackAnvil/patches/tree/main
 
 ## ViaFabricPlus
 
-The [ViaFabricPlus patch series](https://github.com/StackAnvil/patches/tree/main/patches/viafabricplus) supplies the client base for the Bedrock add-on.
+StackAnvil downloads [upstream Jenkins build 2254](https://ci.viaversion.com/job/ViaFabricPlus/2254/) for the Bedrock add-on and PrismLauncher bundle. The [pin](https://github.com/StackAnvil/patches/blob/main/viafabricplus.json) records its commit and checksums. Run `bun run build viafabricplus` to download and verify it. This command does not build ViaFabricPlus source.
 
 ## ViaProxy
 
 The [ViaProxy patch series](https://github.com/StackAnvil/patches/tree/main/patches/viaproxy) builds against the patched ViaBedrock dependency.
 
-The exact dependency order and upstream commits live in [`targets.json`](https://github.com/StackAnvil/patches/blob/main/targets.json).
+The patch dependency order and upstream commits live in [`targets.json`](https://github.com/StackAnvil/patches/blob/main/targets.json).

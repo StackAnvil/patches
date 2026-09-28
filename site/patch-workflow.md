@@ -7,7 +7,7 @@ description: How StackAnvil applies, edits, and exports focused patches.
 
 # Patch workflow
 
-Each project has an ordered `series.json`. StackAnvil applies `setup`, then `upstreamable`, then `deferred` patches.
+Each patch target has an ordered `series.json`. StackAnvil applies `setup`, then `upstreamable`, then `deferred` patches.
 
 | Group | Purpose | Included in an upstream PR? |
 | --- | --- | --- |

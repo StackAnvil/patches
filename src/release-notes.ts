@@ -20,14 +20,18 @@ async function patchTitle(id: string, group: string, file: string): Promise<stri
 
 const lines = [
   "# StackAnvil builds", "",
-  "These JARs contain the full StackAnvil stacks. They are experimental and differ from the clean upstream PR branches.", "",
+  "The StackAnvil JARs contain experimental patch stacks. The ViaFabricPlus JAR is an unchanged, pinned upstream Jenkins build.", "",
   "Setup patches prepare StackAnvil builds. Upstreamable patches can become our PRs. Deferred patches track work that another contributor already owns upstream.", "",
   "## Play the Java client", "",
-  "Download `StackAnvil-26.3-Prism-Launcher_Config.zip` and import it as an instance in PrismLauncher. The instance contains the patched ViaFabricPlus and Bedrock add-on mods for Minecraft 26.3 with Fabric Loader 0.19.5. PrismLauncher downloads Minecraft and asks for your own account. The add-on embeds the patched ViaBedrock and CubeConverter JARs, so do not install them a second time as Fabric mods.", "",
+  "Download `StackAnvil-26.3-Prism-Launcher_Config.zip` and import it as an instance in PrismLauncher. The instance contains the pinned upstream ViaFabricPlus build and the patched Bedrock add-on for Minecraft 26.3 with Fabric Loader 0.19.5. PrismLauncher downloads Minecraft and asks for your own account. The add-on embeds the patched ViaBedrock and CubeConverter JARs, so do not install them a second time as Fabric mods.", "",
   "For a local Bedrock server and ViaProxy test, follow the [development guide](https://github.com/StackAnvil/patches/blob/main/docs/development.md). The automated lab runs the clients on a private display at zero volume.", "",
   "## Download individual JARs", "",
-  "Download the CubeConverter, ViaBedrock, ViaFabricPlus, Bedrock add-on, and ViaProxy JARs from this release. The ViaProxy JAR embeds the patched ViaBedrock build. The [StackAnvil Maven repository](https://github.com/StackAnvil/maven) publishes all five under the matching release version, along with the ViaFabricPlus API JAR.", "",
+  "Download the CubeConverter, ViaBedrock, Bedrock add-on, and ViaProxy JARs from this release. The ViaFabricPlus JAR is a copy of the pinned upstream Jenkins artifact. The ViaProxy JAR embeds the patched ViaBedrock build. The [StackAnvil Maven repository](https://github.com/StackAnvil/maven) publishes the four StackAnvil builds under the matching release version.", "",
 ];
+const viaFabricPlusPin = JSON.parse(await readFile(join(root, "viafabricplus.json"), "utf8")) as { build: number; commit: string; version: string };
+lines.push("## ViaFabricPlus", "", `- Upstream Jenkins build: [#${viaFabricPlusPin.build}](https://ci.viaversion.com/job/ViaFabricPlus/${viaFabricPlusPin.build}/)`,
+  `- Upstream commit: [${viaFabricPlusPin.commit.slice(0, 12)}](https://github.com/ViaVersion/ViaFabricPlus/commit/${viaFabricPlusPin.commit})`,
+  `- Version: ${viaFabricPlusPin.version}`, "");
 for (const id of await targetIds()) {
   const target = await getTarget(id);
   const series = await getSeries(id);

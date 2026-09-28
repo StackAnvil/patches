@@ -2,9 +2,9 @@
 
 **Website:** [stackanvil.pistonmaster.net](https://stackanvil.pistonmaster.net) · [Getting started](https://stackanvil.pistonmaster.net/getting-started/) · [Releases](https://stackanvil.pistonmaster.net/releases/)
 
-StackAnvil is a place to test changes across ViaBedrock, viafabricplus-bedrock, CubeConverter, ViaFabricPlus, and ViaProxy. Each upstream-sized feature lives in one patch. Contributors can try the full build while upstream reviews one feature at a time.
+StackAnvil is a place to test changes across ViaBedrock, viafabricplus-bedrock, CubeConverter, and ViaProxy. It uses a pinned upstream ViaFabricPlus build. Each upstream-sized feature lives in one patch. Contributors can try the full build while upstream reviews one feature at a time.
 
-We welcome bug reports, test results, and patches. You do not need to work on all five projects. Start with the project you know.
+We welcome bug reports, test results, and patches. You do not need to work on all four patch targets. Start with the project you know.
 
 ## How the stack works
 
@@ -21,7 +21,6 @@ The full build applies every group in that order. Our upstream PR branch starts 
 | ViaBedrock | [ViaVersionAddons/ViaBedrock](https://github.com/ViaVersionAddons/ViaBedrock) | [#420](https://github.com/ViaVersionAddons/ViaBedrock/pull/420), [#425](https://github.com/ViaVersionAddons/ViaBedrock/pull/425), [#427](https://github.com/ViaVersionAddons/ViaBedrock/pull/427), [#429](https://github.com/ViaVersionAddons/ViaBedrock/pull/429) |
 | viafabricplus-bedrock | [ViaVersionAddons/viafabricplus-bedrock](https://github.com/ViaVersionAddons/viafabricplus-bedrock) | [#7](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/7), [#9](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/9), [#11](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/11) |
 | CubeConverter | [oryxel1/CubeConverter](https://github.com/oryxel1/CubeConverter/tree/vv-json) | Ready for contributions |
-| ViaFabricPlus | [ViaVersion/ViaFabricPlus](https://github.com/ViaVersion/ViaFabricPlus) | Ready for contributions |
 | ViaProxy | [ViaVersion/ViaProxy](https://github.com/ViaVersion/ViaProxy) | Ready for contributions |
 
 ## Try a stack
@@ -34,7 +33,11 @@ bun run stack sync viabedrock
 bun run build viabedrock
 ```
 
-The tool clones upstream into `.worktrees/viabedrock`. The full source tree remains a normal Git repository. The build JAR and its SHA-256 manifest go to `dist/viabedrock/`. A target build also builds its dependencies. `bun run build all` builds CubeConverter before ViaBedrock, then builds the Bedrock add-on and ViaProxy against that library. It also builds ViaFabricPlus before the add-on. The local Maven repository in `.stackanvil/maven/` makes each downstream build use the patched dependency built in the same run.
+The tool clones upstream into `.worktrees/viabedrock`. The full source tree remains a normal Git repository. The build JAR and its SHA-256 manifest go to `dist/viabedrock/`. A target build also builds its dependencies. `bun run build all` builds CubeConverter before ViaBedrock, then builds the Bedrock add-on and ViaProxy against that library. It downloads the pinned ViaFabricPlus Jenkins JAR before building the add-on. The local Maven repository in `.stackanvil/maven/` gives the add-on that exact JAR and the patched ViaBedrock dependency.
+
+The ViaFabricPlus pin is in [`viafabricplus.json`](viafabricplus.json). It records Jenkins build 2254, upstream commit `430c2520d8d76e8e615b9a45ee1c6d87a3c442b3`, and SHA-256 checksums for the JAR, API JAR, and Maven POMs. `bun run build viafabricplus` downloads and verifies these upstream artifacts without building a VFP checkout.
+
+To update the pin, choose a successful Jenkins build for the target Minecraft version. Record its commit, version, and artifact checksums in `viafabricplus.json`. Check that the Maven API JAR matches the API JAR embedded in the Jenkins JAR. Then run `bun run build viafabricplus-bedrock` and `bun run bundle`. The add-on gets its ViaFabricPlus version from the pin.
 
 Run `bun run bundle` after `bun run build all` to make a PrismLauncher instance ZIP with the two Fabric mods. Import that ZIP in PrismLauncher to try the Java client. The add-on embeds the StackAnvil ViaBedrock and CubeConverter JARs. Our [capture lab guide](docs/capture-lab.md) explains the local server, ViaProxy, Bedrock client, Java client, screenshots, and private HTTPS capture workflow. The lab keeps both game windows off your active desktop and sets their master volume to zero.
 
@@ -57,9 +60,8 @@ The sync command adds the project's default PR assignees when your GitHub accoun
 
 ## Builds and licenses
 
-[GitHub releases](https://github.com/StackAnvil/patches/releases) provide five direct JAR downloads, including ViaProxy, and a PrismLauncher instance ZIP. The [Maven repository](https://github.com/StackAnvil/maven) serves published release artifacts. A full build can contain features that are still under upstream review. Test it before using it in a production server.
+[GitHub releases](https://github.com/StackAnvil/patches/releases) provide four StackAnvil JARs, the pinned upstream ViaFabricPlus JAR, and a PrismLauncher instance ZIP. The [Maven repository](https://github.com/StackAnvil/maven) serves the StackAnvil release artifacts. A full build can contain features that are still under upstream review. Test it before using it in a production server.
 
 Maintainers can use the [VFP Bedrock add-on publishing guide](docs/publishing-vfp-vb-addon.md) to prepare separate StackAnvil listings on Modrinth and CurseForge.
-The [ViaFabricPlus fork listing guide](docs/publishing-viafabricplus.md) records private and unlisted drafts that have no uploaded files.
 
 StackAnvil tooling is licensed under [GPL-3.0-or-later](LICENSE). Each upstream project keeps its own license and copyright notices. StackAnvil is an independent experiment and is not an official ViaVersion release.

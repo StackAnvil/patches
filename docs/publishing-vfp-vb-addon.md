@@ -25,11 +25,11 @@ The projects use these fields on both sites:
 
 On Modrinth, add [ViaFabricPlus](https://modrinth.com/mod/viafabricplus) as a required dependency. On CurseForge, add [ViaFabricPlus](https://www.curseforge.com/minecraft/mc-mods/viafabricplus) as a required relation. The upload tool also sets these version dependencies. Do not add ViaBedrock or CubeConverter as required mods because the add-on embeds them.
 
-Both platforms may install upstream ViaFabricPlus automatically from that relation. Users must replace it with the matching StackAnvil ViaFabricPlus JAR from the same GitHub release and keep only one ViaFabricPlus JAR in the mods folder. The listing description gives this instruction.
+Both platforms can install ViaFabricPlus automatically from that relation. The StackAnvil release also includes the pinned upstream Jenkins JAR. Users need only one ViaFabricPlus JAR in the mods folder. The listing description gives this instruction.
 
 Credit the original creators and keep the StackAnvil fork label visible. [Modrinth's rules](https://modrinth.com/legal/rules) require meaningful credit and substantial changes for a fork. [CurseForge's moderation policy](https://support.curseforge.com/support/solutions/articles/9000197279) also requires credit and distinct project content.
 
-The listing description was drafted with AI assistance, and Modrinth's **AI-generated text** disclosure is enabled. The maintainer drew the [`VFP VB icon`](../assets/publishing/vfp-vb.png) in GIMP. Its editable source is [`VFP VB.xcf`](../assets/publishing/handdrawn/VFP%20VB.xcf). The [`VFP icon`](../assets/publishing/vfp.png) uses the same drawing with the VB letters covered in the canvas blue; its editable source is [`VFP.xcf`](../assets/publishing/handdrawn/VFP.xcf). These icons replace the earlier AI-assisted drafts. [Modrinth's image rule](https://support.modrinth.com/en/articles/16551575-disclosure-and-usage-of-ai) prohibits AI-generated project images.
+The listing description was drafted with AI assistance, and Modrinth's **AI-generated text** disclosure is enabled. The maintainer drew the [`VFP VB icon`](../assets/publishing/vfp-vb.png) in GIMP. Its editable source is [`VFP VB.xcf`](../assets/publishing/handdrawn/VFP%20VB.xcf). [Modrinth's image rule](https://support.modrinth.com/en/articles/16551575-disclosure-and-usage-of-ai) prohibits AI-generated project images.
 
 ## Configure GitHub
 

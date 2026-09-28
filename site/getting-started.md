@@ -43,6 +43,6 @@ bun run build all
 bun run bundle
 ```
 
-The bundle command creates a PrismLauncher instance ZIP with the Fabric mods. The Bedrock add-on embeds the StackAnvil ViaBedrock and CubeConverter JARs. See [releases]({{ '/releases/' | relative_url }}) if you want prebuilt artifacts.
+The bundle command creates a PrismLauncher instance ZIP with the pinned upstream ViaFabricPlus JAR and the patched Bedrock add-on. The add-on embeds the StackAnvil ViaBedrock and CubeConverter JARs. See [releases]({{ '/releases/' | relative_url }}) if you want prebuilt artifacts.
 
 For local client and server tests, use the [capture lab guide](https://github.com/StackAnvil/patches/blob/main/docs/capture-lab.md). Keep credentials, captures, and screenshots in ignored local paths.

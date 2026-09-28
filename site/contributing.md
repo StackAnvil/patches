@@ -7,7 +7,7 @@ description: Report a problem, test a build, or contribute a focused patch.
 
 # Contributing
 
-You can help with one project without working on all five. Start with the project you know.
+You can help with one patch target without working on all four. Start with the project you know.
 
 ## Report or test
 

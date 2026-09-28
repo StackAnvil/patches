@@ -2,25 +2,32 @@ import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { root, targetIds } from "./model.ts";
+import { verifyPinnedManifest, type ViaFabricPlusPin } from "./viafabricplus.ts";
 
 interface ArtifactManifest {
   target: string;
+  baseSha?: string;
+  jenkinsBuild?: number;
+  apiSha256?: string;
   artifacts: { file: string; sha256: string }[];
 }
 
-export async function prepareReleaseAssets(artifactsDir: string, outputDir: string, projects: readonly string[]): Promise<string[]> {
+export async function prepareReleaseAssets(artifactsDir: string, outputDir: string, projects: readonly string[], viaFabricPlusPin?: ViaFabricPlusPin): Promise<string[]> {
   await rm(outputDir, { recursive: true, force: true });
   await mkdir(outputDir, { recursive: true });
   const names = new Set<string>();
 
-  for (const project of projects) {
+  for (const project of [...projects, "viafabricplus"]) {
     const projectDir = join(artifactsDir, project);
     const manifest = JSON.parse(await readFile(join(projectDir, "manifest.json"), "utf8")) as ArtifactManifest;
     if (manifest.target !== project || manifest.artifacts.length !== 1) {
       throw new Error(`Expected one ${project} release JAR in its build manifest`);
     }
+    if (project === "viafabricplus") await verifyPinnedManifest(manifest, viaFabricPlusPin);
     const artifact = manifest.artifacts[0]!;
-    if (basename(artifact.file) !== artifact.file || !artifact.file.endsWith("-StackAnvil.jar")) {
+    if (basename(artifact.file) !== artifact.file || (project === "viafabricplus"
+      ? !/^ViaFabricPlus-[^/]+\.jar$/.test(artifact.file)
+      : !artifact.file.endsWith("-StackAnvil.jar"))) {
       throw new Error(`Invalid ${project} release JAR name: ${artifact.file}`);
     }
     const bytes = await readFile(join(projectDir, artifact.file));
@@ -29,8 +36,8 @@ export async function prepareReleaseAssets(artifactsDir: string, outputDir: stri
     if (names.has(artifact.file)) throw new Error(`Duplicate release asset: ${artifact.file}`);
     names.add(artifact.file);
     await copyFile(join(projectDir, artifact.file), join(outputDir, artifact.file));
-    if (project === "viafabricplus-bedrock") {
-      const manifestName = "viafabricplus-bedrock-manifest.json";
+    if (project === "viafabricplus-bedrock" || project === "viafabricplus") {
+      const manifestName = `${project}-manifest.json`;
       names.add(manifestName);
       await copyFile(join(projectDir, "manifest.json"), join(outputDir, manifestName));
     }

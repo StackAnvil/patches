@@ -1,6 +1,6 @@
 # Development environment
 
-Use this guide to build the five projects and start a local Bedrock test server.
+Use this guide to build the four patch targets with pinned ViaFabricPlus and start a local Bedrock test server.
 
 ## Build the stack
 
@@ -28,7 +28,7 @@ bun run lab up
 
 The lab starts a separate Xvfb display, the Bedrock server, ViaProxy, and the PrismLauncher instance. Both game clients stay off your active desktop, so their input cannot interrupt another game. The lab routes their audio to a silent sink and sets each game's master volume to zero. It detects services that you already started and leaves them under your control. `bun run lab down` stops only lab managed processes. `bun run lab status` lists the current processes. By default, ViaProxy listens on `127.0.0.1:25568` and connects to the local Bedrock server on `127.0.0.1:19132`. Set `STACKANVIL_VIAPROXY_BIND` and `STACKANVIL_BEDROCK_TARGET` to change these addresses.
 
-PrismLauncher must be installed as a Flatpak for `bun run lab java start`. You can also import the ZIP from `dist/prism/` into another PrismLauncher installation. The ZIP contains Minecraft and Fabric version metadata plus the patched ViaFabricPlus and Bedrock add-on JARs. It does not contain the game itself or an account.
+PrismLauncher must be installed as a Flatpak for `bun run lab java start`. You can also import the ZIP from `dist/prism/` into another PrismLauncher installation. The ZIP contains Minecraft and Fabric version metadata, the pinned upstream ViaFabricPlus JAR, and the patched Bedrock add-on JAR. It does not contain the game itself or an account.
 
 For HTTPS capture, client control, credentials, and JVM diagnostics, see the [capture lab guide](capture-lab.md). Bedrock gameplay packets use UDP and are outside the HTTPS proxy capture.
 

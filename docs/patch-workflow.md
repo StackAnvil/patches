@@ -26,7 +26,7 @@ The [PaperSpigot 1.8.8 apply script](https://github.com/PaperMC/Paper-archive/bl
 
 StackAnvil keeps `setup`, `upstreamable`, and `deferred` separate in `series.json`. Full builds apply them in that order. Setup prepares StackAnvil builds. Upstreamable patches can become focused PRs. Deferred patches track work that another contributor already owns upstream, with a reason and PR link for each entry. The PR checkout applies only the first upstreamable patch to the pinned upstream base. The exact patch filenames and order come from `series.json`; rebuilding does not renumber them.
 
-Paper's per-file source and resource patches solve the problem of editing decompiled Minecraft code. Our five targets are existing Git repositories, so they do not need that layer. We also apply patches one at a time instead of building a large `git am` argument list. This keeps conflict recovery tied to one explicit `series.json` entry and avoids the older Windows command-length issue. We do not add Paper-specific source markers to upstream code.
+Paper's per-file source and resource patches solve the problem of editing decompiled Minecraft code. Our four patch targets are existing Git repositories, so they do not need that layer. We also apply patches one at a time instead of building a large `git am` argument list. This keeps conflict recovery tied to one explicit `series.json` entry and avoids the older Windows command-length issue. We do not add Paper-specific source markers to upstream code.
 
 ## Daily commands
 
@@ -49,7 +49,6 @@ When the first upstreamable patch is ready for upstream, add a non-empty `upstre
 | --- | --- |
 | ViaBedrock | `RaphiMC` (RK_01), `Exterminate5573` |
 | viafabricplus-bedrock | `RaphiMC`, `Exterminate5573`, `florianreuth` |
-| ViaFabricPlus | `florianreuth` |
 | ViaProxy | `RaphiMC` (RK_01) |
 | CubeConverter | `oryxel1` |
 

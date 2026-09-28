@@ -8,6 +8,7 @@ import { buildOrder } from "./dependencies.ts";
 import { getTarget, getTargets, listArtifacts, root } from "./model.ts";
 import { command } from "./process.ts";
 import { sync } from "./stack.ts";
+import { prepareViaFabricPlus } from "./viafabricplus.ts";
 
 interface Coordinates { group: string; artifact: string; version: string }
 
@@ -51,7 +52,12 @@ function buildOne(id: string, built: Map<string, Coordinates>) {
     const target = yield* Effect.promise(() => getTarget(id));
     const dir = yield* sync(id);
     const jdk = yield* Effect.promise(() => javaHome(target.java));
-    yield* command("bash", ["./gradlew", "--no-daemon", `-PstackanvilMavenRepo=${localRepo}`, "clean", target.buildTask,
+    const viaFabricPlusVersion = id === "viafabricplus-bedrock" ? built.get("viafabricplus")?.version : undefined;
+    if (id === "viafabricplus-bedrock" && !viaFabricPlusVersion) {
+      return yield* Effect.fail(new Error("The Bedrock add-on needs a pinned ViaFabricPlus artifact"));
+    }
+    yield* command("bash", ["./gradlew", "--no-daemon", `-PstackanvilMavenRepo=${localRepo}`,
+      ...(viaFabricPlusVersion ? [`-PstackanvilViaFabricPlusVersion=${viaFabricPlusVersion}`] : []), "clean", target.buildTask,
       `generatePomFileFor${target.publication}Publication`], dir,
       { ...process.env, JAVA_HOME: jdk, PATH: `${join(jdk, "bin")}:${process.env.PATH ?? ""}` });
     const artifacts = yield* Effect.promise(() => listArtifacts(dir));
@@ -78,27 +84,14 @@ function buildOne(id: string, built: Map<string, Coordinates>) {
     yield* Effect.promise(() => copyFile(artifact, join(output, name)));
     yield* Effect.promise(() => writeFile(join(output, "pom.xml"), pom));
     yield* Effect.promise(() => publishLocal(artifact, pom, coordinate));
-    let apiArtifact: string | undefined;
-    if (id === "viafabricplus") {
-      const apiDir = join(dir, "viafabricplus-api");
-      const apiPom = yield* Effect.promise(() => Bun.file(join(apiDir, "build", "publications", "maven", "pom-default.xml")).text());
-      const apiArtifacts = yield* Effect.promise(() => listArtifacts(apiDir));
-      if (apiArtifacts.length !== 1) return yield* Effect.fail(new Error("Expected one ViaFabricPlus API JAR"));
-      apiArtifact = apiArtifacts[0]!;
-      yield* Effect.promise(() => publishLocal(apiArtifacts[0]!, apiPom, coordinates(apiPom)));
-      const apiOutput = join(output, "api");
-      yield* Effect.promise(() => mkdir(apiOutput, { recursive: true }));
-      yield* Effect.promise(() => copyFile(apiArtifacts[0]!, join(apiOutput, basename(apiArtifacts[0]!))));
-      yield* Effect.promise(() => writeFile(join(apiOutput, "pom.xml"), apiPom));
-    }
     const bytes = yield* Effect.promise(() => Bun.file(artifact).arrayBuffer());
     const manifest = {
       target: id, upstream: target.upstream, baseSha: target.baseSha,
       coordinates: `${coordinate.group}:${coordinate.artifact}:${coordinate.version}`,
-      dependencies: target.dependsOn.map((dependency) => ({ target: dependency, coordinates: built.get(dependency) })),
+      dependencies: [...target.dependsOn, ...(id === "viafabricplus-bedrock" ? ["viafabricplus"] : [])]
+        .map((dependency) => ({ target: dependency, coordinates: built.get(dependency) })),
       artifacts: [{ file: name, sha256: createHash("sha256").update(Buffer.from(bytes)).digest("hex") }],
-      auxiliaryArtifacts: apiArtifact ? [{ file: `api/${basename(apiArtifact)}`,
-        sha256: createHash("sha256").update(Buffer.from(yield* Effect.promise(() => Bun.file(apiArtifact).arrayBuffer()))).digest("hex") }] : [],
+      auxiliaryArtifacts: [],
     };
     yield* Effect.promise(() => writeFile(join(output, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`));
     built.set(id, coordinate);
@@ -108,14 +101,21 @@ function buildOne(id: string, built: Map<string, Coordinates>) {
 
 export function build(id: string) {
   return Effect.gen(function* () {
-    const order = buildOrder(yield* Effect.promise(() => getTargets()), id);
+    const order = id === "viafabricplus" ? [] : buildOrder(yield* Effect.promise(() => getTargets()), id);
     yield* Effect.promise(() => rm(localRepo, { recursive: true, force: true }));
     const built = new Map<string, Coordinates>();
-    for (const target of order) {
-      console.log(`Building ${target} (${built.size + 1}/${order.length})`);
+    const includeViaFabricPlus = id === "viafabricplus" || order.includes("viafabricplus-bedrock");
+    if (includeViaFabricPlus) {
+      console.log("Fetching pinned ViaFabricPlus Jenkins build");
+      const { pin } = yield* Effect.promise(() => prepareViaFabricPlus());
+      built.set("viafabricplus", { group: "com.viaversion", artifact: "viafabricplus", version: pin.version });
+    }
+    for (const [index, target] of order.entries()) {
+      console.log(`Building ${target} (${index + 1}/${order.length})`);
       yield* buildOne(target, built);
     }
-    return order.map((target) => join(root, "dist", target)).join("\n");
+    return [...(includeViaFabricPlus ? ["viafabricplus"] : []), ...order]
+      .map((target) => join(root, "dist", target)).join("\n");
   });
 }
 

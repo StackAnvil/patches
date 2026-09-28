@@ -4,7 +4,7 @@ This is StackAnvil's experimental build of [ViaFabricPlus Bedrock](https://githu
 
 ## Install
 
-Use Minecraft Java Edition 26.3 with Fabric Loader. Install ViaFabricPlus and this add-on in the same client. Use the matching StackAnvil ViaFabricPlus JAR from the [same GitHub release](https://github.com/StackAnvil/patches/releases). If your launcher installs the upstream ViaFabricPlus JAR automatically, replace it with the StackAnvil JAR. Keep only one ViaFabricPlus JAR in the mods folder. The add-on includes the patched ViaBedrock and CubeConverter libraries. Do not install those library JARs as separate Fabric mods.
+Use Minecraft Java Edition 26.3 with Fabric Loader. Install ViaFabricPlus 5.1.1 and this add-on in the same client. The [StackAnvil release](https://github.com/StackAnvil/patches/releases) includes a copy of the pinned upstream ViaFabricPlus Jenkins build. Keep only one ViaFabricPlus JAR in the mods folder. The add-on includes the patched ViaBedrock and CubeConverter libraries. Do not install those library JARs as separate Fabric mods.
 
 ## Bedrock features in this build
 

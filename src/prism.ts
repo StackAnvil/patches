@@ -6,19 +6,21 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
 import { root } from "./model.ts";
+import { verifyPinnedManifest } from "./viafabricplus.ts";
 
 const execute = promisify(execFile);
 const bundleRoot = join(root, ".stackanvil", "prism-bundle");
 const prismHome = join(homedir(), ".var", "app", "org.prismlauncher.PrismLauncher", "data", "PrismLauncher", "instances");
 const prismInstance = process.env.STACKANVIL_JAVA_INSTANCE ?? "StackAnvil 26.3";
 
-interface ArtifactManifest { artifacts: { file: string; sha256: string }[] }
+interface ArtifactManifest { baseSha?: string; jenkinsBuild?: number; apiSha256?: string; artifacts: { file: string; sha256: string }[] }
 interface FabricMod { id: string; version: string; depends: { minecraft: string }; jars?: { file: string }[] }
 
 export async function artifact(project: string): Promise<string> {
   const dir = join(root, "dist", project);
   const manifest = JSON.parse(await readFile(join(dir, "manifest.json"), "utf8")) as ArtifactManifest;
   if (manifest.artifacts.length !== 1) throw new Error(`Expected one ${project} release JAR`);
+  if (project === "viafabricplus") await verifyPinnedManifest(manifest);
   const entry = manifest.artifacts[0]!;
   const file = join(dir, entry.file);
   const digest = createHash("sha256").update(Buffer.from(await Bun.file(file).arrayBuffer())).digest("hex");
@@ -91,7 +93,7 @@ export async function installPrism(instanceName = prismInstance): Promise<string
   for (const file of previous.files) {
     if (/^[A-Za-z0-9.+-]+\.jar$/.test(file)) await rm(join(mods, file), { force: true });
   }
-  const files = (await readdir(join(directory, "minecraft", "mods"))).filter((file) => file.endsWith("-StackAnvil.jar"));
+  const files = (await readdir(join(directory, "minecraft", "mods"))).filter((file) => file.endsWith(".jar"));
   for (const file of files) {
     const source = join(directory, "minecraft", "mods", file);
     await copyFile(source, join(mods, file));

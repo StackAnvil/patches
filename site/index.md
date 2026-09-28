@@ -2,15 +2,15 @@
 layout: default
 title: Home
 nav_order: 1
-description: StackAnvil builds focused patches across five Minecraft protocol projects.
+description: StackAnvil builds four focused patch stacks with pinned upstream ViaFabricPlus.
 ---
 
 # StackAnvil
 
-<p class="sa-home-lead"><strong>Five upstream projects. One reproducible patch stack.</strong> StackAnvil keeps Minecraft protocol experiments in small, reviewable changes while contributors test the combined build.</p>
+<p class="sa-home-lead"><strong>Four patch stacks. One pinned client build.</strong> StackAnvil keeps Minecraft protocol experiments in small, reviewable changes and uses an upstream ViaFabricPlus Jenkins build.</p>
 
 <div class="sa-stack" aria-label="Patch stack order">
-  <p>Every project follows the same patch order</p>
+  <p>Every patch target follows the same order</p>
   <ol>
     <li>Setup: make the combined build work</li>
     <li>Upstreamable: keep each feature reviewable</li>
@@ -26,15 +26,16 @@ description: StackAnvil builds focused patches across five Minecraft protocol pr
 
 ## Choose a project
 
-Start with the code you know. Each project has its own pinned upstream commit and ordered patch series.
+Start with the code you know. Each patch target has its own pinned upstream commit and ordered patch series.
 
 <div class="sa-projects">
   <a href="{{ '/projects/#viabedrock' | relative_url }}"><strong>ViaBedrock</strong><span>Java to Bedrock protocol translation and server support.</span></a>
   <a href="{{ '/projects/#viafabricplus-bedrock-add-on' | relative_url }}"><strong>ViaFabricPlus Bedrock add-on</strong><span>Bedrock connections in the Fabric client.</span></a>
   <a href="{{ '/projects/#cubeconverter' | relative_url }}"><strong>CubeConverter</strong><span>Resource pack conversion used by the Bedrock stack.</span></a>
-  <a href="{{ '/projects/#viafabricplus' | relative_url }}"><strong>ViaFabricPlus</strong><span>The client base for the Bedrock add-on.</span></a>
   <a href="{{ '/projects/#viaproxy' | relative_url }}"><strong>ViaProxy</strong><span>A proxy build tested against the patched dependencies.</span></a>
 </div>
+
+The [ViaFabricPlus client]({{ '/projects/#viafabricplus' | relative_url }}) comes from a pinned upstream Jenkins build.
 
 ## Use this site
 
