@@ -22,7 +22,7 @@ The account screen reads five character slots and the account settings profile f
 
 The player can choose an active slot. The add-on sends the settings profile and selected recipe together in `PUT /api/v1.0/appearance`. It changes only `lastUsedPersonaSlot` in the settings profile. After the write, it reads the profiles again to check the active slot.
 
-An empty slot can receive a new starter character or a copy of the active character's full recipe. The starter recipe contains 14 entries for the base, body, and default emotes. A native Bedrock 1.26.51 Create Character capture supplied this recipe. The new character becomes active.
+An empty slot can receive any of the nine starter characters or a copy of the active character's full recipe. The nine recipes come from Bedrock 1.26.51's bundled Character Creator definitions. The new character becomes active. The add-on can also equip a catalog piece when one of these recipes supplies its complete ID and colors.
 
 The player can delete a saved character after a confirmation click. Deletion keeps the base entry and removes the equipped pieces, as the native client does. If the deleted character was active, another saved character becomes active. The add-on keeps the last saved character. Creation and deletion check the target's profile hash and read back the settings and recipe. A direct account request also confirmed that a saved recipe can be copied into an empty slot.
 
@@ -46,7 +46,7 @@ The **Use in worlds** action downloads the active character's assembled GLTF mod
 
 This conversion preserves the model's visible static shape and textures. The profile model does not include the native client's animated face image, body animation, persona piece handles, or tint metadata. The add-on sends empty piece and tint lists for the converted model. Local tests confirmed that the renderer accepts converted models from the captured default and hair-edited characters, and that the skin packet codec round-trips the converted skin. A second client still needs to confirm how servers relay and display it.
 
-A local Bedrock server captured the native client login for one default Character Creator slot. Its client data contained a 256×256 RGBA atlas, Bedrock geometry with 10 body poly meshes and a separate animated face geometry, nine persona pieces, three tint groups, and an animated image. The converted model is a static approximation of this packet.
+A local Bedrock server captured a native Steve Character Creator login from Bedrock 1.26.51. Its client data contained a 256×256 RGBA atlas, Bedrock body and face geometry, nine persona pieces, three tint groups, and one animated face image. The image has two frames and a blinking expression. Its piece handles contain a piece UUID, the default pack UUID, a piece type, and a default flag. The saved account recipe contains the piece UUID and colors, but omits the pack UUID, piece type, and animation image. The converted model is a static approximation of this packet.
 
 ## Work still needed
 

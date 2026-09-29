@@ -1,11 +1,11 @@
-From 59fa2261f49355d15ae5c6c58e47f101f822f2e6 Mon Sep 17 00:00:00 2001
+From e8e9a39faa929bc862a1b035a45990641fd99005 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
 
 Read the five account recipes and native Dressing Room catalog so players can select a character, browse owned pieces, and edit saved recipes. Use the native appearance PUT flow with a profile hash check and a readback for slot, piece, color, size, cape, and emote changes. Keep the settings profile and unrelated recipe fields intact.
 
-Create new characters with the complete starter recipe captured from Bedrock 1.26.51, or copy an existing recipe into an empty slot. Delete a character by saving its base-only recipe. Both operations follow captured native request shapes; deletion keeps another saved character active. The four-position emote wheel uses saved recipe entries and native empty placeholders.
+Create new characters from the nine bundled Bedrock 1.26.51 starter recipes, or copy an existing recipe into an empty slot. The bundled definitions supply complete default piece IDs and colors, so matching catalog pieces can be equipped without another saved character. Delete a character by saving its base-only recipe. Both operations follow captured native request shapes; deletion keeps another saved character active. The four-position emote wheel uses saved recipe entries and native empty placeholders.
 
 Bedrock 1.26.51 cape captures on the DressingRoom_Capes Store page and the appearance PUT flow showed that an equipped cape uses the catalog pack UUID without a piece suffix and sits before the four emote entries. A direct authenticated account test confirmed that equipping a cape adds one mesh and texture to the assembled GLTF model; the account was restored afterward.
 
@@ -14,19 +14,21 @@ Sequential native Size captures confirmed four fixed height entry pairs. Changin
 The account API returns recipes rather than a Bedrock skin packet. Fetch the active character model as GLTF, convert its meshes and textures to static Bedrock geometry and an atlas, and persist it for login. Refresh that model after active character edits. The service model has no animated face, body animation, piece handles, or tint groups, so this is a static rendering until a source for those fields is available.
 ---
  .../appearance/BedrockAppearanceStore.java    |   90 +-
- .../appearance/BedrockCharacterProfiles.java  | 1046 ++++++++++++++++
+ .../appearance/BedrockCharacterProfiles.java  | 1077 ++++++++++++++++
  .../appearance/BedrockPersonaModel.java       |  435 +++++++
  .../appearance/ViaFabricPlusSkinProvider.java |   20 +-
- .../screen/BedrockCharacterSlotsScreen.java   | 1055 +++++++++++++++++
+ .../screen/BedrockCharacterSlotsScreen.java   | 1089 +++++++++++++++++
  .../screen/BedrockDressingRoomScreen.java     |   34 +-
- .../viafabricplus-bedrock/lang/en_us.json     |   66 ++
+ .../character-presets.json                    |  632 ++++++++++
+ .../viafabricplus-bedrock/lang/en_us.json     |   67 +
  .../BedrockAppearanceStoreTest.java           |   19 +
- .../BedrockCharacterProfilesTest.java         |  385 ++++++
+ .../BedrockCharacterProfilesTest.java         |  411 +++++++
  .../appearance/BedrockPersonaModelTest.java   |   86 ++
- 10 files changed, 3213 insertions(+), 23 deletions(-)
+ 11 files changed, 3937 insertions(+), 23 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaModel.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
+ create mode 100644 src/main/resources/assets/viafabricplus-bedrock/character-presets.json
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaModelTest.java
 
@@ -212,10 +214,10 @@ index 45c0814..194de18 100644
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
 new file mode 100644
-index 0000000..16b7478
+index 0000000..3cbd19d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
-@@ -0,0 +1,1046 @@
+@@ -0,0 +1,1077 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -230,15 +232,19 @@ index 0000000..16b7478
 +import com.google.gson.JsonParser;
 +import com.google.gson.JsonPrimitive;
 +import java.io.IOException;
++import java.io.InputStreamReader;
 +import java.net.URI;
 +import java.net.http.HttpClient;
 +import java.net.http.HttpRequest;
 +import java.net.http.HttpResponse;
++import java.nio.charset.StandardCharsets;
 +import java.time.Duration;
 +import java.util.ArrayList;
 +import java.util.Base64;
++import java.util.EnumMap;
 +import java.util.LinkedHashMap;
 +import java.util.List;
++import java.util.Locale;
 +import java.util.Map;
 +import java.util.Optional;
 +import java.util.UUID;
@@ -248,6 +254,20 @@ index 0000000..16b7478
 +
 +/** Reads the five Character Creator recipes saved to a Bedrock account. */
 +public final class BedrockCharacterProfiles {
++
++    public enum Starter {
++        ALEX, NOOR, ARI, SUNNY, MAKENA, EFE, ZURI, KAI, STEVE;
++
++        public String label() {
++            final String name = this.name().toLowerCase(Locale.ROOT);
++            return Character.toUpperCase(name.charAt(0)) + name.substring(1);
++        }
++
++        public String skinColor() {
++            return array(object(STARTER_CHARACTERS.get(this), "personaCollection"), "universalApp")
++                .get(0).getAsJsonObject().get("skcol").getAsString();
++        }
++    }
 +
 +    public enum ColorTarget {
 +        SKIN, HAIR, IRIS, EYEBROWS, SCLERA;
@@ -321,25 +341,36 @@ index 0000000..16b7478
 +        "#ff141519"
 +    );
 +
-+    // Complete starter recipe saved by the native Bedrock 1.26.51 Create Character flow.
-+    private static final JsonObject STARTER_CHARACTER = JsonParser.parseString("""
-+        {"version":"0.1.0","personaCollection":{"universalApp":[
-+          {"arm":"wide","cs_arm":"wide","skcol":"#ff7e5337","skin":false},
-+          {"id":"8f96d1f8-e9bb-40d2-acc8-eb79746c5d7c/d"},
-+          {"id":"1042557f-d1f9-44e3-ba78-f404e8fb7363/d"},
-+          {"col":["#0","#0","#ff45220e","#0"],"id":"83c940ce-d7b8-4603-8d73-c1234e322cce/d"},
-+          {"col":["#ff381d00","#ff1b110d","#ffe9ecec","#0"],"id":"a0f263b3-e093-4c85-aadb-3759417898ff/d"},
-+          {"id":"bb0321e0-9712-e35a-52cc-f3c83e0065f4/d"},
-+          {"id":"d42123c3-25b2-74e7-5720-b59e4280017a/d"},
-+          {"id":"6791bf52-fb55-3bdf-a20d-6bf9f6c83987/d"},
-+          {"id":"69422c5a-60b1-25eb-cfdd-a45626416758/d"},
-+          {"col":["#ff1b110d","#0","#0","#0"],"id":"99bdbaae-309b-d64b-42ad-0194a57db891/d"},
-+          {"id":"17428c4c-3813-4ea1-b3a9-d6a32f83afca/de"},
-+          {"id":"ce5c0300-7f03-455d-aaf1-352e4927b54d/de"},
-+          {"id":"9a469a61-c83b-4ba9-b507-bdbe64430582/de"},
-+          {"id":"4c8ae710-df2e-47cd-814d-cc7bf21a3d67/de"}
-+        ]}}
-+        """).getAsJsonObject();
++    // Preset appearances from the nine default characters bundled with Bedrock 1.26.51.
++    private static final Map<Starter, JsonObject> STARTER_CHARACTERS = loadStarterCharacters();
++
++    private static Map<Starter, JsonObject> loadStarterCharacters() {
++        final Map<Starter, JsonObject> characters = new EnumMap<>(Starter.class);
++        final var input = BedrockCharacterProfiles.class.getResourceAsStream(
++            "/assets/viafabricplus-bedrock/character-presets.json");
++        if (input == null) {
++            throw new IllegalStateException("The Bedrock starter character catalog is missing");
++        }
++        try (var reader = new InputStreamReader(input, StandardCharsets.UTF_8)) {
++            final JsonObject catalog = JsonParser.parseReader(reader).getAsJsonObject();
++            for (final JsonElement element : catalog.getAsJsonArray("presets")) {
++                final JsonObject preset = element.getAsJsonObject();
++                final Starter starter = Starter.valueOf(string(preset, "name").toUpperCase(Locale.ROOT));
++                final JsonObject recipe = new JsonObject();
++                recipe.add("version", catalog.get("version").deepCopy());
++                final JsonObject collection = new JsonObject();
++                collection.add("universalApp", preset.getAsJsonArray("appearance").deepCopy());
++                recipe.add("personaCollection", collection);
++                characters.put(starter, recipe);
++            }
++        } catch (IOException e) {
++            throw new IllegalStateException("Could not load the Bedrock starter characters", e);
++        }
++        if (characters.size() != Starter.values().length) {
++            throw new IllegalStateException("The Bedrock starter character catalog is incomplete");
++        }
++        return Map.copyOf(characters);
++    }
 +
 +    private static final URI PROFILES = URI.create("https://persona-secondary.franchise.minecraft-services.net/api/v1.0/appearance/retrieve"
 +        + "?profilenames=personaProfile1&profilenames=personaProfile2&profilenames=personaProfile3"
@@ -446,9 +477,9 @@ index 0000000..16b7478
 +    }
 +
 +    public static CompletableFuture<AccountWardrobe> createStarterCharacter(final BedrockAuthManager account, final int slotNumber,
-+                                                                             final String expectedProfileHash) {
++                                                                             final String expectedProfileHash, final Starter starter) {
 +        return updateProfile(account, slotNumber, expectedProfileHash,
-+            current -> createStarterRequest(current, slotNumber));
++            current -> createStarterRequest(current, slotNumber, starter));
 +    }
 +
 +    public static CompletableFuture<AccountWardrobe> deleteSlot(final BedrockAuthManager account, final int slotNumber,
@@ -552,9 +583,10 @@ index 0000000..16b7478
 +            wardrobe.slots().get(wardrobe.activeSlot() - 1).profile());
 +    }
 +
-+    static JsonObject createStarterRequest(final AccountWardrobe wardrobe, final int slotNumber) throws IOException {
++    static JsonObject createStarterRequest(final AccountWardrobe wardrobe, final int slotNumber,
++                                           final Starter starter) throws IOException {
 +        requireEmptySlot(wardrobe, slotNumber);
-+        return editRequest(slotNumber, settingsForSlot(wardrobe, slotNumber), STARTER_CHARACTER);
++        return editRequest(slotNumber, settingsForSlot(wardrobe, slotNumber), STARTER_CHARACTERS.get(starter));
 +    }
 +
 +    private static void requireEmptySlot(final AccountWardrobe wardrobe, final int slotNumber) throws IOException {
@@ -638,7 +670,10 @@ index 0000000..16b7478
 +                }
 +            }
 +            if (source == null) {
-+                throw new IOException("This piece is not in a saved character");
++                source = presetPiece(selectedItem);
++            }
++            if (source == null) {
++                throw new IOException("This piece has no complete saved or preset recipe");
 +            }
 +            if (existing < 0) {
 +                entries.add(source.deepCopy());
@@ -854,16 +889,19 @@ index 0000000..16b7478
 +        return List.copyOf(ids);
 +    }
 +
-+    public static boolean hasStarterEmote(final WardrobeItem item) {
-+        if (!"persona_emote".equals(item.type())) {
-+            return false;
-+        }
-+        for (final JsonElement entry : array(object(STARTER_CHARACTER, "personaCollection"), "universalApp")) {
-+            if (entry.isJsonObject() && item.matches(string(entry.getAsJsonObject(), "id"))) {
-+                return true;
++    public static boolean hasPresetPiece(final WardrobeItem item) {
++        return presetPiece(item) != null;
++    }
++
++    private static JsonObject presetPiece(final WardrobeItem item) {
++        for (final Starter starter : Starter.values()) {
++            for (final JsonElement entry : array(object(STARTER_CHARACTERS.get(starter), "personaCollection"), "universalApp")) {
++                if (entry.isJsonObject() && item.matches(string(entry.getAsJsonObject(), "id"))) {
++                    return entry.getAsJsonObject();
++                }
 +            }
 +        }
-+        return false;
++        return null;
 +    }
 +
 +    private static JsonObject savedEmote(final AccountWardrobe wardrobe, final WardrobeItem item) {
@@ -874,12 +912,7 @@ index 0000000..16b7478
 +                }
 +            }
 +        }
-+        for (final JsonElement entry : array(object(STARTER_CHARACTER, "personaCollection"), "universalApp")) {
-+            if (entry.isJsonObject() && item.matches(string(entry.getAsJsonObject(), "id"))) {
-+                return entry.getAsJsonObject();
-+            }
-+        }
-+        return null;
++        return presetPiece(item);
 +    }
 +
 +    private static int emoteStart(final JsonArray entries, final List<WardrobeItem> categoryItems) {
@@ -1741,10 +1774,10 @@ index 41713cf..e44f8fc 100644
              ViaFabricPlusBedrock.impl().logger().warn("Could not load the selected Bedrock appearance; using Steve", e);
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
 new file mode 100644
-index 0000000..b9a78db
+index 0000000..f946eda
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
-@@ -0,0 +1,1055 @@
+@@ -0,0 +1,1089 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1764,6 +1797,7 @@ index 0000000..b9a78db
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockCharacterProfiles.ColorTarget;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockCharacterProfiles.Height;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockCharacterProfiles.Slot;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockCharacterProfiles.Starter;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockCharacterProfiles.WardrobeItem;
 +import com.viaversion.viafabricplus.bedrock.visual.BedrockImageCache;
 +import com.viaversion.viafabricplus.screen.base.VFPScreen;
@@ -1782,7 +1816,7 @@ index 0000000..b9a78db
 +    public static final Component TITLE = Component.translatable("screen.viafabricplus.bedrock_character_slots");
 +
 +    private enum View {
-+        SLOTS, WARDROBE, SIZE, COLORS
++        SLOTS, WARDROBE, SIZE, COLORS, PRESETS
 +    }
 +
 +    private AccountWardrobe wardrobe;
@@ -1810,6 +1844,7 @@ index 0000000..b9a78db
 +    private boolean personaSelected;
 +    private boolean confirmDelete;
 +    private final Button[] slotButtons = new Button[5];
++    private final Button[] presetButtons = new Button[Starter.values().length];
 +    private final Button[] categoryButtons = new Button[Category.values().length];
 +    private final Button[] emoteSlotButtons = new Button[4];
 +    private final Button[] heightButtons = new Button[Height.values().length];
@@ -1825,6 +1860,7 @@ index 0000000..b9a78db
 +    private Button colorButton;
 +    private Button colorChannelButton;
 +    private Button refreshButton;
++    private Button presetBackButton;
 +
 +    public BedrockCharacterSlotsScreen() {
 +        super(TITLE, true);
@@ -1851,6 +1887,13 @@ index 0000000..b9a78db
 +                    this.confirmDelete = false;
 +                    this.updateControls();
 +                }).bounds(left + index * 61, top + 24, 56, 20).build());
++        }
++        final Starter[] starters = Starter.values();
++        for (int index = 0; index < starters.length; index++) {
++            final Starter starter = starters[index];
++            this.presetButtons[index] = this.addRenderableWidget(Button.builder(Component.literal(starter.label()),
++                _ -> this.createCharacter(false, starter))
++                .bounds(left + index % 3 * 102, top + 92 + index / 3 * 36, 96, 26).build());
 +        }
 +        final Category[] categories = Category.values();
 +        for (int index = 0; index < categories.length; index++) {
@@ -1896,8 +1939,10 @@ index 0000000..b9a78db
 +            .bounds(left + 154, top + 52, 146, 20).build());
 +        this.refreshButton = Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.refresh"),
 +            _ -> this.refresh()).build();
++        this.presetBackButton = Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.back"),
++            _ -> this.changeView(View.SLOTS)).build();
 +        this.addFooter(this.previousItem, this.nextItem, this.useSlot, this.deleteSlot, this.editPiece,
-+            this.colorButton, this.refreshButton);
++            this.colorButton, this.refreshButton, this.presetBackButton);
 +        if (this.items != null) {
 +            this.itemPage = Math.min(this.itemPage, Math.max(0, (this.items.size() - 1) / this.pageSize()));
 +        }
@@ -1930,6 +1975,21 @@ index 0000000..b9a78db
 +        }
 +        if (this.view == View.COLORS) {
 +            this.renderColors(graphics, left, top);
++            return;
++        }
++        if (this.view == View.PRESETS) {
++            graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.choose_starter"),
++                left, top, 300, ACCENT_COLOR);
++            for (int index = 0; index < Starter.values().length; index++) {
++                final int x = left + index % 3 * 102;
++                final int y = top + 76 + index / 3 * 36;
++                graphics.fill(x, y, x + 96, y + 10,
++                    (int) Long.parseLong(Starter.values()[index].skinColor().substring(1), 16));
++            }
++            if (this.selectionFailed) {
++                graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.select_failed"),
++                    left, top + 210, 300, ACCENT_COLOR);
++            }
 +            return;
 +        }
 +        if (this.view == View.WARDROBE) {
@@ -2218,7 +2278,7 @@ index 0000000..b9a78db
 +
 +    private boolean isSaved(final WardrobeItem item) {
 +        return this.wardrobe.slots().stream().anyMatch(slot -> this.isEquipped(item, slot))
-+            || BedrockCharacterProfiles.hasStarterEmote(item) || this.category == Category.CAPES;
++            || BedrockCharacterProfiles.hasPresetPiece(item) || this.category == Category.CAPES;
 +    }
 +
 +    private boolean isEquippedHere(final WardrobeItem item, final Slot slot) {
@@ -2353,14 +2413,18 @@ index 0000000..b9a78db
 +    }
 +
 +    private void updateControls() {
-+        this.slotsTab.visible = this.view != View.COLORS;
-+        this.wardrobeTab.visible = this.view != View.COLORS;
-+        this.sizeTab.visible = this.view != View.COLORS;
++        this.slotsTab.visible = this.view != View.COLORS && this.view != View.PRESETS;
++        this.wardrobeTab.visible = this.view != View.COLORS && this.view != View.PRESETS;
++        this.sizeTab.visible = this.view != View.COLORS && this.view != View.PRESETS;
 +        this.slotsTab.active = this.view != View.SLOTS;
 +        this.wardrobeTab.active = this.view != View.WARDROBE;
 +        this.sizeTab.active = this.view != View.SIZE;
 +        for (final Button button : this.slotButtons) {
-+            button.visible = this.view != View.COLORS;
++            button.visible = this.view != View.COLORS && this.view != View.PRESETS;
++        }
++        for (final Button button : this.presetButtons) {
++            button.visible = this.view == View.PRESETS;
++            button.active = !this.saving;
 +        }
 +        for (int index = 0; index < this.categoryButtons.length; index++) {
 +            this.categoryButtons[index].visible = this.view == View.WARDROBE;
@@ -2393,7 +2457,9 @@ index 0000000..b9a78db
 +        this.colorChannelButton.visible = this.view == View.COLORS && this.colorOrigin == View.WARDROBE
 +            && this.category == Category.EYES;
 +        this.colorChannelButton.setMessage(Component.translatable(this.colorLabel()));
-+        this.refreshButton.visible = this.view != View.COLORS;
++        this.refreshButton.visible = this.view != View.COLORS && this.view != View.PRESETS;
++        this.presetBackButton.visible = this.view == View.PRESETS;
++        this.presetBackButton.active = !this.saving;
 +        this.colorButton.setMessage(Component.translatable(this.view == View.COLORS
 +            ? "bedrock_character_slots.viafabricplus.back"
 +            : this.view == View.SLOTS ? "bedrock_character_slots.viafabricplus.skin_tone"
@@ -2617,7 +2683,7 @@ index 0000000..b9a78db
 +
 +    private void useSelectedSlot() {
 +        if (this.wardrobe != null && !this.wardrobe.slots().get(this.selectedSlot).occupied()) {
-+            this.createCharacter(false);
++            this.changeView(View.PRESETS);
 +            return;
 +        }
 +        if (this.wardrobe != null && this.wardrobe.activeSlot() == this.selectedSlot + 1) {
@@ -2630,7 +2696,7 @@ index 0000000..b9a78db
 +        }
 +    }
 +
-+    private void createCharacter(final boolean copyActive) {
++    private void createCharacter(final boolean copyActive, final Starter starter) {
 +        final BedrockAuthManager account = ViaFabricPlusBedrock.impl().account().get();
 +        if (account == null || this.wardrobe == null || this.saving) {
 +            return;
@@ -2641,7 +2707,7 @@ index 0000000..b9a78db
 +        this.updateControls();
 +        final var operation = copyActive
 +            ? BedrockCharacterProfiles.copyActiveToSlot(account, target.number(), target.profileHash())
-+            : BedrockCharacterProfiles.createStarterCharacter(account, target.number(), target.profileHash());
++            : BedrockCharacterProfiles.createStarterCharacter(account, target.number(), target.profileHash(), starter);
 +        operation
 +            .whenComplete((loaded, error) -> this.minecraft.execute(() -> {
 +                if (this.minecraft.gui.screen() != this) {
@@ -2653,6 +2719,7 @@ index 0000000..b9a78db
 +                    ViaFabricPlusBedrock.impl().logger().warn("Could not create Bedrock character", error);
 +                } else {
 +                    this.wardrobe = loaded;
++                    this.view = View.SLOTS;
 +                    this.loadAvatar(account);
 +                    if (this.personaSelected) {
 +                        this.refreshPersona(account);
@@ -2666,7 +2733,7 @@ index 0000000..b9a78db
 +
 +    private void deleteSelectedSlot() {
 +        if (this.wardrobe != null && !this.wardrobe.slots().get(this.selectedSlot).occupied()) {
-+            this.createCharacter(true);
++            this.createCharacter(true, null);
 +            return;
 +        }
 +        if (!this.confirmDelete) {
@@ -2874,8 +2941,646 @@ index a5d7187..c142e59 100644
          this.customButton.active = appearance.selection() == Selection.CUSTOM || this.store.hasCustomSkin(this.accountId);
          this.modelButton.active = appearance.selection() == Selection.CUSTOM;
          this.modelButton.setMessage(Component.translatable(appearance.effectiveSlim()
+diff --git a/src/main/resources/assets/viafabricplus-bedrock/character-presets.json b/src/main/resources/assets/viafabricplus-bedrock/character-presets.json
+new file mode 100644
+index 0000000..9a72958
+--- /dev/null
++++ b/src/main/resources/assets/viafabricplus-bedrock/character-presets.json
+@@ -0,0 +1,632 @@
++{
++  "version": "0.1.0",
++  "presets": [
++    {
++      "name": "Alex",
++      "appearance": [
++        {
++          "arm": "wide",
++          "skcol": "#ffebd0b0",
++          "skin": false,
++          "cs_arm": "wide"
++        },
++        {
++          "col": [
++            "#0",
++            "#0",
++            "#ffefbbb1",
++            "#0"
++          ],
++          "id": "83c940ce-d7b8-4603-8d73-c1234e322cce/d"
++        },
++        {
++          "id": "1042557f-d1f9-44e3-ba78-f404e8fb7363/d"
++        },
++        {
++          "id": "8f96d1f8-e9bb-40d2-acc8-eb79746c5d7c/d"
++        },
++        {
++          "id": "80eda582-cda7-4fce-9d6f-89a60f2448f1/d"
++        },
++        {
++          "id": "96db6e5b-dc69-4ebc-bd36-cb1b08ffb0f4/d"
++        },
++        {
++          "id": "5f64b737-b88a-40ea-be1f-559840237146/d"
++        },
++        {
++          "id": "0948e089-6f9c-40c1-886b-cd37add03f69/d"
++        },
++        {
++          "col": [
++            "#ffeb983f",
++            "#0",
++            "#0",
++            "#0"
++          ],
++          "id": "70be0801-a93f-4ce0-8e3f-7fdeac1e03b9/d"
++        },
++        {
++          "col": [
++            "#ff236224",
++            "#ffeb983f",
++            "#ffe9ecec",
++            "#0"
++          ],
++          "id": "a0f263b3-e093-4c85-aadb-3759417898ff/d"
++        },
++        {
++          "id": "17428c4c-3813-4ea1-b3a9-d6a32f83afca/de"
++        },
++        {
++          "id": "ce5c0300-7f03-455d-aaf1-352e4927b54d/de"
++        },
++        {
++          "id": "9a469a61-c83b-4ba9-b507-bdbe64430582/de"
++        },
++        {
++          "id": "4c8ae710-df2e-47cd-814d-cc7bf21a3d67/de"
++        }
++      ]
++    },
++    {
++      "name": "Noor",
++      "appearance": [
++        {
++          "arm": "wide",
++          "skcol": "#ff7e5337",
++          "skin": false,
++          "cs_arm": "wide"
++        },
++        {
++          "id": "8f96d1f8-e9bb-40d2-acc8-eb79746c5d7c/d"
++        },
++        {
++          "id": "1042557f-d1f9-44e3-ba78-f404e8fb7363/d"
++        },
++        {
++          "id": "e9be8a1f-c928-4b51-0bef-e8ea58cc9c42/d"
++        },
++        {
++          "id": "2f7834d2-d0af-8110-fa75-28e59022b34b/d"
++        },
++        {
++          "id": "01fc5519-bf48-b37c-fad1-d265ae7bc26a/d"
++        },
++        {
++          "id": "af5ca60b-dae7-3931-507e-1c6797481de1/d"
++        },
++        {
++          "id": "79100fd3-53a3-21e3-40d1-ff5447a8afd3/d"
++        },
++        {
++          "col": [
++            "#ff442711",
++            "#0",
++            "#0",
++            "#0"
++          ],
++          "id": "f07544af-8bab-7ed6-fe9d-8ddde78e1e2a/d"
++        },
++        {
++          "col": [
++            "#ff381d00",
++            "#ff442711",
++            "#ffe9ecec",
++            "#0"
++          ],
++          "id": "a0f263b3-e093-4c85-aadb-3759417898ff/d"
++        },
++        {
++          "col": [
++            "#0",
++            "#0",
++            "#ff45220e",
++            "#0"
++          ],
++          "id": "83c940ce-d7b8-4603-8d73-c1234e322cce/d"
++        },
++        {
++          "id": "17428c4c-3813-4ea1-b3a9-d6a32f83afca/de"
++        },
++        {
++          "id": "ce5c0300-7f03-455d-aaf1-352e4927b54d/de"
++        },
++        {
++          "id": "9a469a61-c83b-4ba9-b507-bdbe64430582/de"
++        },
++        {
++          "id": "4c8ae710-df2e-47cd-814d-cc7bf21a3d67/de"
++        }
++      ]
++    },
++    {
++      "name": "Ari",
++      "appearance": [
++        {
++          "arm": "wide",
++          "skcol": "#ffffd7c0",
++          "skin": false,
++          "cs_arm": "wide"
++        },
++        {
++          "col": [
++            "#ff240303",
++            "#ff933f1e",
++            "#ffe9ecec",
++            "#0"
++          ],
++          "id": "a0f263b3-e093-4c85-aadb-3759417898ff/d"
++        },
++        {
++          "id": "1042557f-d1f9-44e3-ba78-f404e8fb7363/d"
++        },
++        {
++          "id": "8f96d1f8-e9bb-40d2-acc8-eb79746c5d7c/d"
++        },
++        {
++          "id": "66690c38-b6da-92aa-dd23-d1fab2b97423/d"
++        },
++        {
++          "id": "ef62e4af-63c4-276f-3e76-58027fef8358/d"
++        },
++        {
++          "id": "dd0b165f-cd5d-3588-db1e-ab2cea17cbad/d"
++        },
++        {
++          "id": "29ad05be-b99b-3a20-abd9-771fdd53eb0a/d"
++        },
++        {
++          "col": [
++            "#ff933f1e",
++            "#0",
++            "#0",
++            "#0"
++          ],
++          "id": "16a40e66-7d58-b56d-9a4e-e5766ceff6a0/d"
++        },
++        {
++          "col": [
++            "#0",
++            "#0",
++            "#ffee9a73",
++            "#0"
++          ],
++          "id": "83c940ce-d7b8-4603-8d73-c1234e322cce/d"
++        },
++        {
++          "id": "17428c4c-3813-4ea1-b3a9-d6a32f83afca/de"
++        },
++        {
++          "id": "ce5c0300-7f03-455d-aaf1-352e4927b54d/de"
++        },
++        {
++          "id": "9a469a61-c83b-4ba9-b507-bdbe64430582/de"
++        },
++        {
++          "id": "4c8ae710-df2e-47cd-814d-cc7bf21a3d67/de"
++        }
++      ]
++    },
++    {
++      "name": "Sunny",
++      "appearance": [
++        {
++          "arm": "wide",
++          "skcol": "#fff1936e",
++          "skin": false,
++          "cs_arm": "wide"
++        },
++        {
++          "id": "8f96d1f8-e9bb-40d2-acc8-eb79746c5d7c/d"
++        },
++        {
++          "id": "1042557f-d1f9-44e3-ba78-f404e8fb7363/d"
++        },
++        {
++          "col": [
++            "#0",
++            "#0",
++            "#ff774320",
++            "#0"
++          ],
++          "id": "83c940ce-d7b8-4603-8d73-c1234e322cce/d"
++        },
++        {
++          "id": "e86ab12f-d79c-6e47-b3af-19a3c965505a/d"
++        },
++        {
++          "id": "a1f26368-ebfe-843a-e6ff-f2dc724108ec/d"
++        },
++        {
++          "id": "34524691-ff49-da97-8ae0-d07ef8a0c118/d"
++        },
++        {
++          "col": [
++            "#ff2f2f2f",
++            "#0",
++            "#0",
++            "#0"
++          ],
++          "id": "36f3af09-1871-f074-148a-9f748ba3ca42/d"
++        },
++        {
++          "col": [
++            "#ff141519",
++            "#ff2f2f2f",
++            "#ffe9ecec",
++            "#0"
++          ],
++          "id": "a0f263b3-e093-4c85-aadb-3759417898ff/d"
++        },
++        {
++          "id": "33c7a041-46be-73ad-55aa-7e1b18563364/d"
++        },
++        {
++          "id": "17428c4c-3813-4ea1-b3a9-d6a32f83afca/de"
++        },
++        {
++          "id": "ce5c0300-7f03-455d-aaf1-352e4927b54d/de"
++        },
++        {
++          "id": "9a469a61-c83b-4ba9-b507-bdbe64430582/de"
++        },
++        {
++          "id": "4c8ae710-df2e-47cd-814d-cc7bf21a3d67/de"
++        }
++      ]
++    },
++    {
++      "name": "Makena",
++      "appearance": [
++        {
++          "arm": "wide",
++          "skcol": "#ff38281b",
++          "skin": false,
++          "cs_arm": "wide"
++        },
++        {
++          "col": [
++            "#ff240303",
++            "#ff1b110d",
++            "#ffe9ecec",
++            "#0"
++          ],
++          "id": "a0f263b3-e093-4c85-aadb-3759417898ff/d"
++        },
++        {
++          "col": [
++            "#0",
++            "#0",
++            "#ff2a1919",
++            "#0"
++          ],
++          "id": "83c940ce-d7b8-4603-8d73-c1234e322cce/d"
++        },
++        {
++          "id": "1042557f-d1f9-44e3-ba78-f404e8fb7363/d"
++        },
++        {
++          "id": "8f96d1f8-e9bb-40d2-acc8-eb79746c5d7c/d"
++        },
++        {
++          "id": "f76b43c4-052c-ec24-bbc9-389f8b612668/d"
++        },
++        {
++          "id": "4fc639b3-0bb3-9443-0e2d-9332561edb68/d"
++        },
++        {
++          "id": "446f1789-8b8d-755e-6660-672e30537854/d"
++        },
++        {
++          "id": "37788a67-0abb-fec7-4d9b-5dfdbf25e58c/d"
++        },
++        {
++          "col": [
++            "#ff2c1a1a",
++            "#0",
++            "#0",
++            "#0"
++          ],
++          "id": "bb29fbdf-5331-ca8e-01a4-b352cd46a324/d"
++        },
++        {
++          "id": "17428c4c-3813-4ea1-b3a9-d6a32f83afca/de"
++        },
++        {
++          "id": "ce5c0300-7f03-455d-aaf1-352e4927b54d/de"
++        },
++        {
++          "id": "9a469a61-c83b-4ba9-b507-bdbe64430582/de"
++        },
++        {
++          "id": "4c8ae710-df2e-47cd-814d-cc7bf21a3d67/de"
++        }
++      ]
++    },
++    {
++      "name": "Efe",
++      "appearance": [
++        {
++          "arm": "wide",
++          "skcol": "#ffb9674a",
++          "skin": false,
++          "cs_arm": "wide"
++        },
++        {
++          "id": "8f96d1f8-e9bb-40d2-acc8-eb79746c5d7c/d"
++        },
++        {
++          "id": "1042557f-d1f9-44e3-ba78-f404e8fb7363/d"
++        },
++        {
++          "col": [
++            "#ff8a6294",
++            "#0",
++            "#0",
++            "#0"
++          ],
++          "id": "491dfbd8-fc6d-2f9d-8983-70bcbb626754/d"
++        },
++        {
++          "col": [
++            "#ff692b34",
++            "#ff8a6294",
++            "#ffe9ecec",
++            "#0"
++          ],
++          "id": "a0f263b3-e093-4c85-aadb-3759417898ff/d"
++        },
++        {
++          "col": [
++            "#0",
++            "#0",
++            "#ff774320",
++            "#0"
++          ],
++          "id": "83c940ce-d7b8-4603-8d73-c1234e322cce/d"
++        },
++        {
++          "id": "74c2d026-33f0-f0b1-3f4f-670cb1fe6515/d"
++        },
++        {
++          "id": "c20ee35a-8013-0057-692f-35ec4d77d6ed/d"
++        },
++        {
++          "id": "d3777d81-8b2b-d348-daed-710c15805976/d"
++        },
++        {
++          "id": "ba5b65fc-b5ae-1c71-5a9a-7137425f9dda/d"
++        },
++        {
++          "id": "7e45f152-4641-1041-2194-1522c7ad35f2/d"
++        },
++        {
++          "id": "6d4faba3-c8e0-6260-7f88-2bfcb4a0037a/d"
++        },
++        {
++          "id": "829e70a1-05ea-140e-c42e-3ef9d5894ffe/d"
++        },
++        {
++          "id": "17428c4c-3813-4ea1-b3a9-d6a32f83afca/de"
++        },
++        {
++          "id": "ce5c0300-7f03-455d-aaf1-352e4927b54d/de"
++        },
++        {
++          "id": "9a469a61-c83b-4ba9-b507-bdbe64430582/de"
++        },
++        {
++          "id": "4c8ae710-df2e-47cd-814d-cc7bf21a3d67/de"
++        }
++      ]
++    },
++    {
++      "name": "Zuri",
++      "appearance": [
++        {
++          "arm": "wide",
++          "skcol": "#ff7e5337",
++          "skin": false,
++          "cs_arm": "wide"
++        },
++        {
++          "id": "8f96d1f8-e9bb-40d2-acc8-eb79746c5d7c/d"
++        },
++        {
++          "id": "1042557f-d1f9-44e3-ba78-f404e8fb7363/d"
++        },
++        {
++          "col": [
++            "#0",
++            "#0",
++            "#ff45220e",
++            "#0"
++          ],
++          "id": "83c940ce-d7b8-4603-8d73-c1234e322cce/d"
++        },
++        {
++          "col": [
++            "#ff381d00",
++            "#ff1b110d",
++            "#ffe9ecec",
++            "#0"
++          ],
++          "id": "a0f263b3-e093-4c85-aadb-3759417898ff/d"
++        },
++        {
++          "id": "bb0321e0-9712-e35a-52cc-f3c83e0065f4/d"
++        },
++        {
++          "id": "d42123c3-25b2-74e7-5720-b59e4280017a/d"
++        },
++        {
++          "id": "6791bf52-fb55-3bdf-a20d-6bf9f6c83987/d"
++        },
++        {
++          "id": "69422c5a-60b1-25eb-cfdd-a45626416758/d"
++        },
++        {
++          "col": [
++            "#ff1b110d",
++            "#0",
++            "#0",
++            "#0"
++          ],
++          "id": "99bdbaae-309b-d64b-42ad-0194a57db891/d"
++        },
++        {
++          "id": "17428c4c-3813-4ea1-b3a9-d6a32f83afca/de"
++        },
++        {
++          "id": "ce5c0300-7f03-455d-aaf1-352e4927b54d/de"
++        },
++        {
++          "id": "9a469a61-c83b-4ba9-b507-bdbe64430582/de"
++        },
++        {
++          "id": "4c8ae710-df2e-47cd-814d-cc7bf21a3d67/de"
++        }
++      ]
++    },
++    {
++      "name": "Kai",
++      "appearance": [
++        {
++          "arm": "wide",
++          "skcol": "#ffd8844b",
++          "skin": false,
++          "cs_arm": "wide"
++        },
++        {
++          "id": "8f96d1f8-e9bb-40d2-acc8-eb79746c5d7c/d"
++        },
++        {
++          "id": "1042557f-d1f9-44e3-ba78-f404e8fb7363/d"
++        },
++        {
++          "col": [
++            "#ff436753",
++            "#fffbe28a",
++            "#ffe9ecec",
++            "#0"
++          ],
++          "id": "a0f263b3-e093-4c85-aadb-3759417898ff/d"
++        },
++        {
++          "col": [
++            "#0",
++            "#0",
++            "#ff774320",
++            "#0"
++          ],
++          "id": "83c940ce-d7b8-4603-8d73-c1234e322cce/d"
++        },
++        {
++          "id": "aa8d3c95-f189-cf08-0ae3-5cc1e090343b/d"
++        },
++        {
++          "col": [
++            "#fffbe28a",
++            "#0",
++            "#0",
++            "#0"
++          ],
++          "id": "5f49dfbb-1c5d-ec1a-814b-3b6898265d3c/d"
++        },
++        {
++          "id": "97e3e925-6eef-a6db-8235-1f73f8a550fb/d"
++        },
++        {
++          "id": "96db6e5b-dc69-4ebc-bd36-cb1b08ffb0f4/d"
++        },
++        {
++          "id": "a8bc771c-c5a5-7b32-bd03-ba169ec58284/d"
++        },
++        {
++          "id": "37ee7c77-6bf6-4de8-8f56-5dc6b6abc6ff/d"
++        },
++        {
++          "id": "17428c4c-3813-4ea1-b3a9-d6a32f83afca/de"
++        },
++        {
++          "id": "ce5c0300-7f03-455d-aaf1-352e4927b54d/de"
++        },
++        {
++          "id": "9a469a61-c83b-4ba9-b507-bdbe64430582/de"
++        },
++        {
++          "id": "4c8ae710-df2e-47cd-814d-cc7bf21a3d67/de"
++        }
++      ]
++    },
++    {
++      "name": "Steve",
++      "appearance": [
++        {
++          "arm": "wide",
++          "skcol": "#ffb37b62",
++          "skin": false,
++          "cs_arm": "wide"
++        },
++        {
++          "id": "8f96d1f8-e9bb-40d2-acc8-eb79746c5d7c/d"
++        },
++        {
++          "id": "1042557f-d1f9-44e3-ba78-f404e8fb7363/d"
++        },
++        {
++          "col": [
++            "#ff523d89",
++            "#ff2e180e",
++            "#ffe9ecec",
++            "#0"
++          ],
++          "id": "a0f263b3-e093-4c85-aadb-3759417898ff/d"
++        },
++        {
++          "id": "f1e4c577-19ba-4d77-9222-47f145857f78/d"
++        },
++        {
++          "col": [
++            "#ff2e180e",
++            "#0",
++            "#0",
++            "#0"
++          ],
++          "id": "2bb1473b-9a5c-4eae-9fd5-82302a6aa3da/d"
++        },
++        {
++          "col": [
++            "#ff45220e",
++            "#0",
++            "#ff45220e",
++            "#0"
++          ],
++          "id": "2e4341c3-c014-4114-94b5-73968230aaaf/d"
++        },
++        {
++          "id": "b6702f0e-a4b5-497a-8820-6c8e3946bb55/d"
++        },
++        {
++          "id": "49f93789-a512-4c47-95cb-0606cdc1c2be/d"
++        },
++        {
++          "id": "68bfe60d-f30a-422f-b32c-72374ebdd057/d"
++        },
++        {
++          "id": "17428c4c-3813-4ea1-b3a9-d6a32f83afca/de"
++        },
++        {
++          "id": "ce5c0300-7f03-455d-aaf1-352e4927b54d/de"
++        },
++        {
++          "id": "9a469a61-c83b-4ba9-b507-bdbe64430582/de"
++        },
++        {
++          "id": "4c8ae710-df2e-47cd-814d-cc7bf21a3d67/de"
++        }
++      ]
++    }
++  ]
++}
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
-index 4a503d3..b555ee3 100644
+index 4a503d3..e689e0f 100644
 --- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 +++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 @@ -27,6 +27,7 @@
@@ -2886,7 +3591,7 @@ index 4a503d3..b555ee3 100644
    "screen.viafabricplus.accept_invite": "Accept an invitation code",
  
    "bedrock_dressing_room.viafabricplus.steve": "Steve",
-@@ -45,9 +46,74 @@
+@@ -45,9 +46,75 @@
    "bedrock_dressing_room.viafabricplus.pack_skin_number": "Skin %s of %s",
    "bedrock_dressing_room.viafabricplus.import_cape": "Import cape",
    "bedrock_dressing_room.viafabricplus.remove_cape": "Remove cape",
@@ -2919,7 +3624,7 @@ index 4a503d3..b555ee3 100644
 +  "bedrock_character_slots.viafabricplus.items_failed": "Could not load character pieces. Try refreshing.",
 +  "bedrock_character_slots.viafabricplus.no_pieces": "No available pieces in this category.",
 +  "bedrock_character_slots.viafabricplus.equipped": "Equipped in this saved character",
-+  "bedrock_character_slots.viafabricplus.saved_piece": "Saved on another character. You can use it in this slot.",
++  "bedrock_character_slots.viafabricplus.saved_piece": "Available from a saved or starting character.",
 +  "bedrock_character_slots.viafabricplus.catalog_only": "This piece has no saved recipe yet, so VFP cannot equip it.",
 +  "bedrock_character_slots.viafabricplus.use_piece": "Use saved piece",
 +  "bedrock_character_slots.viafabricplus.remove_piece": "Remove piece",
@@ -2946,6 +3651,7 @@ index 4a503d3..b555ee3 100644
 +  "bedrock_character_slots.viafabricplus.use_slot": "Use this slot",
 +  "bedrock_character_slots.viafabricplus.copy_active": "Copy active",
 +  "bedrock_character_slots.viafabricplus.create": "Create new",
++  "bedrock_character_slots.viafabricplus.choose_starter": "Choose a starting character for this slot",
 +  "bedrock_character_slots.viafabricplus.delete": "Delete",
 +  "bedrock_character_slots.viafabricplus.confirm_delete": "Confirm delete",
 +  "bedrock_character_slots.viafabricplus.use_in_worlds": "Use in worlds",
@@ -2993,14 +3699,15 @@ index ccb842c..608ea68 100644
              _ -> new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB));
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java
 new file mode 100644
-index 0000000..40fa2ea
+index 0000000..7a2c4c8
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java
-@@ -0,0 +1,385 @@
+@@ -0,0 +1,411 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import com.google.gson.JsonObject;
 +import com.google.gson.JsonParser;
++import java.util.HashSet;
 +import java.util.List;
 +import org.junit.jupiter.api.Test;
 +
@@ -3128,6 +3835,18 @@ index 0000000..40fa2ea
 +        assertEquals(4, added.size());
 +        assertEquals("hat/1", added.get(3).getAsJsonObject().get("id").getAsString());
 +
++        final var presetEntries = BedrockCharacterProfiles.createStarterRequest(wardrobe, 3,
++            BedrockCharacterProfiles.Starter.ALEX).getAsJsonArray("appearanceObjects").get(1).getAsJsonObject()
++            .getAsJsonObject("personaAppearance").getAsJsonObject("personaCollection").getAsJsonArray("universalApp");
++        final String presetId = presetEntries.get(4).getAsJsonObject().get("id").getAsString();
++        final var presetItem = new BedrockCharacterProfiles.WardrobeItem(presetId, presetId, "persona_top", "",
++            presetId.substring(0, 36));
++        assertTrue(BedrockCharacterProfiles.hasPresetPiece(presetItem));
++        final var fromPreset = BedrockCharacterProfiles.pieceChangeRequest(wardrobe, 1,
++            List.of(presetItem), presetItem, false).getAsJsonArray("appearanceObjects").get(1).getAsJsonObject()
++            .getAsJsonObject("personaAppearance").getAsJsonObject("personaCollection").getAsJsonArray("universalApp");
++        assertEquals(presetId, fromPreset.get(fromPreset.size() - 1).getAsJsonObject().get("id").getAsString());
++
 +        final var skinColor = BedrockCharacterProfiles.colorChangeRequest(wardrobe, 1,
 +            BedrockCharacterProfiles.ColorTarget.SKIN, "#ffffe1c0", List.of())
 +            .getAsJsonArray("appearanceObjects").get(1).getAsJsonObject().getAsJsonObject("personaAppearance")
@@ -3219,13 +3938,26 @@ index 0000000..40fa2ea
 +            .get(0).getAsJsonObject().get("lastUsedPersonaSlot").getAsString());
 +        assertFalse(wardrobe.slots().get(2).occupied());
 +
-+        final var created = BedrockCharacterProfiles.createStarterRequest(wardrobe, 3)
++        final var created = BedrockCharacterProfiles.createStarterRequest(wardrobe, 3,
++            BedrockCharacterProfiles.Starter.ZURI)
 +            .getAsJsonArray("appearanceObjects");
 +        final var starter = created.get(1).getAsJsonObject().getAsJsonObject("personaAppearance");
 +        final var starterPieces = starter.getAsJsonObject("personaCollection").getAsJsonArray("universalApp");
 +        assertEquals(14, starterPieces.size());
 +        assertTrue(starterPieces.get(0).getAsJsonObject().has("skin"));
 +        assertEquals(4, starterPieces.get(3).getAsJsonObject().getAsJsonArray("col").size());
++
++        final var recipes = new HashSet<String>();
++        for (final var preset : BedrockCharacterProfiles.Starter.values()) {
++            final var request = BedrockCharacterProfiles.createStarterRequest(wardrobe, 3, preset);
++            final var appearance = request.getAsJsonArray("appearanceObjects").get(1).getAsJsonObject()
++                .getAsJsonObject("personaAppearance").getAsJsonObject("personaCollection")
++                .getAsJsonArray("universalApp");
++            assertTrue(appearance.size() >= 14);
++            assertTrue(appearance.get(0).getAsJsonObject().has("cs_arm"));
++            recipes.add(appearance.toString());
++        }
++        assertEquals(BedrockCharacterProfiles.Starter.values().length, recipes.size());
 +        assertEquals("persona_profile_persona3", created.get(0).getAsJsonObject().getAsJsonObject("personaAppearance")
 +            .getAsJsonObject("personaCollection").getAsJsonArray("universalApp")
 +            .get(0).getAsJsonObject().get("lastUsedPersonaSlot").getAsString());
