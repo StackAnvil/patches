@@ -1,12 +1,16 @@
 ## Evidence
 
-Mojang's [protocol 2193 PlaySound packet](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/play-sound-packet/) carries its position as a `BlockPos`. ViaVersion's [Java sound packet writer](https://github.com/ViaVersion/ViaVersion/blob/e813796d9a991eafeb50f0a88495e01e5cbaf249/common/src/main/java/com/viaversion/viaversion/protocols/v1_19_1to1_19_3/Protocol1_19_1To1_19_3.java#L128-L141) scales block positions by eight before writing Java sound coordinates. ViaBedrock's PlaySound handler currently forwards the three block coordinates unchanged.
+Mojang's [protocol 2193 PlaySound packet](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/play-sound-packet/) carries its position as a `BlockPos`. ViaBedrock reads its X, Y, and Z as block coordinates without scaling.
+
+Mojang's [Java 26.3 client JAR](https://piston-data.mojang.com/v1/objects/e877b6a07acd633fb3bb475002175cec036e7b87/client.jar) provides the direct check for the destination packet. In `ClientboundSoundPacket`, the constructor multiplies each world coordinate by eight before writing three `int` fields. Its `getX()`, `getY()`, and `getZ()` methods divide those fields by eight. The JAR SHA-1 is `e877b6a07acd633fb3bb475002175cec036e7b87`; inspect the class with `javap -classpath client.jar -c -p net.minecraft.network.protocol.game.ClientboundSoundPacket`.
+
+ViaBedrock's PlaySound handler currently forwards the Bedrock block coordinates unchanged, so Java reads a sound at block X=80 as X=10. ViaBedrock already scales its separate LevelSoundEvent position by eight before writing the same Java packet.
 
 The patch applies that factor to X, Y, and Z. It leaves volume, pitch, and sound selection alone.
 
 ## Review focus
 
-Check the coordinate units on both sides of the translation. The ViaVersion example adds four to play at the block center; this patch preserves ViaBedrock's original position instead of introducing an additional offset.
+Check the coordinate units on both sides of the translation. This patch preserves ViaBedrock's original block position without adding a block-center offset.
 
 ## Testing
 
