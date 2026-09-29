@@ -24,6 +24,8 @@ The player can choose an active slot. The add-on sends the settings profile and 
 
 The account screen can also replace or remove a piece already represented in a saved character. It copies the complete piece entry, including its ID and colors, from another slot. For a replacement, it changes the matching category entry in the target slot. For removal, it deletes that entry. The add-on checks the target profile hash before writing and reads the profile again afterward. Pieces that appear only in the catalog cannot be equipped yet because the layout gives their pack UUID but not the full piece ID stored in the recipe.
 
+The color editor uses the native Dressing Room swatches captured with Bedrock 1.26.51. A skin tone edit changes only `skcol` in the base entry. A hair color edit changes the first value in the equipped hair piece's four-value `col` array. Both edits keep the other values and account settings intact. The add-on checks the profile hash before each write, then reads the slot back to verify the saved recipe.
+
 The active character has a full body image from authenticated `GET /api/v1.0/profile/image/avatar`. The same service returns a GLTF binary model at `/api/v1.0/profile/image/ModelBinary`. A native hair edit changed this model from 12 meshes and two PNG textures to 13 meshes and three textures. The model can support a preview, but its texture layout is not the Bedrock login skin format.
 
 The account response contains recipes, not the assembled skin used in a world. In the captured native flow, the client downloads persona packs from the Marketplace CDN. The outer ZIP contains a second ZIP with encrypted asset files. The Store layout and PlayFab catalog do not expose the full recipe piece ID. The profile GLTF endpoint returns an assembled preview model, but it does not return the full login packet data.
@@ -35,7 +37,7 @@ A local Bedrock server captured the native client login for one default Characte
 1. Derive the full piece ID and asset metadata for catalog pieces that do not appear in a saved recipe.
 2. Convert the profile GLTF model into a Bedrock skin atlas and geometry, or find a supported source for the original persona assets. Compare the result with several native login captures.
 3. Send the assembled character in the login JWT and live skin packet. Verify it with a second Bedrock client.
-4. Add native color, size, arm, and emote editing after capturing and validating their write flows.
+4. Capture and validate the write flows for other piece colors, arm width, size, and emotes, then add their controls.
 5. Render body texture animations and test face and body animation together.
 
 Keep login JWTs, raw proxy flows, player textures, and account data under `.stackanvil/`. Do not commit them.
