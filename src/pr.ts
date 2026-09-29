@@ -1,10 +1,10 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect } from "effect";
-import { getSeries, getTarget, root, type Target } from "./model.ts";
+import { getSeries, getTarget, root, type Target, type UpstreamablePatch } from "./model.ts";
 import { parsePatchMessage } from "./patch-message.ts";
 import { gh, git } from "./process.ts";
-import { sync } from "./stack.ts";
+import { prMode, sync } from "./stack.ts";
 
 export interface ArtifactReference {
   runId?: string;
@@ -35,21 +35,31 @@ export function missingPrParticipants(desired: string[], pr: PrParticipants) {
   };
 }
 
-function northStarPr(target: Target) {
+export function prHead(patchFile?: string): string {
+  return patchFile ? `stackanvil/${prMode(patchFile).slice("pr-".length)}` : "stackanvil/north-star";
+}
+
+function selectedPatch(series: UpstreamablePatch[], patchFile?: string): UpstreamablePatch {
+  const selected = patchFile ? series.find(({ file }) => file === patchFile) : series[0];
+  if (!selected) throw new Error(`No upstreamable patch ${patchFile ?? "at the front of the series"}`);
+  return selected;
+}
+
+function openPrForHead(target: Target, head: string) {
   return Effect.gen(function* () {
-    const existing = yield* gh(["api", "-X", "GET", `repos/${target.upstream}/pulls`, "-f", "state=open", "-f", "head=StackAnvil:stackanvil/north-star"], root);
+    const existing = yield* gh(["api", "-X", "GET", `repos/${target.upstream}/pulls`, "-f", "state=open", "-f", `head=StackAnvil:${head}`], root);
     const prs = (JSON.parse(existing) as { number: number; html_url: string }[])
       .map(({ number, html_url }) => ({ number, url: html_url }));
-    if (prs.length > 1) return yield* Effect.fail(new Error(`Multiple open north-star PRs for ${target.upstream}`));
+    if (prs.length > 1) return yield* Effect.fail(new Error(`Multiple open PRs for ${target.upstream} from ${head}`));
     return prs[0];
   });
 }
 
-export function updatePrParticipants(id: string, prUrl?: string) {
+export function updatePrParticipants(id: string, prUrl?: string, patchFile?: string) {
   return Effect.gen(function* () {
     const target = yield* Effect.promise(() => getTarget(id));
-    const url = prUrl ?? (yield* northStarPr(target))?.url;
-    if (!url) return yield* Effect.fail(new Error(`No open north-star PR for ${id}`));
+    const url = prUrl ?? (yield* openPrForHead(target, prHead(patchFile)))?.url;
+    if (!url) return yield* Effect.fail(new Error(`No open PR for ${id} from ${prHead(patchFile)}`));
     const desired = [...new Set(target.prAssignees)];
     if (!desired.length) return { url, desired, added: [], requested: [] };
 
@@ -89,16 +99,20 @@ export function renderPrBody(
   description: string,
   extraBody: string,
   artifact: ArtifactReference = {},
+  patchFile?: string,
 ): string {
   if (artifact.artifactId && !artifact.runId) throw new Error("--artifact-id requires --run-id");
-  if (!description.trim()) throw new Error(`The first ${id} upstreamable patch needs a commit body describing the change`);
-  if (!extraBody.trim()) throw new Error(`The first ${id} upstreamable patch needs a non-empty PR extra body`);
+  if (!description.trim()) throw new Error(`The ${id} upstreamable patch needs a commit body describing the change`);
+  if (!extraBody.trim()) throw new Error(`The ${id} upstreamable patch needs a non-empty PR extra body`);
+  const provenance = patchFile
+    ? `This PR contains [one patch from StackAnvil's ${id} stack](https://github.com/StackAnvil/patches/blob/main/patches/${id}/upstreamable/${patchFile}), applied alone to the pinned upstream base.`
+    : `This is the first upstreamable change from [StackAnvil's ${id} patch stack](https://github.com/StackAnvil/patches/tree/main/patches/${id}/upstreamable). The PR branch contains this patch alone, based on upstream.`;
   const lines = [
     `## What this changes`,
     "",
     description.trim(),
     "",
-    `This is the first upstreamable change from [StackAnvil's ${id} patch stack](https://github.com/StackAnvil/patches/tree/main/patches/${id}/upstreamable). The PR branch contains this patch alone, based on upstream.`,
+    provenance,
     "",
     extraBody.trim(),
   ];
@@ -111,11 +125,10 @@ export function renderPrBody(
   return `${lines.join("\n")}\n`;
 }
 
-export function prBody(id: string, artifact: ArtifactReference = {}) {
+export function prBody(id: string, artifact: ArtifactReference = {}, patchFile?: string) {
   return Effect.gen(function* () {
     const series = yield* Effect.promise(() => getSeries(id));
-    const upstreamable = series.upstreamable[0];
-    if (!upstreamable) return yield* Effect.fail(new Error(`No pending upstreamable patch for ${id}`));
+    const upstreamable = selectedPatch(series.upstreamable, patchFile);
     const upstreamableDir = join(root, "patches", id, "upstreamable");
     const patch = yield* Effect.promise(() => readFile(join(upstreamableDir, upstreamable.file), "utf8"));
     const message = parsePatchMessage(patch);
@@ -124,29 +137,28 @@ export function prBody(id: string, artifact: ArtifactReference = {}) {
       try: () => readFile(extraBodyFile, "utf8"),
       catch: () => new Error(`Add a PR extra body at ${extraBodyFile} before creating or updating the PR`),
     });
-    return renderPrBody(id, message.description, extraBody, artifact);
+    return renderPrBody(id, message.description, extraBody, artifact, patchFile);
   });
 }
 
-export function syncPr(id: string, artifact: ArtifactReference = {}) {
+export function syncPr(id: string, artifact: ArtifactReference = {}, patchFile?: string) {
   return Effect.gen(function* () {
     const target = yield* Effect.promise(() => getTarget(id));
     const series = yield* Effect.promise(() => getSeries(id));
-    const upstreamable = series.upstreamable[0];
-    if (!upstreamable) return yield* Effect.fail(new Error(`No pending upstreamable patch for ${id}`));
-    const body = yield* prBody(id, artifact);
-    const bodyFile = join(root, ".stackanvil", `${id}-pr-body.md`);
+    const upstreamable = selectedPatch(series.upstreamable, patchFile);
+    const body = yield* prBody(id, artifact, patchFile);
+    const bodyFile = join(root, ".stackanvil", `${id}-${prMode(patchFile)}-body.md`);
     yield* Effect.promise(() => mkdir(join(root, ".stackanvil"), { recursive: true }));
     yield* Effect.promise(() => writeFile(bodyFile, body));
-    const dir = yield* sync(id, "pr");
+    const dir = yield* sync(id, "pr", patchFile);
     const count = yield* git(["rev-list", "--count", `${target.baseSha}..HEAD`], dir);
     if (count !== "1") return yield* Effect.fail(new Error(`Expected exactly one PR commit, found ${count}`));
     const remote = `https://github.com/${target.fork}.git`;
-    const head = "stackanvil/north-star";
+    const head = prHead(patchFile);
     const remoteHead = yield* git(["ls-remote", remote, `refs/heads/${head}`], dir);
     const expected = remoteHead.split("\t")[0] ?? "";
     yield* git(["push", `--force-with-lease=refs/heads/${head}:${expected}`, remote, `HEAD:refs/heads/${head}`], dir);
-    const existing = yield* northStarPr(target);
+    const existing = yield* openPrForHead(target, head);
     if (existing) {
       yield* gh(["pr", "edit", String(existing.number), "--repo", target.upstream, "--title", upstreamable.title, "--body-file", bodyFile], root);
       const assignment = yield* updatePrParticipants(id, existing.url);

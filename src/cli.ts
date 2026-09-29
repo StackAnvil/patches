@@ -14,6 +14,7 @@ function option(name: string): string | undefined {
 }
 
 const artifact = { runId: option("--run-id"), artifactId: option("--artifact-id") };
+const patchFile = option("--patch");
 
 async function main(): Promise<void> {
   if (area === "dev" && action === "setup") {
@@ -25,8 +26,8 @@ async function main(): Promise<void> {
   if (area === "stack") {
     switch (action) {
       case "sync": console.log(await Effect.runPromise(sync(id))); return;
-      case "continue": console.log(await Effect.runPromise(continueApply(id, extra === "--pr" ? "pr" : "full"))); return;
-      case "abort": console.log(await Effect.runPromise(abortApply(id, extra === "--pr" ? "pr" : "full"))); return;
+      case "continue": console.log(await Effect.runPromise(continueApply(id, extra === "--pr" ? "pr" : "full", patchFile))); return;
+      case "abort": console.log(await Effect.runPromise(abortApply(id, extra === "--pr" ? "pr" : "full", patchFile))); return;
       case "edit":
         if (!extra) throw new Error("Supply a .patch filename to edit");
         console.log(`Edit ${workdir(id)}, stage changes, then run: bun run stack rebuild ${id}`);
@@ -50,11 +51,11 @@ async function main(): Promise<void> {
   }
   if (area === "pr") {
     switch (action) {
-      case "check": console.log(await Effect.runPromise(sync(id, "pr"))); return;
-      case "body": console.log(await Effect.runPromise(prBody(id, artifact))); return;
-      case "build": console.log(await Effect.runPromise(buildPr(id))); return;
-      case "assign": console.log(JSON.stringify(await Effect.runPromise(updatePrParticipants(id)), null, 2)); return;
-      case "sync": console.log(await Effect.runPromise(syncPr(id, artifact))); return;
+      case "check": console.log(await Effect.runPromise(sync(id, "pr", patchFile))); return;
+      case "body": console.log(await Effect.runPromise(prBody(id, artifact, patchFile))); return;
+      case "build": console.log(await Effect.runPromise(buildPr(id, patchFile))); return;
+      case "assign": console.log(JSON.stringify(await Effect.runPromise(updatePrParticipants(id, undefined, patchFile)), null, 2)); return;
+      case "sync": console.log(await Effect.runPromise(syncPr(id, artifact, patchFile))); return;
     }
   }
   throw new Error(`Unknown command: ${area} ${action}`);

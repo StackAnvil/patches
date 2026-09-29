@@ -119,14 +119,16 @@ export function build(id: string) {
   });
 }
 
-export function buildPr(id: string) {
+export function buildPr(id: string, patchFile?: string) {
   return Effect.gen(function* () {
     const target = yield* Effect.promise(() => getTarget(id));
-    const dir = yield* sync(id, "pr");
+    const dir = yield* sync(id, "pr", patchFile);
     yield* command("bash", ["./gradlew", "--no-daemon", "clean", target.buildTask], dir);
     const artifacts = yield* Effect.promise(() => listArtifacts(dir));
     if (!artifacts.length) return yield* Effect.fail(new Error(`No PR JAR artifacts found for ${id}`));
-    const output = join(root, "dist", "pr", id);
+    const output = patchFile
+      ? join(root, "dist", "pr", id, patchFile.replace(/\.patch$/, ""))
+      : join(root, "dist", "pr", id);
     yield* Effect.promise(() => rm(output, { recursive: true, force: true }));
     yield* Effect.promise(() => mkdir(output, { recursive: true }));
     for (const artifact of artifacts) yield* Effect.promise(() => copyFile(artifact, join(output, basename(artifact))));

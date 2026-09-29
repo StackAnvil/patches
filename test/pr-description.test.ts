@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { parsePatchMessage } from "../src/patch-message.ts";
-import { missingPrParticipants, renderPrBody } from "../src/pr.ts";
+import { missingPrParticipants, prHead, renderPrBody } from "../src/pr.ts";
 
 test("format-patch message keeps a wrapped subject and multi-paragraph description", () => {
   const patch = [
@@ -30,6 +30,15 @@ test("a PR needs both the patch description and extra body", () => {
   const body = renderPrBody("viabedrock", "Reason for change", "Extra review context");
   expect(body).toContain("Reason for change");
   expect(body).toContain("Extra review context");
+});
+
+test("standalone PRs use a patch-specific branch and body", () => {
+  const file = "0006-encode-26-3-game-modes-correctly.patch";
+  expect(prHead(file)).toBe("stackanvil/0006-encode-26-3-game-modes-correctly");
+  const body = renderPrBody("viabedrock", "Correct respawn fields", "## Evidence\n\nPacket schema", {}, file);
+  expect(body).toContain(`/viabedrock/upstreamable/${file}`);
+  expect(body).toContain("applied alone to the pinned upstream base");
+  expect(() => prHead("../outside.patch")).toThrow(/Invalid patch filename/);
 });
 
 test("PR participants do not receive duplicate review requests", () => {
