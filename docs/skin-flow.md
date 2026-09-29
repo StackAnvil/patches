@@ -30,6 +30,8 @@ The account screen shows category buttons and a thumbnail grid for free and owne
 
 The color editor uses native Dressing Room swatches captured with Bedrock 1.26.51. A skin tone edit changes only `skcol` in the base entry. Hair color and eye iris edits change the first value in the equipped piece's four-value `col` array. Eye eyebrow and sclera edits change the second and third values. The other color channels and account settings stay intact. The add-on checks the profile hash before each write, then reads the slot back to verify the saved recipe.
 
+The Emotes category reads the native `DressingRoom_Emotes` Store page. The player selects one of four wheel positions, then equips or removes an emote with a complete saved recipe ID. The add-on can also use the four emotes in the captured starter recipe. An empty position uses the native `{"id":"/e"}` placeholder. A native equip capture and a direct account write confirmed this four-entry layout. Catalog emotes with no complete ID remain unavailable for the same reason as other catalog pieces.
+
 The active character has a full body image from authenticated `GET /api/v1.0/profile/image/avatar`. The same service returns a GLTF binary model at `/api/v1.0/profile/image/ModelBinary`. A native hair edit changed this model from 12 meshes and two PNG textures to 13 meshes and three textures. The model can support a preview, but its texture layout is not the Bedrock login skin format.
 
 The account response contains recipes, not the assembled skin used in a world. In the captured native flow, the client downloads persona packs from the Marketplace CDN. The pack metadata needed to identify a piece variant is encrypted. The Store layout, PlayFab catalog, and native client's local catalog cache expose the pack UUID but not the full recipe piece ID. A native swap from Steve's Skin to Alex's Skin changed the base piece ID while leaving both arm fields as `wide`, so the editor cannot infer arm width from a base item's title.
@@ -47,7 +49,7 @@ A local Bedrock server captured the native client login for one default Characte
 1. Derive the full piece ID and asset metadata for catalog pieces that do not appear in a saved recipe.
 2. Verify the converted login skin and live update with a second Bedrock client on a local server. Compare several Character Creator outfits against native login captures.
 3. Find a supported source for animated face and body data, persona piece handles, and tint metadata so account characters can match the native packet.
-4. Capture and validate the write flows for other piece colors, arm width, size, and emotes, then add their controls.
+4. Capture and validate the write flows for other piece colors, arm width, and size, then add their controls. Test emote wheel changes with a second client in a world.
 5. Render body texture animations and test face and body animation together.
 
 Keep login JWTs, raw proxy flows, player textures, and account data under `.stackanvil/`. Do not commit them.
