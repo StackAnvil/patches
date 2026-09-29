@@ -9,6 +9,8 @@ description: Download StackAnvil JARs and the PrismLauncher bundle.
 
 [GitHub releases](https://github.com/StackAnvil/patches/releases) contain four StackAnvil JARs, a copy of the pinned upstream ViaFabricPlus JAR, and a PrismLauncher instance ZIP. Each JAR has a SHA-256 manifest under its local `dist/<project>/` directory.
 
+The Bedrock add-on also has project pages on [Modrinth](https://modrinth.com/mod/stackanvil-bedrock-addon) and [CurseForge](https://www.curseforge.com/minecraft/mc-mods/stackanvil-bedrock-addon-for-viafabricplus). New files on those services can remain under review. Use the matching GitHub release for the tested ViaFabricPlus pairing.
+
 ## Choose an artifact
 
 - **Server or proxy:** Download the JAR for the project you want to test.

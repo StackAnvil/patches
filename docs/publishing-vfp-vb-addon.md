@@ -2,13 +2,13 @@
 
 This guide is for StackAnvil maintainers who publish the patched ViaFabricPlus Bedrock add-on. The listing text is in [`publishing/vfp-vb-addon-description.md`](../publishing/vfp-vb-addon-description.md). After the GitHub release is created, the release workflow uploads the add-on JAR to Modrinth and CurseForge.
 
-The [private Modrinth draft](https://modrinth.com/mod/stackanvil-bedrock-addon) is owned by `pistonmaster`. Its project ID is `opL7gK2I`. It has a beta version of the verified `stack-v0.1.4` add-on JAR, with Fabric 26.3 and ViaFabricPlus marked as a required dependency. Its AI-assisted text, fork, and local skin import disclosures are saved. It uses the maintainer's hand-drawn icon and has not been submitted for review.
+The [Modrinth project](https://modrinth.com/mod/stackanvil-bedrock-addon) is owned by `pistonmaster`. Its project ID is `opL7gK2I`. It has beta versions of the add-on JAR, with Fabric 26.3 and ViaFabricPlus marked as a required dependency. Its AI-assisted text, fork, and local skin import disclosures are saved. It uses the maintainer's hand-drawn icon. Its description, website guide, and Discord invite match the CurseForge listing.
 
 The [CurseForge project](https://authors.curseforge.com/#/projects/1713307/files) is owned by `pistonmaster`. Its project ID is `1713307`. Its description, hand-drawn logo, GPLv3 license, GitHub source link, StackAnvil website, Discord invite, and required ViaFabricPlus relation are saved. Files can remain under manual review before they appear in search. Both project IDs are stored as GitHub Actions repository variables.
 
 ## Listing fields
 
-The CurseForge project uses these fields:
+Both projects use these fields. CurseForge also has a Website social link to the StackAnvil home page:
 
 | Field | Value |
 | --- | --- |
