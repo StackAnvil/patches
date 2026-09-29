@@ -10,6 +10,12 @@ Use `setup` for StackAnvil build identity, dependency routing, and compatibility
 
 Each upstreamable patch must apply after the upstreamable patches before it. The first one must apply to clean upstream without `setup`. Do not put unrelated changes in one patch.
 
+## Port Bedrock behavior
+
+Before you port a feature, confirm that the target Bedrock version has it. Record what a native Bedrock client or server does, with versioned evidence in the patch commit body or `.pr.md`. The [Bedrock source guide](docs/bedrock-development-sources.md) lists sources and ways to test behavior.
+
+Use Java events, assets, and UI to reproduce that Bedrock behavior. A Java name that fits an action better does not prove that Bedrock uses a different sound, pitch, caption, or visual result. If a change intentionally departs from Bedrock behavior, describe it as a separate compatibility change, not a Bedrock feature port.
+
 ## Edit an existing patch
 
 1. Run `bun install --frozen-lockfile`.

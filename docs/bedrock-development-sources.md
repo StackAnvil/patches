@@ -18,6 +18,14 @@ For protocol and enum work:
 
 The [preview `TextProcessingEventOrigin` page](https://mojang.github.io/bedrock-protocol-docs/1.26.60-preview.25/types/text-processing-event-origin/) shows a concrete enum renumbering in its **All builds** changelog. Use the changelog to locate a change, then check the schema for the target build.
 
+## Establish the behavior to port
+
+Confirm that the target Bedrock version has the feature before you implement it. Record what players observe and what the client or server sends. Use versioned protocol documentation, game assets, implementation code, or native captures as evidence. When these sources leave a behavior uncertain, test it in the native game.
+
+Choose Java mechanisms by their final result, not their names. For a sound, compare the audio sample, pitch, volume, and closed caption. Two Java sound events can play the same sample but show different captions. Bedrock can also use one sound name for several actions. Preserve the Bedrock result even when a more specific Java event exists.
+
+Document the evidence and any remaining uncertainty in the patch commit body or `.pr.md`. Treat an intentional departure from Bedrock behavior as a separate compatibility change, not a feature port.
+
 ## Mojang protocol reference
 
 These links cover packet shape and protocol behavior. A versioned link is a snapshot. The release index can move as Mojang publishes builds.
