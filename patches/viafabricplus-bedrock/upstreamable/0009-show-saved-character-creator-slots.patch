@@ -1,25 +1,27 @@
-From dfcfe5057ed7d5ee987e579d5672bfb1d207e49f Mon Sep 17 00:00:00 2001
+From 1f587599f8c94f14fcdea841b7be68bce52ae689 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
 
-Read the five account recipes and native Dressing Room catalog so players can select a character, browse owned pieces, and edit saved recipes. Use the native appearance PUT flow with a profile hash check and a readback for slot, piece, color, and emote changes. Keep the settings profile and unrelated recipe fields intact.
+Read the five account recipes and native Dressing Room catalog so players can select a character, browse owned pieces, and edit saved recipes. Use the native appearance PUT flow with a profile hash check and a readback for slot, piece, color, cape, and emote changes. Keep the settings profile and unrelated recipe fields intact.
 
 Create new characters with the complete starter recipe captured from Bedrock 1.26.51, or copy an existing recipe into an empty slot. Delete a character by saving its base-only recipe. Both operations follow captured native request shapes; deletion keeps another saved character active. The four-position emote wheel uses saved recipe entries and native empty placeholders.
+
+Bedrock 1.26.51 cape captures on the DressingRoom_Capes Store page and the appearance PUT flow showed that an equipped cape uses the catalog pack UUID without a piece suffix and sits before the four emote entries. A direct authenticated account test confirmed that equipping a cape adds one mesh and texture to the assembled GLTF model; the account was restored afterward.
 
 The account API returns recipes rather than a Bedrock skin packet. Fetch the active character model as GLTF, convert its meshes and textures to static Bedrock geometry and an atlas, and persist it for login. Refresh that model after active character edits. The service model has no animated face, body animation, piece handles, or tint groups, so this is a static rendering until a source for those fields is available.
 ---
  .../appearance/BedrockAppearanceStore.java    |  90 +-
- .../appearance/BedrockCharacterProfiles.java  | 849 ++++++++++++++++
- .../appearance/BedrockPersonaModel.java       | 435 +++++++++
+ .../appearance/BedrockCharacterProfiles.java  | 918 +++++++++++++++++
+ .../appearance/BedrockPersonaModel.java       | 435 ++++++++
  .../appearance/ViaFabricPlusSkinProvider.java |  20 +-
- .../screen/BedrockCharacterSlotsScreen.java   | 918 ++++++++++++++++++
+ .../screen/BedrockCharacterSlotsScreen.java   | 928 ++++++++++++++++++
  .../screen/BedrockDressingRoomScreen.java     |  34 +-
- .../viafabricplus-bedrock/lang/en_us.json     |  56 ++
+ .../viafabricplus-bedrock/lang/en_us.json     |  59 ++
  .../BedrockAppearanceStoreTest.java           |  19 +
- .../BedrockCharacterProfilesTest.java         | 289 ++++++
+ .../BedrockCharacterProfilesTest.java         | 337 +++++++
  .../appearance/BedrockPersonaModelTest.java   |  86 ++
- 10 files changed, 2773 insertions(+), 23 deletions(-)
+ 10 files changed, 2903 insertions(+), 23 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaModel.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
@@ -208,10 +210,10 @@ index 45c0814..194de18 100644
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
 new file mode 100644
-index 0000000..aaf009d
+index 0000000..7fdd59a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
-@@ -0,0 +1,849 @@
+@@ -0,0 +1,918 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -238,6 +240,7 @@ index 0000000..aaf009d
 +import java.util.Map;
 +import java.util.UUID;
 +import java.util.concurrent.CompletableFuture;
++import java.util.regex.Pattern;
 +import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
 +
 +/** Reads the five Character Creator recipes saved to a Bedrock account. */
@@ -317,6 +320,7 @@ index 0000000..aaf009d
 +    private static final URI STORE = URI.create("https://store.mktpl.minecraft-services.net/api/v2.0/layout/pages/");
 +    private static final URI AVATAR = URI.create("https://persona-secondary.franchise.minecraft-services.net/api/v1.0/profile/image/avatar");
 +    private static final URI MODEL = URI.create("https://persona-secondary.franchise.minecraft-services.net/api/v1.0/profile/image/ModelBinary");
++    private static final Pattern CAPE_ID = Pattern.compile("[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}");
 +    private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
 +
 +    private BedrockCharacterProfiles() {
@@ -378,6 +382,14 @@ index 0000000..aaf009d
 +                                                                       final boolean remove) {
 +        return updateProfile(account, slotNumber, expectedProfileHash,
 +            current -> emoteChangeRequest(current, slotNumber, categoryItems, selectedItem, wheelSlot, remove));
++    }
++
++    public static CompletableFuture<AccountWardrobe> changeCape(final BedrockAuthManager account, final int slotNumber,
++                                                                  final String expectedProfileHash,
++                                                                  final List<WardrobeItem> categoryItems,
++                                                                  final WardrobeItem selectedItem, final boolean remove) {
++        return updateProfile(account, slotNumber, expectedProfileHash,
++            current -> capeChangeRequest(current, slotNumber, categoryItems, selectedItem, remove));
 +    }
 +
 +    public static CompletableFuture<AccountWardrobe> changeColor(final BedrockAuthManager account, final int slotNumber,
@@ -643,6 +655,64 @@ index 0000000..aaf009d
 +        return editRequest(wardrobe, slotNumber, edited);
 +    }
 +
++    static JsonObject capeChangeRequest(final AccountWardrobe wardrobe, final int slotNumber,
++                                        final List<WardrobeItem> categoryItems, final WardrobeItem selectedItem,
++                                        final boolean remove) throws IOException {
++        if (slotNumber < 1 || slotNumber > wardrobe.slots().size() || !categoryItems.contains(selectedItem)
++            || categoryItems.stream().anyMatch(item -> !"persona_capes".equals(item.type()))) {
++            throw new IOException("Invalid cape selection");
++        }
++        final Slot target = wardrobe.slots().get(slotNumber - 1);
++        if (!target.occupied()) {
++            throw new IOException("Create a character before editing its cape");
++        }
++        final JsonObject edited = target.profile().deepCopy();
++        final JsonObject collection = object(edited, "personaCollection");
++        final JsonArray entries = array(collection, "universalApp");
++        int existing = -1;
++        for (int index = 0; index < entries.size(); index++) {
++            if (entries.get(index).isJsonObject()
++                && CAPE_ID.matcher(string(entries.get(index).getAsJsonObject(), "id")).matches()) {
++                if (existing >= 0) {
++                    throw new IOException("This character has multiple saved capes");
++                }
++                existing = index;
++            }
++        }
++        if (remove) {
++            if (existing < 0 || !selectedItem.matches(string(entries.get(existing).getAsJsonObject(), "id"))) {
++                throw new IOException("This cape is not equipped in the selected character");
++            }
++            entries.remove(existing);
++        } else {
++            if (!CAPE_ID.matcher(selectedItem.packId()).matches()) {
++                throw new IOException("This cape has no complete pack ID");
++            }
++            if (existing >= 0 && selectedItem.matches(string(entries.get(existing).getAsJsonObject(), "id"))) {
++                throw new IOException("This cape is already equipped");
++            }
++            final JsonObject cape = new JsonObject();
++            cape.addProperty("id", selectedItem.packId());
++            if (existing >= 0) {
++                entries.set(existing, cape);
++            } else {
++                final int emotes = emoteStart(entries, List.of());
++                final int insertion = emotes < 0 ? entries.size() : emotes;
++                final JsonArray reordered = new JsonArray();
++                for (int index = 0; index <= entries.size(); index++) {
++                    if (index == insertion) {
++                        reordered.add(cape);
++                    }
++                    if (index < entries.size()) {
++                        reordered.add(entries.get(index).deepCopy());
++                    }
++                }
++                collection.add("universalApp", reordered);
++            }
++        }
++        return editRequest(wardrobe, slotNumber, edited);
++    }
++
 +    public static List<String> emoteIds(final Slot slot, final List<WardrobeItem> categoryItems) {
 +        final JsonArray entries = array(object(slot.profile(), "personaCollection"), "universalApp");
 +        final int start = emoteStart(entries, categoryItems);
@@ -686,7 +756,7 @@ index 0000000..aaf009d
 +        int start = entries.size();
 +        while (start > 0 && entries.get(start - 1).isJsonObject()) {
 +            final String id = string(entries.get(start - 1).getAsJsonObject(), "id");
-+            if (!"/e".equals(id) && !id.endsWith("/de")
++            if (!id.endsWith("/e") && !id.endsWith("/de")
 +                && categoryItems.stream().noneMatch(item -> item.matches(id))) {
 +                break;
 +            }
@@ -1031,6 +1101,7 @@ index 0000000..aaf009d
 +        FOOTWEAR("DressingRoom_Footwears", "Footwear"),
 +        FACE_ITEMS("DressingRoom_FaceItems", "Face items"),
 +        BACK_ITEMS("DressingRoom_BackItems", "Back items"),
++        CAPES("DressingRoom_Capes", "Capes"),
 +        EMOTES("DressingRoom_Emotes", "Emotes");
 +
 +        private final String page;
@@ -1540,10 +1611,10 @@ index 41713cf..e44f8fc 100644
              ViaFabricPlusBedrock.impl().logger().warn("Could not load the selected Bedrock appearance; using Steve", e);
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
 new file mode 100644
-index 0000000..ac99b82
+index 0000000..6bd0c8a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
-@@ -0,0 +1,918 @@
+@@ -0,0 +1,928 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1838,7 +1909,8 @@ index 0000000..ac99b82
 +        } else if (this.isSaved(item)) {
 +            graphics.textWithWordWrap(this.font, Component.translatable(this.category == Category.EMOTES
 +                    ? "bedrock_character_slots.viafabricplus.emote_available"
-+                    : "bedrock_character_slots.viafabricplus.saved_piece"),
++                    : this.category == Category.CAPES ? "bedrock_character_slots.viafabricplus.cape_available"
++                        : "bedrock_character_slots.viafabricplus.saved_piece"),
 +                detailLeft, top + 152, statusWidth, ACCENT_COLOR);
 +        } else {
 +            graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.catalog_only"),
@@ -1958,7 +2030,7 @@ index 0000000..ac99b82
 +
 +    private boolean isSaved(final WardrobeItem item) {
 +        return this.wardrobe.slots().stream().anyMatch(slot -> this.isEquipped(item, slot))
-+            || BedrockCharacterProfiles.hasStarterEmote(item);
++            || BedrockCharacterProfiles.hasStarterEmote(item) || this.category == Category.CAPES;
 +    }
 +
 +    private boolean isEquippedHere(final WardrobeItem item, final Slot slot) {
@@ -2161,15 +2233,22 @@ index 0000000..ac99b82
 +            final WardrobeItem item = this.items.get(this.selectedItem);
 +            final Slot slot = this.wardrobe.slots().get(this.selectedSlot);
 +            final boolean equipped = this.isEquippedHere(item, slot);
-+            this.editPiece.setMessage(Component.translatable(equipped
-+                ? this.category == Category.EMOTES ? "bedrock_character_slots.viafabricplus.remove_emote"
-+                    : "bedrock_character_slots.viafabricplus.remove_piece"
-+                : this.category == Category.EMOTES ? "bedrock_character_slots.viafabricplus.use_emote"
-+                    : "bedrock_character_slots.viafabricplus.use_piece"));
++            this.editPiece.setMessage(Component.translatable(this.pieceActionLabel(equipped)));
 +            this.editPiece.active = !this.saving && slot.occupied() && (equipped || this.isSaved(item));
 +        } else {
 +            this.editPiece.active = false;
 +        }
++    }
++
++    private String pieceActionLabel(final boolean equipped) {
++        return switch (this.category) {
++            case EMOTES -> equipped ? "bedrock_character_slots.viafabricplus.remove_emote"
++                : "bedrock_character_slots.viafabricplus.use_emote";
++            case CAPES -> equipped ? "bedrock_character_slots.viafabricplus.remove_cape"
++                : "bedrock_character_slots.viafabricplus.use_cape";
++            default -> equipped ? "bedrock_character_slots.viafabricplus.remove_piece"
++                : "bedrock_character_slots.viafabricplus.use_piece";
++        };
 +    }
 +
 +    private void changePiece() {
@@ -2190,6 +2269,8 @@ index 0000000..ac99b82
 +        final var operation = this.category == Category.EMOTES
 +            ? BedrockCharacterProfiles.changeSavedEmote(account, slot.number(), slot.profileHash(),
 +                this.items, item, this.selectedEmoteSlot, remove)
++            : this.category == Category.CAPES
++                ? BedrockCharacterProfiles.changeCape(account, slot.number(), slot.profileHash(), this.items, item, remove)
 +            : BedrockCharacterProfiles.changeSavedPiece(account, slot.number(), slot.profileHash(), this.items, item, remove);
 +        operation
 +            .whenComplete((loaded, error) -> this.minecraft.execute(() -> {
@@ -2537,7 +2618,7 @@ index a5d7187..c142e59 100644
          this.modelButton.active = appearance.selection() == Selection.CUSTOM;
          this.modelButton.setMessage(Component.translatable(appearance.effectiveSlim()
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
-index 4a503d3..60c90fd 100644
+index 4a503d3..d42ea30 100644
 --- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 +++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 @@ -27,6 +27,7 @@
@@ -2548,7 +2629,7 @@ index 4a503d3..60c90fd 100644
    "screen.viafabricplus.accept_invite": "Accept an invitation code",
  
    "bedrock_dressing_room.viafabricplus.steve": "Steve",
-@@ -45,9 +46,64 @@
+@@ -45,9 +46,67 @@
    "bedrock_dressing_room.viafabricplus.pack_skin_number": "Skin %s of %s",
    "bedrock_dressing_room.viafabricplus.import_cape": "Import cape",
    "bedrock_dressing_room.viafabricplus.remove_cape": "Remove cape",
@@ -2583,6 +2664,9 @@ index 4a503d3..60c90fd 100644
 +  "bedrock_character_slots.viafabricplus.emote_wheel": "Emote wheel: position %s",
 +  "bedrock_character_slots.viafabricplus.emote_equipped": "Equipped in position %s",
 +  "bedrock_character_slots.viafabricplus.emote_available": "Available for this wheel position",
++  "bedrock_character_slots.viafabricplus.cape_available": "Available to equip",
++  "bedrock_character_slots.viafabricplus.use_cape": "Equip cape",
++  "bedrock_character_slots.viafabricplus.remove_cape": "Remove cape",
 +  "bedrock_character_slots.viafabricplus.skin_tone": "Skin tone",
 +  "bedrock_character_slots.viafabricplus.hair_color": "Hair color",
 +  "bedrock_character_slots.viafabricplus.iris_color": "Iris color",
@@ -2645,10 +2729,10 @@ index ccb842c..608ea68 100644
              _ -> new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB));
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java
 new file mode 100644
-index 0000000..6775c03
+index 0000000..311caf8
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java
-@@ -0,0 +1,289 @@
+@@ -0,0 +1,337 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import com.google.gson.JsonObject;
@@ -2718,15 +2802,19 @@ index 0000000..6775c03
 +                "ownership":"NotOwned","packIdentity":[{"type":"persona_piece","uuid":"pack-paid"}]},
 +              {"id":"owned","contentType":"PersonaDurable","title":"Owned Hat","pieceType":"persona_head",
 +                "thumbnail":{"url":"https://example.test/owned.png"},"price":{"listPrice":120},
-+                "ownership":"Owned","packIdentity":[{"type":"persona_piece","uuid":"pack-owned"}]}
++                "ownership":"Owned","packIdentity":[{"type":"persona_piece","uuid":"pack-owned"}]},
++              {"id":"cape","contentType":"PersonaDurable","title":"Owned Cape","pieceType":"persona_capes",
++                "thumbnail":{"url":"https://example.test/cape.png"},"price":null,
++                "ownership":"Purchased","packIdentity":[{"type":"persona_piece","uuid":"pack-cape"}]}
 +            ]}]}]}]}}
 +            """).getAsJsonObject();
 +
 +        final var items = BedrockCharacterProfiles.catalogItems(response);
-+        assertEquals(2, items.size());
++        assertEquals(3, items.size());
 +        assertEquals("pack-free", items.getFirst().packId());
 +        assertEquals("https://example.test/hat.png", items.getFirst().thumbnailUrl());
 +        assertEquals("pack-owned", items.get(1).packId());
++        assertEquals("pack-cape", items.get(2).packId());
 +    }
 +
 +    @Test
@@ -2935,6 +3023,50 @@ index 0000000..6775c03
 +            .getAsJsonObject("personaCollection").getAsJsonArray("universalApp");
 +        assertEquals("/e", removed.get(2).getAsJsonObject().get("id").getAsString());
 +        assertEquals("body/d", removed.get(1).getAsJsonObject().get("id").getAsString());
++    }
++
++    @Test
++    void putsCatalogCapesBeforeEmotesAndReplacesTheEquippedCape() throws Exception {
++        final JsonObject profiles = JsonParser.parseString("""
++            {"result":[
++              {"slotname":"personaProfile1","version":"0.1.0","profileHash":"first","personaCollection":{"universalApp":[
++                {"arm":"wide","skin":false},{"id":"body/d"},{"id":"emote/de"},
++                {"id":"/e"},{"id":"/e"},{"id":"/e"}]}},
++              {"slotname":"personaProfile2","version":"0.1.0","profileHash":"second","personaCollection":{"universalApp":[
++                {"arm":"wide","skin":false},{"id":"body/d"},
++                {"id":"11111111-1111-4111-8111-111111111111"}]}},
++              {"slotname":"personaProfile3","version":"0.1.0","personaCollection":{"universalApp":[]}},
++              {"slotname":"personaProfile4","version":"0.1.0","personaCollection":{"universalApp":[]}},
++              {"slotname":"personaProfile5","version":"0.1.0","personaCollection":{"universalApp":[]}},
++              {"slotname":"personaProfile","version":"0.1.0","personaCollection":{"universalApp":[
++                {"lastUsedPersonaSlot":"persona_profile_persona1"}]}}
++            ]}
++            """).getAsJsonObject();
++        final var wardrobe = BedrockCharacterProfiles.parse(profiles);
++        final var first = new BedrockCharacterProfiles.WardrobeItem("first", "First cape", "persona_capes", "",
++            "11111111-1111-4111-8111-111111111111");
++        final var second = new BedrockCharacterProfiles.WardrobeItem("second", "Second cape", "persona_capes", "",
++            "22222222-2222-4222-8222-222222222222");
++        final var category = List.of(first, second);
++
++        final var inserted = BedrockCharacterProfiles.capeChangeRequest(wardrobe, 1, category, second, false)
++            .getAsJsonArray("appearanceObjects").get(1).getAsJsonObject().getAsJsonObject("personaAppearance")
++            .getAsJsonObject("personaCollection").getAsJsonArray("universalApp");
++        assertEquals("22222222-2222-4222-8222-222222222222", inserted.get(2).getAsJsonObject().get("id").getAsString());
++        assertEquals("emote/de", inserted.get(3).getAsJsonObject().get("id").getAsString());
++
++        final var replaced = BedrockCharacterProfiles.capeChangeRequest(wardrobe, 2, category, second, false)
++            .getAsJsonArray("appearanceObjects").get(1).getAsJsonObject().getAsJsonObject("personaAppearance")
++            .getAsJsonObject("personaCollection").getAsJsonArray("universalApp");
++        assertEquals(3, replaced.size());
++        assertEquals("22222222-2222-4222-8222-222222222222", replaced.get(2).getAsJsonObject().get("id").getAsString());
++
++        final var removed = BedrockCharacterProfiles.capeChangeRequest(wardrobe, 2, category, first, true)
++            .getAsJsonArray("appearanceObjects").get(1).getAsJsonObject().getAsJsonObject("personaAppearance")
++            .getAsJsonObject("personaCollection").getAsJsonArray("universalApp");
++        assertEquals(2, removed.size());
++        assertEquals("body/d", removed.get(1).getAsJsonObject().get("id").getAsString());
++        assertEquals("11111111-1111-4111-8111-111111111111", wardrobe.slots().get(1).pieceIds().getLast());
 +    }
 +
 +}

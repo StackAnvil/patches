@@ -18,7 +18,7 @@ The Dressing Room selects Steve, Alex, an imported PNG, or a skin from a local `
 
 ## Saved Character Creator slots
 
-The account screen reads five character slots and the account settings profile from `GET /api/v1.0/appearance/retrieve`. It keeps each complete recipe, including base fields, piece colors, version, and profile hash. The wardrobe reads the same `DressingRoom_*` Store layout pages that the native client uses. Each layout gives piece names, thumbnails, categories, prices, and pack UUIDs. The pack UUID matches the first 36 characters of a saved recipe piece ID.
+The account screen reads five character slots and the account settings profile from `GET /api/v1.0/appearance/retrieve`. It keeps each complete recipe, including base fields, piece colors, version, and profile hash. The wardrobe reads the same `DressingRoom_*` Store layout pages that the native client uses. Each layout gives piece names, thumbnails, categories, prices, and pack UUIDs. For clothing and emotes, the pack UUID matches the first 36 characters of a saved recipe piece ID. A saved cape uses the pack UUID alone.
 
 The player can choose an active slot. The add-on sends the settings profile and selected recipe together in `PUT /api/v1.0/appearance`. It changes only `lastUsedPersonaSlot` in the settings profile. After the write, it reads the profiles again to check the active slot.
 
@@ -31,6 +31,8 @@ The account screen shows category buttons and a thumbnail grid for free and owne
 The color editor uses native Dressing Room swatches captured with Bedrock 1.26.51. A skin tone edit changes only `skcol` in the base entry. Hair color and eye iris edits change the first value in the equipped piece's four-value `col` array. Eye eyebrow and sclera edits change the second and third values. The other color channels and account settings stay intact. The add-on checks the profile hash before each write, then reads the slot back to verify the saved recipe.
 
 The Emotes category reads the native `DressingRoom_Emotes` Store page. The player selects one of four wheel positions, then equips or removes an emote with a complete saved recipe ID. The add-on can also use the four emotes in the captured starter recipe. An empty position uses the native `{"id":"/e"}` placeholder. A native equip capture and a direct account write confirmed this four-entry layout. Catalog emotes with no complete ID remain unavailable for the same reason as other catalog pieces.
+
+The Capes category reads `DressingRoom_Capes`. The player can equip any free or owned cape in that catalog, replace an equipped cape, or remove it. Two native Bedrock 1.26.51 equip captures showed that the saved cape entry contains only the catalog pack UUID. It sits before the four emote entries. An authenticated account test confirmed that adding a cape changed the assembled model from 12 meshes and two textures to 13 meshes and three textures. The account was restored after the test. Cape appearance in a world still needs a second-client check.
 
 The active character has a full body image from authenticated `GET /api/v1.0/profile/image/avatar`. The same service returns a GLTF binary model at `/api/v1.0/profile/image/ModelBinary`. A native hair edit changed this model from 12 meshes and two PNG textures to 13 meshes and three textures. The model can support a preview, but its texture layout is not the Bedrock login skin format.
 
