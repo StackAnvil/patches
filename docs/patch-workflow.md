@@ -22,7 +22,7 @@ The [PaperSpigot 1.8.8 apply script](https://github.com/PaperMC/Paper-archive/bl
 | Keep generated headers out of review noise | `stack rebuild` leaves a patch file alone when only its generated commit ID or Git version footer changed. |
 | Keep failed apply state for repair | `stack sync` saves an apply session. Resolve and stage a conflict, then run `stack continue`. Run `stack abort` to discard the failed apply. |
 | Patch notes in commit messages | Put the purpose and maintenance details in the commit body. They remain in the exported patch and become the PR change summary. `stack add` requires a body, and `stack rebuild` keeps the series title aligned with the commit subject. |
-| Independently test an upstreamable patch | `bun run pr check <project>` applies only the first upstreamable patch to clean upstream. CI checks that path for projects with a north-star patch. |
+| Independently test an upstreamable patch | `bun run pr check <project>` applies the first patch to clean upstream. Add `--patch <file>` to check another patch. |
 
 StackAnvil keeps `setup`, `upstreamable`, and `deferred` separate in `series.json`. Full builds apply them in that order. Setup prepares StackAnvil builds. Upstreamable patches can become focused PRs. Deferred patches track work that another contributor already owns upstream, with a reason and PR link for each entry. The PR checkout applies only the first upstreamable patch to the pinned upstream base. The exact patch filenames and order come from `series.json`; rebuilding does not renumber them.
 
@@ -39,7 +39,17 @@ bun run pr check viabedrock
 bun run build viabedrock
 ```
 
-When the first upstreamable patch is ready for upstream, add a non-empty `upstreamable/<patch-name>.pr.md` beside its `.patch` file. Use it for PR context, review guidance, and testing steps that do not belong in the commit message. Inspect the combined text with `bun run pr body <project>`. A maintainer uses `bun run pr sync <project>` to update the fork's north-star branch and its draft PR. The command checks the commit description and PR extra body before pushing. Later upstreamable patches stay in the full stack until earlier changes land upstream.
+Before opening a PR, add a non-empty `.pr.md` file beside its `.patch` file. Use it for evidence, review guidance, and test results that do not belong in the commit message. Run `bun run pr body <project>` to inspect the first patch's PR text. Run `bun run pr sync <project>` to update the fork's north-star branch and its PR.
+
+To open another upstreamable patch as a separate PR, select its filename with `--patch`. The selected patch must apply alone to the pinned upstream base. The tool uses a separate checkout and fork branch for each patch. It checks for one PR commit before it pushes. The default command still selects the first patch.
+
+```bash
+bun run pr check viabedrock --patch 0006-encode-26-3-game-modes-correctly.patch
+bun run pr body viabedrock --patch 0006-encode-26-3-game-modes-correctly.patch
+bun run pr sync viabedrock --patch 0006-encode-26-3-game-modes-correctly.patch
+```
+
+Use the same `--patch` option with `pr build` and `pr assign`. If a selected patch conflicts with upstream, use `bun run stack continue <project> --pr --patch <file>` after you resolve and stage the conflict. Use `stack abort` with the same options to discard that apply.
 
 ## PR assignees and reviewers
 
@@ -52,7 +62,7 @@ When the first upstreamable patch is ready for upstream, add a non-empty `upstre
 | ViaProxy | `RaphiMC` (RK_01) |
 | CubeConverter | `oryxel1` |
 
-Draft PRs receive assignees. Review requests wait until the PR is ready; then run `bun run pr assign <project>` or `bun run pr sync <project>`. Assignment needs upstream triage or write access. Review requests need upstream write access. The command reports actions it could not complete, so an upstream maintainer can finish them.
+Draft PRs receive assignees. Review requests wait until the PR is ready; then run `bun run pr assign <project>` or `bun run pr sync <project>`. Add `--patch <file>` to target a standalone PR. Assignment needs upstream triage or write access. Review requests need upstream write access. The command reports actions it could not complete, so an upstream maintainer can finish them.
 
 ## Conflict recovery
 
