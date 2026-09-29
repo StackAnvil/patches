@@ -6,6 +6,10 @@ StackAnvil is a place to test changes across ViaBedrock, viafabricplus-bedrock, 
 
 We welcome bug reports, test results, and patches. You do not need to work on all four patch targets. Start with the project you know.
 
+## Play from Java Edition
+
+Use the [player guide](https://stackanvil.pistonmaster.net/getting-started/) to run the StackAnvil ViaProxy JAR beside a regular Java client, or install the matching ViaFabricPlus and Bedrock add-on JARs in a Fabric client. The [latest release](https://github.com/StackAnvil/patches/releases/latest) has all three JARs. An optional Prism Launcher ZIP provides a prepared Fabric client.
+
 ## How the stack works
 
 Each project has three ordered groups in `patches/<project>/series.json`:
@@ -39,7 +43,7 @@ The ViaFabricPlus pin is in [`viafabricplus.json`](viafabricplus.json). It recor
 
 To update the pin, choose a successful Jenkins build for the target Minecraft version. Record its commit, version, and artifact checksums in `viafabricplus.json`. Check that the Maven API JAR matches the API JAR embedded in the Jenkins JAR. Then run `bun run build viafabricplus-bedrock` and `bun run bundle`. The add-on gets its ViaFabricPlus version from the pin.
 
-Run `bun run bundle` after `bun run build all` to make a PrismLauncher instance ZIP with the two Fabric mods. Import that ZIP in PrismLauncher to try the Java client. The add-on embeds the StackAnvil ViaBedrock and CubeConverter JARs. Our [capture lab guide](docs/capture-lab.md) explains the local server, ViaProxy, Bedrock client, Java client, screenshots, and private HTTPS capture workflow. The lab keeps both game windows off your active desktop and sets their master volume to zero.
+Run `bun run bundle` after `bun run build all` to make the optional Prism Launcher instance ZIP with the two Fabric mods. The add-on embeds the StackAnvil ViaBedrock and CubeConverter JARs. Our [capture lab guide](docs/capture-lab.md) explains the local server, ViaProxy, Bedrock client, Java client, screenshots, and private HTTPS capture workflow. The lab keeps both game windows off your active desktop and sets their master volume to zero.
 
 Use `bun run stack status <project>` to see its pinned upstream commit and patch order. Run `bun run build viaproxy` to build the patched proxy and its dependencies. Use `bun run dev:setup` to prepare mitmproxy and check your Bedrock server and client paths. The [development guide](docs/development.md) explains traffic capture and manual tests.
 

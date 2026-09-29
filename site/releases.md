@@ -2,26 +2,29 @@
 layout: default
 title: Downloads
 nav_order: 3
-description: Choose the StackAnvil client ZIP or individual JARs from a matching release.
+description: Get ViaProxy or the matching ViaFabricPlus and Bedrock add-on JARs from a StackAnvil release.
 ---
 
 # Download StackAnvil
 
-Start with the [latest StackAnvil release on GitHub](https://github.com/StackAnvil/patches/releases/latest). Open **Assets** to see the files. Keep files from the same release together because the client and add-on are tested as a pair.
+Open **Assets** on the [latest StackAnvil release on GitHub](https://github.com/StackAnvil/patches/releases/latest). Choose one of the two ways to play below. The [player guide]({{ '/getting-started/' | relative_url }}) has setup and connection steps.
 
-## I want to play from Java Edition
+## ViaProxy: use your regular Java client
 
-Download the ZIP whose name ends in `Prism-Launcher_Config.zip`. Import it into [Prism Launcher](https://prismlauncher.org/download/) as an instance. It already contains ViaFabricPlus and the StackAnvil Bedrock add-on. Follow the [player guide]({{ '/getting-started/' | relative_url }}) for the full steps.
+Download `ViaProxy-...-StackAnvil.jar`. Run it as a separate app, enter the Bedrock server address and version, then join the address it shows from Minecraft Java Edition. You do not need client mods. This JAR includes the patched ViaBedrock build.
 
-## I already have a Fabric client
+## ViaFabricPlus + Bedrock add-on: use a Fabric client
 
-From the **same release**, install the `ViaFabricPlus-...jar` and `viafabricplus-bedrock-...-StackAnvil.jar` files in your client's mods folder. Match the Minecraft version shown on the release. Keep only one ViaFabricPlus JAR in that folder.
+Download **both** `ViaFabricPlus-...jar` and `viafabricplus-bedrock-...-StackAnvil.jar` from the **same release**. Install Fabric Loader for the Minecraft version shown on that release and put both JARs in the client's `mods` folder. Keep only one ViaFabricPlus JAR there.
 
-The add-on already contains its patched ViaBedrock and CubeConverter libraries. Do not install those library JARs as separate Fabric mods. [Modrinth](https://modrinth.com/mod/stackanvil-bedrock-addon) and [CurseForge](https://www.curseforge.com/minecraft/mc-mods/stackanvil-bedrock-addon-for-viafabricplus) also list the add-on, but new files there can still be under review. The matching GitHub release has the tested pair.
+The add-on includes its patched ViaBedrock and CubeConverter libraries. Do not install those library JARs as separate Fabric mods. [Modrinth](https://modrinth.com/mod/stackanvil-bedrock-addon) and [CurseForge](https://www.curseforge.com/minecraft/mc-mods/stackanvil-bedrock-addon-for-viafabricplus) also list the add-on, but new files there can still be under review. The matching GitHub release has the tested pair.
 
-## I run a server or build against the patches
+## Optional: prepared Prism Launcher client
 
-- **ViaProxy:** Download its StackAnvil JAR to test the patched proxy. It embeds the patched ViaBedrock build.
+If you want a prepackaged Fabric client, download the ZIP ending in `Prism-Launcher_Config.zip` and import it into [Prism Launcher](https://prismlauncher.org/download/). It contains the tested ViaFabricPlus and Bedrock add-on pair. You still need your own Minecraft Java Edition account.
+
+## Libraries and builds
+
 - **ViaBedrock and CubeConverter:** Download their JARs if you need those libraries for a project. They are not standalone Fabric mods.
 - **Maven dependencies:** Use the [StackAnvil Maven repository](https://github.com/StackAnvil/maven) for patched artifacts. Get ViaFabricPlus from [upstream Maven](https://repo.viaversion.com/com/viaversion/viafabricplus/).
 

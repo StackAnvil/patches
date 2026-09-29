@@ -24,7 +24,7 @@ Some Bedrock behavior remains experimental. Test this build before you rely on i
 ## Guides and support
 
 - [StackAnvil website](https://stackanvil.pistonmaster.net/): project overview and patch stacks.
-- [Player guide](https://stackanvil.pistonmaster.net/getting-started/): import the PrismLauncher bundle and join Bedrock worlds.
+- [Player guide](https://stackanvil.pistonmaster.net/getting-started/): install ViaFabricPlus and this add-on, then join Bedrock worlds.
 - [Build from source](https://stackanvil.pistonmaster.net/build-from-source/): compile the patch stack.
 - [Downloads](https://stackanvil.pistonmaster.net/releases/): JARs and the Prism Launcher bundle.
 - [Discord](https://discord.gg/F4ZyEtXXge): questions and community discussion.
