@@ -28,15 +28,19 @@ The color editor uses the native Dressing Room swatches captured with Bedrock 1.
 
 The active character has a full body image from authenticated `GET /api/v1.0/profile/image/avatar`. The same service returns a GLTF binary model at `/api/v1.0/profile/image/ModelBinary`. A native hair edit changed this model from 12 meshes and two PNG textures to 13 meshes and three textures. The model can support a preview, but its texture layout is not the Bedrock login skin format.
 
-The account response contains recipes, not the assembled skin used in a world. In the captured native flow, the client downloads persona packs from the Marketplace CDN. The outer ZIP contains a second ZIP with encrypted asset files. The Store layout and PlayFab catalog do not expose the full recipe piece ID. The profile GLTF endpoint returns an assembled preview model, but it does not return the full login packet data.
+The account response contains recipes, not the assembled skin used in a world. In the captured native flow, the client downloads persona packs from the Marketplace CDN. The outer ZIP contains a second ZIP with encrypted asset files. The Store layout and PlayFab catalog do not expose the full recipe piece ID.
 
-A local Bedrock server captured the native client login for one default Character Creator slot. Its client data contained a 256×256 RGBA atlas, Bedrock geometry with 10 body poly meshes and a separate animated face geometry, nine persona pieces, three tint groups, and an animated image. VFP still sends the selected classic skin at login. A conversion from the service model or a supported source for the original persona assets must produce all of those fields before an account character can replace it.
+The **Use in worlds** action downloads the active character's assembled GLTF model. The add-on packs its PNG textures into a Bedrock skin atlas and converts its triangle meshes into static Bedrock geometry. It saves the result per account and sends it in the next login JWT. If the player is already in a Bedrock world, it also requests a live `PlayerSkinPacket` update. Selecting another saved slot or editing the active character refreshes the stored model. Choosing Steve, Alex, or an imported classic skin in the Dressing Room selects that skin instead.
+
+This conversion preserves the model's visible static shape and textures. The profile model does not include the native client's animated face image, body animation, persona piece handles, or tint metadata. The add-on sends empty piece and tint lists for the converted model. Local tests confirmed that the renderer accepts converted models from the captured default and hair-edited characters, and that the skin packet codec round-trips the converted skin. A second client still needs to confirm how servers relay and display it.
+
+A local Bedrock server captured the native client login for one default Character Creator slot. Its client data contained a 256×256 RGBA atlas, Bedrock geometry with 10 body poly meshes and a separate animated face geometry, nine persona pieces, three tint groups, and an animated image. The converted model is a static approximation of this packet.
 
 ## Work still needed
 
 1. Derive the full piece ID and asset metadata for catalog pieces that do not appear in a saved recipe.
-2. Convert the profile GLTF model into a Bedrock skin atlas and geometry, or find a supported source for the original persona assets. Compare the result with several native login captures.
-3. Send the assembled character in the login JWT and live skin packet. Verify it with a second Bedrock client.
+2. Verify the converted login skin and live update with a second Bedrock client on a local server. Compare several Character Creator outfits against native login captures.
+3. Find a supported source for animated face and body data, persona piece handles, and tint metadata so account characters can match the native packet.
 4. Capture and validate the write flows for other piece colors, arm width, size, and emotes, then add their controls.
 5. Render body texture animations and test face and body animation together.
 

@@ -1,28 +1,223 @@
-From 5716d95bdee175392d0a7458dfe090b28aa5f472 Mon Sep 17 00:00:00 2001
+From a0e096c0a1f9c4587d380f802ba1ce8d47110ce2 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
-Subject: [PATCH] feat(bedrock): show saved Character Creator slots
+Subject: [PATCH] feat(bedrock): manage Character Creator characters
 
-Bedrock stores five character recipes separately from the classic skin selected for login. Read those recipes and Marketplace entitlements for the signed-in account, then resolve owned persona catalog items for names and thumbnails. Load the catalog after the slots so a slow wardrobe request does not hold back saved characters. A recipe alone is not an assembled skin, so this screen does not equip it.
+Read the five account recipes and native Dressing Room catalog so players can
+select a character, browse owned pieces, and edit saved recipes. Use the native
+appearance PUT flow with a profile hash check and a readback for slot, piece,
+and color changes. Keep the settings profile and unrelated recipe fields intact.
 
-Use the compact add-on heading and start the slot controls below it. The old layout reserved space for search and tabs that this screen does not have.
+The account API returns recipes rather than a Bedrock skin packet. Fetch the
+active character's assembled GLTF model, convert its meshes and textures to
+static Bedrock geometry and an atlas, and persist it for login. Refresh that
+model after active character edits. The service model has no animated face,
+body animation, piece handles, or tint groups, so this is a static rendering
+until a source for those fields is available.
 ---
- .../appearance/BedrockCharacterProfiles.java  | 556 +++++++++++++++++
- .../screen/BedrockCharacterSlotsScreen.java   | 565 ++++++++++++++++++
- .../screen/BedrockDressingRoomScreen.java     |   4 +-
- .../viafabricplus-bedrock/lang/en_us.json     |  39 ++
- .../BedrockCharacterProfilesTest.java         | 137 +++++
- 5 files changed, 1300 insertions(+), 1 deletion(-)
+ .../appearance/BedrockAppearanceStore.java    |  90 ++-
+ .../appearance/BedrockCharacterProfiles.java  | 595 ++++++++++++++++
+ .../appearance/BedrockPersonaModel.java       | 435 ++++++++++++
+ .../appearance/ViaFabricPlusSkinProvider.java |  20 +-
+ .../screen/BedrockCharacterSlotsScreen.java   | 661 ++++++++++++++++++
+ .../screen/BedrockDressingRoomScreen.java     |  34 +-
+ .../viafabricplus-bedrock/lang/en_us.json     |  44 ++
+ .../BedrockAppearanceStoreTest.java           |  19 +
+ .../BedrockCharacterProfilesTest.java         | 137 ++++
+ .../appearance/BedrockPersonaModelTest.java   |  86 +++
+ 10 files changed, 2098 insertions(+), 23 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaModel.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaModelTest.java
 
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
+index 45c0814..194de18 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
+@@ -28,6 +28,7 @@ import java.nio.file.AtomicMoveNotSupportedException;
+ import java.nio.file.Files;
+ import java.nio.file.Path;
+ import java.nio.file.StandardCopyOption;
++import java.util.List;
+ import java.util.UUID;
+ import java.util.function.Function;
+ import javax.imageio.ImageIO;
+@@ -42,6 +43,8 @@ public final class BedrockAppearanceStore {
+ 
+     private static final String METADATA = "appearance.json";
+     private static final String CUSTOM_SKIN = "skin.png";
++    private static final String PERSONA_ATLAS = "persona-atlas.png";
++    private static final String PERSONA_MODEL = "persona-model.json";
+     private static final String CAPE = "cape.png";
+     private static final int MAX_FILE_BYTES = 8 * 1024 * 1024;
+ 
+@@ -72,6 +75,7 @@ public final class BedrockAppearanceStore {
+         boolean slim = false;
+         String skinId = "";
+         String capeId = "";
++        Persona persona = null;
+         final Path metadata = directory.resolve(METADATA);
+         if (Files.isRegularFile(metadata)) {
+             try {
+@@ -90,16 +94,37 @@ public final class BedrockAppearanceStore {
+             case ALEX -> this.presets.apply(Selection.ALEX);
+             case CUSTOM -> Files.isRegularFile(directory.resolve(CUSTOM_SKIN))
+                 ? readPng(directory.resolve(CUSTOM_SKIN), false) : null;
++            case PERSONA -> {
++                if (!Files.isRegularFile(directory.resolve(PERSONA_ATLAS))
++                    || !Files.isRegularFile(directory.resolve(PERSONA_MODEL))) {
++                    yield null;
++                }
++                final BufferedImage atlas = readPng(directory.resolve(PERSONA_ATLAS), false);
++                if (Files.size(directory.resolve(PERSONA_MODEL)) > MAX_FILE_BYTES) {
++                    throw new IOException("The saved Bedrock character model is too large");
++                }
++                final JsonObject model;
++                try {
++                    model = JsonParser.parseString(Files.readString(directory.resolve(PERSONA_MODEL))).getAsJsonObject();
++                    persona = new Persona(model.get("geometry").getAsString(), model.get("resourcePatch").getAsString(),
++                        model.get("profileHash").getAsString(), model.get("armSize").getAsString(),
++                        model.get("skinColor").getAsString());
++                } catch (RuntimeException e) {
++                    throw new IOException("The saved Bedrock character model is invalid", e);
++                }
++                yield atlas;
++            }
+         };
+         if (skin == null) {
+             selection = Selection.STEVE;
+             skin = this.presets.apply(Selection.STEVE);
++            persona = null;
+         }
+         final Path capePath = directory.resolve(CAPE);
+         final BufferedImage cape = Files.isRegularFile(capePath) ? readPng(capePath, true) : null;
+         return new Appearance(selection, slim,
+             skin, cape, skinId.isBlank() ? UUID.randomUUID().toString() : skinId,
+-            cape != null && capeId.isBlank() ? UUID.randomUUID().toString() : capeId);
++            cape != null && capeId.isBlank() ? UUID.randomUUID().toString() : capeId, persona);
+     }
+ 
+     public boolean hasCustomSkin(final String accountId) {
+@@ -111,16 +136,22 @@ public final class BedrockAppearanceStore {
+         if (selection == Selection.CUSTOM && !Files.isRegularFile(this.directory(accountId).resolve(CUSTOM_SKIN))) {
+             throw new IOException("Import a custom skin first");
+         }
++        if (selection == Selection.PERSONA && current.persona() == null) {
++            throw new IOException("Load your account character first");
++        }
+         final Appearance updated = new Appearance(selection, current.slim(), current.skin(), current.cape(),
+-            UUID.randomUUID().toString(), current.capeId());
++            UUID.randomUUID().toString(), current.capeId(), selection == Selection.PERSONA ? current.persona() : null);
+         this.saveMetadata(accountId, updated);
+         return this.load(accountId);
+     }
+ 
+     public synchronized Appearance setSlim(final String accountId, final boolean slim) throws IOException {
+         final Appearance current = this.load(accountId);
++        if (current.selection() == Selection.PERSONA) {
++            throw new IOException("Change character arms in Character Creator");
++        }
+         final Appearance updated = new Appearance(current.selection(), slim, current.skin(), current.cape(),
+-            UUID.randomUUID().toString(), current.capeId());
++            UUID.randomUUID().toString(), current.capeId(), current.persona());
+         this.saveMetadata(accountId, updated);
+         return this.load(accountId);
+     }
+@@ -136,7 +167,7 @@ public final class BedrockAppearanceStore {
+         Files.createDirectories(directory);
+         writePng(image, directory.resolve(CUSTOM_SKIN));
+         final Appearance updated = new Appearance(Selection.CUSTOM, slim, image, current.cape(),
+-            UUID.randomUUID().toString(), current.capeId());
++            UUID.randomUUID().toString(), current.capeId(), null);
+         this.saveMetadata(accountId, updated);
+         return updated;
+     }
+@@ -148,7 +179,7 @@ public final class BedrockAppearanceStore {
+         Files.createDirectories(directory);
+         writePng(image, directory.resolve(CAPE));
+         final Appearance updated = new Appearance(current.selection(), current.slim(), current.skin(), image,
+-            current.skinId(), UUID.randomUUID().toString());
++            current.skinId(), UUID.randomUUID().toString(), current.persona());
+         this.saveMetadata(accountId, updated);
+         return updated;
+     }
+@@ -157,7 +188,44 @@ public final class BedrockAppearanceStore {
+         Files.deleteIfExists(this.directory(accountId).resolve(CAPE));
+         final Appearance current = this.load(accountId);
+         final Appearance updated = new Appearance(current.selection(), current.slim(), current.skin(), null,
+-            current.skinId(), "");
++            current.skinId(), "", current.persona());
++        this.saveMetadata(accountId, updated);
++        return updated;
++    }
++
++    public synchronized Appearance importPersona(final String accountId, final BedrockPersonaModel.Converted converted,
++                                                 final String profileHash, final String armSize,
++                                                 final String skinColor) throws IOException {
++        if (converted == null || !List.of("wide", "slim").contains(armSize)
++            || profileHash == null || profileHash.isBlank() || profileHash.length() > 128
++            || skinColor == null || !skinColor.matches("#[0-9a-fA-F]{8}")) {
++            throw new IOException("The Bedrock character profile is incomplete");
++        }
++        final BufferedImage atlas = converted.atlas();
++        validateDimensions(atlas.getWidth(), atlas.getHeight(), false);
++        if (converted.geometry().length() > MAX_FILE_BYTES || converted.resourcePatch().length() > 512) {
++            throw new IOException("The Bedrock character model is too large");
++        }
++        final Appearance current = this.load(accountId);
++        final Path directory = this.directory(accountId);
++        Files.createDirectories(directory);
++        writePng(atlas, directory.resolve(PERSONA_ATLAS));
++        final JsonObject model = new JsonObject();
++        model.addProperty("geometry", converted.geometry());
++        model.addProperty("resourcePatch", converted.resourcePatch());
++        model.addProperty("profileHash", profileHash);
++        model.addProperty("armSize", armSize);
++        model.addProperty("skinColor", skinColor);
++        final Path temporary = Files.createTempFile(directory, "persona-", ".json");
++        try {
++            Files.writeString(temporary, model.toString(), StandardCharsets.UTF_8);
++            moveIntoPlace(temporary, directory.resolve(PERSONA_MODEL));
++        } finally {
++            Files.deleteIfExists(temporary);
++        }
++        final Persona persona = new Persona(converted.geometry(), converted.resourcePatch(), profileHash, armSize, skinColor);
++        final Appearance updated = new Appearance(Selection.PERSONA, "slim".equals(armSize), atlas, current.cape(),
++            UUID.randomUUID().toString(), current.capeId(), persona);
+         this.saveMetadata(accountId, updated);
+         return updated;
+     }
+@@ -254,15 +322,19 @@ public final class BedrockAppearanceStore {
+     }
+ 
+     public enum Selection {
+-        STEVE, ALEX, CUSTOM
++        STEVE, ALEX, CUSTOM, PERSONA
+     }
+ 
+     public record Appearance(Selection selection, boolean slim, BufferedImage skin, BufferedImage cape,
+-                             String skinId, String capeId) {
++                             String skinId, String capeId, Persona persona) {
+ 
+         public boolean effectiveSlim() {
+-            return this.selection == Selection.CUSTOM ? this.slim : this.selection == Selection.ALEX;
++            return this.selection == Selection.CUSTOM || this.selection == Selection.PERSONA
++                ? this.slim : this.selection == Selection.ALEX;
+         }
+     }
+ 
++    public record Persona(String geometry, String resourcePatch, String profileHash, String armSize, String skinColor) {
++    }
++
+ }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
 new file mode 100644
-index 0000000..cc25511
+index 0000000..3d66271
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
-@@ -0,0 +1,556 @@
+@@ -0,0 +1,595 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -82,6 +277,7 @@ index 0000000..cc25511
 +    private static final URI APPEARANCE = URI.create("https://persona-secondary.franchise.minecraft-services.net/api/v1.0/appearance");
 +    private static final URI STORE = URI.create("https://store.mktpl.minecraft-services.net/api/v2.0/layout/pages/");
 +    private static final URI AVATAR = URI.create("https://persona-secondary.franchise.minecraft-services.net/api/v1.0/profile/image/avatar");
++    private static final URI MODEL = URI.create("https://persona-secondary.franchise.minecraft-services.net/api/v1.0/profile/image/ModelBinary");
 +    private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
 +
 +    private BedrockCharacterProfiles() {
@@ -388,6 +584,41 @@ index 0000000..cc25511
 +        });
 +    }
 +
++    public static CompletableFuture<PreparedCharacter> loadActiveModel(final BedrockAuthManager account) {
++        return CompletableFuture.supplyAsync(() -> {
++            try {
++                final AccountWardrobe before = loadNow(account);
++                if (before.activeSlot() < 1 || before.activeSlot() > before.slots().size()) {
++                    throw new IOException("Select a character slot first");
++                }
++                final Slot active = before.slots().get(before.activeSlot() - 1);
++                if (!active.occupied() || active.profileHash().isBlank()) {
++                    throw new IOException("The active character has no saved appearance");
++                }
++                final String authorization = account.getMinecraftSession().getUpToDate().getAuthorizationHeader();
++                final HttpRequest request = HttpRequest.newBuilder(MODEL)
++                    .timeout(Duration.ofSeconds(20))
++                    .header("Authorization", authorization)
++                    .header("session-id", UUID.randomUUID().toString())
++                    .header("Accept", "model/gltf-binary, application/octet-stream")
++                    .GET().build();
++                final HttpResponse<byte[]> response = HTTP.send(request, HttpResponse.BodyHandlers.ofByteArray());
++                if (response.statusCode() / 100 != 2) {
++                    throw new IOException("Bedrock character model request failed: HTTP " + response.statusCode());
++                }
++                final BedrockPersonaModel.Converted converted = BedrockPersonaModel.convert(response.body());
++                final AccountWardrobe after = loadNow(account);
++                if (after.activeSlot() != active.number()
++                    || !after.slots().get(active.number() - 1).profileHash().equals(active.profileHash())) {
++                    throw new IOException("The active character changed while its model was loading");
++                }
++                return new PreparedCharacter(active, converted);
++            } catch (Exception e) {
++                throw new IllegalStateException("Could not load the active Bedrock character model", e);
++            }
++        });
++    }
++
 +    private static ParsedProfiles parseProfiles(final JsonObject profiles) throws IOException {
 +        if (!profiles.has("result") || !profiles.get("result").isJsonArray()) {
 +            throw new IOException("Bedrock character profiles response has no slots");
@@ -578,13 +809,493 @@ index 0000000..cc25511
 +    public record WardrobeItem(String id, String name, String type, String thumbnailUrl, String packId) {
 +    }
 +
++    public record PreparedCharacter(Slot slot, BedrockPersonaModel.Converted model) {
++    }
++
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaModel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaModel.java
+new file mode 100644
+index 0000000..d86a940
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaModel.java
+@@ -0,0 +1,435 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonElement;
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++import java.awt.Graphics2D;
++import java.awt.image.BufferedImage;
++import java.io.ByteArrayInputStream;
++import java.io.IOException;
++import java.nio.ByteBuffer;
++import java.nio.ByteOrder;
++import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
++import java.util.HashSet;
++import java.util.List;
++import java.util.Locale;
++import java.util.Set;
++import javax.imageio.ImageIO;
++import javax.imageio.ImageReader;
++import javax.imageio.stream.ImageInputStream;
++
++/** Converts the account's assembled GLTF preview into a static Bedrock player geometry and atlas. */
++public final class BedrockPersonaModel {
++
++    private static final int MAX_MODEL_BYTES = 4 * 1024 * 1024;
++    private static final int MAX_VERTICES = 32768;
++    private static final int GLTF_MAGIC = 0x46546C67;
++    private static final int JSON_CHUNK = 0x4E4F534A;
++    private static final int BINARY_CHUNK = 0x004E4942;
++
++    private BedrockPersonaModel() {
++    }
++
++    public static Converted convert(final byte[] source) throws IOException {
++        if (source.length < 28 || source.length > MAX_MODEL_BYTES) {
++            throw new IOException("Bedrock character model has an invalid size");
++        }
++        try {
++            return parse(source);
++        } catch (RuntimeException e) {
++            throw new IOException("Bedrock character model is invalid", e);
++        }
++    }
++
++    private static Converted parse(final byte[] source) throws IOException {
++        final ByteBuffer file = ByteBuffer.wrap(source).order(ByteOrder.LITTLE_ENDIAN);
++        if (file.getInt() != GLTF_MAGIC || file.getInt() != 2 || file.getInt() != source.length) {
++            throw new IOException("Bedrock did not return a GLTF 2 model");
++        }
++        final int jsonLength = file.getInt();
++        if (file.getInt() != JSON_CHUNK || jsonLength < 2 || jsonLength > file.remaining()) {
++            throw new IOException("Bedrock character model has no JSON chunk");
++        }
++        final byte[] jsonBytes = new byte[jsonLength];
++        file.get(jsonBytes);
++        final JsonObject gltf = JsonParser.parseString(new String(jsonBytes, StandardCharsets.UTF_8)).getAsJsonObject();
++        if (file.remaining() < 8) {
++            throw new IOException("Bedrock character model has no binary chunk");
++        }
++        final int binaryLength = file.getInt();
++        if (file.getInt() != BINARY_CHUNK || binaryLength < 0 || binaryLength != file.remaining()) {
++            throw new IOException("Bedrock character model has an invalid binary chunk");
++        }
++        final ByteBuffer binary = file.slice().order(ByteOrder.LITTLE_ENDIAN);
++        final Model model = new Model(gltf, binary);
++        return model.convert();
++    }
++
++    public record Converted(BufferedImage atlas, String geometry, String resourcePatch) {
++    }
++
++    private record Placement(BufferedImage image, int x, int y) {
++    }
++
++    private static final class Model {
++
++        private final JsonObject data;
++        private final ByteBuffer binary;
++        private final JsonArray views;
++        private final JsonArray accessors;
++        private final JsonArray nodes;
++        private final JsonArray meshes;
++        private final JsonArray materials;
++        private final JsonArray textures;
++        private final List<BufferedImage> images;
++        private final Set<String> names = new HashSet<>();
++        private final Set<Integer> visited = new HashSet<>();
++        private int atlasSize;
++        private List<Placement> placements;
++        private int vertexCount;
++
++        private Model(final JsonObject data, final ByteBuffer binary) throws IOException {
++            this.data = data;
++            this.binary = binary;
++            this.views = array(data, "bufferViews");
++            this.accessors = array(data, "accessors");
++            this.nodes = array(data, "nodes");
++            this.meshes = array(data, "meshes");
++            this.materials = array(data, "materials");
++            this.textures = array(data, "textures");
++            this.images = this.readImages();
++            if (this.nodes.isEmpty() || this.meshes.isEmpty() || this.images.isEmpty()) {
++                throw new IOException("Bedrock character model has no geometry or textures");
++            }
++        }
++
++        private Converted convert() throws IOException {
++            this.packImages();
++            final BufferedImage atlas = new BufferedImage(this.atlasSize, this.atlasSize, BufferedImage.TYPE_INT_ARGB);
++            final Graphics2D graphics = atlas.createGraphics();
++            try {
++                for (final Placement placement : this.placements) {
++                    graphics.drawImage(placement.image(), placement.x(), placement.y(), null);
++                }
++            } finally {
++                graphics.dispose();
++            }
++
++            final JsonArray bones = new JsonArray();
++            final JsonArray scenes = array(this.data, "scenes");
++            if (scenes.isEmpty()) {
++                throw new IOException("Bedrock character model has no scene");
++            }
++            final int sceneIndex = number(this.data, "scene", 0);
++            for (final JsonElement root : array(scenes.get(sceneIndex).getAsJsonObject(), "nodes")) {
++                this.visit(root.getAsInt(), null, new float[3], bones, 0);
++            }
++            if (this.vertexCount == 0) {
++                throw new IOException("Bedrock character model has no triangles");
++            }
++            final String identifier = "geometry.viafabricplus.account_character";
++            final JsonObject description = new JsonObject();
++            description.addProperty("identifier", identifier);
++            description.addProperty("texture_width", this.atlasSize);
++            description.addProperty("texture_height", this.atlasSize);
++            final JsonObject model = new JsonObject();
++            model.add("description", description);
++            model.add("bones", bones);
++            final JsonArray definitions = new JsonArray();
++            definitions.add(model);
++            final JsonObject geometry = new JsonObject();
++            geometry.addProperty("format_version", "1.12.0");
++            geometry.add("minecraft:geometry", definitions);
++            return new Converted(atlas, geometry.toString(),
++                "{\"geometry\":{\"default\":\"" + identifier + "\"}}");
++        }
++
++        private void visit(final int index, final String parent, final float[] offset,
++                           final JsonArray bones, final int depth) throws IOException {
++            if (index < 0 || index >= this.nodes.size() || depth > 64 || !this.visited.add(index)) {
++                throw new IOException("Bedrock character model has an invalid node tree");
++            }
++            final JsonObject node = this.nodes.get(index).getAsJsonObject();
++            if (node.has("rotation") || node.has("scale") || node.has("matrix")) {
++                throw new IOException("Bedrock character model uses unsupported node transforms");
++            }
++            final String name = string(node, "name", "node" + index).toLowerCase(Locale.ROOT);
++            if (!name.matches("[a-z0-9_]+") || !this.names.add(name)) {
++                throw new IOException("Bedrock character model has duplicate or invalid bone names");
++            }
++            final float[] pivot = offset.clone();
++            final JsonArray translation = array(node, "translation");
++            if (!translation.isEmpty()) {
++                if (translation.size() != 3) {
++                    throw new IOException("Bedrock character model has an invalid translation");
++                }
++                for (int component = 0; component < 3; component++) {
++                    pivot[component] += translation.get(component).getAsFloat();
++                }
++            }
++            final JsonObject bone = new JsonObject();
++            bone.addProperty("name", name);
++            if (parent != null) {
++                bone.addProperty("parent", parent);
++            }
++            bone.add("pivot", vector(pivot));
++            if (node.has("mesh")) {
++                bone.add("poly_mesh", this.mesh(node.get("mesh").getAsInt(), pivot));
++            }
++            bones.add(bone);
++            for (final JsonElement child : array(node, "children")) {
++                this.visit(child.getAsInt(), name, pivot, bones, depth + 1);
++            }
++        }
++
++        private JsonObject mesh(final int index, final float[] offset) throws IOException {
++            final JsonArray positions = new JsonArray();
++            final JsonArray normals = new JsonArray();
++            final JsonArray uvs = new JsonArray();
++            for (final JsonElement entry : array(this.meshes.get(index).getAsJsonObject(), "primitives")) {
++                final JsonObject primitive = entry.getAsJsonObject();
++                if (number(primitive, "mode", 4) != 4) {
++                    throw new IOException("Bedrock character model has non-triangle geometry");
++                }
++                final JsonObject attributes = object(primitive, "attributes");
++                final float[][] sourcePositions = this.floats(attributes.get("POSITION").getAsInt(), 3);
++                final float[][] sourceNormals = this.floats(attributes.get("NORMAL").getAsInt(), 3);
++                final float[][] sourceUvs = this.floats(attributes.get("TEXCOORD_0").getAsInt(), 2);
++                if (sourcePositions.length != sourceNormals.length || sourcePositions.length != sourceUvs.length) {
++                    throw new IOException("Bedrock character model has mismatched vertex data");
++                }
++                final Placement image = this.texture(primitive.get("material").getAsInt());
++                final int[] indices = primitive.has("indices")
++                    ? this.indices(primitive.get("indices").getAsInt()) : sequential(sourcePositions.length);
++                if (indices.length % 3 != 0 || (this.vertexCount += indices.length) > MAX_VERTICES) {
++                    throw new IOException("Bedrock character model has too many vertices");
++                }
++                for (final int vertex : indices) {
++                    if (vertex < 0 || vertex >= sourcePositions.length) {
++                        throw new IOException("Bedrock character model has an invalid vertex index");
++                    }
++                    final float[] position = sourcePositions[vertex].clone();
++                    for (int component = 0; component < 3; component++) {
++                        position[component] += offset[component];
++                    }
++                    positions.add(vector(position));
++                    normals.add(vector(sourceNormals[vertex]));
++                    final float[] uv = sourceUvs[vertex];
++                    final JsonArray mapped = new JsonArray();
++                    mapped.add((image.x() + uv[0] * image.image().getWidth()) / this.atlasSize);
++                    mapped.add(1F - (image.y() + uv[1] * image.image().getHeight()) / this.atlasSize);
++                    uvs.add(mapped);
++                }
++            }
++            final JsonObject mesh = new JsonObject();
++            mesh.addProperty("normalized_uvs", true);
++            mesh.add("positions", positions);
++            mesh.add("normals", normals);
++            mesh.add("uvs", uvs);
++            mesh.addProperty("polys", "tri_list");
++            return mesh;
++        }
++
++        private Placement texture(final int materialIndex) throws IOException {
++            final JsonObject material = this.materials.get(materialIndex).getAsJsonObject();
++            final JsonObject pbr = object(material, "pbrMetallicRoughness");
++            if (pbr.has("baseColorFactor")) {
++                final JsonArray factor = pbr.getAsJsonArray("baseColorFactor");
++                for (final JsonElement channel : factor) {
++                    if (channel.getAsFloat() != 1F) {
++                        throw new IOException("Bedrock character model has an unsupported material tint");
++                    }
++                }
++            }
++            final int texture = object(pbr, "baseColorTexture").get("index").getAsInt();
++            final int image = this.textures.get(texture).getAsJsonObject().get("source").getAsInt();
++            return this.placements.get(image);
++        }
++
++        private float[][] floats(final int index, final int dimensions) throws IOException {
++            final JsonObject accessor = this.accessors.get(index).getAsJsonObject();
++            if (number(accessor, "componentType", 0) != 5126
++                || !String.valueOf("VEC" + dimensions).equals(string(accessor, "type", ""))) {
++                throw new IOException("Bedrock character model has unsupported vertex data");
++            }
++            final int count = number(accessor, "count", 0);
++            if (count < 0 || count > MAX_VERTICES) {
++                throw new IOException("Bedrock character model has too many vertex values");
++            }
++            final JsonObject view = this.views.get(accessor.get("bufferView").getAsInt()).getAsJsonObject();
++            final int viewOffset = number(view, "byteOffset", 0);
++            final int viewLength = number(view, "byteLength", 0);
++            final int accessorOffset = number(accessor, "byteOffset", 0);
++            final long start = (long) viewOffset + accessorOffset;
++            final int stride = number(view, "byteStride", dimensions * Float.BYTES);
++            final long end = start + (count == 0 ? 0L : (long) (count - 1) * stride + dimensions * Float.BYTES);
++            if (viewOffset < 0 || viewLength < 0 || accessorOffset < 0 || stride < dimensions * Float.BYTES
++                || end > (long) viewOffset + viewLength || end > this.binary.limit()) {
++                throw new IOException("Bedrock character model has an invalid vertex buffer");
++            }
++            final float[][] values = new float[count][dimensions];
++            for (int row = 0; row < count; row++) {
++                for (int component = 0; component < dimensions; component++) {
++                    final float value = this.binary.getFloat((int) (start + (long) row * stride + component * Float.BYTES));
++                    if (!Float.isFinite(value)) {
++                        throw new IOException("Bedrock character model has a non-finite vertex value");
++                    }
++                    values[row][component] = value;
++                }
++            }
++            return values;
++        }
++
++        private int[] indices(final int index) throws IOException {
++            final JsonObject accessor = this.accessors.get(index).getAsJsonObject();
++            final int type = number(accessor, "componentType", 0);
++            final int width = switch (type) {
++                case 5121 -> 1;
++                case 5123 -> 2;
++                case 5125 -> 4;
++                default -> throw new IOException("Bedrock character model has unsupported triangle indices");
++            };
++            if (!"SCALAR".equals(string(accessor, "type", ""))) {
++                throw new IOException("Bedrock character model has invalid triangle indices");
++            }
++            final int count = number(accessor, "count", 0);
++            final JsonObject view = this.views.get(accessor.get("bufferView").getAsInt()).getAsJsonObject();
++            final int viewOffset = number(view, "byteOffset", 0);
++            final int viewLength = number(view, "byteLength", 0);
++            final int accessorOffset = number(accessor, "byteOffset", 0);
++            final long start = (long) viewOffset + accessorOffset;
++            final int stride = number(view, "byteStride", width);
++            final long end = start + (count == 0 ? 0L : (long) (count - 1) * stride + width);
++            if (count < 0 || count > MAX_VERTICES || viewOffset < 0 || viewLength < 0 || accessorOffset < 0
++                || stride < width || end > (long) viewOffset + viewLength || end > this.binary.limit()) {
++                throw new IOException("Bedrock character model has an invalid triangle buffer");
++            }
++            final int[] values = new int[count];
++            for (int position = 0; position < count; position++) {
++                final int offset = (int) (start + (long) position * stride);
++                values[position] = switch (width) {
++                    case 1 -> Byte.toUnsignedInt(this.binary.get(offset));
++                    case 2 -> Short.toUnsignedInt(this.binary.getShort(offset));
++                    default -> this.binary.getInt(offset);
++                };
++            }
++            return values;
++        }
++
++        private List<BufferedImage> readImages() throws IOException {
++            final JsonArray descriptions = array(this.data, "images");
++            if (descriptions.size() > 32) {
++                throw new IOException("Bedrock character model has too many textures");
++            }
++            final List<BufferedImage> result = new ArrayList<>(descriptions.size());
++            for (final JsonElement entry : descriptions) {
++                final JsonObject image = entry.getAsJsonObject();
++                if (!"image/png".equals(string(image, "mimeType", ""))) {
++                    throw new IOException("Bedrock character model has an unsupported texture");
++                }
++                final JsonObject view = this.views.get(image.get("bufferView").getAsInt()).getAsJsonObject();
++                final int offset = number(view, "byteOffset", 0);
++                final int length = number(view, "byteLength", 0);
++                if (offset < 0 || length < 8 || length > 1024 * 1024 || offset + (long) length > this.binary.limit()) {
++                    throw new IOException("Bedrock character model has an invalid texture buffer");
++                }
++                final byte[] png = new byte[length];
++                this.binary.duplicate().position(offset).get(png);
++                try (ImageInputStream input = ImageIO.createImageInputStream(new ByteArrayInputStream(png))) {
++                    final var readers = ImageIO.getImageReaders(input);
++                    if (!readers.hasNext()) {
++                        throw new IOException("Bedrock character model has an invalid PNG texture");
++                    }
++                    final ImageReader reader = readers.next();
++                    try {
++                        if (!"png".equalsIgnoreCase(reader.getFormatName())) {
++                            throw new IOException("Bedrock character model has a non-PNG texture");
++                        }
++                        reader.setInput(input);
++                        final int width = reader.getWidth(0);
++                        final int height = reader.getHeight(0);
++                        if (width < 1 || height < 1 || width > 512 || height > 512
++                            || Integer.bitCount(width) != 1 || Integer.bitCount(height) != 1) {
++                            throw new IOException("Bedrock character model has unsupported texture dimensions");
++                        }
++                        result.add(reader.read(0));
++                    } finally {
++                        reader.dispose();
++                    }
++                }
++            }
++            return List.copyOf(result);
++        }
++
++        private void packImages() throws IOException {
++            for (int size = 128; size <= 1024; size *= 2) {
++                final List<Placement> packed = new ArrayList<>(this.images.size());
++                int x = 0;
++                int y = 0;
++                int rowHeight = 0;
++                for (final BufferedImage image : this.images) {
++                    if (image.getWidth() > size || image.getHeight() > size) {
++                        break;
++                    }
++                    if (x + image.getWidth() > size) {
++                        x = 0;
++                        y += rowHeight;
++                        rowHeight = 0;
++                    }
++                    if (y + image.getHeight() > size) {
++                        break;
++                    }
++                    packed.add(new Placement(image, x, y));
++                    x += image.getWidth();
++                    rowHeight = Math.max(rowHeight, image.getHeight());
++                }
++                if (packed.size() == this.images.size()) {
++                    this.atlasSize = size;
++                    this.placements = List.copyOf(packed);
++                    return;
++                }
++            }
++            throw new IOException("Bedrock character textures do not fit a skin atlas");
++        }
++
++        private static int[] sequential(final int length) {
++            final int[] values = new int[length];
++            for (int index = 0; index < length; index++) {
++                values[index] = index;
++            }
++            return values;
++        }
++
++        private static JsonArray vector(final float[] values) {
++            final JsonArray vector = new JsonArray();
++            for (final float value : values) {
++                vector.add(value);
++            }
++            return vector;
++        }
++
++        private static JsonArray array(final JsonObject object, final String key) {
++            return object.has(key) && object.get(key).isJsonArray() ? object.getAsJsonArray(key) : new JsonArray();
++        }
++
++        private static JsonObject object(final JsonObject parent, final String key) {
++            return parent.has(key) && parent.get(key).isJsonObject() ? parent.getAsJsonObject(key) : new JsonObject();
++        }
++
++        private static int number(final JsonObject object, final String key, final int fallback) {
++            return object.has(key) ? object.get(key).getAsInt() : fallback;
++        }
++
++        private static String string(final JsonObject object, final String key, final String fallback) {
++            return object.has(key) ? object.get(key).getAsString() : fallback;
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java
+index 41713cf..e44f8fc 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java
+@@ -51,15 +51,27 @@ public final class ViaFabricPlusSkinProvider extends SkinProvider {
+             claims.put("SkinData", Base64.getEncoder().encodeToString(ImageType.getImageData(skin)));
+             claims.put("SkinImageWidth", skin.getWidth());
+             claims.put("SkinImageHeight", skin.getHeight());
+-            claims.put("SkinResourcePatch", Base64.getEncoder().encodeToString(("{\"geometry\":{\"default\":\"geometry.humanoid.custom"
+-                + (slim ? "Slim" : "") + "\"}}").getBytes(StandardCharsets.UTF_8)));
+-            claims.put("ArmSize", slim ? "slim" : "wide");
++            if (appearance.persona() != null) {
++                final var persona = appearance.persona();
++                claims.put("SkinResourcePatch", Base64.getEncoder().encodeToString(
++                    persona.resourcePatch().getBytes(StandardCharsets.UTF_8)));
++                claims.put("SkinGeometryData", Base64.getEncoder().encodeToString(
++                    persona.geometry().getBytes(StandardCharsets.UTF_8)));
++                claims.put("PersonaSkin", true);
++                claims.put("ProfileHash", persona.profileHash());
++                claims.put("SkinColor", persona.skinColor());
++                claims.put("ArmSize", persona.armSize());
++            } else {
++                claims.put("SkinResourcePatch", Base64.getEncoder().encodeToString(("{\"geometry\":{\"default\":\"geometry.humanoid.custom"
++                    + (slim ? "Slim" : "") + "\"}}").getBytes(StandardCharsets.UTF_8)));
++                claims.put("ArmSize", slim ? "slim" : "wide");
++            }
+             if (appearance.cape() != null) {
+                 claims.put("CapeId", appearance.capeId());
+                 claims.put("CapeData", Base64.getEncoder().encodeToString(ImageType.getImageData(appearance.cape())));
+                 claims.put("CapeImageWidth", appearance.cape().getWidth());
+                 claims.put("CapeImageHeight", appearance.cape().getHeight());
+-                claims.put("CapeOnClassicSkin", true);
++                claims.put("CapeOnClassicSkin", appearance.persona() == null);
+             }
+         } catch (IOException e) {
+             ViaFabricPlusBedrock.impl().logger().warn("Could not load the selected Bedrock appearance; using Steve", e);
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
 new file mode 100644
-index 0000000..a26a3fe
+index 0000000..daf8b17
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
-@@ -0,0 +1,565 @@
+@@ -0,0 +1,661 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -596,6 +1307,8 @@ index 0000000..a26a3fe
 +import com.google.gson.JsonElement;
 +import com.google.gson.JsonObject;
 +import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore.Selection;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockCharacterProfiles;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockCharacterProfiles.AccountWardrobe;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockCharacterProfiles.Category;
@@ -640,6 +1353,8 @@ index 0000000..a26a3fe
 +    private boolean saving;
 +    private boolean selectionFailed;
 +    private boolean editFailed;
++    private boolean modelFailed;
++    private boolean personaSelected;
 +    private final Button[] slotButtons = new Button[5];
 +    private Button slotsTab;
 +    private Button wardrobeTab;
@@ -681,7 +1396,7 @@ index 0000000..a26a3fe
 +        this.nextItem = Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.next"),
 +            _ -> this.changeItem(1)).build();
 +        this.useSlot = Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.use_slot"),
-+            _ -> this.selectSlot()).build();
++            _ -> this.useSelectedSlot()).build();
 +        this.editPiece = Button.builder(Component.empty(), _ -> this.changePiece()).build();
 +        this.colorButton = Button.builder(Component.empty(), _ -> this.toggleColors()).build();
 +        this.refreshButton = Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.refresh"),
@@ -738,11 +1453,15 @@ index 0000000..a26a3fe
 +        if (this.saving) {
 +            graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.saving"),
 +                left, top + 64, ACCENT_COLOR);
++        } else if (this.modelFailed) {
++            graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.model_failed"),
++                left, top + 64, 300, ACCENT_COLOR);
 +        } else if (this.selectionFailed) {
 +            graphics.textWithWordWrap(this.font, Component.translatable("bedrock_character_slots.viafabricplus.select_failed"),
 +                left, top + 64, 300, ACCENT_COLOR);
 +        } else if (this.wardrobe.activeSlot() == slot.number()) {
-+            graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.active"),
++            graphics.text(this.font, Component.translatable(this.personaSelected
++                ? "bedrock_character_slots.viafabricplus.world_active" : "bedrock_character_slots.viafabricplus.active"),
 +                left, top + 64, ACCENT_COLOR);
 +        }
 +        if (this.wardrobe.activeSlot() == slot.number() && this.activeAvatar != null) {
@@ -1007,9 +1726,13 @@ index 0000000..a26a3fe
 +            && (this.view == View.SLOTS || this.category == Category.HAIRS && this.items != null
 +                && !this.items.isEmpty() && this.isEquipped(this.items.get(this.selectedItem),
 +                    this.wardrobe.slots().get(this.selectedSlot)) && !this.currentColor(ColorTarget.HAIR).isEmpty()));
++        final boolean activeSlot = this.wardrobe != null && this.wardrobe.activeSlot() == this.selectedSlot + 1;
++        this.useSlot.setMessage(Component.translatable(activeSlot
++            ? this.personaSelected ? "bedrock_character_slots.viafabricplus.world_active"
++                : "bedrock_character_slots.viafabricplus.use_in_worlds"
++            : "bedrock_character_slots.viafabricplus.use_slot"));
 +        this.useSlot.active = this.wardrobe != null && !this.saving
-+            && this.wardrobe.slots().get(this.selectedSlot).occupied()
-+            && this.wardrobe.activeSlot() != this.selectedSlot + 1;
++            && this.wardrobe.slots().get(this.selectedSlot).occupied() && (!activeSlot || !this.personaSelected);
 +        final boolean hasItems = this.items != null && this.items.size() > 1;
 +        this.previousItem.active = hasItems;
 +        this.nextItem.active = hasItems;
@@ -1059,6 +1782,10 @@ index 0000000..a26a3fe
 +                    this.wardrobe = loaded;
 +                    if (loaded.activeSlot() == slot.number()) {
 +                        this.loadAvatar(account);
++                        if (this.personaSelected) {
++                            this.refreshPersona(account);
++                            return;
++                        }
 +                    }
 +                }
 +                this.updateControls();
@@ -1088,6 +1815,10 @@ index 0000000..a26a3fe
 +                    this.wardrobe = loaded;
 +                    if (loaded.activeSlot() == slot.number()) {
 +                        this.loadAvatar(account);
++                        if (this.personaSelected) {
++                            this.refreshPersona(account);
++                            return;
++                        }
 +                    }
 +                }
 +                this.updateControls();
@@ -1107,13 +1838,72 @@ index 0000000..a26a3fe
 +            if (this.minecraft.gui.screen() != this) {
 +                return;
 +            }
-+            this.saving = false;
 +            if (error != null) {
++                this.saving = false;
 +                this.selectionFailed = true;
 +                ViaFabricPlusBedrock.impl().logger().warn("Could not select Bedrock character slot", error);
 +            } else {
 +                this.wardrobe = loaded;
 +                this.loadAvatar(account);
++                if (this.personaSelected) {
++                    this.refreshPersona(account);
++                    return;
++                }
++                this.saving = false;
++            }
++            this.updateControls();
++        }));
++    }
++
++    private void useSelectedSlot() {
++        if (this.wardrobe != null && this.wardrobe.activeSlot() == this.selectedSlot + 1) {
++            final BedrockAuthManager account = ViaFabricPlusBedrock.impl().account().get();
++            if (account != null) {
++                this.preparePersona(account);
++            }
++        } else {
++            this.selectSlot();
++        }
++    }
++
++    private void refreshPersona(final BedrockAuthManager account) {
++        try {
++            ViaFabricPlusBedrock.impl().appearances()
++                .select(BedrockAppearanceStore.accountId(account), Selection.STEVE);
++            this.personaSelected = false;
++            this.preparePersona(account);
++        } catch (java.io.IOException e) {
++            this.saving = false;
++            this.modelFailed = true;
++            ViaFabricPlusBedrock.impl().logger().warn("Could not retire the previous account character", e);
++            this.updateControls();
++        }
++    }
++
++    private void preparePersona(final BedrockAuthManager account) {
++        this.saving = true;
++        this.modelFailed = false;
++        this.updateControls();
++        final BedrockAppearanceStore store = ViaFabricPlusBedrock.impl().appearances();
++        final String accountId = BedrockAppearanceStore.accountId(account);
++        BedrockCharacterProfiles.loadActiveModel(account).thenApply(prepared -> {
++            try {
++                store.importPersona(accountId, prepared.model(), prepared.slot().profileHash(),
++                    prepared.slot().arm(), prepared.slot().skinColor());
++                return prepared;
++            } catch (java.io.IOException e) {
++                throw new IllegalStateException("Could not save the account character model", e);
++            }
++        }).whenComplete((_, error) -> this.minecraft.execute(() -> {
++            if (this.minecraft.gui.screen() != this) {
++                return;
++            }
++            this.saving = false;
++            if (error != null) {
++                this.modelFailed = true;
++                ViaFabricPlusBedrock.impl().logger().warn("Could not use Bedrock account character in worlds", error);
++            } else {
++                this.personaSelected = true;
 +            }
 +            this.updateControls();
 +        }));
@@ -1127,6 +1917,7 @@ index 0000000..a26a3fe
 +        this.loading = true;
 +        this.failed = false;
 +        this.selectionFailed = false;
++        this.modelFailed = false;
 +        BedrockCharacterProfiles.load(account).whenComplete((loaded, error) -> this.minecraft.execute(() -> {
 +            if (this.minecraft.gui.screen() != this) {
 +                return;
@@ -1137,6 +1928,22 @@ index 0000000..a26a3fe
 +                ViaFabricPlusBedrock.impl().logger().warn("Could not load Bedrock character slots", error);
 +            } else {
 +                this.wardrobe = loaded;
++                try {
++                    final var appearance = ViaFabricPlusBedrock.impl().appearances()
++                        .load(BedrockAppearanceStore.accountId(account));
++                    this.personaSelected = appearance.selection() == Selection.PERSONA
++                        && loaded.activeSlot() > 0
++                        && appearance.persona().profileHash()
++                            .equals(loaded.slots().get(loaded.activeSlot() - 1).profileHash());
++                    if (appearance.selection() == Selection.PERSONA && !this.personaSelected) {
++                        ViaFabricPlusBedrock.impl().appearances()
++                            .select(BedrockAppearanceStore.accountId(account), Selection.STEVE);
++                        this.modelFailed = true;
++                    }
++                } catch (java.io.IOException e) {
++                    this.personaSelected = false;
++                    ViaFabricPlusBedrock.impl().logger().warn("Could not load selected Bedrock character model", e);
++                }
 +                this.items = null;
 +                this.loadedCategory = null;
 +                this.itemsFailed = false;
@@ -1151,10 +1958,18 @@ index 0000000..a26a3fe
 +
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
-index a5d7187..2945315 100644
+index a5d7187..c142e59 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
-@@ -120,7 +120,9 @@ public final class BedrockDressingRoomScreen extends VFPScreen {
+@@ -89,6 +89,7 @@ public final class BedrockDressingRoomScreen extends VFPScreen {
+     private Appearance appearance;
+     private Component status = Component.translatable("bedrock_dressing_room.viafabricplus.reconnect");
+     private PlayerSkin previewSkin;
++    private PlayerSkinWidget previewWidget;
+     private Button customButton;
+     private Button modelButton;
+     private Button removeCapeButton;
+@@ -120,15 +121,18 @@ public final class BedrockDressingRoomScreen extends VFPScreen {
              Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.import_skin"), _ -> this.chooseFile(false)).build(),
              Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.import_pack"), _ -> this.choosePack()).build(),
              Button.builder(Component.translatable("bedrock_dressing_room.viafabricplus.import_cape"), _ -> this.chooseFile(true)).build(),
@@ -1165,8 +1980,59 @@ index a5d7187..2945315 100644
          );
  
          try {
+             this.showAppearance(this.store.load(this.accountId));
+-            final PlayerSkinWidget preview = new PlayerSkinWidget(145, this.previewHeight(), this.minecraft.getEntityModels(), () -> this.previewSkin);
+-            preview.setX(left);
+-            preview.setY(top + 30);
+-            this.addRenderableWidget(preview);
++            this.previewWidget = new PlayerSkinWidget(145, this.previewHeight(), this.minecraft.getEntityModels(), () -> this.previewSkin);
++            this.previewWidget.setX(left);
++            this.previewWidget.setY(top + 30);
++            this.previewWidget.visible = this.appearance.selection() != Selection.PERSONA;
++            this.addRenderableWidget(this.previewWidget);
+         } catch (IOException e) {
+             ViaFabricPlusBedrock.impl().logger().warn("Could not load the selected Bedrock appearance", e);
+             this.status = Component.translatable("bedrock_dressing_room.viafabricplus.load_failed");
+@@ -148,6 +152,10 @@ public final class BedrockDressingRoomScreen extends VFPScreen {
+         final int left = this.width / 2 - 150;
+         final int previewTop = this.contentTop() + 30;
+         if (this.appearance != null) {
++            if (this.appearance.selection() == Selection.PERSONA) {
++                graphics.textWithWordWrap(this.font, Component.translatable("bedrock_dressing_room.viafabricplus.persona_preview"),
++                    left, previewTop + 26, 145, ACCENT_COLOR);
++            }
+             graphics.text(this.font, Component.translatable("bedrock_dressing_room.viafabricplus.selected",
+                 Component.translatable("bedrock_dressing_room.viafabricplus." + this.appearance.selection().name().toLowerCase(Locale.ROOT))),
+                 left + 157, previewTop + 4, -1);
+@@ -281,15 +289,21 @@ public final class BedrockDressingRoomScreen extends VFPScreen {
+     private void showAppearance(final Appearance appearance) {
+         this.appearance = appearance;
+         this.releasePreview();
+-        this.registerPreview(PREVIEW_TEXTURE, appearance.skin());
+-        this.previewRegistered = true;
++        if (appearance.selection() != Selection.PERSONA) {
++            this.registerPreview(PREVIEW_TEXTURE, appearance.skin());
++            this.previewRegistered = true;
++        }
+         if (appearance.cape() != null) {
+             this.registerPreview(CAPE_PREVIEW_TEXTURE, appearance.cape());
+             this.capePreviewRegistered = true;
+         }
+-        this.previewSkin = PlayerSkin.insecure(new ClientAsset.ResourceTexture(PREVIEW_TEXTURE, PREVIEW_TEXTURE),
+-            appearance.cape() == null ? null : new ClientAsset.ResourceTexture(CAPE_PREVIEW_TEXTURE, CAPE_PREVIEW_TEXTURE),
+-            null, appearance.effectiveSlim() ? PlayerModelType.SLIM : PlayerModelType.WIDE);
++        this.previewSkin = appearance.selection() == Selection.PERSONA ? null
++            : PlayerSkin.insecure(new ClientAsset.ResourceTexture(PREVIEW_TEXTURE, PREVIEW_TEXTURE),
++                appearance.cape() == null ? null : new ClientAsset.ResourceTexture(CAPE_PREVIEW_TEXTURE, CAPE_PREVIEW_TEXTURE),
++                null, appearance.effectiveSlim() ? PlayerModelType.SLIM : PlayerModelType.WIDE);
++        if (this.previewWidget != null) {
++            this.previewWidget.visible = appearance.selection() != Selection.PERSONA;
++        }
+         this.customButton.active = appearance.selection() == Selection.CUSTOM || this.store.hasCustomSkin(this.accountId);
+         this.modelButton.active = appearance.selection() == Selection.CUSTOM;
+         this.modelButton.setMessage(Component.translatable(appearance.effectiveSlim()
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
-index 4a503d3..2da6052 100644
+index 4a503d3..42486e9 100644
 --- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 +++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 @@ -27,6 +27,7 @@
@@ -1177,11 +2043,13 @@ index 4a503d3..2da6052 100644
    "screen.viafabricplus.accept_invite": "Accept an invitation code",
  
    "bedrock_dressing_room.viafabricplus.steve": "Steve",
-@@ -45,9 +46,47 @@
+@@ -45,9 +46,52 @@
    "bedrock_dressing_room.viafabricplus.pack_skin_number": "Skin %s of %s",
    "bedrock_dressing_room.viafabricplus.import_cape": "Import cape",
    "bedrock_dressing_room.viafabricplus.remove_cape": "Remove cape",
 +  "bedrock_dressing_room.viafabricplus.character_creator": "Characters",
++  "bedrock_dressing_room.viafabricplus.persona": "Account character",
++  "bedrock_dressing_room.viafabricplus.persona_preview": "See your account character in Characters.",
    "bedrock_dressing_room.viafabricplus.reconnect": "Applies when you next join a Bedrock world.",
    "bedrock_dressing_room.viafabricplus.load_failed": "Could not load your saved appearance. Check the log.",
    "bedrock_dressing_room.viafabricplus.one_file": "Drop one PNG or skin pack at a time.",
@@ -1213,8 +2081,11 @@ index 4a503d3..2da6052 100644
 +  "bedrock_character_slots.viafabricplus.saving_piece": "Saving character edit...",
 +  "bedrock_character_slots.viafabricplus.edit_failed": "Could not save this edit. Refresh the character and try again.",
 +  "bedrock_character_slots.viafabricplus.item_number": "%s of %s",
-+  "bedrock_character_slots.viafabricplus.recipe_notice": "This changes your account's active slot. VFP still uses your selected classic skin when joining a world.",
++  "bedrock_character_slots.viafabricplus.recipe_notice": "Use in worlds saves a static copy of this account character for your next Bedrock connection. Animated details are not included.",
 +  "bedrock_character_slots.viafabricplus.use_slot": "Use this slot",
++  "bedrock_character_slots.viafabricplus.use_in_worlds": "Use in worlds",
++  "bedrock_character_slots.viafabricplus.world_active": "Account character selected for Bedrock worlds",
++  "bedrock_character_slots.viafabricplus.model_failed": "Could not prepare this character for Bedrock worlds. Refresh and try again.",
 +  "bedrock_character_slots.viafabricplus.active": "Active on your Bedrock account",
 +  "bedrock_character_slots.viafabricplus.saving": "Saving slot selection...",
 +  "bedrock_character_slots.viafabricplus.select_failed": "Could not save this slot. Try again.",
@@ -1225,6 +2096,36 @@ index 4a503d3..2da6052 100644
  
    "bedrock_realms.viafabricplus.warning": "This feature requires a Bedrock Edition account to be set in the settings!",
    "bedrock_realms.viafabricplus.availability_check": "Checking availability...",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStoreTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStoreTest.java
+index ccb842c..608ea68 100644
+--- a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStoreTest.java
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStoreTest.java
+@@ -88,6 +88,25 @@ final class BedrockAppearanceStoreTest {
+         assertTrue(this.store().load("123").effectiveSlim());
+     }
+ 
++    @Test
++    void persistsAccountCharacterAndReturnsToClassicSkin() throws IOException {
++        final BedrockAppearanceStore store = this.store();
++        final var model = new BedrockPersonaModel.Converted(
++            new BufferedImage(128, 128, BufferedImage.TYPE_INT_ARGB),
++            "{\"minecraft:geometry\":[]}", "{\"geometry\":{\"default\":\"geometry.test\"}}");
++
++        final var selected = store.importPersona("123", model, "profile-hash", "slim", "#ff2474a8");
++        assertEquals(Selection.PERSONA, selected.selection());
++        assertTrue(selected.effectiveSlim());
++        final var restored = this.store().load("123");
++        assertEquals("profile-hash", restored.persona().profileHash());
++        assertEquals("#ff2474a8", restored.persona().skinColor());
++        assertEquals(128, restored.skin().getWidth());
++
++        store.select("123", Selection.STEVE);
++        assertNull(this.store().load("123").persona());
++    }
++
+     private BedrockAppearanceStore store() {
+         return new BedrockAppearanceStore(this.directory.resolve("appearances"),
+             _ -> new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB));
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java
 new file mode 100644
 index 0000000..e9a2d90
@@ -1367,6 +2268,98 @@ index 0000000..e9a2d90
 +        assertEquals("#aabbcc", hairColor.get(0).getAsJsonObject().get("skcol").getAsString());
 +    }
 +
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaModelTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaModelTest.java
+new file mode 100644
+index 0000000..bb102d2
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaModelTest.java
+@@ -0,0 +1,86 @@
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.google.gson.JsonParser;
++import java.awt.image.BufferedImage;
++import java.io.ByteArrayOutputStream;
++import java.io.IOException;
++import java.nio.ByteBuffer;
++import java.nio.ByteOrder;
++import java.nio.charset.StandardCharsets;
++import javax.imageio.ImageIO;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++
++final class BedrockPersonaModelTest {
++
++    @Test
++    void packsTextureAndTranslatesMeshIntoBedrockCoordinates() throws Exception {
++        final byte[] glb = model();
++        final var converted = BedrockPersonaModel.convert(glb);
++        final var geometry = JsonParser.parseString(converted.geometry()).getAsJsonObject();
++        final var body = geometry.getAsJsonArray("minecraft:geometry").get(0).getAsJsonObject()
++            .getAsJsonArray("bones").get(1).getAsJsonObject();
++        final var mesh = body.getAsJsonObject("poly_mesh");
++
++        assertEquals(128, converted.atlas().getWidth());
++        assertEquals(0xFF2474A8, converted.atlas().getRGB(0, 0));
++        assertEquals(24F, body.getAsJsonArray("pivot").get(1).getAsFloat());
++        assertEquals(24F, mesh.getAsJsonArray("positions").get(0).getAsJsonArray().get(1).getAsFloat());
++        assertEquals(1F, mesh.getAsJsonArray("uvs").get(0).getAsJsonArray().get(1).getAsFloat());
++        assertEquals("tri_list", mesh.get("polys").getAsString());
++    }
++
++    @Test
++    void rejectsTruncatedModel() throws Exception {
++        final byte[] glb = model();
++        assertThrows(IOException.class, () -> BedrockPersonaModel.convert(java.util.Arrays.copyOf(glb, glb.length - 1)));
++    }
++
++    private static byte[] model() throws IOException {
++        final BufferedImage image = new BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB);
++        image.setRGB(0, 0, 0xFF2474A8);
++        final ByteArrayOutputStream png = new ByteArrayOutputStream();
++        ImageIO.write(image, "png", png);
++        final int imageOffset = 3 * (3 + 3 + 2) * Float.BYTES;
++        final byte[] texture = png.toByteArray();
++        final String json = """
++            {"asset":{"version":"2.0"},"buffers":[{"byteLength":%d}],
++             "bufferViews":[
++               {"buffer":0,"byteOffset":0,"byteLength":36},
++               {"buffer":0,"byteOffset":36,"byteLength":36},
++               {"buffer":0,"byteOffset":72,"byteLength":24},
++               {"buffer":0,"byteOffset":%d,"byteLength":%d}],
++             "accessors":[
++               {"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},
++               {"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"},
++               {"bufferView":2,"componentType":5126,"count":3,"type":"VEC2"}],
++             "images":[{"bufferView":3,"mimeType":"image/png"}],
++             "textures":[{"source":0}],
++             "materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}],
++             "meshes":[{"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"material":0}]}],
++             "nodes":[{"name":"root","children":[1]},{"name":"body","translation":[0,24,0],"mesh":0}],
++             "scenes":[{"nodes":[0]}]}
++            """.formatted(imageOffset + texture.length, imageOffset, texture.length);
++        final byte[] jsonBytes = json.getBytes(StandardCharsets.UTF_8);
++        final int jsonLength = (jsonBytes.length + 3) & ~3;
++        final int binaryLength = (imageOffset + texture.length + 3) & ~3;
++        final ByteBuffer glb = ByteBuffer.allocate(12 + 8 + jsonLength + 8 + binaryLength).order(ByteOrder.LITTLE_ENDIAN);
++        glb.putInt(0x46546C67).putInt(2).putInt(glb.capacity());
++        glb.putInt(jsonLength).putInt(0x4E4F534A).put(jsonBytes);
++        while (glb.position() < 20 + jsonLength) {
++            glb.put((byte) ' ');
++        }
++        glb.putInt(binaryLength).putInt(0x004E4942);
++        for (final float value : new float[] {
++            0, 0, 0, 1, 0, 0, 0, 1, 0,
++            0, 0, 1, 0, 0, 1, 0, 0, 1,
++            0, 0, 1, 0, 1, 1
++        }) {
++            glb.putFloat(value);
++        }
++        glb.put(texture);
++        return glb.array();
++    }
 +}
 -- 
 2.55.0
