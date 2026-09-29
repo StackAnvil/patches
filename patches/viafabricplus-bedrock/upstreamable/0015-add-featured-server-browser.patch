@@ -1,0 +1,1174 @@
+From b4b5ce3b882c611143bf2ea7cbc74d8639cee3d5 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Tue, 29 Sep 2026 09:50:28 +0200
+Subject: [PATCH] feat(bedrock): add featured server browser
+
+Discover the live Gatherings catalog used by the Bedrock Servers tab and show featured and creator experiences in a dedicated Java-style screen. Include catalog artwork, descriptions, news, activities, live player counts, and server status where an address is published.
+
+Resolve hosted experience addresses through Gatherings before joining, while direct-address entries use the existing Bedrock connection path. Keep sign-in and refresh actions available from the browser.
+---
+ .../core/integration/MixinVFPScreen.java      |   7 +-
+ .../screen/BedrockServerDetailsScreen.java    | 211 +++++++++
+ .../bedrock/screen/BedrockServersScreen.java  | 399 ++++++++++++++++++
+ .../bedrock/servers/BedrockServerCatalog.java | 261 ++++++++++++
+ .../servers/BedrockServerConnection.java      |  53 +++
+ .../bedrock/servers/BedrockServerStatus.java  | 116 +++++
+ .../bedrock/visual/BedrockImageCache.java     |   3 +-
+ .../viafabricplus-bedrock/lang/en_us.json     |  20 +
+ 8 files changed, 1068 insertions(+), 2 deletions(-)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockServerDetailsScreen.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockServersScreen.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerCatalog.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerConnection.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerStatus.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinVFPScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinVFPScreen.java
+index f65c1a8..c290a48 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinVFPScreen.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinVFPScreen.java
+@@ -25,6 +25,7 @@ import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
+ import com.viaversion.viafabricplus.bedrock.screen.BedrockFriendsScreen;
+ import com.viaversion.viafabricplus.bedrock.screen.BedrockLanScreen;
+ import com.viaversion.viafabricplus.bedrock.screen.BedrockRealmsScreen;
++import com.viaversion.viafabricplus.bedrock.screen.BedrockServersScreen;
+ import com.viaversion.viafabricplus.screen.base.VFPScreen;
+ import com.viaversion.viafabricplus.screen.impl.ViaFabricPlusScreen;
+ import java.util.Arrays;
+@@ -60,15 +61,19 @@ public abstract class MixinVFPScreen {
+         final Button friends = friendsBuilder.build();
+         final Button lan = Button.builder(Component.translatable("bedrock_lan.viafabricplus.button"),
+             _ -> new BedrockLanScreen().open((Screen) (Object) this)).build();
++        final Button servers = Button.builder(Component.translatable("bedrock_servers.viafabricplus.button"),
++            _ -> new BedrockServersScreen().open((Screen) (Object) this)).build();
+         // The realms screen connects to a server, which is not possible while already being connected to one
+         realms.active = !missingAccount && Minecraft.getInstance().getConnection() == null;
+         friends.active = !missingAccount;
+         lan.active = Minecraft.getInstance().getConnection() == null;
++        servers.active = Minecraft.getInstance().getConnection() == null;
+ 
+-        final Button[] result = Arrays.copyOf(buttons, buttons.length + 3);
++        final Button[] result = Arrays.copyOf(buttons, buttons.length + 4);
+         result[buttons.length] = realms;
+         result[buttons.length + 1] = friends;
+         result[buttons.length + 2] = lan;
++        result[buttons.length + 3] = servers;
+         return result;
+     }
+ 
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockServerDetailsScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockServerDetailsScreen.java
+new file mode 100644
+index 0000000..e123970
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockServerDetailsScreen.java
+@@ -0,0 +1,211 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2023-2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.screen;
++
++import com.viaversion.viafabricplus.bedrock.servers.BedrockServerCatalog.Activity;
++import com.viaversion.viafabricplus.bedrock.servers.BedrockServerCatalog.Server;
++import com.viaversion.viafabricplus.bedrock.servers.BedrockServerConnection;
++import com.viaversion.viafabricplus.bedrock.servers.BedrockServerStatus.Status;
++import com.viaversion.viafabricplus.bedrock.visual.BedrockImageCache;
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import com.viaversion.viafabricplus.screen.base.VFPScreen;
++import com.viaversion.viafabricplus.screen.base.list.VFPList;
++import com.viaversion.viafabricplus.screen.base.list.VFPListEntry;
++import com.viaversion.viafabricplus.screen.base.list.VFPTextEntry;
++import java.util.List;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.Font;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.gui.components.Button;
++import net.minecraft.network.chat.Component;
++import net.minecraft.util.FormattedCharSequence;
++import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
++import org.jetbrains.annotations.Nullable;
++import org.jspecify.annotations.NonNull;
++
++/** Full catalog details for one Bedrock server or featured experience. */
++public final class BedrockServerDetailsScreen extends VFPScreen {
++
++    private static final int LIST_TOP = 184;
++    private static final int SECONDARY = 0xFFB8B8B8;
++
++    private final Server server;
++    private final @Nullable Status status;
++    private final @Nullable Integer playerCount;
++    private Button joinButton;
++    private boolean joining;
++
++    public BedrockServerDetailsScreen(final Server server, final @Nullable Status status, final @Nullable Integer playerCount) {
++        super(Component.literal(server.name()), true);
++        this.server = server;
++        this.status = status;
++        this.playerCount = playerCount;
++    }
++
++    @Override
++    public void renderTitle(final GuiGraphicsExtractor graphics) {
++        super.renderTitle(graphics);
++        graphics.centeredText(this.font, this.title, this.width / 2, 32, -1);
++    }
++
++    @Override
++    protected void init() {
++        this.addRenderableWidget(new DetailList(this.minecraft, this.width, this.height, LIST_TOP,
++            FOOTER_HEIGHT, 64));
++        this.addRenderableOnly((graphics, mouseX, mouseY, delta) -> this.renderHeader(graphics));
++        this.joinButton = Button.builder(Component.translatable("bedrock_servers.viafabricplus.join"), _ -> this.join()).build();
++        this.addFooter(this.joinButton);
++        super.init();
++    }
++
++    @Override
++    public void tick() {
++        super.tick();
++        this.joinButton.active = ViaFabricPlusBedrock.impl().account().get() != null
++            && !this.joining && Minecraft.getInstance().getConnection() == null;
++    }
++
++    private void join() {
++        final BedrockAuthManager account = ViaFabricPlusBedrock.impl().account().get();
++        if (account != null && !this.joining && Minecraft.getInstance().getConnection() == null) {
++            this.joining = true;
++            BedrockServerConnection.join(account, this.server).whenComplete((unused, error) -> Minecraft.getInstance().execute(() -> {
++                this.joining = false;
++                if (error != null) {
++                    ViaFabricPlusBedrock.impl().logger().warn("Could not join Bedrock server " + this.server.name(), error);
++                    showToast(Component.translatable("bedrock_servers.viafabricplus.join_failed"));
++                }
++            }));
++        }
++    }
++
++    private void renderHeader(final GuiGraphicsExtractor graphics) {
++        final int width = Math.min(680, this.width - 30);
++        final int left = (this.width - width) / 2;
++        if (!this.server.banner().isBlank()) {
++            BedrockImageCache.drawRemote(graphics, this.server.banner(), left, 49, width, 75);
++        }
++        graphics.text(this.font, this.font.plainSubstrByWidth(this.server.name(), width), left, 132, -1);
++        graphics.text(this.font, this.font.plainSubstrByWidth(this.server.creator(), width), left, 145, SECONDARY);
++        final Component statusLine = this.playerCount != null
++            ? Component.translatable("bedrock_servers.viafabricplus.players_online", this.playerCount)
++            : this.status != null
++                ? Component.translatable("bedrock_servers.viafabricplus.players", this.status.players(), this.status.maxPlayers())
++                : Component.literal(this.server.hasAddress() ? this.server.address()
++                    : Component.translatable("bedrock_servers.viafabricplus.assigning_address").getString());
++        graphics.text(this.font, this.font.plainSubstrByWidth(statusLine.getString(), width), left, 160, SECONDARY);
++    }
++
++    private final class DetailList extends VFPList {
++
++        private DetailList(final Minecraft minecraft, final int width, final int height, final int top,
++                           final int bottom, final int entryHeight) {
++            super(minecraft, width, height, top, bottom, entryHeight);
++            this.addText(Component.translatable("bedrock_servers.viafabricplus.about"),
++                BedrockServerDetailsScreen.this.server.description());
++            if (!BedrockServerDetailsScreen.this.server.news().isBlank()) {
++                final String heading = BedrockServerDetailsScreen.this.server.newsTitle().isBlank()
++                    ? Component.translatable("bedrock_servers.viafabricplus.news").getString()
++                    : BedrockServerDetailsScreen.this.server.newsTitle();
++                this.addText(Component.literal(heading), BedrockServerDetailsScreen.this.server.news());
++            }
++            final List<Activity> activities = BedrockServerDetailsScreen.this.server.activities();
++            if (!activities.isEmpty()) {
++                this.addEntry(new VFPTextEntry(Component.translatable("bedrock_servers.viafabricplus.activities")));
++                activities.forEach(activity -> this.addEntry(new ActivityEntry(activity)));
++            }
++        }
++
++        private void addText(final Component heading, final String body) {
++            final List<FormattedCharSequence> lines = BedrockServerDetailsScreen.this.font.split(Component.literal(body),
++                Math.max(1, this.getRowWidth() - VFPListEntry.SLOT_MARGIN * 2));
++            int offset = 0;
++            boolean first = true;
++            do {
++                final int end = Math.min(lines.size(), offset + (first ? 3 : 5));
++                this.addEntry(new TextEntry(first ? heading : Component.empty(), first ? body : "",
++                    List.copyOf(lines.subList(offset, end))));
++                offset = end;
++                first = false;
++            } while (offset < lines.size());
++        }
++
++        @Override
++        public int getRowWidth() {
++            return Math.min(680, this.width - 20);
++        }
++    }
++
++    private static final class TextEntry extends VFPListEntry {
++
++        private final Component heading;
++        private final String body;
++        private final List<FormattedCharSequence> lines;
++
++        private TextEntry(final Component heading, final String body, final List<FormattedCharSequence> lines) {
++            this.heading = heading;
++            this.body = body;
++            this.lines = lines;
++        }
++
++        @Override
++        public @NonNull Component getNarration() {
++            return this.heading.getString().isBlank() ? Component.empty() : this.heading.copy().append(": " + this.body);
++        }
++
++        @Override
++        public void mappedRender(final GuiGraphicsExtractor graphics, final int entryWidth, final int entryHeight) {
++            final Font font = Minecraft.getInstance().font;
++            int y = SLOT_MARGIN;
++            if (!this.heading.getString().isBlank()) {
++                graphics.text(font, this.heading, SLOT_MARGIN, y, -1);
++                y += font.lineHeight + 5;
++            }
++            for (final FormattedCharSequence line : this.lines) {
++                if (y + font.lineHeight > entryHeight) {
++                    break;
++                }
++                graphics.text(font, line, SLOT_MARGIN, y, SECONDARY);
++                y += font.lineHeight + 2;
++            }
++        }
++    }
++
++    private static final class ActivityEntry extends VFPListEntry {
++
++        private final Activity activity;
++
++        private ActivityEntry(final Activity activity) {
++            this.activity = activity;
++        }
++
++        @Override
++        public @NonNull Component getNarration() {
++            return Component.literal(this.activity.title() + ", " + this.activity.subtitle());
++        }
++
++        @Override
++        public void mappedRender(final GuiGraphicsExtractor graphics, final int entryWidth, final int entryHeight) {
++            final Font font = Minecraft.getInstance().font;
++            final int imageSize = Math.min(54, entryHeight - 6);
++            BedrockImageCache.drawRemote(graphics, this.activity.image(), SLOT_MARGIN, SLOT_MARGIN, imageSize, imageSize);
++            final int textX = imageSize + 10;
++            final int textWidth = Math.max(0, entryWidth - textX - SLOT_MARGIN);
++            graphics.text(font, font.plainSubstrByWidth(this.activity.title(), textWidth), textX, SLOT_MARGIN, -1);
++            graphics.text(font, font.plainSubstrByWidth(this.activity.subtitle(), textWidth),
++                textX, SLOT_MARGIN + font.lineHeight + 3, SECONDARY);
++            int y = SLOT_MARGIN + (font.lineHeight + 3) * 2;
++            for (final FormattedCharSequence line : font.split(Component.literal(this.activity.description()), textWidth)) {
++                if (y + font.lineHeight > entryHeight) {
++                    break;
++                }
++                graphics.text(font, line, textX, y, SECONDARY);
++                y += font.lineHeight + 2;
++            }
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockServersScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockServersScreen.java
+new file mode 100644
+index 0000000..4c799cb
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockServersScreen.java
+@@ -0,0 +1,399 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2023-2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.screen;
++
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import com.viaversion.viafabricplus.bedrock.servers.BedrockServerCatalog;
++import com.viaversion.viafabricplus.bedrock.servers.BedrockServerCatalog.Server;
++import com.viaversion.viafabricplus.bedrock.servers.BedrockServerConnection;
++import com.viaversion.viafabricplus.bedrock.servers.BedrockServerStatus;
++import com.viaversion.viafabricplus.bedrock.servers.BedrockServerStatus.Status;
++import com.viaversion.viafabricplus.bedrock.visual.BedrockImageCache;
++import com.viaversion.viafabricplus.screen.base.VFPScreen;
++import com.viaversion.viafabricplus.screen.base.list.VFPListEntry;
++import com.viaversion.viafabricplus.screen.base.list.VFPTextEntry;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.Font;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.gui.components.Button;
++import net.minecraft.network.chat.Component;
++import net.minecraft.util.FormattedCharSequence;
++import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
++import org.jetbrains.annotations.Nullable;
++import org.jspecify.annotations.NonNull;
++
++/** A Java-style browser for the Bedrock Servers tab's live catalog. */
++public final class BedrockServersScreen extends VFPScreen {
++
++    public static final Component TITLE = Component.translatable("screen.viafabricplus.bedrock_servers");
++
++    private static final int TABS_TOP = 48;
++    private static final int LIST_TOP = 76;
++    private static final int ROW_WIDTH = 360;
++    private static final int SECONDARY = 0xFFB8B8B8;
++
++    private enum Tab {
++        FEATURED, CREATOR
++    }
++
++    private Tab tab = Tab.FEATURED;
++    private List<Server> servers = List.of();
++    private final Map<String, Status> statuses = new HashMap<>();
++    private Map<String, Integer> counts = Map.of();
++    private final Set<String> pendingPings = new HashSet<>();
++    private boolean requested;
++    private boolean loading;
++    private boolean failed;
++    private boolean joining;
++    private boolean countsLoading;
++    private long lastCountsRefresh;
++    private long lastStatusRefresh;
++    private int generation;
++    private ServerList list;
++    private Button joinButton;
++    private Button detailsButton;
++    private Button refreshButton;
++    private @Nullable BedrockAuthManager visibleAccount;
++
++    public BedrockServersScreen() {
++        super(TITLE, true);
++    }
++
++    @Override
++    public void renderTitle(final GuiGraphicsExtractor graphics) {
++        super.renderTitle(graphics);
++        graphics.centeredText(this.font, this.title, this.width / 2, 32, -1);
++    }
++
++    @Override
++    protected void rebuildWidgets() {
++        final String selectedId = this.selected() == null ? null : this.selected().id();
++        super.rebuildWidgets();
++        if (selectedId != null) {
++            for (final VFPListEntry entry : this.list.children()) {
++                if (entry instanceof ServerEntry serverEntry && serverEntry.server.id().equals(selectedId)) {
++                    this.list.setFocused(entry);
++                    break;
++                }
++            }
++        }
++    }
++
++    @Override
++    protected void init() {
++        final int tabWidth = Math.min(112, (this.width - 20) / Tab.values().length);
++        final int left = (this.width - tabWidth * Tab.values().length) / 2;
++        for (final Tab choice : Tab.values()) {
++            final Button button = Button.builder(Component.translatable("bedrock_servers.viafabricplus.tab."
++                    + choice.name().toLowerCase()), _ -> this.show(choice))
++                .pos(left + choice.ordinal() * tabWidth, TABS_TOP).size(tabWidth, 20).build();
++            button.active = choice != this.tab;
++            this.addRenderableWidget(button);
++        }
++        this.list = this.addRenderableWidget(new ServerList(this.minecraft, this.width, this.height, LIST_TOP,
++            FOOTER_HEIGHT, this.font.lineHeight * 2 + 16));
++        this.addRenderableOnly((graphics, mouseX, mouseY, delta) -> this.renderDetails(graphics));
++        this.joinButton = Button.builder(Component.translatable("bedrock_servers.viafabricplus.join"), _ -> this.joinOrSignIn()).build();
++        this.detailsButton = Button.builder(Component.translatable("bedrock_servers.viafabricplus.details"), _ -> this.details()).build();
++        this.refreshButton = Button.builder(Component.translatable("bedrock_servers.viafabricplus.refresh"), _ -> this.refresh()).build();
++        this.addFooter(this.joinButton, this.detailsButton, this.refreshButton);
++        super.init();
++        if (!this.requested) {
++            this.visibleAccount = ViaFabricPlusBedrock.impl().account().get();
++            this.refresh();
++        }
++    }
++
++    @Override
++    public void tick() {
++        super.tick();
++        final BedrockAuthManager account = ViaFabricPlusBedrock.impl().account().get();
++        if (account != this.visibleAccount) {
++            this.generation++;
++            this.loading = false;
++            this.countsLoading = false;
++            this.visibleAccount = account;
++            this.refresh();
++        }
++        final Server selected = this.selected();
++        this.joinButton.setMessage(Component.translatable(account == null
++            ? "bedrock_servers.viafabricplus.sign_in_button" : "bedrock_servers.viafabricplus.join"));
++        this.joinButton.active = (account == null || selected != null) && !this.joining
++            && Minecraft.getInstance().getConnection() == null;
++        this.detailsButton.active = selected != null;
++        this.refreshButton.active = account != null && !this.loading;
++        if (!this.servers.isEmpty() && !this.loading) {
++            final long now = System.nanoTime();
++            if (now - this.lastCountsRefresh > 30_000_000_000L) {
++                this.refreshCounts(this.generation);
++            }
++            if (now - this.lastStatusRefresh > 30_000_000_000L) {
++                this.lastStatusRefresh = now;
++                this.pingServers(this.generation);
++            }
++        }
++    }
++
++    private void show(final Tab choice) {
++        if (this.tab != choice) {
++            this.tab = choice;
++            this.rebuildWidgets();
++        }
++    }
++
++    private @Nullable Server selected() {
++        return this.list != null && this.list.getFocused() instanceof ServerEntry entry ? entry.server : null;
++    }
++
++    private void refresh() {
++        if (this.loading) {
++            return;
++        }
++        final BedrockAuthManager account = ViaFabricPlusBedrock.impl().account().get();
++        if (account == null) {
++            this.servers = List.of();
++            this.statuses.clear();
++            this.counts = Map.of();
++            this.failed = false;
++            this.requested = true;
++            this.rebuildWidgets();
++            return;
++        }
++        this.requested = true;
++        this.loading = true;
++        this.failed = false;
++        final int currentGeneration = ++this.generation;
++        this.countsLoading = false;
++        BedrockServerCatalog.load(account).whenComplete((results, error) -> Minecraft.getInstance().execute(() -> {
++            if (currentGeneration != this.generation) {
++                return;
++            }
++            this.loading = false;
++            this.failed = error != null;
++            if (error == null) {
++                this.servers = results;
++                this.statuses.clear();
++                this.pendingPings.clear();
++                this.counts = Map.of();
++                this.lastStatusRefresh = System.nanoTime();
++                this.pingServers(currentGeneration);
++                this.refreshCounts(currentGeneration);
++            } else {
++                ViaFabricPlusBedrock.impl().logger().warn("Could not load Bedrock server catalog", error);
++                if (!this.servers.isEmpty()) {
++                    showToast(Component.translatable("bedrock_servers.viafabricplus.failed"));
++                }
++            }
++            if (Minecraft.getInstance().gui.screen() == this) {
++                this.rebuildWidgets();
++            }
++        }));
++        if (this.list != null) {
++            this.rebuildWidgets();
++        }
++    }
++
++    private void pingServers(final int currentGeneration) {
++        for (final Server server : this.servers) {
++            if (!server.hasAddress() || !this.pendingPings.add(server.id())) {
++                continue;
++            }
++            BedrockServerStatus.ping(server).whenComplete((status, error) -> Minecraft.getInstance().execute(() -> {
++                if (currentGeneration != this.generation) {
++                    return;
++                }
++                this.pendingPings.remove(server.id());
++                if (status != null) {
++                    this.statuses.put(server.id(), status);
++                }
++            }));
++        }
++    }
++
++    private void refreshCounts(final int currentGeneration) {
++        if (this.countsLoading) {
++            return;
++        }
++        final BedrockAuthManager account = ViaFabricPlusBedrock.impl().account().get();
++        if (account == null) {
++            return;
++        }
++        this.countsLoading = true;
++        this.lastCountsRefresh = System.nanoTime();
++        BedrockServerCatalog.playerCounts(account).whenComplete((results, error) -> Minecraft.getInstance().execute(() -> {
++            if (currentGeneration != this.generation) {
++                return;
++            }
++            this.countsLoading = false;
++            if (error == null) {
++                this.counts = results;
++            } else {
++                ViaFabricPlusBedrock.impl().logger().debug("Could not refresh Bedrock player counts", error);
++            }
++        }));
++    }
++
++    private void join() {
++        final Server selected = this.selected();
++        final BedrockAuthManager account = ViaFabricPlusBedrock.impl().account().get();
++        if (selected != null && account != null && !this.joining && Minecraft.getInstance().getConnection() == null) {
++            this.joining = true;
++            BedrockServerConnection.join(account, selected).whenComplete((unused, error) -> Minecraft.getInstance().execute(() -> {
++                this.joining = false;
++                if (error != null) {
++                    ViaFabricPlusBedrock.impl().logger().warn("Could not join Bedrock server " + selected.name(), error);
++                    showToast(Component.translatable("bedrock_servers.viafabricplus.join_failed"));
++                }
++            }));
++        }
++    }
++
++    private void joinOrSignIn() {
++        if (ViaFabricPlusBedrock.impl().account().get() == null) {
++            ViaFabricPlusBedrock.impl().account().login();
++        } else {
++            this.join();
++        }
++    }
++
++    private void details() {
++        final Server selected = this.selected();
++        if (selected != null) {
++            new BedrockServerDetailsScreen(selected, this.statuses.get(selected.id()), this.counts.get(selected.experienceId())).open(this);
++        }
++    }
++
++    private void renderDetails(final GuiGraphicsExtractor graphics) {
++        if (this.width < 780) {
++            return;
++        }
++        final Server selected = this.selected();
++        if (selected == null) {
++            return;
++        }
++        final int left = this.width / 2 + ROW_WIDTH / 2 + 16;
++        final int width = this.width - left - 14;
++        final int top = LIST_TOP + 4;
++        int y = top;
++        if (!selected.banner().isBlank()) {
++            final int bannerHeight = Math.min(96, Math.max(48, width / 3));
++            BedrockImageCache.drawRemote(graphics, selected.banner(), left, y, width, bannerHeight);
++            y += bannerHeight + 9;
++        }
++        graphics.text(this.font, fit(selected.name(), width), left, y, -1);
++        y += this.font.lineHeight + 5;
++        graphics.text(this.font, fit(selected.creator(), width), left, y, SECONDARY);
++        y += this.font.lineHeight + 10;
++        final Status status = this.statuses.get(selected.id());
++        if (this.counts.containsKey(selected.experienceId())) {
++            graphics.text(this.font, Component.translatable("bedrock_servers.viafabricplus.players_online",
++                this.counts.get(selected.experienceId())), left, y, -1);
++            y += this.font.lineHeight + 4;
++        } else if (status != null) {
++            graphics.text(this.font, Component.translatable("bedrock_servers.viafabricplus.players",
++                status.players(), status.maxPlayers()), left, y, -1);
++            y += this.font.lineHeight + 4;
++        }
++        if (status != null) {
++            graphics.text(this.font, Component.translatable("bedrock_servers.viafabricplus.ping", status.latencyMillis()),
++                left, y, SECONDARY);
++            y += this.font.lineHeight + 10;
++        }
++        final int bottom = this.height - FOOTER_HEIGHT - 5;
++        for (final FormattedCharSequence line : this.font.split(Component.literal(selected.description()), width)) {
++            if (y + this.font.lineHeight >= bottom) {
++                return;
++            }
++            graphics.text(this.font, line, left, y, SECONDARY);
++            y += this.font.lineHeight + 2;
++        }
++        if (!selected.newsTitle().isBlank() && y + this.font.lineHeight * 2 + 14 < bottom) {
++            y += 10;
++            graphics.text(this.font, fit(selected.newsTitle(), width), left, y, -1);
++            y += this.font.lineHeight + 3;
++            graphics.text(this.font, fit(selected.news(), width), left, y, SECONDARY);
++        }
++    }
++
++    private String fit(final String value, final int width) {
++        return this.font.plainSubstrByWidth(value, Math.max(0, width));
++    }
++
++    private final class ServerList extends ActionList {
++
++        private ServerList(final Minecraft minecraft, final int width, final int height, final int top,
++                           final int bottom, final int entryHeight) {
++            super(minecraft, width, height, top, bottom, entryHeight);
++            final List<Server> visible = BedrockServersScreen.this.servers.stream()
++                .filter(server -> server.featured() == (BedrockServersScreen.this.tab == Tab.FEATURED)).toList();
++            if (visible.isEmpty()) {
++                final String key = ViaFabricPlusBedrock.impl().account().get() == null ? "sign_in"
++                    : BedrockServersScreen.this.loading ? "loading"
++                    : BedrockServersScreen.this.failed ? "failed" : "empty";
++                this.addEntry(new VFPTextEntry(Component.translatable("bedrock_servers.viafabricplus." + key)));
++            } else {
++                visible.forEach(server -> this.addEntry(new ServerEntry(this, server)));
++            }
++        }
++
++        @Override
++        public int getRowWidth() {
++            return Math.min(ROW_WIDTH, this.width - 20);
++        }
++
++        @Override
++        protected boolean activate(final VFPListEntry entry) {
++            if (entry instanceof ServerEntry serverEntry) {
++                BedrockServersScreen.this.join();
++                return true;
++            }
++            return false;
++        }
++    }
++
++    private final class ServerEntry extends VFPListEntry {
++
++        private final ServerList parent;
++        private final Server server;
++
++        private ServerEntry(final ServerList parent, final Server server) {
++            this.parent = parent;
++            this.server = server;
++        }
++
++        @Override
++        public @NonNull Component getNarration() {
++            return Component.literal(this.server.name() + ", " + this.server.creator());
++        }
++
++        @Override
++        public void mappedRender(final GuiGraphicsExtractor graphics, final int entryWidth, final int entryHeight) {
++            final Font font = Minecraft.getInstance().font;
++            final int icon = Math.min(32, entryHeight - 6);
++            final int textX = icon + 9;
++            BedrockImageCache.drawRemote(graphics, this.server.icon(), SLOT_MARGIN, (entryHeight - icon) / 2, icon, icon);
++            final Status status = BedrockServersScreen.this.statuses.get(this.server.id());
++            final Integer count = BedrockServersScreen.this.counts.get(this.server.experienceId());
++            final String right = count != null ? Integer.toString(count)
++                : status == null ? "" : status.players() + "/" + status.maxPlayers();
++            final int nameWidth = entryWidth - textX - font.width(right) - SLOT_MARGIN * 2 - 5;
++            graphics.text(font, font.plainSubstrByWidth(this.server.name(), Math.max(0, nameWidth)),
++                textX, SLOT_MARGIN + 1, this.parent.getFocused() == this ? ACCENT_COLOR : -1);
++            if (!right.isEmpty()) {
++                graphics.text(font, right, entryWidth - font.width(right) - SLOT_MARGIN, SLOT_MARGIN + 1, SECONDARY);
++            }
++            final String subtitle = this.server.creator().isBlank() ? this.server.description() : this.server.creator();
++            graphics.text(font, font.plainSubstrByWidth(subtitle, Math.max(0, entryWidth - textX - SLOT_MARGIN)),
++                textX, SLOT_MARGIN + font.lineHeight + 5, SECONDARY);
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerCatalog.java b/src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerCatalog.java
+new file mode 100644
+index 0000000..8be88e4
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerCatalog.java
+@@ -0,0 +1,261 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2023-2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.servers;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonElement;
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++import java.io.IOException;
++import java.net.URI;
++import java.net.http.HttpClient;
++import java.net.http.HttpRequest;
++import java.net.http.HttpResponse;
++import java.time.Duration;
++import java.util.ArrayList;
++import java.util.Comparator;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Locale;
++import java.util.Map;
++import java.util.concurrent.CompletableFuture;
++import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import org.jetbrains.annotations.Nullable;
++
++/** The catalog behind Bedrock's Featured and Creator experiences on the Servers tab. */
++public final class BedrockServerCatalog {
++
++    private static final URI DISCOVERY = URI.create("https://client.discovery.minecraft-services.net/api/v1.0/discovery/MinecraftPE/builds/"
++        + ProtocolConstants.BEDROCK_VERSION_NAME);
++    private static final String SEARCH_PATH = "/api/v2.0/discovery/blob/client";
++    private static final String SCID = "4fc10100-5f7a-4470-899b-280835760c07";
++    private static final String FILTER = "(contentType eq '3PP_V2.0') and platforms/any(tp: tp eq 'xboxone.store' and tp eq 'title.bedrockvanilla')";
++    private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
++    private static volatile @Nullable URI serviceUri;
++
++    private BedrockServerCatalog() {
++    }
++
++    public static CompletableFuture<List<Server>> load(final BedrockAuthManager account) {
++        return CompletableFuture.supplyAsync(() -> {
++            try {
++                final JsonObject query = new JsonObject();
++                query.addProperty("count", true);
++                query.addProperty("filter", FILTER);
++                query.addProperty("orderBy", "startDate desc");
++                query.addProperty("scid", SCID);
++                query.addProperty("select", "images");
++                query.addProperty("top", 75);
++                final HttpRequest listing = authorized(service().resolve(SEARCH_PATH), account)
++                    .timeout(Duration.ofSeconds(20))
++                    .header("Content-Type", "application/json")
++                    .header("Accept", "application/json")
++                    .header("Accept-Language", Locale.getDefault().toLanguageTag())
++                    .POST(HttpRequest.BodyPublishers.ofString(query.toString())).build();
++                return parse(request(listing));
++            } catch (Exception exception) {
++                throw new IllegalStateException("Could not load Bedrock servers", exception);
++            }
++        });
++    }
++
++    public static CompletableFuture<Map<String, Integer>> playerCounts(final BedrockAuthManager account) {
++        return CompletableFuture.supplyAsync(() -> {
++            try {
++                final JsonObject response = request(authorized(service().resolve("/api/v2.0/dataquery/playercounts"), account)
++                    .timeout(Duration.ofSeconds(15)).GET().build());
++                final JsonArray entries = array(response, "result");
++                if (entries == null) {
++                    throw new IOException("Bedrock player counts response has no entries");
++                }
++                final Map<String, Integer> counts = new HashMap<>();
++                for (final JsonElement element : entries) {
++                    if (element.isJsonObject()) {
++                        final JsonObject item = element.getAsJsonObject();
++                        final String id = string(item, "experienceId");
++                        if (!id.isBlank()) {
++                            counts.put(id, number(item, "playerCount", 0));
++                        }
++                    }
++                }
++                return Map.copyOf(counts);
++            } catch (Exception exception) {
++                throw new IllegalStateException("Could not load Bedrock player counts", exception);
++            }
++        });
++    }
++
++    public static CompletableFuture<JoinAddress> join(final BedrockAuthManager account, final Server server) {
++        return CompletableFuture.supplyAsync(() -> {
++            try {
++                final JsonObject body = new JsonObject();
++                body.addProperty("experienceId", server.experienceId());
++                final JsonObject response = request(authorized(service().resolve("/api/v2.0/join/experience"), account)
++                    .timeout(Duration.ofSeconds(20))
++                    .header("Content-Type", "application/json")
++                    .POST(HttpRequest.BodyPublishers.ofString(body.toString())).build());
++                final JsonObject data = object(response, "result");
++                final String host = string(data, "ipV4Address");
++                final int port = data == null ? 0 : number(data, "port", 0);
++                if (host.isBlank() || port < 1 || port > 65535) {
++                    throw new IOException("Bedrock experience returned no usable server address");
++                }
++                return new JoinAddress(host, port, string(data, "networkProtocol"));
++            } catch (Exception exception) {
++                throw new IllegalStateException("Could not join Bedrock experience", exception);
++            }
++        });
++    }
++
++    private static URI service() throws IOException, InterruptedException {
++        URI uri = serviceUri;
++        if (uri == null) {
++            final JsonObject discovery = request(HttpRequest.newBuilder(DISCOVERY).timeout(Duration.ofSeconds(15)).GET().build());
++            final JsonObject gatherings = object(object(object(discovery, "result"), "serviceEnvironments"), "gatherings");
++            uri = URI.create(string(object(gatherings, "prod"), "serviceUri"));
++            if (!"https".equals(uri.getScheme()) || uri.getHost() == null
++                || !uri.getHost().endsWith(".minecraft-services.net")) {
++                throw new IOException("Discovery returned an unexpected Bedrock gatherings service");
++            }
++            serviceUri = uri;
++        }
++        return uri;
++    }
++
++    private static HttpRequest.Builder authorized(final URI uri, final BedrockAuthManager account) throws Exception {
++        return HttpRequest.newBuilder(uri)
++            .header("Authorization", account.getMinecraftSession().getUpToDate().getAuthorizationHeader())
++            .header("Client-Version", ProtocolConstants.BEDROCK_VERSION_NAME)
++            .header("User-Agent", "libhttpclient/1.0.0.0");
++    }
++
++    private static JsonObject request(final HttpRequest request) throws IOException, InterruptedException {
++        final HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
++        if (response.statusCode() / 100 != 2) {
++            throw new IOException("Bedrock catalog returned HTTP " + response.statusCode());
++        }
++        final JsonElement json = JsonParser.parseString(response.body());
++        if (!json.isJsonObject()) {
++            throw new IOException("Bedrock catalog returned invalid JSON");
++        }
++        return json.getAsJsonObject();
++    }
++
++    static List<Server> parse(final JsonObject response) throws IOException {
++        final JsonArray items = array(object(response, "data"), "Items");
++        if (items == null) {
++            throw new IOException("Bedrock catalog response has no server items");
++        }
++        final List<Server> servers = new ArrayList<>();
++        for (final JsonElement item : items) {
++            if (!item.isJsonObject()) {
++                continue;
++            }
++            final JsonObject source = item.getAsJsonObject();
++            final JsonObject properties = object(source, "DisplayProperties");
++            final String id = string(source, "Id");
++            final String name = localized(object(source, "Title"));
++            if (id.isBlank() || name.isBlank() || properties == null) {
++                continue;
++            }
++            final Map<String, String> images = new HashMap<>();
++            final JsonArray imageEntries = array(source, "Images");
++            if (imageEntries != null) {
++                for (final JsonElement image : imageEntries) {
++                    if (image.isJsonObject()) {
++                        final JsonObject data = image.getAsJsonObject();
++                        images.putIfAbsent(string(data, "Tag").toLowerCase(Locale.ROOT), string(data, "Url"));
++                    }
++                }
++            }
++            final List<Activity> activities = new ArrayList<>();
++            final JsonArray games = array(properties, "availableGames");
++            if (games != null) {
++                for (final JsonElement game : games) {
++                    if (game.isJsonObject()) {
++                        final JsonObject data = game.getAsJsonObject();
++                        activities.add(new Activity(string(data, "title"), string(data, "subtitle"),
++                            string(data, "description"), images.getOrDefault(string(data, "imageTag").toLowerCase(Locale.ROOT), "")));
++                    }
++                }
++            }
++            final boolean featured = properties.has("rank") && properties.get("rank").isJsonPrimitive()
++                && properties.get("rank").getAsJsonPrimitive().isNumber();
++            final int rank = featured ? properties.get("rank").getAsInt() : 0;
++            final String experienceId = string(properties, "experienceId");
++            servers.add(new Server(id, experienceId.isBlank() ? id : experienceId,
++                name, localized(object(source, "Description")), string(properties, "creatorName"),
++                string(properties, "url"), number(properties, "port", ProtocolConstants.BEDROCK_DEFAULT_PORT),
++                featured, rank, string(properties, "newsTitle"), string(properties, "news"),
++                images.getOrDefault("icon", images.getOrDefault("thumbnail", "")),
++                images.getOrDefault("banner", ""), List.copyOf(activities)));
++        }
++        servers.sort(Comparator.comparing(Server::featured).reversed()
++            .thenComparing(Comparator.comparingInt(Server::rank).reversed()));
++        return List.copyOf(servers);
++    }
++
++    private static @Nullable JsonObject object(final @Nullable JsonObject source, final String key) {
++        final JsonElement value = source == null ? null : source.get(key);
++        return value != null && value.isJsonObject() ? value.getAsJsonObject() : null;
++    }
++
++    private static @Nullable JsonArray array(final @Nullable JsonObject source, final String key) {
++        final JsonElement value = source == null ? null : source.get(key);
++        return value != null && value.isJsonArray() ? value.getAsJsonArray() : null;
++    }
++
++    private static String string(final @Nullable JsonObject source, final String key) {
++        final JsonElement value = source == null ? null : source.get(key);
++        return value != null && value.isJsonPrimitive() ? value.getAsString() : "";
++    }
++
++    private static int number(final JsonObject source, final String key, final int fallback) {
++        final JsonElement value = source.get(key);
++        return value != null && value.isJsonPrimitive() && value.getAsJsonPrimitive().isNumber()
++            ? value.getAsInt() : fallback;
++    }
++
++    private static String localized(final @Nullable JsonObject translations) {
++        if (translations == null) {
++            return "";
++        }
++        final String locale = Locale.getDefault().toString();
++        for (final String key : List.of(locale, locale.replace('_', '-'), "neutral", "NEUTRAL", "en_US", "en-US")) {
++            final String text = string(translations, key);
++            if (!text.isBlank()) {
++                return text;
++            }
++        }
++        return "";
++    }
++
++    public record Server(String id, String experienceId, String name, String description, String creator, String host, int port,
++                         boolean featured, int rank, String newsTitle, String news, String icon, String banner,
++                         List<Activity> activities) {
++
++        public boolean hasAddress() {
++            return !this.host.isBlank() && this.port > 0 && this.port <= 65535;
++        }
++
++        public String address() {
++            return this.host + ':' + this.port;
++        }
++    }
++
++    public record Activity(String title, String subtitle, String description, String image) {
++    }
++
++    public record JoinAddress(String host, int port, String networkProtocol) {
++
++        public String address() {
++            return this.host + ':' + this.port;
++        }
++    }
++
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerConnection.java b/src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerConnection.java
+new file mode 100644
+index 0000000..5d34485
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerConnection.java
+@@ -0,0 +1,53 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2023-2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.servers;
++
++import com.viaversion.viafabricplus.bedrock.protocoltranslator.network.BedrockConnectionUtil;
++import com.viaversion.viafabricplus.bedrock.protocoltranslator.network.NetherNetJsonRpcAddress;
++import com.viaversion.viafabricplus.bedrock.servers.BedrockServerCatalog.JoinAddress;
++import com.viaversion.viafabricplus.bedrock.servers.BedrockServerCatalog.Server;
++import com.viaversion.viafabricplus.util.network.ConnectionUtil;
++import java.util.concurrent.CompletableFuture;
++import net.minecraft.client.Minecraft;
++import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
++import net.raphimc.minecraftauth.extra.realms.model.RealmsJoinInformation;
++import net.raphimc.viabedrock.api.BedrockProtocolVersion;
++import org.cloudburstmc.netty.channel.nethernet.config.NetherNetAddress;
++
++/** Resolves hosted experiences and connects through the transport requested by Gatherings. */
++public final class BedrockServerConnection {
++
++    private BedrockServerConnection() {
++    }
++
++    public static CompletableFuture<Void> join(final BedrockAuthManager account, final Server server) {
++        final CompletableFuture<JoinAddress> destination = server.hasAddress()
++            ? CompletableFuture.completedFuture(new JoinAddress(server.host(), server.port(), RealmsJoinInformation.PROTOCOL_DEFAULT))
++            : BedrockServerCatalog.join(account, server);
++        return destination.thenCompose(address -> {
++            final CompletableFuture<Void> result = new CompletableFuture<>();
++            Minecraft.getInstance().execute(() -> {
++                try {
++                    final String protocol = address.networkProtocol();
++                    if (protocol.isBlank() || protocol.equalsIgnoreCase(RealmsJoinInformation.PROTOCOL_DEFAULT)) {
++                        ConnectionUtil.connect(address.address(), BedrockProtocolVersion.BEDROCK_LATEST);
++                    } else if (protocol.equalsIgnoreCase(RealmsJoinInformation.PROTOCOL_NETHERNET)) {
++                        BedrockConnectionUtil.connectNetherNet(new NetherNetAddress(address.address()));
++                    } else if (protocol.equalsIgnoreCase(RealmsJoinInformation.PROTOCOL_NETHERNET_JSONRPC)) {
++                        BedrockConnectionUtil.connectNetherNet(new NetherNetJsonRpcAddress(address.address()));
++                    } else {
++                        throw new IllegalArgumentException("Unsupported Bedrock server transport: " + protocol);
++                    }
++                    result.complete(null);
++                } catch (Exception exception) {
++                    result.completeExceptionally(exception);
++                }
++            });
++            return result;
++        });
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerStatus.java b/src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerStatus.java
+new file mode 100644
+index 0000000..8a21c62
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/servers/BedrockServerStatus.java
+@@ -0,0 +1,116 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2023-2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.servers;
++
++import java.io.IOException;
++import java.net.DatagramPacket;
++import java.net.DatagramSocket;
++import java.net.InetAddress;
++import java.net.SocketTimeoutException;
++import java.nio.ByteBuffer;
++import java.nio.ByteOrder;
++import java.nio.charset.StandardCharsets;
++import java.util.Arrays;
++import java.util.Comparator;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.ThreadLocalRandom;
++import org.jetbrains.annotations.Nullable;
++
++/** Reads live player counts and latency using RakNet's unconnected ping. */
++public final class BedrockServerStatus {
++
++    private static final byte[] MAGIC = {0x00, (byte) 0xFF, (byte) 0xFF, 0x00,
++        (byte) 0xFE, (byte) 0xFE, (byte) 0xFE, (byte) 0xFE,
++        (byte) 0xFD, (byte) 0xFD, (byte) 0xFD, (byte) 0xFD, 0x12, 0x34, 0x56, 0x78};
++    private static final int TIMEOUT_MILLIS = 1200;
++
++    private BedrockServerStatus() {
++    }
++
++    public static CompletableFuture<@Nullable Status> ping(final BedrockServerCatalog.Server server) {
++        if (!server.hasAddress()) {
++            return CompletableFuture.completedFuture(null);
++        }
++        return CompletableFuture.supplyAsync(() -> {
++            try {
++                final InetAddress[] addresses = InetAddress.getAllByName(server.host());
++                // Prefer IPv4 for the common Bedrock server addresses, but use IPv6 when that is all DNS returns.
++                Arrays.sort(addresses, Comparator.comparingInt(address -> address.getAddress().length));
++                for (final InetAddress address : addresses) {
++                    try {
++                        return query(address, server.port());
++                    } catch (IOException ignored) {
++                        // The next address can still answer.
++                    }
++                }
++            } catch (IOException ignored) {
++                // A catalog entry can be unavailable without failing the list.
++            }
++            return null;
++        });
++    }
++
++    private static Status query(final InetAddress address, final int port) throws IOException {
++        final byte[] ping = ByteBuffer.allocate(1 + Long.BYTES + MAGIC.length + Long.BYTES)
++            .order(ByteOrder.BIG_ENDIAN)
++            .put((byte) 0x01)
++            .putLong(System.currentTimeMillis())
++            .put(MAGIC)
++            .putLong(ThreadLocalRandom.current().nextLong())
++            .array();
++        try (DatagramSocket socket = new DatagramSocket()) {
++            socket.setSoTimeout(TIMEOUT_MILLIS);
++            socket.connect(address, port);
++            final long start = System.nanoTime();
++            socket.send(new DatagramPacket(ping, ping.length));
++            final byte[] bytes = new byte[2048];
++            final DatagramPacket reply = new DatagramPacket(bytes, bytes.length);
++            socket.receive(reply);
++            final long latency = (System.nanoTime() - start) / 1_000_000L;
++            return parse(bytes, reply.getLength(), latency);
++        } catch (SocketTimeoutException exception) {
++            throw new IOException("Bedrock server did not answer its status ping", exception);
++        }
++    }
++
++    static Status parse(final byte[] bytes, final int length, final long latency) throws IOException {
++        if (length < 35) {
++            throw new IOException("Bedrock server sent a short status response");
++        }
++        final ByteBuffer reply = ByteBuffer.wrap(bytes, 0, length).order(ByteOrder.BIG_ENDIAN);
++        if (reply.get() != 0x1C) {
++            throw new IOException("Bedrock server sent an unexpected status response");
++        }
++        reply.getLong(); // Timestamp echoed by the server.
++        reply.getLong(); // Server GUID.
++        final byte[] magic = new byte[MAGIC.length];
++        reply.get(magic);
++        if (!Arrays.equals(magic, MAGIC)) {
++            throw new IOException("Bedrock server status has invalid RakNet magic");
++        }
++        final int size = Short.toUnsignedInt(reply.getShort());
++        if (size > reply.remaining()) {
++            throw new IOException("Bedrock server status has an invalid message length");
++        }
++        final byte[] message = new byte[size];
++        reply.get(message);
++        final String[] fields = new String(message, StandardCharsets.UTF_8).split(";", -1);
++        if (fields.length < 6 || !"MCPE".equals(fields[0])) {
++            throw new IOException("Bedrock server status has an invalid MOTD");
++        }
++        try {
++            return new Status(Math.max(0, Integer.parseInt(fields[4])), Math.max(0, Integer.parseInt(fields[5])),
++                latency, fields[1], fields[3]);
++        } catch (NumberFormatException exception) {
++            throw new IOException("Bedrock server status has invalid player counts", exception);
++        }
++    }
++
++    public record Status(int players, int maxPlayers, long latencyMillis, String motd, String version) {
++    }
++
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/visual/BedrockImageCache.java b/src/main/java/com/viaversion/viafabricplus/bedrock/visual/BedrockImageCache.java
+index 9d9f2b1..44a420f 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/visual/BedrockImageCache.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/visual/BedrockImageCache.java
+@@ -89,7 +89,8 @@ public final class BedrockImageCache {
+         return host.equals("xboxlive.com") || host.endsWith(".xboxlive.com")
+             || host.equals("xbox.com") || host.endsWith(".xbox.com")
+             || host.equals("minecraft.net") || host.endsWith(".minecraft.net")
+-            || host.equals("minecraft-services.net") || host.endsWith(".minecraft-services.net");
++            || host.equals("minecraft-services.net") || host.endsWith(".minecraft-services.net")
++            || host.matches("content\\d+\\.prod\\.catalog\\.playfab\\.com");
+     }
+ 
+     public static boolean drawBundled(final GuiGraphicsExtractor graphics, final String resource,
+diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
+index 75b5640..2c5e14d 100644
+--- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
++++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
+@@ -17,6 +17,26 @@
+   "screen.viafabricplus.bedrock_realms": "Bedrock Realms",
+   "screen.viafabricplus.bedrock_friends": "Bedrock Friends",
+   "screen.viafabricplus.bedrock_lan": "Bedrock LAN",
++  "screen.viafabricplus.bedrock_servers": "Bedrock Servers",
++  "bedrock_servers.viafabricplus.button": "Servers",
++  "bedrock_servers.viafabricplus.tab.featured": "Featured",
++  "bedrock_servers.viafabricplus.tab.creator": "Creator",
++  "bedrock_servers.viafabricplus.join": "Join server",
++  "bedrock_servers.viafabricplus.sign_in_button": "Sign in",
++  "bedrock_servers.viafabricplus.details": "Details",
++  "bedrock_servers.viafabricplus.refresh": "Refresh",
++  "bedrock_servers.viafabricplus.sign_in": "Sign in to your Bedrock account to see servers.",
++  "bedrock_servers.viafabricplus.loading": "Loading servers...",
++  "bedrock_servers.viafabricplus.failed": "Could not load servers. Try refreshing.",
++  "bedrock_servers.viafabricplus.empty": "No servers are listed right now.",
++  "bedrock_servers.viafabricplus.players": "Players: %s/%s",
++  "bedrock_servers.viafabricplus.ping": "Ping: %s ms",
++  "bedrock_servers.viafabricplus.players_online": "%s players online",
++  "bedrock_servers.viafabricplus.assigning_address": "The server address is assigned when you join.",
++  "bedrock_servers.viafabricplus.join_failed": "Could not join this server. Try again.",
++  "bedrock_servers.viafabricplus.about": "About",
++  "bedrock_servers.viafabricplus.activities": "Activities",
++  "bedrock_servers.viafabricplus.news": "News",
+   "bedrock_lan.viafabricplus.button": "LAN Worlds",
+   "bedrock_lan.viafabricplus.join": "Join world",
+   "bedrock_lan.viafabricplus.refresh": "Refresh",
+-- 
+2.55.0
