@@ -4,16 +4,16 @@ This guide is for StackAnvil maintainers who publish the patched ViaFabricPlus B
 
 The [private Modrinth draft](https://modrinth.com/mod/stackanvil-bedrock-addon) is owned by `pistonmaster`. Its project ID is `opL7gK2I`. It has a beta version of the verified `stack-v0.1.4` add-on JAR, with Fabric 26.3 and ViaFabricPlus marked as a required dependency. Its AI-assisted text, fork, and local skin import disclosures are saved. It uses the maintainer's hand-drawn icon and has not been submitted for review.
 
-The [unlisted CurseForge project](https://authors.curseforge.com/#/projects/1713307/files) is owned by `pistonmaster`. Its project ID is `1713307`. Its description, hand-drawn logo, GPLv3 license, GitHub source link, and required ViaFabricPlus relation are saved. It has no file yet, so it remains unavailable to other users until moderation. Both project IDs are stored as GitHub Actions repository variables.
+The [CurseForge project](https://authors.curseforge.com/#/projects/1713307/files) is owned by `pistonmaster`. Its project ID is `1713307`. Its description, hand-drawn logo, GPLv3 license, GitHub source link, StackAnvil website, Discord invite, and required ViaFabricPlus relation are saved. Files can remain under manual review before they appear in search. Both project IDs are stored as GitHub Actions repository variables.
 
 ## Listing fields
 
-The projects use these fields on both sites:
+The CurseForge project uses these fields:
 
 | Field | Value |
 | --- | --- |
 | Project name | StackAnvil Bedrock Addon for ViaFabricPlus |
-| Summary | Experimental Bedrock support for ViaFabricPlus with StackAnvil patches. |
+| Summary | Experimental Bedrock Edition support for ViaFabricPlus, with Friends, Realms, skins, and StackAnvil patches. |
 | Project type | Minecraft mod |
 | Loader | Fabric |
 | Environment | Client |
@@ -21,6 +21,9 @@ The projects use these fields on both sites:
 | License | GPLv3, matching the upstream add-on |
 | Source | `https://github.com/StackAnvil/patches` |
 | Issues | `https://github.com/StackAnvil/patches/issues` |
+| Website | `https://stackanvil.pistonmaster.net/` |
+| Wiki | `https://stackanvil.pistonmaster.net/getting-started/` |
+| Discord | `https://discord.gg/F4ZyEtXXge` |
 | Description | Copy `publishing/vfp-vb-addon-description.md` |
 
 On Modrinth, add [ViaFabricPlus](https://modrinth.com/mod/viafabricplus) as a required dependency. On CurseForge, add [ViaFabricPlus](https://www.curseforge.com/minecraft/mc-mods/viafabricplus) as a required relation. The upload tool also sets these version dependencies. Do not add ViaBedrock or CubeConverter as required mods because the add-on embeds them.
