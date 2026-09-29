@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Projects
-nav_order: 3
+nav_order: 5
 description: Four patch targets and the pinned upstream ViaFabricPlus build.
 ---
 

@@ -2,47 +2,37 @@
 layout: default
 title: Home
 nav_order: 1
-description: StackAnvil builds four focused patch stacks with pinned upstream ViaFabricPlus.
+description: Play on Minecraft Bedrock servers from Java Edition with the StackAnvil client build.
 ---
 
 # StackAnvil
 
-<p class="sa-home-lead"><strong>Four patch stacks. One pinned client build.</strong> StackAnvil keeps Minecraft protocol experiments in small, reviewable changes and uses an upstream ViaFabricPlus Jenkins build.</p>
-
-<div class="sa-stack" aria-label="Patch stack order">
-  <p>Every patch target follows the same order</p>
-  <ol>
-    <li>Setup: make the combined build work</li>
-    <li>Upstreamable: keep each feature reviewable</li>
-    <li>Deferred: track work already covered upstream</li>
-  </ol>
-</div>
+<p class="sa-home-lead"><strong>Play on Bedrock servers from Minecraft Java Edition.</strong> StackAnvil pairs ViaFabricPlus with an experimental Bedrock add-on. The ready-to-import client lets you try Bedrock servers, Friends, and Realms from Java Edition.</p>
 
 <div class="sa-actions">
-  <a href="{{ '/getting-started/' | relative_url }}">Build a stack</a>
-  <a href="https://github.com/StackAnvil/patches/releases">Get the latest release</a>
-  <a href="{{ '/contributing/' | relative_url }}">Contribute a patch</a>
+  <a href="{{ '/getting-started/' | relative_url }}">Start playing</a>
+  <a href="{{ '/releases/' | relative_url }}">See the downloads</a>
 </div>
 
-## Choose a project
+<p class="sa-route">Your Java Edition game <span aria-hidden="true">→</span> ViaFabricPlus + StackAnvil add-on <span aria-hidden="true">→</span> Bedrock world</p>
 
-Start with the code you know. Each patch target has its own pinned upstream commit and ordered patch series.
+## Get started
 
-<div class="sa-projects">
-  <a href="{{ '/projects/#viabedrock' | relative_url }}"><strong>ViaBedrock</strong><span>Java to Bedrock protocol translation and server support.</span></a>
-  <a href="{{ '/projects/#viafabricplus-bedrock-add-on' | relative_url }}"><strong>ViaFabricPlus Bedrock add-on</strong><span>Bedrock connections in the Fabric client.</span></a>
-  <a href="{{ '/projects/#cubeconverter' | relative_url }}"><strong>CubeConverter</strong><span>Resource pack conversion used by the Bedrock stack.</span></a>
-  <a href="{{ '/projects/#viaproxy' | relative_url }}"><strong>ViaProxy</strong><span>A proxy build tested against the patched dependencies.</span></a>
-</div>
+Download one ZIP from a [StackAnvil release]({{ '/releases/' | relative_url }}), import it into Prism Launcher, and launch the new game setup. The [player guide]({{ '/getting-started/' | relative_url }}) shows each step. No code build or separate library installation is needed.
 
-The [ViaFabricPlus client]({{ '/projects/#viafabricplus' | relative_url }}) comes from a pinned upstream Jenkins build.
+StackAnvil runs in a **Java Edition client**. It does not turn a Java server into a Bedrock server or change your singleplayer worlds.
 
-## Use this site
+## What is StackAnvil?
 
-- [Getting started]({{ '/getting-started/' | relative_url }}) walks through a local build.
-- [Patch workflow]({{ '/patch-workflow/' | relative_url }}) explains patch order, edits, and upstream PRs.
-- [Projects]({{ '/projects/' | relative_url }}) links each upstream project and patch series.
-- [Releases]({{ '/releases/' | relative_url }}) explains the JARs and PrismLauncher bundle.
-- [Contributing]({{ '/contributing/' | relative_url }}) shows the path from a local edit to a focused PR.
+[ViaFabricPlus](https://github.com/ViaVersion/ViaFabricPlus) and its Bedrock add-on let a Java client talk to Bedrock servers. Our client build includes changes to the add-on and its ViaBedrock and CubeConverter libraries. We also publish a patched ViaProxy for people who test server connections.
 
-<p class="sa-note">StackAnvil is an independent experiment. Its builds can include changes that upstream has not accepted. Test them before using them on a production server.</p>
+We publish each change separately for review by the original projects. Players can try the changes together in one build while that review continues.
+
+This is an independent experimental build, not an official ViaVersion release. Some Bedrock behavior can still fail or differ from the Bedrock game.
+
+## Build or contribute
+
+- [Build from source]({{ '/build-from-source/' | relative_url }}) if you want to compile a project or the full client bundle.
+- [Projects]({{ '/projects/' | relative_url }}) explains what each part does.
+- [Patch workflow]({{ '/patch-workflow/' | relative_url }}) explains how changes move toward upstream projects.
+- [Contributing]({{ '/contributing/' | relative_url }}) covers bug reports, testing, and patches.

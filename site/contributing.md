@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Contributing
-nav_order: 6
+nav_order: 7
 description: Report a problem, test a build, or contribute a focused patch.
 ---
 

@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Patch workflow
-nav_order: 4
+nav_order: 6
 description: How StackAnvil applies, edits, and exports focused patches.
 ---
 

@@ -10,7 +10,7 @@ Visit the [StackAnvil website](https://stackanvil.pistonmaster.net/) for the pro
 2. Install ViaFabricPlus and this add-on in the same client. For the tested pairing, get the pinned upstream ViaFabricPlus JAR from the [matching StackAnvil release](https://github.com/StackAnvil/patches/releases).
 3. Keep only one ViaFabricPlus JAR in your mods folder. If your launcher installed another copy, remove the duplicate.
 
-The add-on includes the patched ViaBedrock and CubeConverter libraries. Do not install those library JARs as separate Fabric mods. For a ready-to-import client, use the PrismLauncher bundle from the [StackAnvil releases](https://stackanvil.pistonmaster.net/releases/).
+The add-on includes the patched ViaBedrock and CubeConverter libraries. Do not install those library JARs as separate Fabric mods. For a ready-to-import client, use the Prism Launcher bundle from the [StackAnvil downloads](https://stackanvil.pistonmaster.net/releases/).
 
 ## Bedrock features
 
@@ -24,8 +24,9 @@ Some Bedrock behavior remains experimental. Test this build before you rely on i
 ## Guides and support
 
 - [StackAnvil website](https://stackanvil.pistonmaster.net/): project overview and patch stacks.
-- [Getting started](https://stackanvil.pistonmaster.net/getting-started/): build and install guidance.
-- [Releases](https://stackanvil.pistonmaster.net/releases/): JARs and the PrismLauncher bundle.
+- [Player guide](https://stackanvil.pistonmaster.net/getting-started/): import the PrismLauncher bundle and join Bedrock worlds.
+- [Build from source](https://stackanvil.pistonmaster.net/build-from-source/): compile the patch stack.
+- [Downloads](https://stackanvil.pistonmaster.net/releases/): JARs and the Prism Launcher bundle.
 - [Discord](https://discord.gg/F4ZyEtXXge): questions and community discussion.
 - [Issue tracker](https://github.com/StackAnvil/patches/issues): report a reproducible StackAnvil build problem.
 

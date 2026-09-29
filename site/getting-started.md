@@ -1,48 +1,40 @@
 ---
 layout: default
-title: Getting started
+title: Play on Bedrock
 nav_order: 2
-description: Build and try a StackAnvil patch stack locally.
+description: Import the StackAnvil client in PrismLauncher and join a Bedrock server from Minecraft Java Edition.
 ---
 
-# Getting started
+# Play on Bedrock from Java Edition
 
-Build one project first. The commands below use ViaBedrock as an example.
+This guide uses the prepared StackAnvil game setup. You need a Minecraft Java Edition account and [Prism Launcher](https://prismlauncher.org/download/). No coding or manual mod installation is needed.
 
-## Requirements
+## Install the client
 
-Install [Bun](https://bun.sh/), Git, and the JDK for your project. The [project list]({{ '/projects/' | relative_url }}) gives each JDK version. Install the [GitHub CLI](https://cli.github.com/) if you plan to work with upstream PRs.
+1. Open the [latest StackAnvil release on GitHub](https://github.com/StackAnvil/patches/releases/latest).
+2. Under **Assets**, download the ZIP whose name ends in `Prism-Launcher_Config.zip`. Keep it as a ZIP file.
+3. In Prism Launcher, select **Add Instance**, then **Import**. Choose the ZIP you downloaded and confirm the import. Prism Launcher's [ZIP import guide](https://prismlauncher.org/wiki/help-pages/zip-import/) shows this screen.
+4. Launch the new **StackAnvil** instance. Prism Launcher downloads Minecraft and Fabric Loader and asks you to sign in with your Java Edition account if needed.
 
-## Build ViaBedrock
+The instance includes the tested ViaFabricPlus build and the StackAnvil Bedrock add-on. You do not need to add any other JARs to play.
 
-1. Clone the [patches repository](https://github.com/StackAnvil/patches) and enter it.
-2. Install the tooling dependencies.
-3. Apply the pinned upstream source and patch series.
-4. Build the project.
+## Join a Bedrock server
 
-```bash
-bun install --frozen-lockfile
-bun run stack sync viabedrock
-bun run build viabedrock
-```
+1. Open **Multiplayer**, then the **ViaFabricPlus** menu. In **Bedrock** settings, select **Account for Bedrock Edition** and sign in. The sign-in opens in your browser.
+2. Return to **Multiplayer** and select **Add Server**. Enter the Bedrock server's address. If the server gives you a port, add it after a colon, like `play.example.com:19132`.
+3. On the server screen, use the **ViaFabricPlus** button to choose the Bedrock version for that server.
+4. Save the server and join it.
 
-The source checkout lives in `.worktrees/viabedrock`. The JAR and its SHA-256 manifest go to `dist/viabedrock/`. A target build also builds the dependencies listed in `targets.json`.
+## Join Friends, Realms, or LAN worlds
 
-## Inspect a stack
+From **Multiplayer**, open the **ViaFabricPlus** menu. Choose **Bedrock Friends**, **Bedrock Realms**, or **LAN Worlds**. Friends and Realms need Bedrock sign-in. LAN worlds can also offer an offline login option.
 
-```bash
-bun run stack status viabedrock
-```
+## If something does not work
 
-The command shows the pinned upstream commit and patch order. Read `patches/viabedrock/series.json` to see which changes are for setup, upstream review, or deferred work.
+- **No Bedrock menu:** Make sure you launched the imported StackAnvil instance. Its mod list must contain ViaFabricPlus and the Bedrock add-on.
+- **A server will not connect:** Make sure its ViaFabricPlus version is set to Bedrock. Check that the address and port came from that Bedrock server.
+- **Sign-in or Realms fails:** Open Bedrock settings in ViaFabricPlus and sign in again. A Realm can also reject a Bedrock game version it does not support.
 
-## Build the full set
+Ask for help in [StackAnvil Discord](https://discord.gg/F4ZyEtXXge), or [report a reproducible problem](https://github.com/StackAnvil/patches/issues). Include the release version, what you tried, and the error message. Remove account details from logs before sharing them.
 
-```bash
-bun run build all
-bun run bundle
-```
-
-The bundle command creates a PrismLauncher instance ZIP with the pinned upstream ViaFabricPlus JAR and the patched Bedrock add-on. The add-on embeds the StackAnvil ViaBedrock and CubeConverter JARs. See [releases]({{ '/releases/' | relative_url }}) if you want prebuilt artifacts.
-
-For local client and server tests, use the [capture lab guide](https://github.com/StackAnvil/patches/blob/main/docs/capture-lab.md). Keep credentials, captures, and screenshots in ignored local paths.
+If you prefer to install the mods manually, see [Downloads]({{ '/releases/' | relative_url }}). To compile the stack, use [Build from source]({{ '/build-from-source/' | relative_url }}).

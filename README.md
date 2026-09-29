@@ -1,6 +1,6 @@
 # StackAnvil patches
 
-**Website:** [stackanvil.pistonmaster.net](https://stackanvil.pistonmaster.net) · [Getting started](https://stackanvil.pistonmaster.net/getting-started/) · [Releases](https://stackanvil.pistonmaster.net/releases/)
+**Website:** [stackanvil.pistonmaster.net](https://stackanvil.pistonmaster.net) · [Player guide](https://stackanvil.pistonmaster.net/getting-started/) · [Build from source](https://stackanvil.pistonmaster.net/build-from-source/) · [Downloads](https://stackanvil.pistonmaster.net/releases/)
 
 StackAnvil is a place to test changes across ViaBedrock, viafabricplus-bedrock, CubeConverter, and ViaProxy. It uses a pinned upstream ViaFabricPlus build. Each upstream-sized feature lives in one patch. Contributors can try the full build while upstream reviews one feature at a time.
 
