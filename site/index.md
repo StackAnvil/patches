@@ -34,6 +34,7 @@ This is an independent experimental build, not an official ViaVersion release. S
 ## Build or contribute
 
 - [Build from source]({{ '/build-from-source/' | relative_url }}) if you want to compile a project or the full client bundle.
+- [Maven and Javadocs]({{ '/libraries/' | relative_url }}) shows how to use published artifacts and links to each API reference.
 - [Projects]({{ '/projects/' | relative_url }}) explains what each part does.
 - [Patch workflow]({{ '/patch-workflow/' | relative_url }}) explains how changes move toward upstream projects.
 - [Contributing]({{ '/contributing/' | relative_url }}) covers bug reports, testing, and patches.

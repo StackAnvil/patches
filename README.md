@@ -10,6 +10,31 @@ We welcome bug reports, test results, and patches. You do not need to work on al
 
 Use the [player guide](https://stackanvil.pistonmaster.net/getting-started/) to run the StackAnvil ViaProxy JAR beside a regular Java client, or install the matching ViaFabricPlus and Bedrock add-on JARs in a Fabric client. The [latest release](https://github.com/StackAnvil/patches/releases/latest) has all three JARs. An optional Prism Launcher ZIP provides a prepared Fabric client.
 
+## Use the libraries in a project
+
+Add the [StackAnvil Maven repository](https://stackanvil-maven.pistonmaster.net/) to your existing Gradle build. Use a StackAnvil release version without the `stack-v` tag prefix:
+
+```kotlin
+repositories {
+    maven("https://stackanvil-maven.pistonmaster.net/")
+}
+
+dependencies {
+    implementation("io.github.stackanvil:viabedrock-stackanvil:0.2.2")
+}
+```
+
+This example uses release `stack-v0.2.2`. Choose the version you need from [StackAnvil releases](https://github.com/StackAnvil/patches/releases) and keep the other repositories required by your dependencies. The [Javadocs site](https://stackanvil-jd.pistonmaster.net/) documents the latest release.
+
+| Project | Artifact ID | Maven versions | API reference |
+| --- | --- | --- | --- |
+| ViaBedrock | `viabedrock-stackanvil` | [Metadata](https://stackanvil-maven.pistonmaster.net/io/github/stackanvil/viabedrock-stackanvil/maven-metadata.xml) | [Javadocs](https://stackanvil-jd.pistonmaster.net/viabedrock/) |
+| ViaFabricPlus Bedrock add-on | `viafabricplus-bedrock-stackanvil` | [Metadata](https://stackanvil-maven.pistonmaster.net/io/github/stackanvil/viafabricplus-bedrock-stackanvil/maven-metadata.xml) | [Javadocs](https://stackanvil-jd.pistonmaster.net/viafabricplus-bedrock/) |
+| CubeConverter | `cubeconverter-stackanvil` | [Metadata](https://stackanvil-maven.pistonmaster.net/io/github/stackanvil/cubeconverter-stackanvil/maven-metadata.xml) | [Javadocs](https://stackanvil-jd.pistonmaster.net/cubeconverter/) |
+| ViaProxy | `viaproxy-stackanvil` | [Metadata](https://stackanvil-maven.pistonmaster.net/io/github/stackanvil/viaproxy-stackanvil/maven-metadata.xml) | [Javadocs](https://stackanvil-jd.pistonmaster.net/viaproxy/) |
+
+All four coordinates use group ID `io.github.stackanvil`. The Maven repository keeps published versions. The Javadocs links show the latest release at stable paths. The [website guide](https://stackanvil.pistonmaster.net/libraries/) has the same usage steps and reference links.
+
 ## How the stack works
 
 Each project has three ordered groups in `patches/<project>/series.json`:
@@ -64,7 +89,7 @@ The sync command adds the project's default PR assignees when your GitHub accoun
 
 ## Builds and licenses
 
-[GitHub releases](https://github.com/StackAnvil/patches/releases) provide four StackAnvil JARs, the pinned upstream ViaFabricPlus JAR, and a PrismLauncher instance ZIP. The [Maven repository](https://github.com/StackAnvil/maven) serves the StackAnvil release artifacts. A full build can contain features that are still under upstream review. Test it before using it in a production server.
+[GitHub releases](https://github.com/StackAnvil/patches/releases) provide four StackAnvil JARs, the pinned upstream ViaFabricPlus JAR, and a PrismLauncher instance ZIP. The [Maven repository](https://stackanvil-maven.pistonmaster.net/) serves the StackAnvil release artifacts. A full build can contain features that are still under upstream review. Test it before using it in a production server.
 
 Maintainers can use the [VFP Bedrock add-on publishing guide](docs/publishing-vfp-vb-addon.md) to prepare separate StackAnvil listings on Modrinth and CurseForge.
 

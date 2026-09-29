@@ -26,7 +26,7 @@ If you want a prepackaged Fabric client, download the ZIP ending in `Prism-Launc
 ## Libraries and builds
 
 - **ViaBedrock and CubeConverter:** Download their JARs if you need those libraries for a project. They are not standalone Fabric mods.
-- **Maven dependencies:** Use the [StackAnvil Maven repository](https://github.com/StackAnvil/maven) for patched artifacts. Get ViaFabricPlus from [upstream Maven](https://repo.viaversion.com/com/viaversion/viafabricplus/).
+- **Maven dependencies:** Use the [StackAnvil Maven repository](https://stackanvil-maven.pistonmaster.net/) for patched artifacts. The [Maven and Javadocs guide]({{ '/libraries/' | relative_url }}) has a Gradle example, direct artifact links, and API references. Get ViaFabricPlus from [upstream Maven](https://repo.viaversion.com/com/viaversion/viafabricplus/).
 
 StackAnvil builds include experimental changes that may still be under upstream review. Test them before relying on them for a long play session or a production server. StackAnvil is independent of ViaVersion.
 

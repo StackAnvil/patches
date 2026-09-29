@@ -37,3 +37,5 @@ StackAnvil downloads [upstream Jenkins build 2254](https://ci.viaversion.com/job
 The [ViaProxy patch series](https://github.com/StackAnvil/patches/tree/main/patches/viaproxy) builds against the patched ViaBedrock dependency.
 
 The patch dependency order and upstream commits live in [`targets.json`](https://github.com/StackAnvil/patches/blob/main/targets.json).
+
+For published artifact coordinates and API references, see [Maven and Javadocs]({{ '/libraries/' | relative_url }}).
