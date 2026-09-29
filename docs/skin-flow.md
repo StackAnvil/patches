@@ -34,6 +34,8 @@ The Emotes category reads the native `DressingRoom_Emotes` Store page. The playe
 
 The Capes category reads `DressingRoom_Capes`. The player can equip any free or owned cape in that catalog, replace an equipped cape, or remove it. Two native Bedrock 1.26.51 equip captures showed that the saved cape entry contains only the catalog pack UUID. It sits before the four emote entries. An authenticated account test confirmed that adding a cape changed the assembled model from 12 meshes and two textures to 13 meshes and three textures. The account was restored after the test. Cape appearance in a world still needs a second-client check.
 
+The Size screen has the native four height choices and two arm widths. Bedrock 1.26.51 saves an arm-width change by updating `arm` in the base entry; it leaves `cs_arm` intact. A height change removes the previous pair of height entries and inserts the selected pair before the emote wheel. Native captures confirmed all four height pairs. The add-on changes only characters with one complete, recognized pair. It checks the profile hash and reads the saved recipe back after each edit. The test account was restored to its original recipe after the captures.
+
 The active character has a full body image from authenticated `GET /api/v1.0/profile/image/avatar`. The same service returns a GLTF binary model at `/api/v1.0/profile/image/ModelBinary`. A native hair edit changed this model from 12 meshes and two PNG textures to 13 meshes and three textures. The model can support a preview, but its texture layout is not the Bedrock login skin format.
 
 The account response contains recipes, not the assembled skin used in a world. In the captured native flow, the client downloads persona packs from the Marketplace CDN. The pack metadata needed to identify a piece variant is encrypted. The Store layout, PlayFab catalog, and native client's local catalog cache expose the pack UUID but not the full recipe piece ID. A native swap from Steve's Skin to Alex's Skin changed the base piece ID while leaving both arm fields as `wide`, so the editor cannot infer arm width from a base item's title.
@@ -51,7 +53,7 @@ A local Bedrock server captured the native client login for one default Characte
 1. Derive the full piece ID and asset metadata for catalog pieces that do not appear in a saved recipe.
 2. Verify the converted login skin and live update with a second Bedrock client on a local server. Compare several Character Creator outfits against native login captures.
 3. Find a supported source for animated face and body data, persona piece handles, and tint metadata so account characters can match the native packet.
-4. Capture and validate the write flows for other piece colors, arm width, and size, then add their controls. Test emote wheel changes with a second client in a world.
+4. Capture and validate the write flows for other piece colors, then add their controls. Test height, arm-width, cape, and emote changes with a second client in a world.
 5. Render body texture animations and test face and body animation together.
 
 Keep login JWTs, raw proxy flows, player textures, and account data under `.stackanvil/`. Do not commit them.
