@@ -6,13 +6,21 @@ Owned persona and emote assets use the current inventory receipt, PlayFab catalo
 
 ## Built-in persona package
 
-Bundle an Xodus-based helper that signs into Microsoft Store with the selected Xbox account, obtains a device-bound license, and extracts only the persona directory from the official package. Pin Bedrock 1.26.51.1 / package 1.26.5101.0 to protocol 2193. The pinned header anchors verification of the Merkle tree, metadata, and encrypted pages before decryption.
+Bundle an Xodus-based helper that signs into Microsoft Store with the selected Xbox account, obtains a device-bound license, and extracts persona files and base vanilla model archives from the official package. Pin Bedrock 1.26.51.1 / package 1.26.5101.0 to protocol 2193. The pinned header anchors verification of the Merkle tree, metadata, and encrypted pages before decryption.
 
 Read resident and ordinary multi-run NTFS streams or the package segment index. Unpack BR archives with shared offsets and empty stubs, then atomically publish a versioned cache with file checksums. Decode native PNG face strips and BGRA TGA tint masks and feed equipped built-in pieces into the asset loader. Wave, Clap, Over There, and Follow Me use their extracted animation sources for preview and world playback.
 
-Local Linux tests acquired the official license and extracted 227 persona files through the bundled helper. Fresh interactive Store sign-in and Windows and macOS runtime flows still need verification. CI builds the four supported helper variants. The runtime requires no installed game, copied keys, or user-supplied extractor.
+Local Linux tests acquired the official license and extracted 229 files through the bundled helper. Fresh interactive Store sign-in and Windows and macOS runtime flows still need verification. CI builds the four supported helper variants. The runtime requires no installed game, copied keys, or user-supplied extractor.
 
 Sources: [Pinned Xodus extraction](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/commands/streaming.rs), [license acquisition](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/license.rs), and [BR archive format](https://github.com/bedrock-crustaceans/brarchive/blob/main/FORMAT.md).
+
+## Classic model library
+
+Expand both base vanilla model archives under their original model paths. Index individual legacy and modern definitions and merge equal duplicates. Cache format 2 refreshes older persona-only caches before use. Failed acquisition keeps the existing cache.
+
+Classic imports resolve missing models and parents lazily through the licensed library. Pack definitions retain precedence. Loading runs on a worker; a changed account or closed screen prevents stale results from opening. Self-contained packs require no asset acquisition.
+
+Licensed tests resolve all seven inherited entries from the base skin-model library, including the zombie parent from an entity file. They verify extraction, equal duplicate definitions, model decoding, cache reuse, and schema refresh. Versioned vanilla model overrides and native visual comparisons remain pending. A broader check found an unresolved `rightarm` parent in the native legacy vex model; native parent-name behavior needs research before importing it.
 
 ## Face composition and tint blending
 
@@ -41,7 +49,7 @@ Private native 1.26.51 captures establish Battle Cry's pack UUID, 130 ticks, and
 ## Verification
 
 - Full patch stack builds successfully.
-- 90 add-on tests pass with private persona, login, emote, and legacy geometry fixtures enabled.
+- 96 add-on tests pass with private persona, login, emote, and legacy geometry fixtures enabled.
 - Private Battle Cry, Kadoosh, and four built-in emote tests sample every frame at 60 Hz.
 - Bundled-helper tests verify official acquisition, archive extraction, face-mask decoding, cache reuse, and failed refresh recovery.
 - A Java GUI recording verifies the locally assembled body, face, and animated arms, including open and closed face frames. Geometry parser tests cover native null optional transforms.

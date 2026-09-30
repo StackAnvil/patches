@@ -20,9 +20,11 @@ The Dressing Room selects Steve, Alex, an imported PNG, or a skin from a local `
 
 Legacy 64×32 skins expand to 64×64 by mirroring limb faces. The importer preserves transparent hat details and clears unused opaque hat backgrounds. Custom geometry textures retain their original rectangular dimensions.
 
-Custom geometry import checks bone hierarchy, coordinate bounds, texture dimensions, and model size before replacing a saved skin. Legacy inheritance keeps parent surfaces and appends child cubes on matching bones. Child bones supply their pose and flags. Each texture dimension inherits separately, with a 64×64 default. The importer preserves cube mirror and inflation defaults, polygon indices, and visible bounds. It rejects missing parents, ambiguous names, inheritance cycles, and inheritance in format versions 1.12 and later.
+Custom geometry import checks bone hierarchy, coordinate bounds, texture dimensions, and model size before replacing a saved skin. Legacy inheritance keeps parent surfaces and appends child cubes on matching bones. Child bones supply their pose and flags. Each texture dimension inherits separately, with a 64×64 default. The importer preserves cube mirror and inflation defaults, polygon indices, and visible bounds. It rejects unresolved parents, ambiguous names, inheritance cycles, and inheritance in format versions 1.12 and later.
 
-References to absent global built-in parents and classic animation metadata remain incomplete. The importer currently needs each inherited parent in the pack geometry file. Private tests combine the official legacy model files to validate seven inheritance chains. These tests establish model decoding and persistence. A native visual comparison of inherited custom skins remains pending.
+Missing legacy parents resolve from the licensed package's base vanilla model library. Pack definitions take precedence, including across library chains. Imports run in the background and request the package only when the pack lacks a selected model or parent. Self-contained packs need no Store sign-in. The importer checks the account and open screen before showing the result.
+
+Licensed tests resolve all seven inherited entries from the base skin-model library, including parents supplied by entity model files. Equal duplicate definitions share one library entry. Conflicting definitions remain errors. Versioned vanilla overlays and native visual comparisons remain pending. A broader library check found an unresolved `rightarm` parent in the native legacy vex model. The importer rejects this model until native parent-name behavior is established. Classic animation metadata also remains incomplete.
 
 ## Account recipes and editing
 
@@ -90,15 +92,15 @@ The add-on bundles an Xodus-based package helper. First use opens Microsoft Stor
 
 The current pin selects Bedrock 1.26.51.1, package version 1.26.5101.0, for ViaBedrock protocol 2193. The package URL identifies the matching official Xbox CDN build. Its pinned header checksum anchors the package hash tree. The helper verifies metadata and encrypted file pages before decryption because this CDN serves the package over HTTP.
 
-The helper obtains a device-bound license from Microsoft and unwraps its content key. It reads the segment index or the NTFS persona directory. The NTFS reader handles resident files and ordinary streams with multiple data runs. It downloads only persona file data and the metadata needed to locate it.
+The helper obtains a device-bound license from Microsoft and unwraps its content key. It reads the segment index or the NTFS persona directory. The NTFS reader handles resident files and ordinary streams with multiple data runs. It downloads persona files, base vanilla model archives, and the metadata needed to locate them.
 
 Java unpacks version 1 BR archives beneath their original piece directories. Shared content offsets are valid. Empty archive entries preserve separately supplied loose files. Path, file count, size, and duplicate checks apply before publishing the cache.
 
-The cache lives under the add-on's `bedrock-assets/persona/<account>/<version>.zip` directory. Each file has a checksum, and the cache records the package identity. A failed refresh keeps the previous cache. Store credentials remain in a separate private directory, and the helper reuses its device identity.
+The cache lives under the add-on's `bedrock-assets/persona/<account>/<version>.zip` directory. Each file has a checksum, and the cache records the package identity. Cache format 2 includes the model library. Older persona-only caches refresh before use. A failed refresh keeps the previous cache. Store credentials remain in a separate private directory, and the helper reuses its device identity.
 
 The source loader indexes piece metadata, PNG face strips, BGRA TGA tint masks, and geometry by native piece UUID. Equipped built-in pieces enter the same asset loader as owned pieces. Wave, Clap, Over There, and Follow Me use their extracted animation sources for previews and world playback. Built-in emotes retain their piece UUID as the wire identity.
 
-A live test obtained the official license and extracted 227 persona files. Java tests used the bundled helper, unpacked the archives, sampled all four emotes, decoded face masks, and reused the versioned cache. No downloaded content or credentials enter the repository. Fresh interactive Store sign-in and the Windows and macOS helper builds still need runtime verification.
+A live test obtained the official license and extracted 229 files, including both base vanilla model archives. Java tests used the bundled helper, unpacked the archives, sampled all four emotes, decoded face masks, and reused the versioned cache. No downloaded content or credentials enter the repository. Fresh interactive Store sign-in and the Windows and macOS helper builds still need runtime verification.
 
 Local add-on builds require Rust 1.98.1, Protobuf, and the platform's WebView build libraries. Linux sign-in requires WebKitGTK 4.1. Release and full-stack CI assemble helper resources for Linux x64, Windows x64, and both macOS architectures. Native installations serve only as private research fixtures.
 
@@ -136,7 +138,7 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 - Compare more face sizes, tint channels, and equipped combinations against native results.
 - Verify native blinking and strip timing. Implement emote effects, timelines, delays, multiple sources, relative rotations, chat announcements, and unavailable remote assets.
 - Add other piece palettes, verify native leg edits, and resolve free limb side recipes. Add paid purchase/redemption flows and account classic-pack downloads.
-- Support inherited legacy geometry and classic pack animation metadata.
+- Verify versioned vanilla model overrides and native parent-name behavior. Add classic pack animation metadata and compare inherited skins with native rendering.
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. A white quad above the player moved independently with the sky clouds; it was not an extra face surface.
 
 Keep login JWTs, receipts, content keys, raw flows, screenshots, player textures, and account data private under `.stackanvil/`.

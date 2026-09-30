@@ -1,4 +1,4 @@
-From 0789a56aedf37703ff224faa7936c5fd920aab6f Mon Sep 17 00:00:00 2001
+From 51386481590d56c377589ff6539a0a86c3ed573f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:39 +0200
 Subject: [PATCH] feat(bedrock): add classic Dressing Room
@@ -16,14 +16,20 @@ Retain selected custom geometry from local Classic Skin packs, including rectang
 Resolve colon-based legacy geometry inheritance within the pack before persistence and transport. Native Bedrock 1.26.51.1 model construction copies parent bone surfaces and appends child cubes while the child supplies its bone pose and flags. Inherit texture dimensions independently, use 64x64 defaults, preserve per-cube mirror and inflate defaults, and retain polygon buffers with independent indices. Reject cycles, missing parents, ambiguous identifiers and inheritance in formats 1.12 and later. Explicit pack models named geometry.humanoid.custom or geometry.humanoid.customSlim take precedence over the built-in model selection.
 
 Synthetic tests cover additive surfaces, child bone flags, texture dimensions, polygon indices, invalid chains and store/wire round trips. An optional private fixture combines Mojang's pinned legacy mobs and zombie model files and resolves all seven inheritance chains. Game assets remain outside the repository. References to absent global built-in parents and classic animation metadata still need their asset-library integration and playback support.
+
+Resolve missing geometry through an injected model source so licensed global
+models can serve as parents without coupling the pack reader to account
+authentication. Pack definitions retain precedence across library chains.
+Normalize modern library parents and validate cross-library cycles before
+persisting the selected model.
 ---
  README.md                                     |  12 +
  build.gradle.kts                              |   6 +
  .../bedrock/ViaFabricPlusBedrock.java         |  11 +-
  .../appearance/BedrockAppearanceStore.java    | 320 ++++++++++++++++++
- .../appearance/BedrockClassicModel.java       | 117 +++++++
- .../appearance/BedrockClassicSkinPack.java    | 211 ++++++++++++
- .../appearance/BedrockLegacyGeometry.java     | 248 ++++++++++++++
+ .../appearance/BedrockClassicModel.java       | 130 +++++++
+ .../appearance/BedrockClassicSkinPack.java    | 214 ++++++++++++
+ .../appearance/BedrockLegacyGeometry.java     | 285 ++++++++++++++++
  .../bedrock/appearance/BedrockLegacySkin.java |  61 ++++
  .../appearance/ViaFabricPlusSkinProvider.java |  82 +++++
  .../friends/FriendWorldSkinProvider.java      |  49 ---
@@ -32,9 +38,9 @@ Synthetic tests cover additive surfaces, child bone flags, texture dimensions, p
  .../bedrock/settings/BedrockSettings.java     |   5 +
  .../viafabricplus-bedrock/lang/en_us.json     |  23 ++
  .../BedrockAppearanceStoreTest.java           | 126 +++++++
- .../appearance/BedrockClassicModelTest.java   | 190 +++++++++++
+ .../appearance/BedrockClassicModelTest.java   | 273 +++++++++++++++
  .../BedrockClassicSkinPackTest.java           | 154 +++++++++
- 17 files changed, 1989 insertions(+), 51 deletions(-)
+ 17 files changed, 2125 insertions(+), 51 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java
@@ -467,10 +473,10 @@ index 0000000..ec94be0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java
 new file mode 100644
-index 0000000..3417616
+index 0000000..14ea700
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,130 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -497,6 +503,17 @@ index 0000000..3417616
 +
 +    public static BedrockClassicModel read(final String data, final String identifier)
 +            throws IOException {
++        return read(data, identifier, name -> null);
++    }
++
++    @FunctionalInterface
++    public interface ModelSource {
++        JsonObject find(String identifier) throws IOException;
++    }
++
++    public static BedrockClassicModel read(
++            final String data, final String identifier, final ModelSource source)
++            throws IOException {
 +        if (data.length() > 1024 * 1024 || !IDENTIFIER.matcher(identifier).matches())
 +            throw new IOException("The classic skin geometry is too large or has an invalid name");
 +        try {
@@ -512,8 +529,10 @@ index 0000000..3417616
 +                        selected = model.deepCopy();
 +                    }
 +                }
++                if (selected == null)
++                    selected = BedrockLegacyGeometry.read(new JsonObject(), identifier, source);
 +            } else {
-+                selected = BedrockLegacyGeometry.read(document, identifier);
++                selected = BedrockLegacyGeometry.read(document, identifier, source);
 +            }
 +            if (selected == null)
 +                throw new IOException("The pack is missing the selected skin geometry");
@@ -590,10 +609,10 @@ index 0000000..3417616
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java
 new file mode 100644
-index 0000000..9873706
+index 0000000..7317a80
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java
-@@ -0,0 +1,211 @@
+@@ -0,0 +1,214 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -629,6 +648,10 @@ index 0000000..9873706
 +    private static final int MAX_SKIN_BYTES = 8 * 1024 * 1024;
 +
 +    public static BedrockClassicSkinPack read(final Path path) throws IOException {
++        return read(path, name -> null);
++    }
++
++    public static BedrockClassicSkinPack read(final Path path, final BedrockClassicModel.ModelSource source) throws IOException {
 +        if (!Files.isRegularFile(path) || Files.size(path) > MAX_ARCHIVE_BYTES) {
 +            throw new IOException("The skin pack is missing or too large");
 +        }
@@ -658,8 +681,7 @@ index 0000000..9873706
 +                if (standard && !definesGeometry(models, geometry)) {
 +                    model = null;
 +                } else {
-+                    if (models == null) throw new IOException("The pack is missing geometry.json");
-+                    model = BedrockClassicModel.read(models.toString(), geometry);
++                    model = BedrockClassicModel.read(models == null ? "{}" : models.toString(), geometry, source);
 +                }
 +                final String texture = string(definition, "texture");
 +                if (!safePath(texture) || !texture.endsWith(".png")
@@ -807,10 +829,10 @@ index 0000000..9873706
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacyGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacyGeometry.java
 new file mode 100644
-index 0000000..5db8508
+index 0000000..de86ce2
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacyGeometry.java
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,285 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -832,19 +854,14 @@ index 0000000..5db8508
 +final class BedrockLegacyGeometry {
 +    private BedrockLegacyGeometry() {}
 +
-+    static JsonObject read(final JsonObject document, final String identifier) throws IOException {
++    static JsonObject read(
++            final JsonObject document,
++            final String identifier,
++            final BedrockClassicModel.ModelSource source)
++            throws IOException {
 +        final Map<String, Definition> definitions = legacyDefinitions(document);
-+        if (definitions.values().stream().anyMatch(model -> !model.parent().isEmpty())
-+                && document.has("format_version")) {
-+            final String[] version = document.get("format_version").getAsString().split("\\.");
-+            if (Integer.parseInt(version[0]) > 1
-+                    || Integer.parseInt(version[0]) == 1
-+                            && version.length > 1
-+                            && Integer.parseInt(version[1]) >= 12)
-+                throw new IOException("Geometry inheritance requires a format version before 1.12");
-+        }
-+        if (!definitions.containsKey(identifier)) return null;
-+        final JsonObject selected = resolveLegacy(definitions, identifier, new HashSet<>());
++        if (!definitions.containsKey(identifier) && source.find(identifier) == null) return null;
++        final JsonObject selected = resolveLegacy(definitions, identifier, new HashSet<>(), source);
 +        final JsonObject description = new JsonObject();
 +        description.addProperty("identifier", identifier);
 +        description.add("texture_width", selected.remove("texturewidth"));
@@ -878,22 +895,64 @@ index 0000000..5db8508
 +                                            names.length == 2 ? names[1] : ""))
 +                            != null) throw new IOException("The skin geometry name is ambiguous");
 +        }
++        if (definitions.values().stream().anyMatch(model -> !model.parent().isEmpty())
++                && document.has("format_version")) {
++            final String[] version = document.get("format_version").getAsString().split("\\.");
++            if (Integer.parseInt(version[0]) > 1
++                    || Integer.parseInt(version[0]) == 1
++                            && version.length > 1
++                            && Integer.parseInt(version[1]) >= 12)
++                throw new IOException("Geometry inheritance requires a format version before 1.12");
++        }
 +        return definitions;
 +    }
 +
 +    private static JsonObject resolveLegacy(
 +            final Map<String, Definition> definitions,
 +            final String name,
-+            final Set<String> ancestors)
++            final Set<String> ancestors,
++            final BedrockClassicModel.ModelSource source)
 +            throws IOException {
-+        final Definition definition = definitions.get(name);
++        Definition definition = definitions.get(name);
++        if (definition == null) {
++            final JsonObject document = source.find(name);
++            if (document != null) {
++                if (document.has("minecraft:geometry")) {
++                    for (final var element : document.getAsJsonArray("minecraft:geometry")) {
++                        final JsonObject model = element.getAsJsonObject();
++                        final JsonObject description = model.getAsJsonObject("description");
++                        if (!name.equals(description.get("identifier").getAsString())) continue;
++                        if (definition != null)
++                            throw new IOException("The skin geometry name is ambiguous");
++                        final JsonObject legacy = model.deepCopy();
++                        legacy.remove("description");
++                        for (final String dimension : new String[] {"width", "height"}) {
++                            if (description.has("texture_" + dimension))
++                                legacy.add(
++                                        "texture" + dimension,
++                                        description.get("texture_" + dimension).deepCopy());
++                        }
++                        for (final var field : description.entrySet()) {
++                            if (field.getKey().startsWith("visible_bounds_"))
++                                legacy.add(field.getKey(), field.getValue().deepCopy());
++                        }
++                        definition = new Definition(legacy, "");
++                    }
++                } else {
++                    final var library = legacyDefinitions(document);
++                    library.forEach(definitions::putIfAbsent);
++                    definition = definitions.get(name);
++                }
++                if (definition != null) definitions.put(name, definition);
++            }
++        }
 +        if (definition == null) throw new IOException("The pack is missing a skin geometry parent");
 +        if (ancestors.size() >= 32 || !ancestors.add(name))
 +            throw new IOException("The skin geometry has an invalid inheritance chain");
 +        final JsonObject parent =
 +                definition.parent().isEmpty()
 +                        ? null
-+                        : resolveLegacy(definitions, definition.parent(), ancestors);
++                        : resolveLegacy(definitions, definition.parent(), ancestors, source);
 +        final JsonObject selected = definition.model().deepCopy();
 +        for (final String dimension : new String[] {"texturewidth", "textureheight"}) {
 +            if (!selected.has(dimension))
@@ -1908,10 +1967,10 @@ index 0000000..b8fbd8a
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModelTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModelTest.java
 new file mode 100644
-index 0000000..e9f8c67
+index 0000000..155e2f9
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModelTest.java
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,273 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -1929,6 +1988,89 @@ index 0000000..e9f8c67
 +import java.nio.file.Path;
 +
 +final class BedrockClassicModelTest {
++    @Test
++    void resolvesLibraryParentsWhileKeepingPackOverrides() throws IOException {
++        final JsonObject library =
++                JsonParser.parseString(
++                                """
++                                {"geometry.base":{"texturewidth":128,"textureheight":32,"bones":[{"name":"body"}]},
++                                 "geometry.middle:geometry.base":{"bones":[{"name":"hat","parent":"body"}]}}
++                                """)
++                        .getAsJsonObject();
++        final var model =
++                BedrockClassicModel.read(
++                        """
++                        {"geometry.base":{"texturewidth":64,"textureheight":128,"bones":[{"name":"body"}]},
++                         "geometry.child:geometry.middle":{"bones":[{"name":"antenna","parent":"hat"}]}}
++                        """,
++                        "geometry.child",
++                        name -> library);
++        final var decoded = BedrockGeometryModel.fromJson(model.geometry()).getFirst();
++        assertEquals(64, decoded.getTextureSize().getX());
++        assertEquals(128, decoded.getTextureSize().getY());
++        assertEquals(3, decoded.getParents().size());
++        assertEquals(model, BedrockClassicModel.read(model.geometry(), model.identifier()));
++    }
++
++    @Test
++    void resolvesModernLibraryParentsAndDirectLibraryModels() throws IOException {
++        final JsonObject library =
++                JsonParser.parseString(
++                                """
++                                {"format_version":"1.12.0","minecraft:geometry":[
++                                  {"description":{"identifier":"geometry.base","texture_width":128,"texture_height":32},
++                                   "bones":[{"name":"body","cubes":[{"origin":[0,0,0],"size":[1,1,1],"uv":[0,0]}]}]}]}
++                                """)
++                        .getAsJsonObject();
++        final var source = (BedrockClassicModel.ModelSource) name -> library;
++        final var direct = BedrockClassicModel.read("{}", "geometry.base", source);
++        final var absent =
++                BedrockClassicModel.read(
++                        "{\"format_version\":\"1.12.0\",\"minecraft:geometry\":[]}",
++                        "geometry.base",
++                        source);
++        assertEquals(direct, absent);
++        final var child =
++                BedrockClassicModel.read(
++                        """
++                        {"geometry.child:geometry.base":{"bones":[{"name":"hat","parent":"body"}]}}
++                        """,
++                        "geometry.child",
++                        source);
++        assertEquals(
++                128,
++                BedrockGeometryModel.fromJson(child.geometry()).getFirst().getTextureSize().getX());
++        assertEquals(
++                1,
++                BedrockGeometryModel.fromJson(direct.geometry())
++                        .getFirst()
++                        .getParents()
++                        .getFirst()
++                        .getCubes()
++                        .size());
++        assertEquals(
++                2, BedrockGeometryModel.fromJson(child.geometry()).getFirst().getParents().size());
++    }
++
++    @Test
++    void rejectsCyclesAcrossPackAndLibrary() {
++        final JsonObject library =
++                JsonParser.parseString(
++                                """
++                                {"geometry.parent:geometry.child":{"bones":[]}}
++                                """)
++                        .getAsJsonObject();
++        assertThrows(
++                IOException.class,
++                () ->
++                        BedrockClassicModel.read(
++                                """
++                                {"geometry.child:geometry.parent":{"bones":[]}}
++                                """,
++                                "geometry.child",
++                                name -> library));
++    }
++
 +    @Test
 +    void inheritsBonesAndDimensionsThroughSeveralModels() throws IOException {
 +        final var model =
