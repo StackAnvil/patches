@@ -1,4 +1,4 @@
-From ccf369bd7941b6ca2809b0c595f9b29435443727 Mon Sep 17 00:00:00 2001
+From 0789a56aedf37703ff224faa7936c5fd920aab6f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:39 +0200
 Subject: [PATCH] feat(bedrock): add classic Dressing Room
@@ -12,13 +12,18 @@ Resolve archive paths relative to a single manifest and skins.json root, includi
 Accept legacy 64x32 PNGs from file imports and pack textures. Expand each mirrored limb face into the 64x64 layout before persistence and preview, leaving modern overlays clear and preserving authored transparent hats. The face mapping matches the current Minecraft SkinTextureDownloader implementation; tests verify side-face swaps, source immutability, and file/store round trips.
 
 Retain selected custom geometry from local Classic Skin packs, including rectangular model textures. Normalize legacy and modern geometry, reject missing models and cyclic bone hierarchies, persist the model per account, and preserve it through selection and cape edits. Login and live packets use the selected resource patch and geometry instead of silently substituting Steve. The pack and Dressing Room previews own their textures through the shared skin renderer lifecycle.
+
+Resolve colon-based legacy geometry inheritance within the pack before persistence and transport. Native Bedrock 1.26.51.1 model construction copies parent bone surfaces and appends child cubes while the child supplies its bone pose and flags. Inherit texture dimensions independently, use 64x64 defaults, preserve per-cube mirror and inflate defaults, and retain polygon buffers with independent indices. Reject cycles, missing parents, ambiguous identifiers and inheritance in formats 1.12 and later. Explicit pack models named geometry.humanoid.custom or geometry.humanoid.customSlim take precedence over the built-in model selection.
+
+Synthetic tests cover additive surfaces, child bone flags, texture dimensions, polygon indices, invalid chains and store/wire round trips. An optional private fixture combines Mojang's pinned legacy mobs and zombie model files and resolves all seven inheritance chains. Game assets remain outside the repository. References to absent global built-in parents and classic animation metadata still need their asset-library integration and playback support.
 ---
  README.md                                     |  12 +
  build.gradle.kts                              |   6 +
  .../bedrock/ViaFabricPlusBedrock.java         |  11 +-
  .../appearance/BedrockAppearanceStore.java    | 320 ++++++++++++++++++
  .../appearance/BedrockClassicModel.java       | 117 +++++++
- .../appearance/BedrockClassicSkinPack.java    | 193 +++++++++++
+ .../appearance/BedrockClassicSkinPack.java    | 211 ++++++++++++
+ .../appearance/BedrockLegacyGeometry.java     | 248 ++++++++++++++
  .../bedrock/appearance/BedrockLegacySkin.java |  61 ++++
  .../appearance/ViaFabricPlusSkinProvider.java |  82 +++++
  .../friends/FriendWorldSkinProvider.java      |  49 ---
@@ -27,17 +32,20 @@ Retain selected custom geometry from local Classic Skin packs, including rectang
  .../bedrock/settings/BedrockSettings.java     |   5 +
  .../viafabricplus-bedrock/lang/en_us.json     |  23 ++
  .../BedrockAppearanceStoreTest.java           | 126 +++++++
- .../BedrockClassicSkinPackTest.java           | 152 +++++++++
- 15 files changed, 1531 insertions(+), 51 deletions(-)
+ .../appearance/BedrockClassicModelTest.java   | 190 +++++++++++
+ .../BedrockClassicSkinPackTest.java           | 154 +++++++++
+ 17 files changed, 1989 insertions(+), 51 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacyGeometry.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacySkin.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java
  delete mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/friends/FriendWorldSkinProvider.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockClassicSkinPackScreen.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStoreTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModelTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPackTest.java
 
 diff --git a/README.md b/README.md
@@ -459,7 +467,7 @@ index 0000000..ec94be0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java
 new file mode 100644
-index 0000000..d5b9ea1
+index 0000000..3417616
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java
 @@ -0,0 +1,117 @@
@@ -481,12 +489,15 @@ index 0000000..d5b9ea1
 +import java.util.HashMap;
 +import java.util.HashSet;
 +import java.util.Map;
++import java.util.regex.Pattern;
 +
 +/** Selected custom geometry from a Classic Skin pack, normalized for persistence and transport. */
 +public record BedrockClassicModel(String geometry, String identifier) {
++    static final Pattern IDENTIFIER = Pattern.compile("geometry\\.[a-zA-Z0-9_.'-]{1,128}");
++
 +    public static BedrockClassicModel read(final String data, final String identifier)
 +            throws IOException {
-+        if (data.length() > 1024 * 1024 || !identifier.matches("geometry\\.[a-zA-Z0-9_.-]{1,128}"))
++        if (data.length() > 1024 * 1024 || !IDENTIFIER.matcher(identifier).matches())
 +            throw new IOException("The classic skin geometry is too large or has an invalid name");
 +        try {
 +            final JsonObject document = JsonParser.parseString(data).getAsJsonObject();
@@ -501,13 +512,8 @@ index 0000000..d5b9ea1
 +                        selected = model.deepCopy();
 +                    }
 +                }
-+            } else if (document.has(identifier)) {
-+                selected = document.getAsJsonObject(identifier).deepCopy();
-+                final JsonObject description = new JsonObject();
-+                description.addProperty("identifier", identifier);
-+                description.add("texture_width", selected.remove("texturewidth"));
-+                description.add("texture_height", selected.remove("textureheight"));
-+                selected.add("description", description);
++            } else {
++                selected = BedrockLegacyGeometry.read(document, identifier);
 +            }
 +            if (selected == null)
 +                throw new IOException("The pack is missing the selected skin geometry");
@@ -550,6 +556,8 @@ index 0000000..d5b9ea1
 +            normalized.addProperty("format_version", "1.12.0");
 +            normalized.add("minecraft:geometry", models);
 +            final String geometry = normalized.toString();
++            if (geometry.length() > 1024 * 1024)
++                throw new IOException("The assembled skin geometry is too large");
 +            if (BedrockGeometryModel.fromJson(geometry).size() != 1)
 +                throw new IOException("The skin geometry could not be decoded");
 +            return new BedrockClassicModel(geometry, identifier);
@@ -582,10 +590,10 @@ index 0000000..d5b9ea1
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java
 new file mode 100644
-index 0000000..41eea2d
+index 0000000..9873706
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java
-@@ -0,0 +1,193 @@
+@@ -0,0 +1,211 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -632,6 +640,7 @@ index 0000000..41eea2d
 +                throw new IOException("The archive is not a Bedrock skin pack");
 +            }
 +            final JsonObject definitions = json(zip, root + "skins.json");
++            final JsonObject models = zip.getEntry(root + "geometry.json") == null ? null : json(zip, root + "geometry.json");
 +            final String key = string(definitions, "localization_name");
 +            final Map<String, String> names = translations(zip, root);
 +            final String packName = names.getOrDefault("skinpack." + key, key);
@@ -645,8 +654,13 @@ index 0000000..41eea2d
 +                final JsonObject definition = element.getAsJsonObject();
 +                final String geometry = string(definition, "geometry");
 +                final boolean standard = "geometry.humanoid.custom".equals(geometry) || "geometry.humanoid.customSlim".equals(geometry);
-+                final BedrockClassicModel model = standard ? null : BedrockClassicModel.read(
-+                    json(zip, root + "geometry.json").toString(), geometry);
++                final BedrockClassicModel model;
++                if (standard && !definesGeometry(models, geometry)) {
++                    model = null;
++                } else {
++                    if (models == null) throw new IOException("The pack is missing geometry.json");
++                    model = BedrockClassicModel.read(models.toString(), geometry);
++                }
 +                final String texture = string(definition, "texture");
 +                if (!safePath(texture) || !texture.endsWith(".png")
 +                    || zip.getEntry(root + texture) == null) {
@@ -664,7 +678,7 @@ index 0000000..41eea2d
 +            }
 +            return new BedrockClassicSkinPack(path, packName.isBlank() ? path.getFileName().toString() : packName,
 +                List.copyOf(skins));
-+        } catch (IllegalStateException | com.google.gson.JsonParseException e) {
++        } catch (RuntimeException e) {
 +            throw new IOException("The skin pack metadata is invalid", e);
 +        }
 +    }
@@ -677,6 +691,18 @@ index 0000000..41eea2d
 +            return skin.model() == null ? BedrockAppearanceStore.readSkin(bytes(zip, skin.texture(), MAX_SKIN_BYTES))
 +                : BedrockAppearanceStore.readTexture(bytes(zip, skin.texture(), MAX_SKIN_BYTES));
 +        }
++    }
++
++    private static boolean definesGeometry(final JsonObject models, final String identifier) {
++        if (models == null) return false;
++        if (models.has("minecraft:geometry")) {
++            for (final var element : models.getAsJsonArray("minecraft:geometry")) {
++                final JsonObject description = element.getAsJsonObject().getAsJsonObject("description");
++                if (identifier.equals(string(description, "identifier"))) return true;
++            }
++            return false;
++        }
++        return models.keySet().stream().anyMatch(name -> name.equals(identifier) || name.startsWith(identifier + ":"));
 +    }
 +
 +    private static String packRoot(final ZipFile zip) throws IOException {
@@ -778,6 +804,260 @@ index 0000000..41eea2d
 +    public record Skin(String name, String texture, boolean slim, BedrockClassicModel model) {
 +    }
 +
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacyGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacyGeometry.java
+new file mode 100644
+index 0000000..5db8508
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacyGeometry.java
+@@ -0,0 +1,248 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonObject;
++import com.google.gson.JsonPrimitive;
++
++import java.io.IOException;
++import java.util.HashSet;
++import java.util.LinkedHashMap;
++import java.util.Map;
++import java.util.Set;
++
++/** Resolves legacy geometry inheritance before its model reaches the renderer or wire format. */
++final class BedrockLegacyGeometry {
++    private BedrockLegacyGeometry() {}
++
++    static JsonObject read(final JsonObject document, final String identifier) throws IOException {
++        final Map<String, Definition> definitions = legacyDefinitions(document);
++        if (definitions.values().stream().anyMatch(model -> !model.parent().isEmpty())
++                && document.has("format_version")) {
++            final String[] version = document.get("format_version").getAsString().split("\\.");
++            if (Integer.parseInt(version[0]) > 1
++                    || Integer.parseInt(version[0]) == 1
++                            && version.length > 1
++                            && Integer.parseInt(version[1]) >= 12)
++                throw new IOException("Geometry inheritance requires a format version before 1.12");
++        }
++        if (!definitions.containsKey(identifier)) return null;
++        final JsonObject selected = resolveLegacy(definitions, identifier, new HashSet<>());
++        final JsonObject description = new JsonObject();
++        description.addProperty("identifier", identifier);
++        description.add("texture_width", selected.remove("texturewidth"));
++        description.add("texture_height", selected.remove("textureheight"));
++        for (final String field :
++                new String[] {
++                    "visible_bounds_width", "visible_bounds_height", "visible_bounds_offset"
++                }) {
++            if (selected.has(field)) description.add(field, selected.remove(field));
++        }
++        selected.add("description", description);
++        normalizeLegacyBones(selected.getAsJsonArray("bones"));
++        return selected;
++    }
++
++    private static Map<String, Definition> legacyDefinitions(final JsonObject document)
++            throws IOException {
++        final Map<String, Definition> definitions = new LinkedHashMap<>();
++        for (final var entry : document.entrySet()) {
++            if (!entry.getKey().startsWith("geometry.")) continue;
++            final String[] names = entry.getKey().split(":", -1);
++            if (names.length > 2
++                    || names.length == 2
++                            && !BedrockClassicModel.IDENTIFIER.matcher(names[1]).matches())
++                throw new IOException("The classic skin geometry has an invalid parent name");
++            if (!BedrockClassicModel.IDENTIFIER.matcher(names[0]).matches()
++                    || definitions.putIfAbsent(
++                                    names[0],
++                                    new Definition(
++                                            entry.getValue().getAsJsonObject(),
++                                            names.length == 2 ? names[1] : ""))
++                            != null) throw new IOException("The skin geometry name is ambiguous");
++        }
++        return definitions;
++    }
++
++    private static JsonObject resolveLegacy(
++            final Map<String, Definition> definitions,
++            final String name,
++            final Set<String> ancestors)
++            throws IOException {
++        final Definition definition = definitions.get(name);
++        if (definition == null) throw new IOException("The pack is missing a skin geometry parent");
++        if (ancestors.size() >= 32 || !ancestors.add(name))
++            throw new IOException("The skin geometry has an invalid inheritance chain");
++        final JsonObject parent =
++                definition.parent().isEmpty()
++                        ? null
++                        : resolveLegacy(definitions, definition.parent(), ancestors);
++        final JsonObject selected = definition.model().deepCopy();
++        for (final String dimension : new String[] {"texturewidth", "textureheight"}) {
++            if (!selected.has(dimension))
++                selected.addProperty(
++                        dimension, parent == null ? 64 : parent.get(dimension).getAsInt());
++        }
++        final Map<String, JsonObject> bones = new LinkedHashMap<>();
++        if (parent != null) {
++            for (final var element : parent.getAsJsonArray("bones")) {
++                final JsonObject bone = element.getAsJsonObject();
++                bones.put(bone.get("name").getAsString(), bone.deepCopy());
++            }
++        }
++        final Set<String> localNames = new HashSet<>();
++        if (selected.has("bones")) {
++            for (final var element : selected.getAsJsonArray("bones")) {
++                final JsonObject bone = element.getAsJsonObject();
++                final String boneName = bone.get("name").getAsString();
++                if (boneName.isBlank() || !localNames.add(boneName))
++                    throw new IOException("The skin geometry has a duplicate or empty bone name");
++                applyCubeDefaults(bone);
++                if (bone.has("poly_mesh"))
++                    normalizeMesh(
++                            bone.getAsJsonObject("poly_mesh"),
++                            selected.get("texturewidth").getAsInt(),
++                            selected.get("textureheight").getAsInt());
++                final JsonObject inherited = bones.put(boneName, bone);
++                if (inherited != null && inherited.has("cubes")) {
++                    final JsonArray cubes = inherited.getAsJsonArray("cubes").deepCopy();
++                    if (bone.has("cubes")) cubes.addAll(bone.getAsJsonArray("cubes"));
++                    if (cubes.size() > 2048)
++                        throw new IOException("The skin geometry has too many cubes");
++                    bone.add("cubes", cubes);
++                }
++                if (inherited != null && inherited.has("poly_mesh")) {
++                    if (bone.has("poly_mesh"))
++                        bone.add(
++                                "poly_mesh",
++                                mergeMeshes(
++                                        inherited.getAsJsonObject("poly_mesh"),
++                                        bone.getAsJsonObject("poly_mesh")));
++                    else bone.add("poly_mesh", inherited.get("poly_mesh").deepCopy());
++                }
++            }
++        }
++        if (bones.size() > 256) throw new IOException("The skin geometry has too many bones");
++        final JsonArray merged = new JsonArray();
++        bones.values().forEach(merged::add);
++        selected.add("bones", merged);
++        ancestors.remove(name);
++        return selected;
++    }
++
++    private static void normalizeLegacyBones(final JsonArray bones) {
++        for (final var element : bones) {
++            final JsonObject bone = element.getAsJsonObject();
++            if (bone.has("neverRender") && bone.get("neverRender").getAsBoolean()) {
++                bone.add("cubes", new JsonArray());
++                bone.remove("poly_mesh");
++            }
++        }
++    }
++
++    private static void applyCubeDefaults(final JsonObject bone) {
++        if (!bone.has("cubes")) return;
++        for (final var cubeElement : bone.getAsJsonArray("cubes")) {
++            final JsonObject cube = cubeElement.getAsJsonObject();
++            for (final String field : new String[] {"mirror", "inflate"}) {
++                if (!cube.has(field) && bone.has(field))
++                    cube.add(field, bone.get(field).deepCopy());
++            }
++        }
++    }
++
++    private static void normalizeMesh(final JsonObject mesh, final int width, final int height)
++            throws IOException {
++        for (final String field : new String[] {"positions", "normals", "uvs"}) {
++            if (!mesh.has(field)
++                    || !mesh.get(field).isJsonArray()
++                    || mesh.getAsJsonArray(field).size() > 65536)
++                throw new IOException("The skin polygon mesh has invalid vertices");
++        }
++        if (!mesh.has("normalized_uvs") || !mesh.get("normalized_uvs").getAsBoolean()) {
++            for (final var element : mesh.getAsJsonArray("uvs")) {
++                final JsonArray uv = element.getAsJsonArray();
++                if (uv.size() != 2) throw new IOException("The skin polygon mesh has invalid UVs");
++                uv.set(0, new JsonPrimitive(uv.get(0).getAsDouble() / width));
++                uv.set(1, new JsonPrimitive(uv.get(1).getAsDouble() / height));
++            }
++            mesh.addProperty("normalized_uvs", true);
++        }
++        if (mesh.get("polys").isJsonPrimitive()) {
++            final int vertices =
++                    switch (mesh.get("polys").getAsString()) {
++                        case "tri_list" -> 3;
++                        case "quad_list" -> 4;
++                        default ->
++                                throw new IOException(
++                                        "The skin polygon mesh has an invalid polygon format");
++                    };
++            final int count = mesh.getAsJsonArray("positions").size();
++            if (count % vertices != 0)
++                throw new IOException("The skin polygon mesh has an incomplete polygon");
++            final JsonArray polygons = new JsonArray();
++            for (int index = 0; index < count; index += vertices) {
++                final JsonArray polygon = new JsonArray();
++                for (int vertex = index; vertex < index + vertices; vertex++) {
++                    final JsonArray indices = new JsonArray();
++                    indices.add(vertex);
++                    indices.add(vertex);
++                    indices.add(vertex);
++                    polygon.add(indices);
++                }
++                polygons.add(polygon);
++            }
++            mesh.add("polys", polygons);
++        }
++        for (final var polygon : mesh.getAsJsonArray("polys")) {
++            final JsonArray vertices = polygon.getAsJsonArray();
++            if (vertices.size() != 3 && vertices.size() != 4)
++                throw new IOException("The skin polygon mesh has an invalid polygon");
++            for (final var vertex : vertices) {
++                final JsonArray indices = vertex.getAsJsonArray();
++                if (indices.size() != 3)
++                    throw new IOException("The skin polygon mesh has invalid indices");
++                final String[] fields = {"positions", "normals", "uvs"};
++                for (int component = 0; component < 3; component++) {
++                    final int index = indices.get(component).getAsInt();
++                    if (index < 0 || index >= mesh.getAsJsonArray(fields[component]).size())
++                        throw new IOException("The skin polygon mesh has an invalid vertex index");
++                }
++            }
++        }
++    }
++
++    private static JsonObject mergeMeshes(final JsonObject inherited, final JsonObject child)
++            throws IOException {
++        final JsonObject target = inherited.deepCopy();
++        final int positions = target.getAsJsonArray("positions").size();
++        final int normals = target.getAsJsonArray("normals").size();
++        final int uvs = target.getAsJsonArray("uvs").size();
++        for (final String field : new String[] {"positions", "normals", "uvs"}) {
++            target.getAsJsonArray(field).addAll(child.getAsJsonArray(field).deepCopy());
++            if (target.getAsJsonArray(field).size() > 65536)
++                throw new IOException("The assembled skin polygon mesh has too many vertices");
++        }
++        for (final var element : child.getAsJsonArray("polys")) {
++            final JsonArray polygon = new JsonArray();
++            for (final var vertex : element.getAsJsonArray()) {
++                final JsonArray indices = vertex.getAsJsonArray();
++                if (indices.size() != 3)
++                    throw new IOException("The inherited polygon mesh has invalid indices");
++                final JsonArray shifted = new JsonArray();
++                shifted.add(indices.get(0).getAsInt() + positions);
++                shifted.add(indices.get(1).getAsInt() + normals);
++                shifted.add(indices.get(2).getAsInt() + uvs);
++                polygon.add(shifted);
++            }
++            target.getAsJsonArray("polys").add(polygon);
++        }
++        return target;
++    }
++
++    private record Definition(JsonObject model, String parent) {}
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacySkin.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacySkin.java
 new file mode 100644
@@ -1626,12 +1906,208 @@ index 0000000..b8fbd8a
 +    }
 +
 +}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModelTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModelTest.java
+new file mode 100644
+index 0000000..e9f8c67
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModelTest.java
+@@ -0,0 +1,190 @@
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++
++import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++import java.io.IOException;
++import java.nio.file.Files;
++import java.nio.file.Path;
++
++final class BedrockClassicModelTest {
++    @Test
++    void inheritsBonesAndDimensionsThroughSeveralModels() throws IOException {
++        final var model =
++                BedrockClassicModel.read(
++                        """
++                        {"format_version":"1.8.0",
++                          "geometry.base":{"texturewidth":128,"textureheight":32,"bones":[
++                            {"name":"body","pivot":[0,12,0],"cubes":[{"origin":[0,0,0],"size":[2,2,2],"uv":[0,0]}]},
++                            {"name":"head","parent":"body","pivot":[0,24,0]}]},
++                          "geometry.middle:geometry.base":{"textureheight":64,"bones":[{"name":"accessory","parent":"head"}]},
++                          "geometry.child:geometry.middle":{"visible_bounds_height":3,"bones":[
++                            {"name":"body","pivot":[0,10,0],"cubes":[{"origin":[2,0,0],"size":[1,1,1],"uv":[8,0]}]}]}}
++                        """,
++                        "geometry.child");
++        final var decoded = BedrockGeometryModel.fromJson(model.geometry()).getFirst();
++        assertEquals(128, decoded.getTextureSize().getX());
++        assertEquals(64, decoded.getTextureSize().getY());
++        assertEquals(3, decoded.getParents().size());
++        final var body =
++                decoded.getParents().stream()
++                        .filter(b -> b.getName().equals("body"))
++                        .findFirst()
++                        .orElseThrow();
++        assertEquals(2, body.getCubes().size());
++        assertEquals(10, body.getPivot().getY());
++        final var accessory =
++                decoded.getParents().stream()
++                        .filter(b -> b.getName().equals("accessory"))
++                        .findFirst()
++                        .orElseThrow();
++        assertEquals("head", accessory.getParent());
++        assertEquals(
++                3,
++                selected(model)
++                        .getAsJsonObject("description")
++                        .get("visible_bounds_height")
++                        .getAsInt());
++        assertEquals(model, BedrockClassicModel.read(model.geometry(), model.identifier()));
++    }
++
++    @Test
++    void freezesCubeDefaultsBeforeApplyingChildBoneFlags() throws IOException {
++        final var model =
++                BedrockClassicModel.read(
++                        """
++                        {"geometry.base":{"bones":[{"name":"body","mirror":true,"inflate":0.5,"neverRender":true,
++                          "cubes":[{"origin":[0,0,0],"size":[2,2,2],"uv":[0,0]}]}]},
++                         "geometry.child:geometry.base":{"bones":[{"name":"body","mirror":false,"inflate":1,
++                          "cubes":[{"origin":[2,0,0],"size":[1,1,1],"uv":[8,0],"inflate":0.25}]}]}}
++                        """,
++                        "geometry.child");
++        final var decoded = BedrockGeometryModel.fromJson(model.geometry()).getFirst();
++        assertEquals(64, decoded.getTextureSize().getX());
++        assertEquals(64, decoded.getTextureSize().getY());
++        final var cubes = decoded.getParents().getFirst().getCubes();
++        assertEquals(2, cubes.size());
++        assertTrue(cubes.get(0).isMirror());
++        assertFalse(cubes.get(1).isMirror());
++        assertEquals(0.5, cubes.get(0).getInflate());
++        assertEquals(0.25, cubes.get(1).getInflate());
++        assertEquals(
++                0,
++                BedrockGeometryModel.fromJson(
++                                BedrockClassicModel.read(
++                                                """
++                                                {"geometry.hidden":{"bones":[{"name":"body","neverRender":true,
++                                                  "cubes":[{"origin":[0,0,0],"size":[2,2,2],"uv":[0,0]}]}]}}
++                                                """,
++                                                "geometry.hidden")
++                                        .geometry())
++                        .getFirst()
++                        .getParents()
++                        .getFirst()
++                        .getCubes()
++                        .size());
++    }
++
++    @Test
++    void mergesPolygonBuffersWithIndependentIndicesAndUvUnits() throws IOException {
++        final var model =
++                BedrockClassicModel.read(
++                        """
++                        {"geometry.base":{"texturewidth":128,"textureheight":64,"bones":[{"name":"body","poly_mesh":{
++                          "positions":[[0,0,0],[1,0,0],[0,1,0]],"normals":[[0,0,1]],
++                          "uvs":[[0,0],[128,0],[0,64]],"polys":[[[0,0,0],[1,0,1],[2,0,2]]]}}]},
++                         "geometry.child:geometry.base":{"bones":[{"name":"body","poly_mesh":{
++                          "normalized_uvs":true,"positions":[[0,0,1],[1,0,1],[0,1,1]],
++                          "normals":[[0,1,0],[0,1,0],[0,1,0]],"uvs":[[0,0],[1,0],[0,1]],"polys":"tri_list"}}]}}
++                        """,
++                        "geometry.child");
++        final var mesh =
++                selected(model)
++                        .getAsJsonArray("bones")
++                        .get(0)
++                        .getAsJsonObject()
++                        .getAsJsonObject("poly_mesh");
++        assertEquals(6, mesh.getAsJsonArray("positions").size());
++        assertEquals(4, mesh.getAsJsonArray("normals").size());
++        assertEquals(6, mesh.getAsJsonArray("uvs").size());
++        final JsonArray child = mesh.getAsJsonArray("polys").get(1).getAsJsonArray();
++        assertEquals(4, child.get(1).getAsJsonArray().get(0).getAsInt());
++        assertEquals(2, child.get(1).getAsJsonArray().get(1).getAsInt());
++        assertEquals(4, child.get(1).getAsJsonArray().get(2).getAsInt());
++        assertEquals(1, mesh.getAsJsonArray("uvs").get(1).getAsJsonArray().get(0).getAsDouble());
++    }
++
++    @Test
++    void rejectsMissingCyclicAndAmbiguousParentsAndModernInheritance() {
++        for (final String geometry :
++                new String[] {
++                    "{\"geometry.child:geometry.missing\":{}}",
++                    "{\"geometry.child:geometry.parent\":{},\"geometry.parent:geometry.child\":{}}",
++                    "{\"geometry.child\":{},\"geometry.child:geometry.parent\":{},\"geometry.parent\":{}}",
++                    "{\"format_version\":\"1.12.0\",\"geometry.child:geometry.parent\":{},\"geometry.parent\":{}}"
++                })
++            assertThrows(
++                    IOException.class, () -> BedrockClassicModel.read(geometry, "geometry.child"));
++        final JsonObject deep = new JsonObject();
++        for (int depth = 0; depth < 33; depth++)
++            deep.add(
++                    "geometry.level" + depth + (depth < 32 ? ":geometry.level" + (depth + 1) : ""),
++                    new JsonObject());
++        assertThrows(
++                IOException.class,
++                () -> BedrockClassicModel.read(deep.toString(), "geometry.level0"));
++    }
++
++    @Test
++    void validatesHierarchyAfterMergingRatherThanWithinEachFragment() throws IOException {
++        final var model =
++                BedrockClassicModel.read(
++                        """
++                        {"geometry.base":{"bones":[{"name":"body"}]},
++                         "geometry.child:geometry.base":{"bones":[{"name":"head","parent":"body"}]}}
++                        """,
++                        "geometry.child");
++        assertEquals(
++                2, BedrockGeometryModel.fromJson(model.geometry()).getFirst().getParents().size());
++        assertThrows(
++                IOException.class,
++                () ->
++                        BedrockClassicModel.read(
++                                """
++                                {"geometry.base":{"bones":[{"name":"body","parent":"head"}]},
++                                 "geometry.child:geometry.base":{"bones":[{"name":"head","parent":"body"}]}}
++                                """,
++                                "geometry.child"));
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_LEGACY_GEOMETRY", matches = ".+")
++    void decodesThePublishedMojangLegacyModelLibrary() throws IOException {
++        final String data = Files.readString(Path.of(System.getenv("STACKANVIL_LEGACY_GEOMETRY")));
++        final var document = JsonParser.parseString(data).getAsJsonObject();
++        int inherited = 0;
++        for (final String key : document.keySet()) {
++            if (!key.contains(":")) continue;
++            final var model = BedrockClassicModel.read(data, key.substring(0, key.indexOf(':')));
++            assertEquals(1, BedrockGeometryModel.fromJson(model.geometry()).size());
++            assertEquals(model, BedrockClassicModel.read(model.geometry(), model.identifier()));
++            inherited++;
++        }
++        assertTrue(inherited >= 7);
++    }
++
++    private static JsonObject selected(final BedrockClassicModel model) {
++        return JsonParser.parseString(model.geometry())
++                .getAsJsonObject()
++                .getAsJsonArray("minecraft:geometry")
++                .get(0)
++                .getAsJsonObject();
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPackTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPackTest.java
 new file mode 100644
-index 0000000..53e58a3
+index 0000000..0fab7c4
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPackTest.java
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,154 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import java.awt.image.BufferedImage;
@@ -1718,12 +2194,13 @@ index 0000000..53e58a3
 +    void retainsCustomGeometryAndRectangularTextureThroughStoreAndWire() throws IOException {
 +        final Path archive = this.directory.resolve("custom.mcpack");
 +        final String geometry = """
-+            {"format_version":"1.8.0","geometry.robot":{"texturewidth":64,"textureheight":32,
-+              "bones":[{"name":"body","pivot":[0,12,0],"cubes":[{"origin":[-4,0,-2],"size":[8,24,4],"uv":[0,0]}]}]}}
++            {"format_version":"1.8.0","geometry.base":{"texturewidth":64,"textureheight":32,
++              "bones":[{"name":"body","pivot":[0,12,0],"cubes":[{"origin":[-4,0,-2],"size":[8,24,4],"uv":[0,0]}]}]},
++              "geometry.humanoid.custom:geometry.base":{"bones":[{"name":"antenna","parent":"body","pivot":[0,24,0]}]}}
 +            """;
 +        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(archive))) {
 +            put(zip, "Robot/manifest.json", "{\"modules\":[{\"type\":\"skin_pack\"}]}");
-+            put(zip, "Robot/skins.json", "{\"skins\":[{\"geometry\":\"geometry.robot\",\"texture\":\"robot.png\"}]}");
++            put(zip, "Robot/skins.json", "{\"skins\":[{\"geometry\":\"geometry.humanoid.custom\",\"texture\":\"robot.png\"}]}");
 +            put(zip, "Robot/geometry.json", geometry);
 +            put(zip, "Robot/robot.png", image(64, 32));
 +        }
@@ -1741,6 +2218,7 @@ index 0000000..53e58a3
 +        final var wire = restored.skinData("unused standard geometry");
 +        assertEquals(model.geometry(), wire.geometryData());
 +        assertEquals(model.resourcePatch(), wire.skinResourcePatch());
++        assertEquals(2, org.cube.converter.model.impl.bedrock.BedrockGeometryModel.fromJson(wire.geometryData()).getFirst().getParents().size());
 +        org.junit.jupiter.api.Assertions.assertFalse(wire.persona());
 +        assertThrows(IOException.class, () -> store.setSlim("123", true));
 +        store.select("123", BedrockAppearanceStore.Selection.STEVE);

@@ -14,13 +14,15 @@ The add-on sends a [PlayerSkinPacket](https://mojang.github.io/bedrock-protocol-
 
 ## Classic skins
 
-The Dressing Room selects Steve, Alex, an imported PNG, or a skin from a local `.mcpack`. It reads `manifest.json`, `skins.json`, and PNGs from [standard Classic Skin packs](https://learn.microsoft.com/en-us/minecraft/creator/documents/packagingaskinpack?view=minecraft-bedrock-stable). The player can preview each supported skin and select one. Pack import supports wide and slim models, plus selected custom geometry from `geometry.json`. It reads modern geometry arrays and direct legacy geometry definitions. It resolves nested textures relative to a single pack root, including wrapped archive exports. It rejects ambiguous roots, unsafe paths, duplicate entries, and oversized expanded archives.
+The Dressing Room selects Steve, Alex, an imported PNG, or a skin from a local `.mcpack`. It reads `manifest.json`, `skins.json`, and PNGs from [standard Classic Skin packs](https://learn.microsoft.com/en-us/minecraft/creator/documents/packagingaskinpack?view=minecraft-bedrock-stable). The player can preview each supported skin and select one. Pack import supports wide and slim models, plus selected custom geometry from `geometry.json`. It reads modern geometry arrays and resolves legacy geometry inheritance within the pack. Explicit pack geometry takes precedence over built-in Steve and Alex models. It resolves nested textures relative to a single pack root, including wrapped archive exports. It rejects ambiguous roots, unsafe paths, duplicate entries, and oversized expanded archives.
 
 `BedrockAppearanceStore` keeps the choice per account. `ViaFabricPlusSkinProvider` sends the selected skin in the next login JWT. The store keeps an imported cape and custom geometry separately. Custom model textures retain their dimensions and UV layout. Model selection, save/load, login claims, and live packets use the same selected geometry.
 
 Legacy 64×32 skins expand to 64×64 by mirroring limb faces. The importer preserves transparent hat details and clears unused opaque hat backgrounds. Custom geometry textures retain their original rectangular dimensions.
 
-Custom geometry import checks bone hierarchy, coordinate bounds, texture dimensions, and model size before replacing a saved skin. Inherited legacy geometry and classic animation metadata remain incomplete.
+Custom geometry import checks bone hierarchy, coordinate bounds, texture dimensions, and model size before replacing a saved skin. Legacy inheritance keeps parent surfaces and appends child cubes on matching bones. Child bones supply their pose and flags. Each texture dimension inherits separately, with a 64×64 default. The importer preserves cube mirror and inflation defaults, polygon indices, and visible bounds. It rejects missing parents, ambiguous names, inheritance cycles, and inheritance in format versions 1.12 and later.
+
+References to absent global built-in parents and classic animation metadata remain incomplete. The importer currently needs each inherited parent in the pack geometry file. Private tests combine the official legacy model files to validate seven inheritance chains. These tests establish model decoding and persistence. A native visual comparison of inherited custom skins remains pending.
 
 ## Account recipes and editing
 
