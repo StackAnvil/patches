@@ -37,6 +37,7 @@ Catalog pieces no longer require a recipe copied from another slot. Native equip
 | Built-in piece | Piece UUID plus `/d` |
 | Free catalog piece | Pack UUID plus `/f` |
 | Owned catalog piece | Pack UUID |
+| Owned left or right limb | Pack UUID plus `/l` or `/r` |
 | Built-in emote | Piece UUID plus `/de` |
 | Other emote | Pack UUID plus `/e` |
 | Classic cape | Pack UUID plus its skin index |
@@ -47,7 +48,7 @@ The Emotes category edits four wheel positions. An empty position uses `{"id":"/
 
 The Capes category equips, replaces, or removes free and owned capes. Persona capes use their catalog pack UUID. The account model service includes the selected cape in its assembled model. Classic imported capes remain separate skin fields.
 
-The Size screen provides four native heights and two arm widths. Arm edits change `arm` and preserve `cs_arm`. Height edits replace the recognized pair of height entries. Independent left and right limb controls still need a verified saved recipe flow.
+The Size screen provides four native heights and two arm widths. Arm edits change `arm` and preserve `cs_arm`. Height edits replace the recognized pair of height entries. The wardrobe provides Both, Left, and Right controls for owned arms and legs. Native arm captures saved separate `/l` and `/r` entries even when both sides used the same piece. An edit keeps the opposite limb, its colors, and the emote wheel. Packet handles use the corresponding left or right limb type. The leg flow uses the same recipe structure and has targeted tests; it still needs a native write capture. Side controls stay disabled for unresolved free limb recipes. At small GUI sizes, Minecraft's category selector replaces the full category list, and limb and emote controls remain above the footer.
 
 The color editor uses swatches captured from Bedrock 1.26.51. Skin tone edits change `skcol`. Hair and iris edits change channel zero in `col`; eyebrow and sclera edits change channels one and two. It preserves the remaining channels. Other piece palettes and channel controls remain incomplete.
 
@@ -67,7 +68,7 @@ For owned assets, the add-on requests `GET /api/v1.0/player/inventory?includeRec
 
 The asset reader checks archive limits, manifest UUID, and encrypted content ID. It decodes the AES CFB8 index and indexed files in memory. Native archives can contain two `contents.json` entries; the final entry supplies the encrypted index. Directory entries in the index do not require file data.
 
-For animated owned geometry, assembly selects the character's body and arm variants. It replaces matching static preview surfaces and packs looping texture frames into a separate animation atlas. Save/load, login claims, and live packets retain those frames. Unresolved free assets continue to use the service's static model.
+For animated owned geometry, assembly selects the character's body and arm variants. It replaces matching static preview surfaces and packs looping texture frames into a separate animation atlas. Save/load, login claims, and live packets retain those frames. Independent limb recipes filter animated bones by their limb ancestry, leaving the opposite side's static geometry intact. Unresolved free assets continue to use the service's static model.
 
 A private HelliArm capture contains ten animated arm cubes, a 16-frame 32×512 strip, and a separate blinking face. Targeted checks decode the entitled arm pack, assemble its variants, preserve every frame through save/load, and render the native face and arm bindings together. These checks use local private fixtures through `STACKANVIL_PERSONA_ASSETS` and `STACKANVIL_PERSONA_CAPTURE`; the repository contains no captured assets or receipts.
 
@@ -82,7 +83,7 @@ A running Java client displayed the assembled HelliArm body and animated arm sur
 - Assemble default animated faces and resolve free piece assets beyond the static model service.
 - Apply and verify tint maps for animated pieces.
 - Verify native animation timing and emote playback.
-- Add other piece palettes and independent limb controls after native write captures establish their behavior.
+- Add other piece palettes, verify native leg edits, and resolve free limb side recipes.
 - Support inherited legacy geometry and classic pack animation metadata.
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits.
 
