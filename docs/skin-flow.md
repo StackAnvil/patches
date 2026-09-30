@@ -70,7 +70,11 @@ The runtime downloads owned assets from the official Xbox and PlayFab content ho
 
 The asset reader checks archive limits, manifest UUID, and encrypted content ID. It decodes the AES CFB8 index and indexed files in memory. Native archives can contain two `contents.json` entries; the final entry supplies the encrypted index. Directory entries in the index do not require file data.
 
-For animated owned geometry, assembly selects the character's body and arm variants. It replaces matching static preview surfaces and packs looping texture frames into a separate animation atlas. Save/load, login claims, and live packets retain those frames. Independent limb recipes filter animated bones by their limb ancestry, leaving the opposite side's static geometry intact. Unresolved free assets continue to use the service's static model.
+Local face assembly combines equipped skin, mouth, eyes, facial hair, and hair textures in native piece order. Static layers repeat across animated frames. Extracted head and hat meshes replace the service model's corresponding surfaces and bind to the new face strip. Two-frame faces retain the native blink expression.
+
+Tint blending uses four weighted mask channels and the native HSL, LCh, and luminance color transfer. The alpha mask uses the character's skin tone, including eyelids. Recipe colors bind the other channels. Source alpha controls composition, and output bytes use native truncation. A private Bedrock 1.26.51.1 face capture matches all 2,048 RGBA pixels; isolated native compositor evaluations match 512 deterministic tint cases. These checks establish the captured composition and tint math. Other face sizes and equipped combinations still need native comparisons.
+
+For animated owned geometry, assembly selects the character's body and arm variants. It replaces matching static preview surfaces and packs looping texture frames into a separate animation atlas. Save/load, login claims, and live packets retain those frames. Independent limb recipes filter animated bones by their limb ancestry and retain separate tint colors and atlas tiles. The opposite side keeps its static geometry. Unresolved free assets continue to use the service's static model.
 
 A private HelliArm capture contains ten animated arm cubes, a 16-frame 32×512 strip, and a separate blinking face. Targeted checks decode the entitled arm pack, assemble its variants, preserve every frame through save/load, and render the native face and arm bindings together. These checks use local private fixtures through `STACKANVIL_PERSONA_ASSETS` and `STACKANVIL_PERSONA_CAPTURE`; the repository contains no captured assets or receipts.
 
@@ -98,7 +102,7 @@ Sources: [Xodus package extraction](https://github.com/xodus-gaming/xodus/blob/a
 
 The main Dressing Room and Classic Skin pack screen share the player skin renderer. Custom models use their saved geometry. Account characters include separate animated surfaces in the preview. Each preview owns and releases its textures when the screen changes or closes.
 
-A running Java client displayed the assembled HelliArm body and animated arm surfaces. The account character preview stays visible without a world connection. Unsupported geometry reports an error through the existing import or selection flow.
+A running Java client displayed the assembled HelliArm body, animated arms, and locally composed face. A private recording shows the open and closed face frames alongside changing arm frames. This checks production rendering; it does not establish native timing. Native geometry exports can contain null optional transforms. The asset loader omits those fields before assembly so the geometry parser applies its defaults. The account character preview stays visible without a world connection. Unsupported geometry reports an error through the existing import or selection flow.
 
 ## Owned emote previews
 
@@ -122,10 +126,10 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 
 ## Work still needed
 
-- Composite the decoded default face sources into animated character surfaces and resolve other free assets beyond the static model service.
-- Apply and verify tint maps for animated pieces.
-- Verify native strip timing, resolve unavailable remote emote assets, and implement emote chat announcements.
-- Add other piece palettes, verify native leg edits, and resolve free limb side recipes.
+- Resolve remaining free assets and assemble body geometry, texture layers, and variants locally. The service model still supplies the static body base.
+- Compare more face sizes, tint channels, and equipped combinations against native results.
+- Verify native blinking and strip timing. Implement emote effects, timelines, delays, multiple sources, relative rotations, chat announcements, and unavailable remote assets.
+- Add other piece palettes, verify native leg edits, and resolve free limb side recipes. Add paid purchase/redemption flows and account classic-pack downloads.
 - Support inherited legacy geometry and classic pack animation metadata.
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. A white quad above the player moved independently with the sky clouds; it was not an extra face surface.
 

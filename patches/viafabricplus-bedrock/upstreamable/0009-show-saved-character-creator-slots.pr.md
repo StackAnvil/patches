@@ -2,7 +2,7 @@
 
 Use native account recipes and catalog items for saved character, limb, color, size, cape, and four-position emote edits. Profile hashes and exact readback protect each account write. Starter recipes match Bedrock 1.26.51.
 
-Owned persona and emote assets use the current inventory receipt, PlayFab catalog, and official Xbox or PlayFab CDN download flow. The runtime decrypts assets in memory without a native installation, copied keys, or an external extractor. Receipts, content keys, screenshots, profiles, and assets stay private. The model service supplies static geometry for unresolved default and free assets.
+Owned persona and emote assets use the current inventory receipt, PlayFab catalog, and official Xbox or PlayFab CDN download flow. The runtime decrypts assets in memory without a native installation, copied keys, or an external extractor. Receipts, content keys, screenshots, profiles, and assets stay private. The model service supplies the static body base and unresolved free assets.
 
 ## Built-in persona package
 
@@ -13,6 +13,14 @@ Read resident and ordinary multi-run NTFS streams or the package segment index. 
 Local Linux tests acquired the official license and extracted 227 persona files through the bundled helper. Fresh interactive Store sign-in and Windows and macOS runtime flows still need verification. CI builds the four supported helper variants. The runtime requires no installed game, copied keys, or user-supplied extractor.
 
 Sources: [Pinned Xodus extraction](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/commands/streaming.rs), [license acquisition](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/license.rs), and [BR archive format](https://github.com/bedrock-crustaceans/brarchive/blob/main/FORMAT.md).
+
+## Face composition and tint blending
+
+Compose equipped face textures in native piece order and repeat static layers across animated frames. Bind extracted head and hat geometry to the animated face surface. Two-frame faces retain the native blink expression.
+
+Apply native four-channel weighted tint transfer to face layers and animated body pieces. Preserve skin-tone binding, recipe channels, source alpha, and output truncation. Independent limb recipes keep separate colors and texture tiles.
+
+Private Bedrock 1.26.51.1 compositor observations establish the HSL, LCh, and luminance contributions. The Java compositor matches all 2,048 pixels of a captured two-frame face. Its tint math matches 512 deterministic native execution cases. Research binaries, execution harnesses, captured images, and assets remain outside the patch.
 
 ## Emote playback
 
@@ -25,10 +33,11 @@ Private native 1.26.51 captures establish Battle Cry's pack UUID, 130 ticks, and
 ## Verification
 
 - Full patch stack builds successfully.
-- 74 add-on tests pass with private persona, login, and emote fixtures enabled.
+- 79 add-on tests pass with private persona, login, and emote fixtures enabled.
 - Private Battle Cry, Kadoosh, and four built-in emote tests sample every frame at 60 Hz.
 - Bundled-helper tests verify official acquisition, archive extraction, face-mask decoding, cache reuse, and failed refresh recovery.
+- A Java GUI recording verifies the locally composed face, open and closed face frames, and animated arms. Geometry parser tests cover native null optional transforms.
 - A Java GUI recording verifies visible Battle Cry motion, attached clothing, completion reset, and readable controls at the default GUI scale.
 - Native arm writes, cape equips, sizes, and account wheel edits have capture evidence. The account is restored after temporary edits.
 
-Unavailable remote emote assets, free limb side recipes, default face compositing, and animated tint blending remain incomplete. The Java preview recording uses an offline appearance fixture, so it does not establish live Java account download behavior.
+Complete local body assembly, unresolved free assets, native animation timing, unavailable remote emotes, and free limb side recipes remain incomplete. More face sizes and equipped combinations need native comparison. The Java preview recording uses an offline appearance fixture, so it does not establish live Java account download behavior.
