@@ -66,13 +66,33 @@ Piece claims use native names such as `persona_hair`. Packet fields use ViaBedro
 
 For owned assets, the add-on requests `GET /api/v1.0/player/inventory?includeReceipt=true` with the current Minecraft authorization. It decodes content keys only from that account's receipt. It resolves product downloads through PlayFab `Catalog/GetPublishedItem` and uses the native `libhttpclient/1.0.0.0` CDN user agent.
 
-The runtime downloads assets from the official Xbox and PlayFab content hosts. It obtains receipt keys and decrypts assets in memory. It does not read a Bedrock installation, load external key files, or run an external extractor. Private native assets serve only as research and test fixtures.
+The runtime downloads owned assets from the official Xbox and PlayFab content hosts. It obtains receipt keys and decrypts owned packs in memory. Built-in assets use the separate Microsoft Store package flow below.
 
 The asset reader checks archive limits, manifest UUID, and encrypted content ID. It decodes the AES CFB8 index and indexed files in memory. Native archives can contain two `contents.json` entries; the final entry supplies the encrypted index. Directory entries in the index do not require file data.
 
 For animated owned geometry, assembly selects the character's body and arm variants. It replaces matching static preview surfaces and packs looping texture frames into a separate animation atlas. Save/load, login claims, and live packets retain those frames. Independent limb recipes filter animated bones by their limb ancestry, leaving the opposite side's static geometry intact. Unresolved free assets continue to use the service's static model.
 
 A private HelliArm capture contains ten animated arm cubes, a 16-frame 32×512 strip, and a separate blinking face. Targeted checks decode the entitled arm pack, assemble its variants, preserve every frame through save/load, and render the native face and arm bindings together. These checks use local private fixtures through `STACKANVIL_PERSONA_ASSETS` and `STACKANVIL_PERSONA_CAPTURE`; the repository contains no captured assets or receipts.
+
+## Built-in persona assets
+
+The add-on bundles an Xodus-based package helper. First use opens Microsoft Store sign-in when no Store session exists. Sign in with the selected Bedrock account. The helper checks the Xbox user ID before requesting the package license.
+
+The current pin selects Bedrock 1.26.51.1, package version 1.26.5101.0, for ViaBedrock protocol 2193. The package URL identifies the matching official Xbox CDN build. Its pinned header checksum anchors the package hash tree. The helper verifies metadata and encrypted file pages before decryption because this CDN serves the package over HTTP.
+
+The helper obtains a device-bound license from Microsoft and unwraps its content key. It reads the segment index or the NTFS persona directory. The NTFS reader handles resident files and ordinary streams with multiple data runs. It downloads only persona file data and the metadata needed to locate it.
+
+Java unpacks version 1 BR archives beneath their original piece directories. Shared content offsets are valid. Empty archive entries preserve separately supplied loose files. Path, file count, size, and duplicate checks apply before publishing the cache.
+
+The cache lives under the add-on's `bedrock-assets/persona/<account>/<version>.zip` directory. Each file has a checksum, and the cache records the package identity. A failed refresh keeps the previous cache. Store credentials remain in a separate private directory, and the helper reuses its device identity.
+
+The source loader indexes piece metadata, PNG face strips, BGRA TGA tint masks, and geometry by native piece UUID. Equipped built-in pieces enter the same asset loader as owned pieces. Wave, Clap, Over There, and Follow Me use their extracted animation sources for previews and world playback. Built-in emotes retain their piece UUID as the wire identity.
+
+A live test obtained the official license and extracted 227 persona files. Java tests used the bundled helper, unpacked the archives, sampled all four emotes, decoded face masks, and reused the versioned cache. No downloaded content or credentials enter the repository. Fresh interactive Store sign-in and the Windows and macOS helper builds still need runtime verification.
+
+Local add-on builds require Rust 1.98.1, Protobuf, and the platform's WebView build libraries. Linux sign-in requires WebKitGTK 4.1. Release and full-stack CI assemble helper resources for Linux x64, Windows x64, and both macOS architectures. Native installations serve only as private research fixtures.
+
+Sources: [Xodus package extraction](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/commands/streaming.rs), [Xodus licensing](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/license.rs), and [BR archive format](https://github.com/bedrock-crustaceans/brarchive/blob/main/FORMAT.md).
 
 ## Dressing Room previews
 
@@ -96,15 +116,15 @@ The B key opens four native wheel positions. Mouse clicks and keys 1 through 4 p
 
 The ViaBedrock provider forwards `EMOTE` and `EMOTE_LIST` with tracked player UUIDs. The add-on advertises available wheel assets and sends the selected pack UUID and duration. It animates body and clothing through one sampled pose per frame. Movement, completion, account changes, and disconnects clear playback.
 
-Native Bedrock 1.26.51 Battle Cry captures send 130 ticks and flags zero. Its `PlayerAuthInput` Emoting flag clears after 130 ticks, or immediately when walking. A private Java relay test reproduces the packet identity, duration, completion flag transition, and movement cancellation. The native client's emote visibly animates its remote player in Java and returns to the ordinary pose. These tests use entitled local fixtures. Default emotes and remote emotes without an available account asset remain unsupported.
+Native Bedrock 1.26.51 Battle Cry captures send 130 ticks and flags zero. Its `PlayerAuthInput` Emoting flag clears after 130 ticks, or immediately when walking. A private Java relay test reproduces the packet identity, duration, completion flag transition, and movement cancellation. The native client's emote visibly animates its remote player in Java and returns to the ordinary pose. These tests use entitled local fixtures. The package loader now supplies the four default emotes. Other remote emotes without an available account asset remain unsupported.
 
 Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-protocol-docs/blob/v1.26.51/json/EmotePacketPayload.json) and [Emote List payload](https://github.com/Mojang/bedrock-protocol-docs/blob/v1.26.51/json/EmoteListPacketPayload.json).
 
 ## Work still needed
 
-- Assemble default animated faces and resolve free piece assets beyond the static model service. Built-in assets still need an independent download source. The service returned `ItemNotFound` for the built-in pack and Wave emote UUIDs.
+- Composite the decoded default face sources into animated character surfaces and resolve other free assets beyond the static model service.
 - Apply and verify tint maps for animated pieces.
-- Verify native strip timing, resolve default and unavailable remote emote assets, and implement emote chat announcements.
+- Verify native strip timing, resolve unavailable remote emote assets, and implement emote chat announcements.
 - Add other piece palettes, verify native leg edits, and resolve free limb side recipes.
 - Support inherited legacy geometry and classic pack animation metadata.
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. A white quad above the player moved independently with the sky clouds; it was not an extra face surface.
