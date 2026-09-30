@@ -44,7 +44,7 @@ Catalog pieces no longer require a recipe copied from another slot. Native equip
 
 The editor preserves existing colors when it replaces a category. It inserts new categories before the four emote positions. Saved recipes and starter recipes still supply their complete entries when available.
 
-The Emotes category edits four wheel positions. An empty position uses `{"id":"/e"}`. Equip moves an existing emote rather than adding a duplicate. Catalog emotes can use the native recipe suffix without an earlier saved copy. This edits the account wheel; emote playback remains incomplete.
+The Emotes category edits four wheel positions. An empty position uses `{"id":"/e"}`. Equip moves an existing emote rather than adding a duplicate. Catalog emotes can use the native recipe suffix without an earlier saved copy. The account wheel supports equip and removal. Owned emotes also have a local preview with Replay and Stop controls. In-world playback remains incomplete.
 
 The Capes category equips, replaces, or removes free and owned capes. Persona capes use their catalog pack UUID. The account model service includes the selected cape in its assembled model. Classic imported capes remain separate skin fields.
 
@@ -77,6 +77,16 @@ A private HelliArm capture contains ten animated arm cubes, a 16-frame 32×512 s
 The main Dressing Room and Classic Skin pack screen share the player skin renderer. Custom models use their saved geometry. Account characters include separate animated surfaces in the preview. Each preview owns and releases its textures when the screen changes or closes.
 
 A running Java client displayed the assembled HelliArm body and animated arm surfaces. The account character preview stays visible without a world connection. Unsupported geometry reports an error through the existing import or selection flow.
+
+## Owned emote previews
+
+The add-on downloads emote packs through the current account's entitlement receipt. It reads the metadata piece UUID and named animation source. Receipts and content keys remain in memory. Preview uses the active account character and does not change its saved recipe.
+
+Menu models retain the native root, waist, and body hierarchy. Bone poses also apply to animated clothing surfaces. The sampler supports position, rotation, scale, pre/post keyframes, linear and Catmull-Rom interpolation, and Molang frame queries. Each playback has its own variable state. Expressions have size and execution limits. Effects, delays, multiple animation sources, and entity-relative rotations remain unsupported.
+
+Private Bedrock 1.26.51 Battle Cry and Kadoosh assets resolve to 6.5 and 4.75 seconds. Asset tests sample every frame at 60 Hz. A Java GUI recording verifies Battle Cry movement, attached clothing, readable controls at the default GUI scale, and pose reset after completion. The recording uses private native assets and a local appearance fixture. It does not verify a live Java account download or in-world packet playback.
+
+Sources: [Microsoft animation reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/actor_animation.v1.8.0?view=minecraft-bedrock-stable), [Molang syntax](https://learn.microsoft.com/en-us/minecraft/creator/documents/molang/syntax-guide?view=minecraft-bedrock-stable), [Mocha](https://github.com/unnamed/mocha), and [Blockbench animation interpolation](https://github.com/JannisX11/blockbench/blob/master/js/animations/timeline_animators.js).
 
 ## Work still needed
 
