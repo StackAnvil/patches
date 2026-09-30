@@ -22,10 +22,16 @@ Native Bedrock 1.26.51.1 copies skin animation aliases and three render flags in
 
 Store the options for standard and custom models. Preserve them across preset selection, width changes, cape changes, previews, and transport. A new PNG import clears the previous pack options. Bound aliases and validate field types before storage.
 
-Private loader and constructor observations establish the serialized fields. Tests cover metadata decoding, preset switching, persistence, PNG replacement, malformed input, and protocol round trips. Local alias playback, render-flag behavior, and geometry-provided alias precedence remain pending.
+Private loader and constructor observations establish the serialized fields. Tests cover metadata decoding, preset switching, persistence, PNG replacement, malformed input, and protocol round trips. Local alias playback and geometry-provided alias precedence remain pending.
+
+Apply equipment flags to both ordinary and custom player renderers through the shared layer submission call. Disable armor, wings, held items, and equipped head items when attachables are disabled. Hide armor and wings independently when `hide_armor` is true. Apply full brightness only to held-item layers. Keep clothing, face, and cape layers. Resolve flags from the installed texture so replacement, release, and disconnect cannot retain stale options.
+
+Bedrock 1.26.51.1 reads each present flag into its actor resource definition without resetting absent fields. Its player definition enables attachables. The [Microsoft client entity reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/entityreference/examples/cliententitydocumentation/cliententitydocumentationintroduction?view=minecraft-bedrock-stable#enable_attachables) establishes equipment semantics and armor precedence.
 
 ## Verification and remaining limits
 
 Eighteen classic tests pass with the private model library enabled. Tests cover additive cubes, child flags, dimensions, polygon indices, invalid chains, and account store and wire round trips. The optional library test resolves all seven inheritance chains after combining the matching official files. The full add-on suite passes 99 tests with no skips. The exported stack and add-on build pass. Captured and downloaded assets remain outside the repository.
 
-The account asset patch supplies the licensed base vanilla model library through the model-source interface. Pack definitions retain precedence across library chains. Tests cover external parents, modern library models, absent selections, cross-library cycles, and persistence. Versioned vanilla overrides, native parent-name behavior, local classic alias playback, render flags, geometry-provided alias precedence, and native visual comparisons remain pending.
+A private running-client probe passed 208 checks across standard and custom models, flag combinations, layer submissions, lighting, replacement, and release. The client loads the injected layer handler. Native visual and first-person comparisons of the equipment flags remain pending.
+
+The account asset patch supplies the licensed base vanilla model library through the model-source interface. Pack definitions retain precedence across library chains. Tests cover external parents, modern library models, absent selections, cross-library cycles, and persistence. Versioned vanilla overrides, native parent-name behavior, local classic alias playback, geometry-provided alias precedence, and native visual comparisons remain pending.

@@ -24,7 +24,7 @@ Custom geometry import checks bone hierarchy, coordinate bounds, texture dimensi
 
 Missing legacy parents resolve from the licensed package's base vanilla model library. Pack definitions take precedence, including across library chains. Imports run in the background and request the package only when the pack lacks a selected model or parent. Self-contained packs need no Store sign-in. The importer checks the account and open screen before showing the result.
 
-Licensed tests resolve all seven inherited entries from the base skin-model library, including parents supplied by entity model files. Equal duplicate definitions share one library entry. Conflicting definitions remain errors. Versioned vanilla overlays and native visual comparisons remain pending. A broader library check found an unresolved `rightarm` parent in the native legacy vex model. The importer rejects this model until native parent-name behavior is established. Classic skin animation aliases and render flags now survive import and transport. Local playback, render-flag behavior, and geometry-provided alias precedence remain incomplete.
+Licensed tests resolve all seven inherited entries from the base skin-model library, including parents supplied by entity model files. Equal duplicate definitions share one library entry. Conflicting definitions remain errors. Versioned vanilla overlays and native visual comparisons remain pending. A broader library check found an unresolved `rightarm` parent in the native legacy vex model. The importer rejects this model until native parent-name behavior is established. Classic skin animation aliases and render flags survive import and transport. Local alias playback and geometry-provided alias precedence remain incomplete.
 
 ## Classic skin declarations
 
@@ -32,7 +32,11 @@ The importer preserves `skins.json` animation aliases in `SkinResourcePatch`, wi
 
 The account store keeps these options with the classic appearance, including skins that use the standard Steve or Alex model. Preset selection suspends the options. Selecting the saved custom skin restores them. A plain PNG import clears the previous pack options. Model-width and cape edits preserve them.
 
-Private Bedrock 1.26.51.1 loader and serialization observations establish the resource-patch fields. Tests cover metadata parsing, persistence, preset selection, width changes, and live protocol round trips. Preview skin data carries the same declarations. Java does not yet use these aliases for local playback or apply the render flags.
+Private Bedrock 1.26.51.1 loader and serialization observations establish the resource-patch fields. Tests cover metadata parsing, persistence, preset selection, width changes, and live protocol round trips. Preview skin data carries the same declarations. Java does not yet use these aliases for local playback.
+
+Player equipment layers now use the installed skin's render flags. `enable_attachables=false` hides armor, wings, held items, and equipped head items. `hide_armor=true` hides armor and wings while preserving held items. `held_item_ignores_lighting=true` gives only held-item layers full brightness. Clothing, face, and cape layers keep their ordinary behavior. Missing flags retain the vanilla player defaults. Skin replacement, release, and disconnect clear the previous options.
+
+The target native reader applies only present flags. The matching player definition enables attachables. Microsoft documents the [equipment flags and armor precedence](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/entityreference/examples/cliententitydocumentation/cliententitydocumentationintroduction?view=minecraft-bedrock-stable#enable_attachables). A private running-client probe passed 208 checks across standard and custom models, flag combinations, layer submissions, lighting, replacement, and release. These checks establish Java layer behavior. Native visual and first-person comparisons remain pending.
 
 ## Account recipes and editing
 
@@ -146,7 +150,7 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 - Compare more face sizes, tint channels, and equipped combinations against native results.
 - Verify native blinking and strip timing. Implement emote effects, timelines, delays, multiple sources, relative rotations, chat announcements, and unavailable remote assets.
 - Add other piece palettes, verify native leg edits, and resolve free limb side recipes. Add paid purchase/redemption flows and account classic-pack downloads.
-- Verify versioned vanilla model overrides and native parent-name behavior. Implement local classic alias playback, render flags, and geometry-provided alias precedence. Compare inherited skins with native rendering.
+- Verify versioned vanilla model overrides and native parent-name behavior. Implement local classic alias playback and geometry-provided alias precedence. Compare inherited skins and equipment flags with native rendering, including first-person views.
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. A white quad above the player moved independently with the sky clouds; it was not an extra face surface.
 
 Keep login JWTs, receipts, content keys, raw flows, screenshots, player textures, and account data private under `.stackanvil/`.

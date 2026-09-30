@@ -1,4 +1,4 @@
-From 725bf16a67a8c027d00f14bf961608865ef1fa1a Mon Sep 17 00:00:00 2001
+From b61c0b2273796d34c0d3af3a9d1774904690fd47 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:39 +0200
 Subject: [PATCH] feat(bedrock): add classic Dressing Room
@@ -32,6 +32,14 @@ plain PNG imports independent of saved pack metadata.
 Tests cover pack import, preset switching, model-width changes, protocol
 round trips, and malformed metadata. This preserves the native declarations;
 local alias playback and render-flag behavior still require implementation.
+
+Apply resource-patch equipment flags to both standard and custom player
+renderers. Bedrock 1.26.51.1 reads each present flag into its actor resource
+definition without resetting absent fields. Its player definition enables
+attachables. Follow the documented precedence of hide_armor over enabled
+attachables, and apply full brightness only to held-item layers. Preserve
+clothing and cape layers and scope the behavior to installed player skins.
+Native visual comparison of these equipment flags remains pending.
 ---
  README.md                                     |  12 +
  build.gradle.kts                              |   6 +
@@ -44,15 +52,18 @@ local alias playback and render-flag behavior still require implementation.
  .../bedrock/appearance/BedrockLegacySkin.java |  61 ++++
  .../appearance/ViaFabricPlusSkinProvider.java |  82 +++++
  .../friends/FriendWorldSkinProvider.java      |  49 ---
+ .../render/MixinLivingEntitySkinLayers.java   |  59 ++++
+ .../bedrock/render/BedrockPlayerSkins.java    |  27 +-
  .../screen/BedrockClassicSkinPackScreen.java  | 126 +++++++
  .../screen/BedrockDressingRoomScreen.java     | 299 ++++++++++++++++
  .../bedrock/settings/BedrockSettings.java     |   5 +
  .../viafabricplus-bedrock/lang/en_us.json     |  23 ++
+ .../viafabricplus-bedrock.mixins.json         |   1 +
  .../BedrockAppearanceStoreTest.java           | 126 +++++++
  .../appearance/BedrockClassicModelTest.java   | 273 +++++++++++++++
  .../appearance/BedrockClassicOptionsTest.java |  47 +++
  .../BedrockClassicSkinPackTest.java           | 193 +++++++++++
- 19 files changed, 2306 insertions(+), 51 deletions(-)
+ 22 files changed, 2391 insertions(+), 53 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicOptions.java
@@ -61,6 +72,7 @@ local alias playback and render-flag behavior still require implementation.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacySkin.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java
  delete mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/friends/FriendWorldSkinProvider.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntitySkinLayers.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockClassicSkinPackScreen.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStoreTest.java
@@ -1443,6 +1455,146 @@ index 79efc1d..0000000
 -    }
 -
 -}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntitySkinLayers.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntitySkinLayers.java
+new file mode 100644
+index 0000000..d6afe12
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinLivingEntitySkinLayers.java
+@@ -0,0 +1,59 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.mojang.blaze3d.vertex.PoseStack;
++import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
++
++import net.minecraft.client.renderer.SubmitNodeCollector;
++import net.minecraft.client.renderer.entity.LivingEntityRenderer;
++import net.minecraft.client.renderer.entity.layers.CustomHeadLayer;
++import net.minecraft.client.renderer.entity.layers.HumanoidArmorLayer;
++import net.minecraft.client.renderer.entity.layers.ItemInHandLayer;
++import net.minecraft.client.renderer.entity.layers.RenderLayer;
++import net.minecraft.client.renderer.entity.layers.WingsLayer;
++import net.minecraft.client.renderer.entity.state.AvatarRenderState;
++import net.minecraft.client.renderer.entity.state.EntityRenderState;
++import net.minecraft.util.LightCoordsUtil;
++
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++@Mixin(LivingEntityRenderer.class)
++public abstract class MixinLivingEntitySkinLayers {
++    @WrapOperation(
++            method = "submit",
++            at =
++                    @At(
++                            value = "INVOKE",
++                            target =
++                                    "Lnet/minecraft/client/renderer/entity/layers/RenderLayer;submit(Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;ILnet/minecraft/client/renderer/entity/state/EntityRenderState;FF)V"))
++    private void bedrockSkinLayer(
++            final RenderLayer<EntityRenderState, ?> layer,
++            final PoseStack poses,
++            final SubmitNodeCollector collector,
++            final int light,
++            final EntityRenderState state,
++            final float yaw,
++            final float pitch,
++            final Operation<Void> original) {
++        int itemLight = light;
++        if (state instanceof AvatarRenderState avatar) {
++            final var flags = BedrockPlayerSkins.options(avatar.skin).rendering();
++            final boolean attachables = flags.getOrDefault("enable_attachables", true);
++            if ((layer instanceof HumanoidArmorLayer<?, ?, ?> || layer instanceof WingsLayer<?, ?>)
++                    && (!attachables || flags.getOrDefault("hide_armor", false))) return;
++            if (layer instanceof ItemInHandLayer<?, ?>) {
++                if (!attachables) return;
++                if (flags.getOrDefault("held_item_ignores_lighting", false))
++                    itemLight = LightCoordsUtil.FULL_BRIGHT;
++            } else if (layer instanceof CustomHeadLayer<?, ?> && !attachables) return;
++        }
++        original.call(layer, poses, collector, itemLight, state, yaw, pitch);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
+index 2686b85..a5539e5 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
+@@ -19,12 +19,14 @@
+ package com.viaversion.viafabricplus.bedrock.render;
+ 
+ import com.mojang.blaze3d.platform.NativeImage;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockClassicOptions;
+ import com.viaversion.viafabricplus.ViaFabricPlus;
+ import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
+ import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.libs.gson.JsonObject;
+ import com.viaversion.viaversion.libs.gson.JsonParser;
+ import java.awt.image.BufferedImage;
++import java.io.IOException;
+ import java.util.HashMap;
+ import java.util.List;
+ import java.util.Locale;
+@@ -104,7 +106,7 @@ public final class BedrockPlayerSkins {
+         final PlayerSkin playerSkin = PlayerSkin.insecure(new ClientAsset.ResourceTexture(bodyId, bodyId),
+             capeId == null ? null : new ClientAsset.ResourceTexture(capeId, capeId), null, modelType);
+         final BedrockGeometryModel geometry = geometry(skin);
+-        APPEARANCES.put(playerUuid, new Appearance(playerSkin, geometry, slim, bodyId, capeId));
++        APPEARANCES.put(playerUuid, new Appearance(playerSkin, geometry, slim, bodyId, capeId, options(skin)));
+         PLAYER_BY_TEXTURE.put(bodyId, playerUuid);
+         return playerSkin;
+     }
+@@ -114,6 +116,25 @@ public final class BedrockPlayerSkins {
+         return appearance == null ? fallback : appearance.skin;
+     }
+ 
++    /** Returns options belonging to this installed skin, including standard player models. */
++    public static BedrockClassicOptions options(final PlayerSkin skin) {
++        if (skin == null || skin.body() == null) return BedrockClassicOptions.EMPTY;
++        final UUID id = PLAYER_BY_TEXTURE.get(skin.body().id());
++        final Appearance appearance = id == null ? null : APPEARANCES.get(id);
++        return appearance == null ? BedrockClassicOptions.EMPTY : appearance.options;
++    }
++
++    private static BedrockClassicOptions options(final SkinData skin) {
++        if (skin.skinResourcePatch() == null || skin.skinResourcePatch().isBlank())
++            return BedrockClassicOptions.EMPTY;
++        try {
++            return BedrockClassicOptions.read(com.google.gson.JsonParser.parseString(skin.skinResourcePatch()).getAsJsonObject());
++        } catch (IOException | RuntimeException e) {
++            ViaFabricPlusBedrock.impl().logger().warn("Failed to parse Bedrock skin options", e);
++            return BedrockClassicOptions.EMPTY;
++        }
++    }
++
+     public static AvatarRenderer<?> renderer(final UUID playerUuid) {
+         final Appearance appearance = APPEARANCES.get(playerUuid);
+         if (appearance == null || appearance.geometry == null || rendererContext == null) {
+@@ -219,17 +240,19 @@ public final class BedrockPlayerSkins {
+         private final boolean slim;
+         private final Identifier bodyId;
+         private final Identifier capeId;
++        private final BedrockClassicOptions options;
+         private AvatarRenderer<?> renderer;
+         private Model.Simple previewModel;
+         private long rendererEpoch;
+ 
+         private Appearance(final PlayerSkin skin, final BedrockGeometryModel geometry, final boolean slim,
+-                           final Identifier bodyId, final Identifier capeId) {
++                           final Identifier bodyId, final Identifier capeId, final BedrockClassicOptions options) {
+             this.skin = skin;
+             this.geometry = geometry;
+             this.slim = slim;
+             this.bodyId = bodyId;
+             this.capeId = capeId;
++            this.options = options;
+         }
+     }
+ 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockClassicSkinPackScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockClassicSkinPackScreen.java
 new file mode 100644
 index 0000000..9a754b6
@@ -1948,6 +2100,18 @@ index 364ec25..49f0538 100644
    "bedrock_realms.viafabricplus.warning": "This feature requires a Bedrock Edition account to be set in the settings!",
    "bedrock_realms.viafabricplus.availability_check": "Checking availability...",
    "bedrock_realms.viafabricplus.no_worlds": "No worlds found :(",
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index d65401a..6be3c49 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -49,6 +49,7 @@
+     "features.render.MixinCustomEntity",
+     "features.render.MixinEntityRenderDispatcher",
+     "features.render.MixinMinecraftSkinLifecycle",
++    "features.render.MixinLivingEntitySkinLayers",
+     "features.render.MixinPlayerSkinWidget",
+     "features.movement.MixinEntity",
+     "features.movement.MixinEntityFluidInteraction",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStoreTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStoreTest.java
 new file mode 100644
 index 0000000..b8fbd8a
