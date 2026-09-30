@@ -16,8 +16,16 @@ Private Bedrock 1.26.51.1 observations establish the inheritance version check, 
 - [Pinned Mojang legacy model library](https://github.com/Mojang/bedrock-samples/blob/46ba6ea985fb5a92d79a9419198f10dda14c199d/resource_pack/models/mobs.json).
 - [Matching zombie parent definition](https://github.com/Mojang/bedrock-samples/blob/46ba6ea985fb5a92d79a9419198f10dda14c199d/resource_pack/models/entity/zombie.v1.0.geo.json).
 
+## Classic animation aliases and render flags
+
+Native Bedrock 1.26.51.1 copies skin animation aliases and three render flags into `SkinResourcePatch`: `enable_attachables`, `held_item_ignores_lighting`, and `hide_armor`. Preserve explicit false flags and empty aliases. Do not put these declarations in `SkinAnimationData`.
+
+Store the options for standard and custom models. Preserve them across preset selection, width changes, cape changes, previews, and transport. A new PNG import clears the previous pack options. Bound aliases and validate field types before storage.
+
+Private loader and constructor observations establish the serialized fields. Tests cover metadata decoding, preset switching, persistence, PNG replacement, malformed input, and protocol round trips. Local alias playback, render-flag behavior, and geometry-provided alias precedence remain pending.
+
 ## Verification and remaining limits
 
-Fifteen classic tests pass with the private model library enabled. Tests cover additive cubes, child flags, dimensions, polygon indices, invalid chains, and account store and wire round trips. The optional library test resolves all seven inheritance chains after combining the matching official files. The full add-on suite passes 96 tests with no skips. The exported stack and add-on build pass. Captured and downloaded assets remain outside the repository.
+Eighteen classic tests pass with the private model library enabled. Tests cover additive cubes, child flags, dimensions, polygon indices, invalid chains, and account store and wire round trips. The optional library test resolves all seven inheritance chains after combining the matching official files. The full add-on suite passes 99 tests with no skips. The exported stack and add-on build pass. Captured and downloaded assets remain outside the repository.
 
-The account asset patch supplies the licensed base vanilla model library through the model-source interface. Pack definitions retain precedence across library chains. Tests cover external parents, modern library models, absent selections, cross-library cycles, and persistence. Versioned vanilla overrides, native parent-name behavior, classic animation metadata, and native visual comparisons remain pending.
+The account asset patch supplies the licensed base vanilla model library through the model-source interface. Pack definitions retain precedence across library chains. Tests cover external parents, modern library models, absent selections, cross-library cycles, and persistence. Versioned vanilla overrides, native parent-name behavior, local classic alias playback, render flags, geometry-provided alias precedence, and native visual comparisons remain pending.

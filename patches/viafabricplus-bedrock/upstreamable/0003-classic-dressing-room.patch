@@ -1,4 +1,4 @@
-From 51386481590d56c377589ff6539a0a86c3ed573f Mon Sep 17 00:00:00 2001
+From 725bf16a67a8c027d00f14bf961608865ef1fa1a Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:39 +0200
 Subject: [PATCH] feat(bedrock): add classic Dressing Room
@@ -22,14 +22,25 @@ models can serve as parents without coupling the pack reader to account
 authentication. Pack definitions retain precedence across library chains.
 Normalize modern library parents and validate cross-library cycles before
 persisting the selected model.
+
+Native Bedrock 1.26.51.1 places classic animation aliases and the attachment,
+lighting, and armor flags in SkinResourcePatch. Preserve these fields through
+pack preview, account persistence, and skin transport, including explicit
+false flags and empty animation aliases. Keep default model selection and
+plain PNG imports independent of saved pack metadata.
+
+Tests cover pack import, preset switching, model-width changes, protocol
+round trips, and malformed metadata. This preserves the native declarations;
+local alias playback and render-flag behavior still require implementation.
 ---
  README.md                                     |  12 +
  build.gradle.kts                              |   6 +
  .../bedrock/ViaFabricPlusBedrock.java         |  11 +-
- .../appearance/BedrockAppearanceStore.java    | 320 ++++++++++++++++++
+ .../appearance/BedrockAppearanceStore.java    | 327 ++++++++++++++++++
  .../appearance/BedrockClassicModel.java       | 130 +++++++
+ .../appearance/BedrockClassicOptions.java     |  88 +++++
  .../appearance/BedrockClassicSkinPack.java    | 214 ++++++++++++
- .../appearance/BedrockLegacyGeometry.java     | 285 ++++++++++++++++
+ .../appearance/BedrockLegacyGeometry.java     | 285 +++++++++++++++
  .../bedrock/appearance/BedrockLegacySkin.java |  61 ++++
  .../appearance/ViaFabricPlusSkinProvider.java |  82 +++++
  .../friends/FriendWorldSkinProvider.java      |  49 ---
@@ -39,10 +50,12 @@ persisting the selected model.
  .../viafabricplus-bedrock/lang/en_us.json     |  23 ++
  .../BedrockAppearanceStoreTest.java           | 126 +++++++
  .../appearance/BedrockClassicModelTest.java   | 273 +++++++++++++++
- .../BedrockClassicSkinPackTest.java           | 154 +++++++++
- 17 files changed, 2125 insertions(+), 51 deletions(-)
+ .../appearance/BedrockClassicOptionsTest.java |  47 +++
+ .../BedrockClassicSkinPackTest.java           | 193 +++++++++++
+ 19 files changed, 2306 insertions(+), 51 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicOptions.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacyGeometry.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacySkin.java
@@ -52,6 +65,7 @@ persisting the selected model.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStoreTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModelTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicOptionsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPackTest.java
 
 diff --git a/README.md b/README.md
@@ -147,10 +161,10 @@ index a8f239a..92f1b49 100644
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
 new file mode 100644
-index 0000000..ec94be0
+index 0000000..d54e7f7
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
-@@ -0,0 +1,320 @@
+@@ -0,0 +1,327 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -197,7 +211,7 @@ index 0000000..ec94be0
 +
 +    private static final String METADATA = "appearance.json";
 +    private static final String CUSTOM_SKIN = "skin.png";
-+    private static final String CLASSIC_MODEL = "classic-model.json";
++    private static final String CLASSIC_APPEARANCE = "classic-model.json";
 +    private static final String CAPE = "cape.png";
 +    private static final int MAX_FILE_BYTES = 8 * 1024 * 1024;
 +
@@ -242,12 +256,14 @@ index 0000000..ec94be0
 +        }
 +
 +        BedrockClassicModel classicModel = null;
-+        final Path modelPath = directory.resolve(CLASSIC_MODEL);
++        BedrockClassicOptions classicOptions = BedrockClassicOptions.EMPTY;
++        final Path modelPath = directory.resolve(CLASSIC_APPEARANCE);
 +        if (selection == Selection.CUSTOM && Files.isRegularFile(modelPath)) {
 +            if (Files.size(modelPath) > 2 * 1024 * 1024) throw new IOException("The saved skin geometry is too large");
 +            try {
 +                final JsonObject model = JsonParser.parseString(Files.readString(modelPath)).getAsJsonObject();
-+                classicModel = BedrockClassicModel.read(model.get("geometry").getAsString(), model.get("identifier").getAsString());
++                if (model.has("geometry")) classicModel = BedrockClassicModel.read(model.get("geometry").getAsString(), model.get("identifier").getAsString());
++                if (model.has("options")) classicOptions = BedrockClassicOptions.read(model.getAsJsonObject("options"));
 +            } catch (RuntimeException e) { throw new IOException("The saved skin geometry is invalid", e); }
 +        }
 +        BufferedImage skin = switch (selection) {
@@ -260,12 +276,13 @@ index 0000000..ec94be0
 +            selection = Selection.STEVE;
 +            skin = this.presets.apply(Selection.STEVE);
 +            classicModel = null;
++            classicOptions = BedrockClassicOptions.EMPTY;
 +        }
 +        final Path capePath = directory.resolve(CAPE);
 +        final BufferedImage cape = Files.isRegularFile(capePath) ? readPng(capePath, TextureKind.CAPE) : null;
 +        return new Appearance(selection, slim,
 +            skin, cape, skinId.isBlank() ? UUID.randomUUID().toString() : skinId,
-+            cape != null && capeId.isBlank() ? UUID.randomUUID().toString() : capeId, classicModel);
++            cape != null && capeId.isBlank() ? UUID.randomUUID().toString() : capeId, classicModel, classicOptions);
 +    }
 +
 +    public boolean hasCustomSkin(final String accountId) {
@@ -278,7 +295,7 @@ index 0000000..ec94be0
 +            throw new IOException("Import a custom skin first");
 +        }
 +        final Appearance updated = new Appearance(selection, current.slim(), current.skin(), current.cape(),
-+            UUID.randomUUID().toString(), current.capeId(), current.classicModel());
++            UUID.randomUUID().toString(), current.capeId(), current.classicModel(), current.classicOptions());
 +        this.saveMetadata(accountId, updated);
 +        return this.load(accountId);
 +    }
@@ -287,7 +304,7 @@ index 0000000..ec94be0
 +        final Appearance current = this.load(accountId);
 +        if (current.classicModel() != null) throw new IOException("This skin pack defines its own model");
 +        final Appearance updated = new Appearance(current.selection(), slim, current.skin(), current.cape(),
-+            UUID.randomUUID().toString(), current.capeId(), current.classicModel());
++            UUID.randomUUID().toString(), current.capeId(), current.classicModel(), current.classicOptions());
 +        this.saveMetadata(accountId, updated);
 +        return this.load(accountId);
 +    }
@@ -297,11 +314,12 @@ index 0000000..ec94be0
 +    }
 +
 +    public synchronized Appearance importSkinImage(final String accountId, final BufferedImage image, final boolean slim) throws IOException {
-+        return this.importSkinImage(accountId, image, slim, null);
++        return this.importSkinImage(accountId, image, slim, null, BedrockClassicOptions.EMPTY);
 +    }
 +
 +    public synchronized Appearance importSkinImage(final String accountId, final BufferedImage image,
-+                                                   final boolean slim, final BedrockClassicModel model) throws IOException {
++                                                   final boolean slim, final BedrockClassicModel model, final BedrockClassicOptions options) throws IOException {
++        final BedrockClassicOptions validatedOptions = BedrockClassicOptions.read(options.write());
 +        validateDimensions(image.getWidth(), image.getHeight(), model == null ? TextureKind.SKIN : TextureKind.MODEL);
 +        final BedrockClassicModel validatedModel = model == null ? null : BedrockClassicModel.read(model.geometry(), model.identifier());
 +        final BufferedImage skin = model == null ? BedrockLegacySkin.convert(image) : image;
@@ -309,17 +327,20 @@ index 0000000..ec94be0
 +        final Path directory = this.directory(accountId);
 +        Files.createDirectories(directory);
 +        writePng(skin, directory.resolve(CUSTOM_SKIN));
-+        if (validatedModel == null) Files.deleteIfExists(directory.resolve(CLASSIC_MODEL));
++        if (validatedModel == null && validatedOptions.equals(BedrockClassicOptions.EMPTY)) Files.deleteIfExists(directory.resolve(CLASSIC_APPEARANCE));
 +        else {
 +            final JsonObject json = new JsonObject();
-+            json.addProperty("geometry", validatedModel.geometry());
-+            json.addProperty("identifier", validatedModel.identifier());
++            if (validatedModel != null) {
++                json.addProperty("geometry", validatedModel.geometry());
++                json.addProperty("identifier", validatedModel.identifier());
++            }
++            json.add("options", validatedOptions.write());
 +            final Path temporary = Files.createTempFile(directory, "classic-", ".json");
-+            try { Files.writeString(temporary, json.toString()); moveIntoPlace(temporary, directory.resolve(CLASSIC_MODEL)); }
++            try { Files.writeString(temporary, json.toString()); moveIntoPlace(temporary, directory.resolve(CLASSIC_APPEARANCE)); }
 +            finally { Files.deleteIfExists(temporary); }
 +        }
 +        final Appearance updated = new Appearance(Selection.CUSTOM, slim, skin, current.cape(),
-+            UUID.randomUUID().toString(), current.capeId(), validatedModel);
++            UUID.randomUUID().toString(), current.capeId(), validatedModel, validatedOptions);
 +        this.saveMetadata(accountId, updated);
 +        return updated;
 +    }
@@ -331,7 +352,7 @@ index 0000000..ec94be0
 +        Files.createDirectories(directory);
 +        writePng(image, directory.resolve(CAPE));
 +        final Appearance updated = new Appearance(current.selection(), current.slim(), current.skin(), image,
-+            current.skinId(), UUID.randomUUID().toString(), current.classicModel());
++            current.skinId(), UUID.randomUUID().toString(), current.classicModel(), current.classicOptions());
 +        this.saveMetadata(accountId, updated);
 +        return updated;
 +    }
@@ -340,7 +361,7 @@ index 0000000..ec94be0
 +        Files.deleteIfExists(this.directory(accountId).resolve(CAPE));
 +        final Appearance current = this.load(accountId);
 +        final Appearance updated = new Appearance(current.selection(), current.slim(), current.skin(), null,
-+            current.skinId(), "", current.classicModel());
++            current.skinId(), "", current.classicModel(), current.classicOptions());
 +        this.saveMetadata(accountId, updated);
 +        return updated;
 +    }
@@ -455,11 +476,11 @@ index 0000000..ec94be0
 +    }
 +
 +    public record Appearance(Selection selection, boolean slim, BufferedImage skin, BufferedImage cape,
-+                             String skinId, String capeId, BedrockClassicModel classicModel) {
++                             String skinId, String capeId, BedrockClassicModel classicModel, BedrockClassicOptions classicOptions) {
 +
 +        public SkinData skinData(final String standardGeometry) {
 +            final String patch = this.classicModel == null ? "{\"geometry\":{\"default\":\"geometry.humanoid.custom" + (this.effectiveSlim() ? "Slim" : "") + "\"}}" : this.classicModel.resourcePatch();
-+            return new SkinData(this.skinId, "", patch, this.skin, List.of(),
++            return new SkinData(this.skinId, "", this.classicOptions.resourcePatch(patch), this.skin, List.of(),
 +                this.cape, this.classicModel == null ? standardGeometry : this.classicModel.geometry(), this.classicModel == null ? "0.0.0" : "1.14.0",
 +                "", false, false, this.cape != null, false, this.cape == null ? "" : this.capeId, "", this.effectiveSlim() ? "slim" : "wide", "#0",
 +                List.of(), List.of(), false, "False", "");
@@ -607,9 +628,103 @@ index 0000000..14ea700
 +        return patch.toString();
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicOptions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicOptions.java
+new file mode 100644
+index 0000000..3e787c7
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicOptions.java
+@@ -0,0 +1,88 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.google.gson.JsonObject;
++
++import java.io.IOException;
++import java.util.LinkedHashMap;
++import java.util.Map;
++import java.util.Set;
++import java.util.regex.Pattern;
++
++/** Classic skin animation aliases and render flags carried in SkinResourcePatch. */
++public record BedrockClassicOptions(
++        Map<String, String> animations, Map<String, Boolean> rendering) {
++    private static final Set<String> FLAGS =
++            Set.of("enable_attachables", "held_item_ignores_lighting", "hide_armor");
++    private static final Pattern ALIAS = Pattern.compile("[a-zA-Z0-9_:.\\-]{1,128}");
++    private static final Pattern REFERENCE =
++            Pattern.compile("(?:animation|controller\\.animation)\\.[a-zA-Z0-9_:.\\-]{1,240}");
++
++    public static final BedrockClassicOptions EMPTY = new BedrockClassicOptions(Map.of(), Map.of());
++
++    public BedrockClassicOptions {
++        if (animations.size() > 128 || rendering.size() > 3)
++            throw new IllegalArgumentException("Too many classic skin options");
++        for (final var entry : animations.entrySet()) {
++            if (!ALIAS.matcher(entry.getKey()).matches()
++                    || (!entry.getValue().isEmpty()
++                            && !REFERENCE.matcher(entry.getValue()).matches()))
++                throw new IllegalArgumentException("Invalid classic skin animation alias");
++        }
++        if (!FLAGS.containsAll(rendering.keySet()))
++            throw new IllegalArgumentException("Invalid classic skin render flag");
++        animations = Map.copyOf(animations);
++        rendering = Map.copyOf(rendering);
++    }
++
++    public static BedrockClassicOptions read(final JsonObject definition) throws IOException {
++        try {
++            final Map<String, String> animations = new LinkedHashMap<>();
++            if (definition.has("animations")) {
++                for (final var entry : definition.getAsJsonObject("animations").entrySet()) {
++                    if (!entry.getValue().isJsonPrimitive()
++                            || !entry.getValue().getAsJsonPrimitive().isString())
++                        throw new IOException("The skin animation alias must name an animation");
++                    animations.put(entry.getKey(), entry.getValue().getAsString());
++                }
++            }
++            final Map<String, Boolean> rendering = new LinkedHashMap<>();
++            for (final String flag : FLAGS) {
++                if (!definition.has(flag)) continue;
++                if (!definition.get(flag).isJsonPrimitive()
++                        || !definition.get(flag).getAsJsonPrimitive().isBoolean())
++                    throw new IOException("The skin render flag must be a boolean");
++                rendering.put(flag, definition.get(flag).getAsBoolean());
++            }
++            return new BedrockClassicOptions(animations, rendering);
++        } catch (RuntimeException e) {
++            throw new IOException("The classic skin options are invalid", e);
++        }
++    }
++
++    public JsonObject write() {
++        final JsonObject json = new JsonObject();
++        if (!this.animations.isEmpty()) {
++            final JsonObject aliases = new JsonObject();
++            this.animations.entrySet().stream()
++                    .sorted(Map.Entry.comparingByKey())
++                    .forEach(entry -> aliases.addProperty(entry.getKey(), entry.getValue()));
++            json.add("animations", aliases);
++        }
++        this.rendering.entrySet().stream()
++                .sorted(Map.Entry.comparingByKey())
++                .forEach(entry -> json.addProperty(entry.getKey(), entry.getValue()));
++        return json;
++    }
++
++    public String resourcePatch(final String geometryPatch) {
++        final JsonObject patch =
++                com.google.gson.JsonParser.parseString(geometryPatch).getAsJsonObject();
++        this.write().entrySet().forEach(entry -> patch.add(entry.getKey(), entry.getValue()));
++        return patch.toString();
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java
 new file mode 100644
-index 0000000..7317a80
+index 0000000..4326121
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java
 @@ -0,0 +1,214 @@
@@ -690,7 +805,7 @@ index 0000000..7317a80
 +                }
 +                final String skinKey = string(definition, "localization_name");
 +                final String name = names.getOrDefault("skin." + key + "." + skinKey, skinKey);
-+                skins.add(new Skin(name.isBlank() ? texture : name, root + texture, geometry.endsWith("customSlim"), model));
++                skins.add(new Skin(name.isBlank() ? texture : name, root + texture, geometry.endsWith("customSlim"), model, BedrockClassicOptions.read(definition)));
 +                if (skins.size() > 256) {
 +                    throw new IOException("The skin pack contains too many skins");
 +                }
@@ -823,7 +938,7 @@ index 0000000..7317a80
 +        return object.has(key) && object.get(key).isJsonPrimitive() ? object.get(key).getAsString() : "";
 +    }
 +
-+    public record Skin(String name, String texture, boolean slim, BedrockClassicModel model) {
++    public record Skin(String name, String texture, boolean slim, BedrockClassicModel model, BedrockClassicOptions options) {
 +    }
 +
 +}
@@ -1330,7 +1445,7 @@ index 79efc1d..0000000
 -}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockClassicSkinPackScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockClassicSkinPackScreen.java
 new file mode 100644
-index 0000000..4146193
+index 0000000..9a754b6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockClassicSkinPackScreen.java
 @@ -0,0 +1,126 @@
@@ -1435,7 +1550,7 @@ index 0000000..4146193
 +            final Skin skin = this.pack.skins().get(this.selected);
 +            this.selectedImage = this.pack.image(skin);
 +            final var appearance = new BedrockAppearanceStore.Appearance(BedrockAppearanceStore.Selection.CUSTOM,
-+                skin.slim(), this.selectedImage, null, "preview", "", skin.model());
++                skin.slim(), this.selectedImage, null, "preview", "", skin.model(), skin.options());
 +            this.preview = BedrockPlayerSkins.preview(appearance.skinData(""));
 +            this.previewSkin = this.preview.skin();
 +        } catch (IOException e) {
@@ -1462,7 +1577,7 @@ index 0000000..4146193
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
 new file mode 100644
-index 0000000..086b07d
+index 0000000..8acdbce
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
 @@ -0,0 +1,299 @@
@@ -1733,7 +1848,7 @@ index 0000000..086b07d
 +
 +    void importSkinPackSkin(final BufferedImage image, final BedrockClassicSkinPack.Skin skin) {
 +        try {
-+            this.showAppearance(this.store.importSkinImage(this.accountId, image, skin.slim(), skin.model()));
++            this.showAppearance(this.store.importSkinImage(this.accountId, image, skin.slim(), skin.model(), skin.options()));
 +        } catch (IOException e) {
 +            this.failed(e);
 +        }
@@ -2244,12 +2359,65 @@ index 0000000..155e2f9
 +                .getAsJsonObject();
 +    }
 +}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicOptionsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicOptionsTest.java
+new file mode 100644
+index 0000000..f628ffb
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicOptionsTest.java
+@@ -0,0 +1,47 @@
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++
++import org.junit.jupiter.api.Test;
++
++import java.io.IOException;
++import java.util.Map;
++
++final class BedrockClassicOptionsTest {
++    @Test
++    void distinguishesMissingFlagsFromExplicitFalse() throws IOException {
++        final var absent = BedrockClassicOptions.read(new JsonObject());
++        final var explicit =
++                BedrockClassicOptions.read(
++                        JsonParser.parseString("{\"hide_armor\":false}").getAsJsonObject());
++        assertEquals(BedrockClassicOptions.EMPTY, absent);
++        assertEquals(Map.of("hide_armor", false), explicit.rendering());
++        assertNotEquals(absent, explicit);
++        assertEquals(explicit, BedrockClassicOptions.read(explicit.write()));
++    }
++
++    @Test
++    void rejectsMalformedAliasesAndFlags() {
++        for (final String data :
++                new String[] {
++                    "{\"animations\":[]}", "{\"animations\":{\"move.arms\":true}}",
++                            "{\"animations\":{\"move.arms\":{}}}",
++                    "{\"animations\":{\"move.arms\":\"textures/not-an-animation\"}}",
++                            "{\"hide_armor\":\"false\"}", "{\"enable_attachables\":null}"
++                }) {
++            assertThrows(
++                    IOException.class,
++                    () ->
++                            BedrockClassicOptions.read(
++                                    JsonParser.parseString(data).getAsJsonObject()));
++        }
++        final JsonObject aliases = new JsonObject(), definition = new JsonObject();
++        for (int index = 0; index < 129; index++)
++            aliases.addProperty("move" + index, "animation.player.move.arms");
++        definition.add("animations", aliases);
++        assertThrows(IOException.class, () -> BedrockClassicOptions.read(definition));
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPackTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPackTest.java
 new file mode 100644
-index 0000000..0fab7c4
+index 0000000..adb58ec
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPackTest.java
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,193 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import java.awt.image.BufferedImage;
@@ -2271,6 +2439,45 @@ index 0000000..0fab7c4
 +
 +    @TempDir
 +    Path directory;
++
++    @Test
++    void preservesClassicAliasesAndExplicitFlagsAcrossSelectionAndTransport() throws IOException {
++        final Path archive = this.directory.resolve("animated.mcpack");
++        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(archive))) {
++            put(zip, "manifest.json", "{\"modules\":[{\"type\":\"skin_pack\"}]}");
++            put(zip, "skins.json", """
++                {"skins":[{"geometry":"geometry.humanoid.customSlim","texture":"skin.png",
++                  "animations":{"move.arms":"animation.player.move.arms.zombie","look_at_target":""},
++                  "hide_armor":true,"enable_attachables":false,"held_item_ignores_lighting":true}]}
++                """);
++            put(zip, "skin.png", image(64, 64));
++        }
++        final var pack = BedrockClassicSkinPack.read(archive);
++        final var skin = pack.skins().getFirst();
++        final var store = new BedrockAppearanceStore(this.directory.resolve("appearances"),
++            _ -> new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB));
++        store.importSkinImage("123", pack.image(skin), skin.slim(), skin.model(), skin.options());
++        assertEquals(skin.options(), store.load("123").classicOptions());
++        store.select("123", BedrockAppearanceStore.Selection.STEVE);
++        assertEquals(BedrockClassicOptions.EMPTY, store.load("123").classicOptions());
++        store.select("123", BedrockAppearanceStore.Selection.CUSTOM);
++        store.setSlim("123", false);
++        final var wire = store.load("123").skinData("");
++        final var buffer = io.netty.buffer.Unpooled.buffer();
++        final net.raphimc.viabedrock.protocol.model.SkinData decoded;
++        try {
++            final var type = new net.raphimc.viabedrock.protocol.types.model.SkinType();
++            type.write(buffer, wire);
++            decoded = type.read(buffer);
++        } finally { buffer.release(); }
++        final var patch = com.google.gson.JsonParser.parseString(decoded.skinResourcePatch()).getAsJsonObject();
++        assertEquals(skin.options(), BedrockClassicOptions.read(patch));
++        assertEquals("geometry.humanoid.custom", patch.getAsJsonObject("geometry").get("default").getAsString());
++        org.junit.jupiter.api.Assertions.assertTrue(decoded.animationData().isEmpty());
++        org.junit.jupiter.api.Assertions.assertFalse(decoded.persona());
++        store.importSkinImage("123", new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB), true);
++        assertEquals(BedrockClassicOptions.EMPTY, store.load("123").classicOptions());
++    }
 +
 +    @Test
 +    void readsSkinModelsNamesAndTexturesFromPack() throws IOException {
@@ -2353,7 +2560,7 @@ index 0000000..0fab7c4
 +        assertEquals(32, texture.getHeight());
 +        final var store = new BedrockAppearanceStore(this.directory.resolve("appearances"),
 +            _ -> new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB));
-+        store.importSkinImage("123", texture, skin.slim(), model);
++        store.importSkinImage("123", texture, skin.slim(), model, skin.options());
 +        final var restored = store.load("123");
 +        assertEquals(model, restored.classicModel());
 +        assertEquals(32, restored.skin().getHeight());
@@ -2383,7 +2590,7 @@ index 0000000..0fab7c4
 +            _ -> new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB));
 +        final var before = store.importSkinImage("123", new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB), false);
 +        assertThrows(IOException.class, () -> store.importSkinImage("123", new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB),
-+            false, new BedrockClassicModel(cyclic, "geometry.cycle")));
++            false, new BedrockClassicModel(cyclic, "geometry.cycle"), BedrockClassicOptions.EMPTY));
 +        assertEquals(before.skinId(), store.load("123").skinId());
 +    }
 +

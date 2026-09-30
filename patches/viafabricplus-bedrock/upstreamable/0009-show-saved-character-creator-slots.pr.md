@@ -49,7 +49,7 @@ Private native 1.26.51 captures establish Battle Cry's pack UUID, 130 ticks, and
 ## Verification
 
 - Full patch stack builds successfully.
-- 96 add-on tests pass with private persona, login, emote, and legacy geometry fixtures enabled.
+- 99 add-on tests pass with private persona, login, emote, and legacy geometry fixtures enabled.
 - Private Battle Cry, Kadoosh, and four built-in emote tests sample every frame at 60 Hz.
 - Bundled-helper tests verify official acquisition, archive extraction, face-mask decoding, cache reuse, and failed refresh recovery.
 - A Java GUI recording verifies the locally assembled body, face, and animated arms, including open and closed face frames. Geometry parser tests cover native null optional transforms.
