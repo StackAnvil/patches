@@ -2,7 +2,7 @@
 
 Use native account recipes and catalog items for saved character, limb, color, size, cape, and four-position emote edits. Profile hashes and exact readback protect each account write. Starter recipes match Bedrock 1.26.51.
 
-Owned persona and emote assets use the current inventory receipt, PlayFab catalog, and CDN download flow. Receipts, content keys, screenshots, profiles, and assets stay private. The model service supplies static geometry for unresolved default and free assets.
+Owned persona and emote assets use the current inventory receipt, PlayFab catalog, and official Xbox or PlayFab CDN download flow. The runtime decrypts assets in memory without a native installation, copied keys, or an external extractor. Receipts, content keys, screenshots, profiles, and assets stay private. The model service supplies static geometry for unresolved default and free assets.
 
 ## Owned emote playback
 
@@ -15,7 +15,7 @@ Private native 1.26.51 captures establish Battle Cry's pack UUID, 130 ticks, and
 ## Verification
 
 - Full patch stack builds successfully.
-- 67 add-on tests pass with private persona, login, and emote fixtures enabled.
+- 68 add-on tests pass with private persona, login, and emote fixtures enabled.
 - Private Battle Cry and Kadoosh tests sample every frame at 60 Hz.
 - A Java GUI recording verifies visible Battle Cry motion, attached clothing, completion reset, and readable controls at the default GUI scale.
 - Native arm writes, cape equips, sizes, and account wheel edits have capture evidence. The account is restored after temporary edits.

@@ -66,6 +66,8 @@ Piece claims use native names such as `persona_hair`. Packet fields use ViaBedro
 
 For owned assets, the add-on requests `GET /api/v1.0/player/inventory?includeReceipt=true` with the current Minecraft authorization. It decodes content keys only from that account's receipt. It resolves product downloads through PlayFab `Catalog/GetPublishedItem` and uses the native `libhttpclient/1.0.0.0` CDN user agent.
 
+The runtime downloads assets from the official Xbox and PlayFab content hosts. It obtains receipt keys and decrypts assets in memory. It does not read a Bedrock installation, load external key files, or run an external extractor. Private native assets serve only as research and test fixtures.
+
 The asset reader checks archive limits, manifest UUID, and encrypted content ID. It decodes the AES CFB8 index and indexed files in memory. Native archives can contain two `contents.json` entries; the final entry supplies the encrypted index. Directory entries in the index do not require file data.
 
 For animated owned geometry, assembly selects the character's body and arm variants. It replaces matching static preview surfaces and packs looping texture frames into a separate animation atlas. Save/load, login claims, and live packets retain those frames. Independent limb recipes filter animated bones by their limb ancestry, leaving the opposite side's static geometry intact. Unresolved free assets continue to use the service's static model.
@@ -100,11 +102,11 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 
 ## Work still needed
 
-- Assemble default animated faces and resolve free piece assets beyond the static model service.
+- Assemble default animated faces and resolve free piece assets beyond the static model service. Built-in assets still need an independent download source. The service returned `ItemNotFound` for the built-in pack and Wave emote UUIDs.
 - Apply and verify tint maps for animated pieces.
 - Verify native strip timing, resolve default and unavailable remote emote assets, and implement emote chat announcements.
 - Add other piece palettes, verify native leg edits, and resolve free limb side recipes.
 - Support inherited legacy geometry and classic pack animation metadata.
-- Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin, but its extra face surface has a misplaced quad that still needs investigation.
+- Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. A white quad above the player moved independently with the sky clouds; it was not an extra face surface.
 
 Keep login JWTs, receipts, content keys, raw flows, screenshots, player textures, and account data private under `.stackanvil/`.
