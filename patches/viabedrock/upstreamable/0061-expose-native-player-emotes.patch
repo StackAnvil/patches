@@ -1,0 +1,385 @@
+From 2dd7a0f4ee08cd8a4969284645e23ea7e2733286 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Wed, 30 Sep 2026 06:42:47 +0200
+Subject: [PATCH] feat(players): expose native emotes to client integrations
+
+Decode Bedrock 1.26.51 EmotePacketPayload and EmoteListPacketPayload using
+the target protocol 2193 field order. Preserve unsigned tick lengths and
+resolve actor runtime IDs through the player entity tracker. Discard the
+Xbox and platform identity fields after decoding; client animation only
+needs the player UUID, emote UUID, length, and flags.
+
+Register an EmoteProvider for direct client playback. Its default sends
+versioned payloads only to clients that register viabedrock:emote, so a
+proxy can support compatible clients without inventing Java animations.
+Keep unmodified clients' behavior unchanged. Tests verify field order and
+unsigned length boundaries against the target schema.
+
+Source: https://github.com/Mojang/bedrock-protocol-docs/blob/v1.26.51/json/EmotePacketPayload.json
+Source: https://github.com/Mojang/bedrock-protocol-docs/blob/v1.26.51/json/EmoteListPacketPayload.json
+---
+ .../viabedrock/protocol/BedrockProtocol.java  |  2 +
+ .../viabedrock/protocol/model/EmoteData.java  | 31 ++++++++
+ .../protocol/packet/ClientPlayerPackets.java  |  5 ++
+ .../protocol/packet/OtherPlayerPackets.java   | 27 +++++++
+ .../protocol/packet/UnhandledPackets.java     |  2 -
+ .../protocol/provider/EmoteProvider.java      | 71 +++++++++++++++++++
+ .../protocol/types/BedrockTypes.java          |  1 +
+ .../protocol/types/model/EmoteType.java       | 52 ++++++++++++++
+ .../protocol/types/model/EmoteTypeTest.java   | 49 +++++++++++++
+ 9 files changed, 238 insertions(+), 2 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/EmoteData.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/provider/EmoteProvider.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/types/model/EmoteType.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/model/EmoteTypeTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+index e76b2f9a..00e3cb1b 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+@@ -46,6 +46,7 @@ import net.raphimc.viabedrock.protocol.provider.BlobCacheProvider;
+ import net.raphimc.viabedrock.protocol.provider.NettyPipelineProvider;
+ import net.raphimc.viabedrock.protocol.provider.ResourcePackProvider;
+ import net.raphimc.viabedrock.protocol.provider.SkinProvider;
++import net.raphimc.viabedrock.protocol.provider.EmoteProvider;
+ import net.raphimc.viabedrock.protocol.rewriter.InventoryTransactionRewriter;
+ import net.raphimc.viabedrock.protocol.storage.*;
+ import net.raphimc.viabedrock.protocol.task.*;
+@@ -125,6 +126,7 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
+         providers.register(ResourcePackProvider.class, ViaBedrock.getConfig().getPackCacheMode().createProvider());
+         providers.register(BlobCacheProvider.class, ViaBedrock.getConfig().getBlobCacheMode().createProvider());
+         providers.register(SkinProvider.class, new SkinProvider());
++        providers.register(EmoteProvider.class, new EmoteProvider());
+ 
+         if (!ViaBedrock.getConfig().getBlobCacheMode().equals(ViaBedrockConfig.BlobCacheMode.DISABLED) && !providers.get(BlobCacheProvider.class).hasBlob(0L)) {
+             providers.get(BlobCacheProvider.class).addBlob(0L, new byte[0]);
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/EmoteData.java b/src/main/java/net/raphimc/viabedrock/protocol/model/EmoteData.java
+new file mode 100644
+index 00000000..87c85be3
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/EmoteData.java
+@@ -0,0 +1,31 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import java.util.UUID;
++
++/** Bedrock 1.26.51 EmotePacketPayload (protocol 2193). */
++public record EmoteData(long runtimeId, UUID emoteId, long lengthTicks, String xuid, String platformId, int flags) {
++
++    public EmoteData {
++        if (emoteId == null || xuid == null || platformId == null || lengthTicks < 0 || lengthTicks > 0xFFFFFFFFL || flags < 0 || flags > 255) {
++            throw new IllegalArgumentException("Invalid emote packet fields");
++        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+index 09db3dce..85e5e308 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+@@ -17,6 +17,7 @@
+  */
+ package net.raphimc.viabedrock.protocol.packet;
+ 
++import com.viaversion.viaversion.api.Via;
+ import com.viaversion.viaversion.api.minecraft.BlockPosition;
+ import com.viaversion.viaversion.api.minecraft.Vector3d;
+ import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
+@@ -49,6 +50,7 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.*;
+ import net.raphimc.viabedrock.protocol.model.BedrockItem;
+ import net.raphimc.viabedrock.protocol.model.Position2f;
+ import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.provider.EmoteProvider;
+ import net.raphimc.viabedrock.protocol.rewriter.GameTypeRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+ import net.raphimc.viabedrock.protocol.storage.*;
+@@ -658,6 +660,9 @@ public final class ClientPlayerPackets {
+             wrapper.write(BedrockTypes.POSITION_3F, inputPosition); // predicted player or vehicle position
+             wrapper.write(BedrockTypes.POSITION_2F, MathUtil.calculateMovementDirections(clientPlayer.authInputData(), clientPlayer.isBedrockSneaking())); // move vector
+             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().z()); // head yaw
++            if (Via.getManager().getProviders().get(EmoteProvider.class).isEmoting(wrapper.user())) {
++                clientPlayer.addAuthInputData(PlayerAuthInputData.Emoting);
++            }
+             wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, clientPlayer.authInputData().size()); // input flags count
+             for (PlayerAuthInputData inputData : PlayerAuthInputData.values()) {
+                 if (clientPlayer.authInputData().contains(inputData)) {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
+index 5409f303..48767edb 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
+@@ -48,6 +48,7 @@ import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
+ import net.raphimc.viabedrock.protocol.model.Position3f;
+ import net.raphimc.viabedrock.protocol.model.SkinData;
+ import net.raphimc.viabedrock.protocol.provider.SkinProvider;
++import net.raphimc.viabedrock.protocol.provider.EmoteProvider;
+ import net.raphimc.viabedrock.protocol.rewriter.GameTypeRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+ import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+@@ -211,6 +212,32 @@ public final class OtherPlayerPackets {
+ 
+             Via.getManager().getProviders().get(SkinProvider.class).setSkin(wrapper.user(), uuid, skin);
+         });
++        protocol.registerClientbound(ClientboundBedrockPackets.EMOTE, null, wrapper -> {
++            wrapper.cancel();
++            final var emote = wrapper.read(BedrockTypes.EMOTE);
++            final Entity entity = wrapper.user().get(EntityTracker.class).getEntityByRid(emote.runtimeId());
++            if (!(entity instanceof PlayerEntity) || emote.lengthTicks() > 12000) {
++                return;
++            }
++            Via.getManager().getProviders().get(EmoteProvider.class).play(wrapper.user(), entity.javaUuid(), emote.emoteId(), emote.lengthTicks(), emote.flags());
++        });
++        protocol.registerClientbound(ClientboundBedrockPackets.EMOTE_LIST, null, wrapper -> {
++            wrapper.cancel();
++            final long runtimeId = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG);
++            final int count = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
++            if (count < 0 || count > 256) {
++                return;
++            }
++            final UUID[] emotes = new UUID[count];
++            for (int i = 0; i < count; i++) {
++                emotes[i] = wrapper.read(BedrockTypes.UUID);
++            }
++            final Entity entity = wrapper.user().get(EntityTracker.class).getEntityByRid(runtimeId);
++            if (!(entity instanceof PlayerEntity)) {
++                return;
++            }
++            Via.getManager().getProviders().get(EmoteProvider.class).setAvailable(wrapper.user(), entity.javaUuid(), emotes);
++        });
+         protocol.registerClientbound(ClientboundBedrockPackets.UPDATE_ABILITIES, ClientboundPackets26_3.PLAYER_ABILITIES, wrapper -> {
+             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+             final PlayerAbilities abilities = wrapper.read(BedrockTypes.PLAYER_ABILITIES); // abilities
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java
+index 6c30923b..4ac5e03f 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java
+@@ -33,9 +33,7 @@ public final class UnhandledPackets {
+         protocol.cancelClientbound(ClientboundBedrockPackets.SHOW_PROFILE);
+         protocol.cancelClientbound(ClientboundBedrockPackets.LAB_TABLE); // Not relevant (Education Edition)
+         protocol.cancelClientbound(ClientboundBedrockPackets.EDUCATION_SETTINGS); // Not relevant (Education Edition)
+-        protocol.cancelClientbound(ClientboundBedrockPackets.EMOTE); // Not possible in Java Edition
+         protocol.cancelClientbound(ClientboundBedrockPackets.CODE_BUILDER); // Not relevant (Education Edition)
+-        protocol.cancelClientbound(ClientboundBedrockPackets.EMOTE_LIST); // Not possible in Java Edition
+         protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_SHAKE); // Not possible in Java Edition
+         protocol.cancelClientbound(ClientboundBedrockPackets.PLAYER_FOG); // Not possible in Java Edition
+         protocol.cancelClientbound(ClientboundBedrockPackets.EDU_URI_RESOURCE); // Not relevant (Education Edition)
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/provider/EmoteProvider.java b/src/main/java/net/raphimc/viabedrock/protocol/provider/EmoteProvider.java
+new file mode 100644
+index 00000000..1d6c3310
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/provider/EmoteProvider.java
+@@ -0,0 +1,71 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.provider;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.platform.providers.Provider;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
++import java.util.UUID;
++
++/** Client integrations may consume native emotes directly or through the versioned payload. */
++public class EmoteProvider implements Provider {
++
++    public static final String CHANNEL = "viabedrock:emote";
++    public static final int VERSION = 1;
++
++    private PacketWrapper payload(final UserConnection user, final UUID player, final int kind) {
++        if (!user.get(ChannelStorage.class).hasChannel(CHANNEL)) {
++            return null;
++        }
++        final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, user);
++        packet.write(Types.STRING, CHANNEL);
++        packet.write(Types.VAR_INT, VERSION);
++        packet.write(Types.VAR_INT, kind);
++        packet.write(Types.UUID, player);
++        return packet;
++    }
++
++    public boolean isEmoting(final UserConnection user) {
++        return false;
++    }
++
++    public void play(final UserConnection user, final UUID player, final UUID emote, final long lengthTicks, final int flags) {
++        final PacketWrapper packet = this.payload(user, player, 0);
++        if (packet == null) {
++            return;
++        }
++        packet.write(Types.UUID, emote);
++        packet.write(Types.VAR_LONG, lengthTicks);
++        packet.write(Types.UNSIGNED_BYTE, (short) flags);
++        packet.send(BedrockProtocol.class);
++    }
++
++    public void setAvailable(final UserConnection user, final UUID player, final UUID[] emotes) {
++        final PacketWrapper packet = this.payload(user, player, 1);
++        if (packet == null) {
++            return;
++        }
++        packet.write(Types.UUID_ARRAY, emotes);
++        packet.send(BedrockProtocol.class);
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/BedrockTypes.java b/src/main/java/net/raphimc/viabedrock/protocol/types/BedrockTypes.java
+index 35ae27a6..ac971078 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/types/BedrockTypes.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/types/BedrockTypes.java
+@@ -55,6 +55,7 @@ public final class BedrockTypes {
+     public static final VarIntType VAR_INT = new VarIntType();
+     public static final UnsignedVarIntType UNSIGNED_VAR_INT = new UnsignedVarIntType();
+     public static final VarLongType VAR_LONG = new VarLongType();
++    public static final EmoteType EMOTE = new EmoteType();
+     public static final UnsignedVarLongType UNSIGNED_VAR_LONG = new UnsignedVarLongType();
+     public static final Type<Long[]> LONG_ARRAY = new ArrayType<>(LONG_LE, UNSIGNED_VAR_INT);
+     public static final Type<byte[]> BYTE_ARRAY = new ByteArrayType();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/model/EmoteType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/model/EmoteType.java
+new file mode 100644
+index 00000000..4b863720
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/types/model/EmoteType.java
+@@ -0,0 +1,52 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.types.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import io.netty.buffer.ByteBuf;
++import java.util.UUID;
++import net.raphimc.viabedrock.protocol.model.EmoteData;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++public final class EmoteType extends Type<EmoteData> {
++
++    public EmoteType() {
++        super("Emote", EmoteData.class);
++    }
++
++    @Override
++    public EmoteData read(final ByteBuf buffer) {
++        final long actor = BedrockTypes.UNSIGNED_VAR_LONG.readPrimitive(buffer);
++        final UUID emote = UUID.fromString(BedrockTypes.STRING.read(buffer));
++        final long ticks = Integer.toUnsignedLong(BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(buffer));
++        final String xuid = BedrockTypes.STRING.read(buffer);
++        final String platform = BedrockTypes.STRING.read(buffer);
++        return new EmoteData(actor, emote, ticks, xuid, platform, buffer.readUnsignedByte());
++    }
++
++    @Override
++    public void write(final ByteBuf buffer, final EmoteData emote) {
++        BedrockTypes.UNSIGNED_VAR_LONG.writePrimitive(buffer, emote.runtimeId());
++        BedrockTypes.STRING.write(buffer, emote.emoteId().toString());
++        BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(buffer, (int) emote.lengthTicks());
++        BedrockTypes.STRING.write(buffer, emote.xuid());
++        BedrockTypes.STRING.write(buffer, emote.platformId());
++        buffer.writeByte(emote.flags());
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/types/model/EmoteTypeTest.java b/src/test/java/net/raphimc/viabedrock/protocol/types/model/EmoteTypeTest.java
+new file mode 100644
+index 00000000..db3669da
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/types/model/EmoteTypeTest.java
+@@ -0,0 +1,49 @@
++package net.raphimc.viabedrock.protocol.types.model;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++import io.netty.buffer.Unpooled;
++import java.util.UUID;
++import net.raphimc.viabedrock.protocol.model.EmoteData;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++
++final class EmoteTypeTest {
++
++    @Test
++    void readsThe2193FieldOrderAndPreservesUnsignedDuration() {
++        final var buffer = Unpooled.buffer();
++        final UUID id = UUID.randomUUID();
++        try {
++            BedrockTypes.UNSIGNED_VAR_LONG.writePrimitive(buffer, 300);
++            BedrockTypes.STRING.write(buffer, id.toString());
++            BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(buffer, -1);
++            BedrockTypes.STRING.write(buffer, "12345");
++            BedrockTypes.STRING.write(buffer, "platform");
++            buffer.writeByte(3);
++            assertEquals(new EmoteData(300, id, 0xFFFFFFFFL, "12345", "platform", 3), BedrockTypes.EMOTE.read(buffer));
++            assertFalse(buffer.isReadable());
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void writesAnActorIdAndStringIdentityBeforeTheDuration() {
++        final var buffer = Unpooled.buffer();
++        final UUID id = UUID.randomUUID();
++        try {
++            BedrockTypes.EMOTE.write(buffer, new EmoteData(129, id, 130, "", "", 0));
++            assertEquals(129, BedrockTypes.UNSIGNED_VAR_LONG.readPrimitive(buffer));
++            assertEquals(id, UUID.fromString(BedrockTypes.STRING.read(buffer)));
++            assertEquals(130, BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(buffer));
++            assertTrue(BedrockTypes.STRING.read(buffer).isEmpty());
++            assertTrue(BedrockTypes.STRING.read(buffer).isEmpty());
++            assertEquals(0, buffer.readUnsignedByte());
++            assertFalse(buffer.isReadable());
++        } finally {
++            buffer.release();
++        }
++    }
++
++}
+-- 
+2.55.0

@@ -44,7 +44,7 @@ Catalog pieces no longer require a recipe copied from another slot. Native equip
 
 The editor preserves existing colors when it replaces a category. It inserts new categories before the four emote positions. Saved recipes and starter recipes still supply their complete entries when available.
 
-The Emotes category edits four wheel positions. An empty position uses `{"id":"/e"}`. Equip moves an existing emote rather than adding a duplicate. Catalog emotes can use the native recipe suffix without an earlier saved copy. The account wheel supports equip and removal. Owned emotes also have a local preview with Replay and Stop controls. In-world playback remains incomplete.
+The Emotes category edits four wheel positions. An empty position uses `{"id":"/e"}`. Equip moves an existing emote rather than adding a duplicate. Catalog emotes can use the native recipe suffix without an earlier saved copy. The account wheel supports equip and removal. Owned emotes also have a local preview with Replay and Stop controls. A rebindable in-world wheel plays available entitled animations and sends native emote packets.
 
 The Capes category equips, replaces, or removes free and owned capes. Persona capes use their catalog pack UUID. The account model service includes the selected cape in its assembled model. Classic imported capes remain separate skin fields.
 
@@ -80,21 +80,31 @@ A running Java client displayed the assembled HelliArm body and animated arm sur
 
 ## Owned emote previews
 
-The add-on downloads emote packs through the current account's entitlement receipt. It reads the metadata piece UUID and named animation source. Receipts and content keys remain in memory. Preview uses the active account character and does not change its saved recipe.
+The add-on downloads emote packs through the current account's entitlement receipt. It reads the named animation source and uses the pack UUID as the wire identity. Native captures show that the metadata piece UUID differs. Receipts and content keys remain in memory. Preview uses the active account character and does not change its saved recipe.
 
 Menu models retain the native root, waist, and body hierarchy. Bone poses also apply to animated clothing surfaces. The sampler supports position, rotation, scale, pre/post keyframes, linear and Catmull-Rom interpolation, and Molang frame queries. Each playback has its own variable state. Expressions have size and execution limits. Effects, delays, multiple animation sources, and entity-relative rotations remain unsupported.
 
-Private Bedrock 1.26.51 Battle Cry and Kadoosh assets resolve to 6.5 and 4.75 seconds. Asset tests sample every frame at 60 Hz. A Java GUI recording verifies Battle Cry movement, attached clothing, readable controls at the default GUI scale, and pose reset after completion. The recording uses private native assets and a local appearance fixture. It does not verify a live Java account download or in-world packet playback.
+Private Bedrock 1.26.51 Battle Cry and Kadoosh assets resolve to 6.5 and 4.75 seconds. Asset tests sample every frame at 60 Hz. A Java GUI recording verifies Battle Cry movement, attached clothing, readable controls at the default GUI scale, and pose reset after completion. The recording uses private native assets and a local appearance fixture. It does not verify a live Java account download.
 
 Sources: [Microsoft animation reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/actor_animation.v1.8.0?view=minecraft-bedrock-stable), [Molang syntax](https://learn.microsoft.com/en-us/minecraft/creator/documents/molang/syntax-guide?view=minecraft-bedrock-stable), [Mocha](https://github.com/unnamed/mocha), and [Blockbench animation interpolation](https://github.com/JannisX11/blockbench/blob/master/js/animations/timeline_animators.js).
+
+## In-world emotes
+
+The B key opens four native wheel positions. Mouse clicks and keys 1 through 4 play loaded animations. The key can be rebound in Controls. Missing account assets stay disabled and show an explanation.
+
+The ViaBedrock provider forwards `EMOTE` and `EMOTE_LIST` with tracked player UUIDs. The add-on advertises available wheel assets and sends the selected pack UUID and duration. It animates body and clothing through one sampled pose per frame. Movement, completion, account changes, and disconnects clear playback.
+
+Native Bedrock 1.26.51 Battle Cry captures send 130 ticks and flags zero. Its `PlayerAuthInput` Emoting flag clears after 130 ticks, or immediately when walking. A private Java relay test reproduces the packet identity, duration, completion flag transition, and movement cancellation. The native client's emote visibly animates its remote player in Java and returns to the ordinary pose. These tests use entitled local fixtures. Default emotes and remote emotes without an available account asset remain unsupported.
+
+Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-protocol-docs/blob/v1.26.51/json/EmotePacketPayload.json) and [Emote List payload](https://github.com/Mojang/bedrock-protocol-docs/blob/v1.26.51/json/EmoteListPacketPayload.json).
 
 ## Work still needed
 
 - Assemble default animated faces and resolve free piece assets beyond the static model service.
 - Apply and verify tint maps for animated pieces.
-- Verify native animation timing and emote playback.
+- Verify native strip timing, resolve default and unavailable remote emote assets, and implement emote chat announcements.
 - Add other piece palettes, verify native leg edits, and resolve free limb side recipes.
 - Support inherited legacy geometry and classic pack animation metadata.
-- Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits.
+- Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin, but its extra face surface has a misplaced quad that still needs investigation.
 
 Keep login JWTs, receipts, content keys, raw flows, screenshots, player textures, and account data private under `.stackanvil/`.
