@@ -1,4 +1,4 @@
-From 94f6301159306e4c33bb5ef4ecfff4e927a889dc Mon Sep 17 00:00:00 2001
+From 730e156204d03f2c10248235ea3b51ee6bbe76e2 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:39 +0200
 Subject: [PATCH] feat(bedrock): add classic Dressing Room
@@ -6,12 +6,14 @@ Subject: [PATCH] feat(bedrock): add classic Dressing Room
 Import the appearance controls from viafabricplus-bedrock PR #11. Carry the native skin-rendering callback into the new appearance provider so the earlier rendering patch remains functional.
 
 Place the subtitle and controls beneath the VFP logo without reserving space for the main screen search bar and tabs. This also gives the skin preview more vertical room at common GUI scales.
+
+Resolve archive paths relative to a single manifest and skins.json root, including wrapped exports and nested textures. Reject traversal, duplicate entries, ambiguous roots, and oversized expanded archives before reading assets. Targeted ZIP fixtures cover nested imports and invalid roots.
 ---
  README.md                                     |  12 +
  build.gradle.kts                              |   6 +
  .../bedrock/ViaFabricPlusBedrock.java         |  11 +-
  .../appearance/BedrockAppearanceStore.java    | 268 ++++++++++++++
- .../appearance/BedrockClassicSkinPack.java    | 145 ++++++++
+ .../appearance/BedrockClassicSkinPack.java    | 192 ++++++++++
  .../appearance/ViaFabricPlusSkinProvider.java |  78 +++++
  .../friends/FriendWorldSkinProvider.java      |  49 ---
  .../screen/BedrockClassicSkinPackScreen.java  | 138 ++++++++
@@ -19,8 +21,8 @@ Place the subtitle and controls beneath the VFP logo without reserving space for
  .../bedrock/settings/BedrockSettings.java     |   5 +
  .../viafabricplus-bedrock/lang/en_us.json     |  23 ++
  .../BedrockAppearanceStoreTest.java           | 102 ++++++
- .../BedrockClassicSkinPackTest.java           |  75 ++++
- 13 files changed, 1189 insertions(+), 51 deletions(-)
+ .../BedrockClassicSkinPackTest.java           |  99 ++++++
+ 13 files changed, 1260 insertions(+), 51 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java
@@ -397,10 +399,10 @@ index 0000000..45c0814
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java
 new file mode 100644
-index 0000000..1b71aa0
+index 0000000..539374b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,192 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -423,6 +425,8 @@ index 0000000..1b71aa0
 +import java.util.HashMap;
 +import java.util.List;
 +import java.util.Map;
++import java.util.HashSet;
++import java.util.Set;
 +import java.util.zip.ZipEntry;
 +import java.util.zip.ZipFile;
 +
@@ -438,13 +442,15 @@ index 0000000..1b71aa0
 +            throw new IOException("The skin pack is missing or too large");
 +        }
 +        try (ZipFile zip = new ZipFile(path.toFile())) {
-+            final JsonObject manifest = json(zip, "manifest.json");
++            validateEntries(zip);
++            final String root = packRoot(zip);
++            final JsonObject manifest = json(zip, root + "manifest.json");
 +            if (!isSkinPack(manifest)) {
 +                throw new IOException("The archive is not a Bedrock skin pack");
 +            }
-+            final JsonObject definitions = json(zip, "skins.json");
++            final JsonObject definitions = json(zip, root + "skins.json");
 +            final String key = string(definitions, "localization_name");
-+            final Map<String, String> names = translations(zip);
++            final Map<String, String> names = translations(zip, root);
 +            final String packName = names.getOrDefault("skinpack." + key, key);
 +            final List<Skin> skins = new ArrayList<>();
 +            final JsonArray entries = definitions.has("skins") && definitions.get("skins").isJsonArray()
@@ -459,13 +465,13 @@ index 0000000..1b71aa0
 +                    continue;
 +                }
 +                final String texture = string(definition, "texture");
-+                if (texture.isBlank() || texture.contains("/") || texture.contains("\\") || !texture.endsWith(".png")
-+                    || zip.getEntry(texture) == null) {
++                if (!safePath(texture) || !texture.endsWith(".png")
++                    || zip.getEntry(root + texture) == null) {
 +                    continue;
 +                }
 +                final String skinKey = string(definition, "localization_name");
 +                final String name = names.getOrDefault("skin." + key + "." + skinKey, skinKey);
-+                skins.add(new Skin(name.isBlank() ? texture : name, texture, geometry.endsWith("customSlim")));
++                skins.add(new Skin(name.isBlank() ? texture : name, root + texture, geometry.endsWith("customSlim")));
 +                if (skins.size() > 256) {
 +                    throw new IOException("The skin pack contains too many skins");
 +                }
@@ -489,6 +495,49 @@ index 0000000..1b71aa0
 +        }
 +    }
 +
++    private static String packRoot(final ZipFile zip) throws IOException {
++        final List<String> roots = zip.stream()
++            .filter(entry -> !entry.isDirectory() && (entry.getName().equals("manifest.json")
++                || entry.getName().endsWith("/manifest.json")))
++            .map(entry -> entry.getName().substring(0, entry.getName().length() - "manifest.json".length()))
++            .filter(root -> zip.getEntry(root + "skins.json") != null)
++            .toList();
++        if (roots.size() != 1) {
++            throw new IOException("The archive must contain one skin pack manifest and skins.json");
++        }
++        return roots.getFirst();
++    }
++
++    private static void validateEntries(final ZipFile zip) throws IOException {
++        if (zip.size() > 4096) {
++            throw new IOException("The skin pack contains too many files");
++        }
++        final Set<String> names = new HashSet<>();
++        long size = 0;
++        final var entries = zip.entries();
++        while (entries.hasMoreElements()) {
++            final ZipEntry entry = entries.nextElement();
++            final String name = entry.getName();
++            final String path = entry.isDirectory() && name.endsWith("/")
++                ? name.substring(0, name.length() - 1) : name;
++            if (!safePath(path) || !names.add(name)) {
++                throw new IOException("The skin pack contains an invalid or duplicate path");
++            }
++            if (entry.getSize() < 0 || entry.getSize() > MAX_ARCHIVE_BYTES
++                || (size += entry.getSize()) > MAX_ARCHIVE_BYTES) {
++                throw new IOException("The expanded skin pack is too large");
++            }
++        }
++    }
++
++    private static boolean safePath(final String name) {
++        if (name.isBlank() || name.startsWith("/") || name.contains("\\") || name.contains(":")) return false;
++        for (final String part : name.split("/", -1)) {
++            if (part.isEmpty() || part.equals(".") || part.equals("..")) return false;
++        }
++        return true;
++    }
++
 +    private static boolean isSkinPack(final JsonObject manifest) {
 +        if (!manifest.has("modules") || !manifest.get("modules").isJsonArray()) {
 +            return false;
@@ -509,12 +558,12 @@ index 0000000..1b71aa0
 +        }
 +    }
 +
-+    private static Map<String, String> translations(final ZipFile zip) throws IOException {
-+        if (zip.getEntry("texts/en_US.lang") == null) {
++    private static Map<String, String> translations(final ZipFile zip, final String root) throws IOException {
++        if (zip.getEntry(root + "texts/en_US.lang") == null) {
 +            return Map.of();
 +        }
 +        final Map<String, String> names = new HashMap<>();
-+        final String contents = new String(bytes(zip, "texts/en_US.lang", MAX_METADATA_BYTES), StandardCharsets.UTF_8);
++        final String contents = new String(bytes(zip, root + "texts/en_US.lang", MAX_METADATA_BYTES), StandardCharsets.UTF_8);
 +        for (final String line : contents.split("\\R")) {
 +            final int equals = line.indexOf('=');
 +            if (equals > 0 && !line.startsWith("#")) {
@@ -1341,10 +1390,10 @@ index 0000000..ccb842c
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPackTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPackTest.java
 new file mode 100644
-index 0000000..cb3e93f
+index 0000000..e5ccc03
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPackTest.java
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,99 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import java.awt.image.BufferedImage;
@@ -1388,6 +1437,30 @@ index 0000000..cb3e93f
 +        assertEquals("First skin", pack.skins().get(0).name());
 +        assertTrue(pack.skins().get(0).slim());
 +        assertEquals(128, pack.image(pack.skins().get(1)).getWidth());
++    }
++
++    @Test
++    void resolvesNestedTexturesRelativeToWrappedPackRoot() throws IOException {
++        final Path archive = this.directory.resolve("wrapped.mcpack");
++        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(archive))) {
++            put(zip, "Example/manifest.json", "{\"modules\":[{\"type\":\"skin_pack\"}]}");
++            put(zip, "Example/skins.json", "{\"skins\":[{\"geometry\":\"geometry.humanoid.custom\",\"texture\":\"textures/skin.png\"}]}");
++            put(zip, "Example/textures/skin.png", image(128, 128));
++        }
++        final BedrockClassicSkinPack pack = BedrockClassicSkinPack.read(archive);
++        assertEquals(128, pack.image(pack.skins().getFirst()).getHeight());
++    }
++
++    @Test
++    void rejectsAmbiguousPackRoots() throws IOException {
++        final Path archive = this.directory.resolve("ambiguous.mcpack");
++        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(archive))) {
++            for (final String root : new String[]{"one/", "two/"}) {
++                put(zip, root + "manifest.json", "{\"modules\":[{\"type\":\"skin_pack\"}]}");
++                put(zip, root + "skins.json", "{}");
++            }
++        }
++        assertThrows(IOException.class, () -> BedrockClassicSkinPack.read(archive));
 +    }
 +
 +    @Test

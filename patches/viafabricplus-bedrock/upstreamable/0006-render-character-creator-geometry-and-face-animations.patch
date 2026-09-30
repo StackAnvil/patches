@@ -1,24 +1,32 @@
-From ec9124108d5e76c92cfb3a049eee1f76bedbd722 Mon Sep 17 00:00:00 2001
+From 7e01ea2d7132e83f8eb473a3e3484c808233adc2 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 10:44:51 +0200
 Subject: [PATCH] feat(bedrock): render Character Creator geometry and face
  animations
 
 Character Creator skins can split the body and animated face into separate geometry models and textures. Parse the bound models together, validate their layout, and render the face as a synchronized layer. Keep a visible vanilla fallback for unsupported geometry and animation data instead of installing a blank renderer.
+
+A native Bedrock 1.26.51, protocol 2193 login with the owned Helli Arm added a type-2 image (32 by 512, 16 frames) and animated_32x32 resource-patch binding alongside a type-1 face (32 by 64, two blinking frames). Both geometry descriptions used the full strip height. Normalize their texture size to one frame, remap bottom-origin mesh UVs, and render each bound surface on its own animated texture. Support the corresponding animated_128x128 binding with the same validated strip layout. Body coverage includes surfaces nested below the player bones.
+
+The captured persona mesh UVs use a bottom origin, while Java vertex UVs use a top origin. Flip V when creating mesh vertices so both native and converted GLTF skins keep their texture orientation. Keep raw login data and textures outside the repository. An opt-in test reads a private capture through STACKANVIL_PERSONA_CAPTURE and verifies that every bound animation surface is accepted. Animation timing retains the existing 100 ms frame and four-second blink cadence; exact timing still needs a native video comparison.
 ---
  .../bedrock/render/BedrockGeometry.java       | 102 +++++++-
- .../render/BedrockPersonaFaceAnimation.java   |  86 +++++++
- .../render/BedrockPersonaFaceLayer.java       |  37 +++
- .../bedrock/render/BedrockPlayerRenderer.java |   7 +-
- .../bedrock/render/BedrockPlayerSkins.java    | 193 +++++++++++++-
+ .../bedrock/render/BedrockPersonaLayer.java   |  37 +++
+ .../bedrock/render/BedrockPlayerRenderer.java |  10 +-
+ .../bedrock/render/BedrockPlayerSkins.java    | 233 ++++++++++++++++-
+ .../bedrock/render/BedrockSkinAnimation.java  | 135 ++++++++++
+ .../render/BedrockPersonaCaptureTest.java     |  70 +++++
  .../render/BedrockPersonaGeometryTest.java    | 243 ++++++++++++++++++
- 6 files changed, 655 insertions(+), 13 deletions(-)
- create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaFaceAnimation.java
- create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaFaceLayer.java
+ .../render/BedrockSkinAnimationTest.java      |  83 ++++++
+ 8 files changed, 899 insertions(+), 14 deletions(-)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaLayer.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimation.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaCaptureTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaGeometryTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimationTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
-index d0265c4..e012b4b 100644
+index d0265c4..065fa6d 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 @@ -18,6 +18,9 @@
@@ -147,7 +155,7 @@ index d0265c4..e012b4b 100644
 +                position.get(0).getAsFloat() - bone.getPivot().getX(),
 +                bone.getPivot().getY() - position.get(1).getAsFloat(),
 +                position.get(2).getAsFloat() - bone.getPivot().getZ(),
-+                uv.get(0).getAsFloat() / width, uv.get(1).getAsFloat() / height
++                uv.get(0).getAsFloat() / width, 1F - uv.get(1).getAsFloat() / height
 +            );
 +            normal.add(direction.get(0).getAsFloat(), -direction.get(1).getAsFloat(), direction.get(2).getAsFloat());
 +        }
@@ -166,103 +174,11 @@ index d0265c4..e012b4b 100644
      private static ModelPart cubePart(final Cube cube, final Parent bone, final float textureWidth, final float textureHeight) {
          final float pivotX = cube.getPivot().getX();
          final float pivotY = cube.getPivot().getY();
-diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaFaceAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaFaceAnimation.java
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaLayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaLayer.java
 new file mode 100644
-index 0000000..e27ba22
+index 0000000..5137223
 --- /dev/null
-+++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaFaceAnimation.java
-@@ -0,0 +1,86 @@
-+/*
-+ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
-+ * Copyright (C) 2026 ViaVersion and contributors
-+ * SPDX-License-Identifier: GPL-3.0-or-later
-+ */
-+package com.viaversion.viafabricplus.bedrock.render;
-+
-+import com.mojang.blaze3d.platform.NativeImage;
-+import java.awt.image.BufferedImage;
-+import net.minecraft.client.Minecraft;
-+import net.minecraft.client.renderer.texture.DynamicTexture;
-+import net.minecraft.resources.Identifier;
-+import net.raphimc.viabedrock.protocol.model.SkinData;
-+import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
-+
-+/** Reads the face frames sent alongside a persona's separate face geometry. */
-+final class BedrockPersonaFaceAnimation {
-+
-+    private static final long FRAME_DURATION_MS = 100;
-+    private static final long BLINK_PERIOD_MS = 4_000;
-+
-+    private final BufferedImage image;
-+    private final int width;
-+    private final int height;
-+    private final int frameCount;
-+    private final boolean vertical;
-+    private final int expression;
-+    private int currentFrame;
-+
-+    BedrockPersonaFaceAnimation(final SkinData.AnimationData animation, final BedrockGeometryModel model) {
-+        this.image = animation.image();
-+        this.width = (int) model.getTextureSize().getX();
-+        this.height = (int) model.getTextureSize().getY();
-+        this.expression = animation.expression();
-+        final int declaredFrames = (int) animation.frames();
-+        if (this.image == null || this.width <= 0 || this.height <= 0 || declaredFrames < 1
-+            || declaredFrames != animation.frames()) {
-+            throw new IllegalArgumentException("Invalid Bedrock face animation");
-+        }
-+        if (this.image.getWidth() == this.width && this.image.getHeight() == this.height) {
-+            this.frameCount = 1;
-+            this.vertical = true;
-+        } else if (this.image.getWidth() == this.width && this.image.getHeight() == this.height * declaredFrames) {
-+            this.frameCount = declaredFrames;
-+            this.vertical = true;
-+        } else if (this.image.getWidth() == this.width * declaredFrames && this.image.getHeight() == this.height) {
-+            this.frameCount = declaredFrames;
-+            this.vertical = false;
-+        } else {
-+            throw new IllegalArgumentException("Face frames do not match persona geometry texture size");
-+        }
-+    }
-+
-+    BufferedImage frame(final int index) {
-+        if (index < 0 || index >= this.frameCount) {
-+            throw new IllegalArgumentException("Invalid face frame index");
-+        }
-+        return this.image.getSubimage(this.vertical ? 0 : index * this.width,
-+            this.vertical ? index * this.height : 0, this.width, this.height);
-+    }
-+
-+    void update(final Identifier textureId, final long nowMillis) {
-+        if (this.frameCount == 1) {
-+            return;
-+        }
-+        final int next = this.expression == 1
-+            ? nowMillis % BLINK_PERIOD_MS < (long) (this.frameCount - 1) * FRAME_DURATION_MS
-+                ? 1 + (int) (nowMillis % BLINK_PERIOD_MS / FRAME_DURATION_MS) : 0
-+            : (int) (nowMillis / FRAME_DURATION_MS % this.frameCount);
-+        if (next == this.currentFrame) {
-+            return;
-+        }
-+        final DynamicTexture texture = (DynamicTexture) Minecraft.getInstance().getTextureManager().getTexture(textureId);
-+        final NativeImage pixels = texture.getPixels();
-+        final BufferedImage frame = this.frame(next);
-+        for (int y = 0; y < this.height; y++) {
-+            for (int x = 0; x < this.width; x++) {
-+                final int argb = frame.getRGB(x, y);
-+                pixels.setPixelABGR(x, y, (argb & 0xFF00FF00) | ((argb & 0xFF) << 16) | ((argb >>> 16) & 0xFF));
-+            }
-+        }
-+        texture.upload();
-+        this.currentFrame = next;
-+    }
-+
-+}
-diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaFaceLayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaFaceLayer.java
-new file mode 100644
-index 0000000..8694121
---- /dev/null
-+++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaFaceLayer.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaLayer.java
 @@ -0,0 +1,37 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
@@ -281,31 +197,36 @@ index 0000000..8694121
 +import net.minecraft.client.renderer.texture.OverlayTexture;
 +import net.minecraft.resources.Identifier;
 +
-+final class BedrockPersonaFaceLayer extends RenderLayer<AvatarRenderState, PlayerModel> {
++final class BedrockPersonaLayer extends RenderLayer<AvatarRenderState, PlayerModel> {
 +
-+    private final PlayerModel faceModel;
-+    private final Identifier faceTexture;
++    private final PlayerModel surfaceModel;
++    private final Identifier surfaceTexture;
 +
-+    BedrockPersonaFaceLayer(final AvatarRenderer<?> parent, final PlayerModel faceModel, final Identifier faceTexture) {
++    BedrockPersonaLayer(final AvatarRenderer<?> parent, final PlayerModel surfaceModel, final Identifier surfaceTexture) {
 +        super(parent);
-+        this.faceModel = faceModel;
-+        this.faceTexture = faceTexture;
++        this.surfaceModel = surfaceModel;
++        this.surfaceTexture = surfaceTexture;
 +    }
 +
 +    @Override
 +    public void submit(final PoseStack poseStack, final SubmitNodeCollector collector, final int packedLight,
 +                       final AvatarRenderState state, final float yRot, final float xRot) {
-+        this.faceModel.setupAnim(state);
-+        collector.order(1).submitModel(this.faceModel, state, poseStack, RenderTypes.entityTranslucent(this.faceTexture),
++        this.surfaceModel.setupAnim(state);
++        collector.order(1).submitModel(this.surfaceModel, state, poseStack, RenderTypes.entityTranslucent(this.surfaceTexture),
 +            packedLight, OverlayTexture.NO_OVERLAY, state.outlineColor);
 +    }
 +
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
-index 4b9f121..6934ebb 100644
+index 4b9f121..3a9f2f2 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
-@@ -22,12 +22,17 @@ import net.minecraft.client.model.player.PlayerModel;
+@@ -18,16 +18,24 @@
+ 
+ package com.viaversion.viafabricplus.bedrock.render;
+ 
++import java.util.List;
+ import net.minecraft.client.model.player.PlayerModel;
  import net.minecraft.client.player.AbstractClientPlayer;
  import net.minecraft.client.renderer.entity.EntityRendererProvider;
  import net.minecraft.client.renderer.entity.player.AvatarRenderer;
@@ -315,20 +236,22 @@ index 4b9f121..6934ebb 100644
  
 -    BedrockPlayerRenderer(final EntityRendererProvider.Context context, final PlayerModel model, final boolean slim) {
 +    BedrockPlayerRenderer(final EntityRendererProvider.Context context, final PlayerModel model, final boolean slim,
-+                          final PlayerModel faceModel, final Identifier faceTexture) {
++                          final List<Surface> surfaces) {
          super(context, slim);
          this.model = model;
-+        if (faceModel != null && faceTexture != null) {
-+            this.addLayer(new BedrockPersonaFaceLayer(this, faceModel, faceTexture));
++        for (final Surface surface : surfaces) {
++            this.addLayer(new BedrockPersonaLayer(this, surface.model(), surface.texture()));
 +        }
      }
  
++    record Surface(PlayerModel model, Identifier texture) {
++    }
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 0daed6c..b47d422 100644
+index 0daed6c..daf4168 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-@@ -22,6 +22,7 @@ import com.mojang.blaze3d.platform.NativeImage;
+@@ -22,9 +22,11 @@ import com.mojang.blaze3d.platform.NativeImage;
  import com.viaversion.viafabricplus.ViaFabricPlus;
  import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
  import com.viaversion.viaversion.api.connection.UserConnection;
@@ -336,15 +259,27 @@ index 0daed6c..b47d422 100644
  import com.viaversion.viaversion.libs.gson.JsonObject;
  import com.viaversion.viaversion.libs.gson.JsonParser;
  import java.awt.image.BufferedImage;
-@@ -45,6 +46,7 @@ import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++import java.util.ArrayList;
+ import java.util.HashMap;
+ import java.util.List;
+ import java.util.Locale;
+@@ -40,11 +42,15 @@ import net.minecraft.world.entity.player.PlayerModelType;
+ import net.minecraft.world.entity.player.PlayerSkin;
+ import net.raphimc.viabedrock.protocol.model.SkinData;
+ import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++import org.apache.logging.log4j.LogManager;
++import org.apache.logging.log4j.Logger;
+ 
+ /** Owns client textures and geometry for Bedrock player appearances. */
  public final class BedrockPlayerSkins {
  
++    private static final Logger LOGGER = LogManager.getLogger("ViaFabricPlus Bedrock");
      private static final int MAX_TEXTURE_DIMENSION = 1024;
 +    private static final int MAX_PERSONA_MODELS = 64;
      private static final Map<UUID, Appearance> APPEARANCES = new HashMap<>();
      private static final Map<Identifier, UUID> PLAYER_BY_TEXTURE = new HashMap<>();
      private static volatile EntityRendererProvider.Context rendererContext;
-@@ -54,7 +56,7 @@ public final class BedrockPlayerSkins {
+@@ -54,7 +60,7 @@ public final class BedrockPlayerSkins {
      }
  
      public static void accept(final UserConnection connection, final UUID playerUuid, final SkinData skin) {
@@ -353,7 +288,7 @@ index 0daed6c..b47d422 100644
              return;
          }
          Minecraft.getInstance().execute(() -> {
-@@ -66,18 +68,29 @@ public final class BedrockPlayerSkins {
+@@ -66,18 +72,32 @@ public final class BedrockPlayerSkins {
                  PLAYER_BY_TEXTURE.remove(previous.bodyId);
                  release(previous);
              }
@@ -369,11 +304,14 @@ index 0daed6c..b47d422 100644
              if (capeId != null) {
                  register(capeId, skin.capeData());
              }
-+            final Identifier faceId = geometry != null && geometry.face() != null ? textureId(playerUuid, "face") : null;
-+            final BedrockPersonaFaceAnimation faceAnimation = faceId == null ? null
-+                : new BedrockPersonaFaceAnimation(geometry.face().animation(), geometry.face().model());
-+            if (faceAnimation != null) {
-+                register(faceId, faceAnimation.frame(0));
++            final List<AnimatedSurface> surfaces = new ArrayList<>();
++            if (geometry != null) {
++                for (final Surface surface : geometry.surfaces()) {
++                    final Identifier id = textureId(playerUuid, "animation_" + surface.animation().type());
++                    final BedrockSkinAnimation animation = new BedrockSkinAnimation(surface.animation(), surface.model());
++                    register(id, animation.frame(0));
++                    surfaces.add(new AnimatedSurface(surface, id, animation));
++                }
 +            }
              final boolean slim = "slim".equalsIgnoreCase(skin.armSize()) || geometryName(skin).toLowerCase(Locale.ROOT).contains("slim");
              final PlayerModelType modelType = slim ? PlayerModelType.SLIM : PlayerModelType.WIDE;
@@ -381,38 +319,41 @@ index 0daed6c..b47d422 100644
                  capeId == null ? null : new ClientAsset.ResourceTexture(capeId, capeId), null, modelType);
 -            final BedrockGeometryModel geometry = geometry(skin);
 -            APPEARANCES.put(playerUuid, new Appearance(playerSkin, geometry, slim, bodyId, capeId));
-+            APPEARANCES.put(playerUuid, new Appearance(playerSkin, geometry, slim, bodyId, capeId, faceId, faceAnimation));
++            APPEARANCES.put(playerUuid, new Appearance(playerSkin, geometry, slim, bodyId, capeId, List.copyOf(surfaces)));
              PLAYER_BY_TEXTURE.put(bodyId, playerUuid);
          });
      }
-@@ -93,9 +106,15 @@ public final class BedrockPlayerSkins {
+@@ -93,9 +113,18 @@ public final class BedrockPlayerSkins {
              return null;
          }
          if (appearance.renderer == null || appearance.rendererEpoch != rendererEpoch) {
 -            appearance.renderer = new BedrockPlayerRenderer(rendererContext, BedrockGeometry.playerModel(appearance.geometry, appearance.slim), appearance.slim);
++            final var surfaces = appearance.surfaces.stream().map(surface -> new BedrockPlayerRenderer.Surface(
++                BedrockGeometry.playerModel(surface.geometry().model(), appearance.slim, surface.geometry().meshes()),
++                surface.texture())).toList();
 +            appearance.renderer = new BedrockPlayerRenderer(rendererContext,
-+                BedrockGeometry.playerModel(appearance.geometry.model(), appearance.slim, appearance.geometry.meshes()), appearance.slim,
-+                appearance.geometry.face() == null ? null : BedrockGeometry.playerModel(
-+                    appearance.geometry.face().model(), appearance.slim, appearance.geometry.face().meshes()), appearance.faceId);
++                BedrockGeometry.playerModel(appearance.geometry.model(), appearance.slim, appearance.geometry.meshes()),
++                appearance.slim, surfaces);
              appearance.rendererEpoch = rendererEpoch;
          }
-+        if (appearance.faceAnimation != null) {
-+            appearance.faceAnimation.update(appearance.faceId, System.currentTimeMillis());
++        final long now = System.currentTimeMillis();
++        for (final AnimatedSurface surface : appearance.surfaces) {
++            surface.animation().update(surface.texture(), now);
 +        }
          return appearance.renderer;
      }
  
-@@ -124,6 +143,9 @@ public final class BedrockPlayerSkins {
+@@ -124,6 +153,9 @@ public final class BedrockPlayerSkins {
          if (appearance.capeId != null) {
              textureManager.release(appearance.capeId);
          }
-+        if (appearance.faceId != null) {
-+            textureManager.release(appearance.faceId);
++        for (final AnimatedSurface surface : appearance.surfaces) {
++            textureManager.release(surface.texture());
 +        }
      }
  
      private static Identifier textureId(final UUID playerUuid, final String kind) {
-@@ -148,16 +170,26 @@ public final class BedrockPlayerSkins {
+@@ -148,16 +180,29 @@ public final class BedrockPlayerSkins {
      }
  
      private static String geometryName(final SkinData skin) {
@@ -436,27 +377,36 @@ index 0daed6c..b47d422 100644
 +    private static Geometry geometry(final SkinData skin) {
          final String name = geometryName(skin);
 +        if (skin.persona()) {
-+            return personaGeometry(name, geometryName(skin.skinResourcePatch(), "animated_face"),
++            return personaGeometry(name, Map.of(
++                1, geometryName(skin.skinResourcePatch(), "animated_face"),
++                2, geometryName(skin.skinResourcePatch(), "animated_32x32"),
++                3, geometryName(skin.skinResourcePatch(), "animated_128x128")),
 +                skin.geometryData(), skin.skinData(), skin.animations());
 +        }
          if ("geometry.humanoid.custom".equalsIgnoreCase(name) || "geometry.humanoid.customSlim".equalsIgnoreCase(name)) {
              // These are Bedrock's standard Steve and Alex models. Minecraft's
              // player renderer already knows their exact UVs and overlay layout.
-@@ -169,30 +201,169 @@ public final class BedrockPlayerSkins {
+@@ -169,30 +214,194 @@ public final class BedrockPlayerSkins {
          try {
              final JsonObject data = JsonParser.parseString(skin.geometryData()).getAsJsonObject();
              final List<BedrockGeometryModel> models = BedrockGeometryModel.fromJson(data);
 -            return models.stream().filter(model -> model.getIdentifier().equals(name)).findFirst()
 +            final BedrockGeometryModel model = models.stream().filter(value -> value.getIdentifier().equals(name)).findFirst()
                  .orElseGet(() -> models.isEmpty() ? null : models.getFirst());
-+            return model == null ? null : new Geometry(model, Map.of(), null);
++            return model == null ? null : new Geometry(model, Map.of(), List.of());
          } catch (RuntimeException e) {
-             ViaFabricPlusBedrock.impl().logger().warn("Failed to parse Bedrock player geometry", e);
+-            ViaFabricPlusBedrock.impl().logger().warn("Failed to parse Bedrock player geometry", e);
++            LOGGER.warn("Failed to parse Bedrock player geometry", e);
              return null;
          }
      }
  
 +    static Geometry personaGeometry(final String name, final String faceName, final String geometryData,
++                                    final BufferedImage skinImage, final List<SkinData.AnimationData> animations) {
++        return personaGeometry(name, Map.of(1, faceName), geometryData, skinImage, animations);
++    }
++
++    static Geometry personaGeometry(final String name, final Map<Integer, String> bindings, final String geometryData,
 +                                    final BufferedImage skinImage, final List<SkinData.AnimationData> animations) {
 +        if (name.isBlank() || geometryData == null || geometryData.isBlank() || !supportedImage(skinImage)) {
 +            return null;
@@ -468,10 +418,8 @@ index 0daed6c..b47d422 100644
 +                return null;
 +            }
 +            JsonObject body = null;
-+            JsonObject face = null;
-+            // The resource patch selects the body by identifier. Other definitions
-+            // have no texture binding here, so only the separate animated face is used.
-+            for (var entry : models) {
++            final Map<Integer, JsonObject> animatedModels = new HashMap<>();
++            for (final var entry : models) {
 +                final JsonObject model = entry.getAsJsonObject();
 +                final String identifier = model.getAsJsonObject("description").get("identifier").getAsString();
 +                if (name.equals(identifier)) {
@@ -479,21 +427,56 @@ index 0daed6c..b47d422 100644
 +                        return null;
 +                    }
 +                    body = model.deepCopy();
-+                } else if (faceName.isEmpty() ? identifier.startsWith("geometry.animated_face_") : faceName.equals(identifier)) {
-+                    if (face != null) {
++                    continue;
++                }
++                for (int type = 1; type <= 3; type++) {
++                    final String binding = bindings.get(type);
++                    final String prefix = switch (type) {
++                        case 1 -> "geometry.animated_face_";
++                        case 2 -> "geometry.animated_32x32_";
++                        default -> "geometry.animated_128x128_";
++                    };
++                    final boolean selected = binding == null || type == 1 && binding.isEmpty()
++                        ? identifier.startsWith(prefix) : binding.equals(identifier);
++                    if (selected && animatedModels.put(type, model.deepCopy()) != null) {
 +                        return null;
 +                    }
-+                    face = model.deepCopy();
 +                }
 +            }
 +            if (body == null) {
 +                return null;
 +            }
-+            final Map<String, Boolean> surfaces = new HashMap<>();
-+            final Map<String, JsonObject> bodyMeshes = normalizePersonaModel(body, surfaces);
-+            final Map<String, JsonObject> faceMeshes = face == null ? Map.of() : normalizePersonaModel(face, surfaces);
-+            for (String part : List.of("head", "body", "rightarm", "leftarm", "rightleg", "leftleg")) {
-+                if (!surfaces.getOrDefault(part, false)) {
++            final Map<Integer, SkinData.AnimationData> animationByType = new HashMap<>();
++            for (final var animation : animations) {
++                if (animation.type() >= 1 && animation.type() <= 3
++                    && animationByType.put(animation.type(), animation) != null) {
++                    return null;
++                }
++            }
++            final Map<String, Boolean> coverage = new HashMap<>();
++            final Map<String, JsonObject> bodyMeshes = normalizePersonaModel(body, coverage);
++            final List<Surface> surfaces = new ArrayList<>();
++            for (int type = 1; type <= 3; type++) {
++                final JsonObject model = animatedModels.get(type);
++                final var animation = animationByType.get(type);
++                if (model == null) {
++                    if (type == 1 && animation != null || !bindings.getOrDefault(type, "").isEmpty()) {
++                        return null;
++                    }
++                    continue;
++                }
++                if (animation == null) {
++                    return null;
++                }
++                BedrockSkinAnimation.normalizeGeometry(model, animation);
++                final Map<String, JsonObject> meshes = normalizePersonaModel(model, coverage);
++                final BedrockGeometryModel parsed = parsePersonaModel(model);
++                new BedrockSkinAnimation(animation, parsed);
++                BedrockGeometry.playerModel(parsed, false, meshes);
++                surfaces.add(new Surface(parsed, Map.copyOf(meshes), animation));
++            }
++            for (final String part : List.of("head", "body", "rightarm", "leftarm", "rightleg", "leftleg")) {
++                if (!coverage.getOrDefault(part, false)) {
 +                    return null;
 +                }
 +            }
@@ -503,41 +486,20 @@ index 0daed6c..b47d422 100644
 +                return null;
 +            }
 +            BedrockGeometry.playerModel(parsedBody, false, bodyMeshes);
-+            // Body32x32 and Body128x128 animations do not change the geometry
-+            // binding. Keep the static body visible while their texture layout
-+            // is unsupported by this renderer.
-+            SkinData.AnimationData faceAnimation = null;
-+            for (final SkinData.AnimationData animation : animations) {
-+                if (animation.type() == 1) {
-+                    if (faceAnimation != null) {
-+                        return null;
-+                    }
-+                    faceAnimation = animation;
-+                }
-+            }
-+            if (face == null) {
-+                return faceAnimation == null ? new Geometry(parsedBody, Map.copyOf(bodyMeshes), null) : null;
-+            }
-+            if (faceAnimation == null || !supportedImage(faceAnimation.image())) {
-+                return null;
-+            }
-+            final BedrockGeometryModel parsedFace = parsePersonaModel(face);
-+            BedrockGeometry.playerModel(parsedFace, false, faceMeshes);
-+            try {
-+                new BedrockPersonaFaceAnimation(faceAnimation, parsedFace);
-+            } catch (IllegalArgumentException e) {
-+                return null;
-+            }
-+            return new Geometry(parsedBody, Map.copyOf(bodyMeshes),
-+                new Face(parsedFace, Map.copyOf(faceMeshes), faceAnimation));
++            return new Geometry(parsedBody, Map.copyOf(bodyMeshes), List.copyOf(surfaces));
 +        } catch (RuntimeException e) {
-+            ViaFabricPlusBedrock.impl().logger().warn("Failed to parse Bedrock persona geometry", e);
++            LOGGER.warn("Failed to parse Bedrock persona geometry", e);
 +            return null;
 +        }
 +    }
 +
 +    private static Map<String, JsonObject> normalizePersonaModel(final JsonObject model, final Map<String, Boolean> surfaces) {
 +        final Map<String, JsonObject> meshes = new HashMap<>();
++        final Map<String, JsonObject> bones = new HashMap<>();
++        for (final var entry : model.getAsJsonArray("bones")) {
++            final JsonObject bone = entry.getAsJsonObject();
++            bones.put(bone.get("name").getAsString(), bone);
++        }
 +        for (var entry : model.getAsJsonArray("bones")) {
 +            final JsonObject bone = entry.getAsJsonObject();
 +            final String boneName = bone.get("name").getAsString();
@@ -562,7 +524,12 @@ index 0daed6c..b47d422 100644
 +                }
 +            }
 +            final boolean hasSurface = bone.has("poly_mesh") || bone.has("cubes") && !bone.getAsJsonArray("cubes").isEmpty();
-+            surfaces.merge(boneName.toLowerCase(Locale.ROOT).replace("_", ""), hasSurface, Boolean::logicalOr);
++            JsonObject ancestor = bone;
++            for (int depth = 0; ancestor != null && depth <= bones.size(); depth++) {
++                final String part = ancestor.get("name").getAsString().toLowerCase(Locale.ROOT).replace("_", "");
++                surfaces.merge(part, hasSurface, Boolean::logicalOr);
++                ancestor = ancestor.has("parent") ? bones.get(ancestor.get("parent").getAsString()) : null;
++            }
 +        }
 +        return meshes;
 +    }
@@ -583,10 +550,16 @@ index 0daed6c..b47d422 100644
 +        return vector;
 +    }
 +
-+    record Geometry(BedrockGeometryModel model, Map<String, JsonObject> meshes, Face face) {
++    record Geometry(BedrockGeometryModel model, Map<String, JsonObject> meshes, List<Surface> surfaces) {
++        Surface face() {
++            return this.surfaces.stream().filter(surface -> surface.animation().type() == 1).findFirst().orElse(null);
++        }
 +    }
 +
-+    record Face(BedrockGeometryModel model, Map<String, JsonObject> meshes, SkinData.AnimationData animation) {
++    record Surface(BedrockGeometryModel model, Map<String, JsonObject> meshes, SkinData.AnimationData animation) {
++    }
++
++    private record AnimatedSurface(Surface geometry, Identifier texture, BedrockSkinAnimation animation) {
 +    }
 +
      private static final class Appearance {
@@ -596,29 +569,243 @@ index 0daed6c..b47d422 100644
          private final boolean slim;
          private final Identifier bodyId;
          private final Identifier capeId;
-+        private final Identifier faceId;
-+        private final BedrockPersonaFaceAnimation faceAnimation;
++        private final List<AnimatedSurface> surfaces;
          private AvatarRenderer<?> renderer;
          private long rendererEpoch;
  
 -        private Appearance(final PlayerSkin skin, final BedrockGeometryModel geometry, final boolean slim,
 -                           final Identifier bodyId, final Identifier capeId) {
 +        private Appearance(final PlayerSkin skin, final Geometry geometry, final boolean slim,
-+                           final Identifier bodyId, final Identifier capeId, final Identifier faceId,
-+                           final BedrockPersonaFaceAnimation faceAnimation) {
++                           final Identifier bodyId, final Identifier capeId, final List<AnimatedSurface> surfaces) {
              this.skin = skin;
              this.geometry = geometry;
              this.slim = slim;
              this.bodyId = bodyId;
              this.capeId = capeId;
-+            this.faceId = faceId;
-+            this.faceAnimation = faceAnimation;
++            this.surfaces = surfaces;
          }
      }
  
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimation.java
+new file mode 100644
+index 0000000..c6d7554
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimation.java
+@@ -0,0 +1,135 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.mojang.blaze3d.platform.NativeImage;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import java.awt.image.BufferedImage;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.renderer.texture.DynamicTexture;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.protocol.model.SkinData;
++import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++
++/** Uploads frames for the separate animated surfaces in a Bedrock skin. */
++final class BedrockSkinAnimation {
++
++    private static final long FRAME_DURATION_MS = 100;
++    private static final long BLINK_PERIOD_MS = 4_000;
++
++    private final BufferedImage image;
++    private final int width;
++    private final int height;
++    private final int frameCount;
++    private final boolean vertical;
++    private final int expression;
++    private int currentFrame;
++
++    BedrockSkinAnimation(final SkinData.AnimationData animation, final BedrockGeometryModel model) {
++        this.image = animation.image();
++        this.width = (int) model.getTextureSize().getX();
++        this.height = (int) model.getTextureSize().getY();
++        this.expression = animation.expression();
++        final int declaredFrames = (int) animation.frames();
++        if (this.image == null || this.width <= 0 || this.height <= 0 || declaredFrames < 1
++            || declaredFrames > 256 || declaredFrames != animation.frames()
++            || this.width > 1024 || this.height > 1024
++            || (long) this.image.getWidth() * this.image.getHeight() > 4 * 1024 * 1024) {
++            throw new IllegalArgumentException("Invalid Bedrock skin animation");
++        }
++        if (declaredFrames == 1 && this.image.getWidth() == this.width && this.image.getHeight() == this.height) {
++            this.frameCount = 1;
++            this.vertical = true;
++        } else if (this.image.getWidth() == this.width && this.image.getHeight() == this.height * declaredFrames) {
++            this.frameCount = declaredFrames;
++            this.vertical = true;
++        } else if (this.image.getWidth() == this.width * declaredFrames && this.image.getHeight() == this.height) {
++            this.frameCount = declaredFrames;
++            this.vertical = false;
++        } else {
++            throw new IllegalArgumentException("Animation frames do not match geometry texture size");
++        }
++    }
++
++    static void normalizeGeometry(final JsonObject model, final SkinData.AnimationData animation) {
++        final JsonObject description = model.getAsJsonObject("description");
++        final int width = description.get("texture_width").getAsInt();
++        final int height = description.get("texture_height").getAsInt();
++        final BufferedImage image = animation.image();
++        final int frames = (int) animation.frames();
++        if (image == null || frames < 1 || frames > 256 || frames != animation.frames()
++            || width < 1 || height < 1) {
++            throw new IllegalArgumentException("Invalid animated geometry texture");
++        }
++        if (frames == 1 || image.getWidth() != width || image.getHeight() != height) {
++            return;
++        }
++        final int nominalSize = animation.type() == 3 ? 128 : 32;
++        final boolean horizontal = height == nominalSize && width == nominalSize * frames;
++        final int frameWidth = horizontal ? width / frames : width;
++        final int frameHeight = horizontal ? height : height / frames;
++        if ((!horizontal && height % frames != 0) || frameHeight < 1) {
++            throw new IllegalArgumentException("Animation strip does not contain complete frames");
++        }
++        description.addProperty("texture_width", frameWidth);
++        description.addProperty("texture_height", frameHeight);
++        for (final var element : model.getAsJsonArray("bones")) {
++            final JsonObject bone = element.getAsJsonObject();
++            if (!bone.has("poly_mesh")) {
++                continue;
++            }
++            final JsonObject mesh = bone.getAsJsonObject("poly_mesh");
++            final boolean normalized = mesh.has("normalized_uvs") && mesh.get("normalized_uvs").getAsBoolean();
++            for (final var entry : mesh.getAsJsonArray("uvs")) {
++                final var uv = entry.getAsJsonArray();
++                if (normalized) {
++                    uv.set(0, new com.viaversion.viaversion.libs.gson.JsonPrimitive(uv.get(0).getAsFloat() * width / frameWidth));
++                    uv.set(1, new com.viaversion.viaversion.libs.gson.JsonPrimitive(1F - (1F - uv.get(1).getAsFloat()) * height / frameHeight));
++                } else {
++                    uv.set(1, new com.viaversion.viaversion.libs.gson.JsonPrimitive(uv.get(1).getAsFloat() - height + frameHeight));
++                }
++            }
++        }
++    }
++
++    int frameIndex(final long elapsedMillis) {
++        final long elapsed = Math.max(0, elapsedMillis);
++        return this.expression == 1
++            ? elapsed % BLINK_PERIOD_MS < (long) (this.frameCount - 1) * FRAME_DURATION_MS
++                ? 1 + (int) (elapsed % BLINK_PERIOD_MS / FRAME_DURATION_MS) : 0
++            : (int) (elapsed / FRAME_DURATION_MS % this.frameCount);
++    }
++
++    BufferedImage frame(final int index) {
++        if (index < 0 || index >= this.frameCount) {
++            throw new IllegalArgumentException("Invalid animation frame index");
++        }
++        return this.image.getSubimage(this.vertical ? 0 : index * this.width,
++            this.vertical ? index * this.height : 0, this.width, this.height);
++    }
++
++    void update(final Identifier textureId, final long nowMillis) {
++        if (this.frameCount == 1) {
++            return;
++        }
++        final int next = this.frameIndex(nowMillis);
++        if (next == this.currentFrame) {
++            return;
++        }
++        final DynamicTexture texture = (DynamicTexture) Minecraft.getInstance().getTextureManager().getTexture(textureId);
++        final NativeImage pixels = texture.getPixels();
++        final BufferedImage frame = this.frame(next);
++        for (int y = 0; y < this.height; y++) {
++            for (int x = 0; x < this.width; x++) {
++                final int argb = frame.getRGB(x, y);
++                pixels.setPixelABGR(x, y, (argb & 0xFF00FF00) | ((argb & 0xFF) << 16) | ((argb >>> 16) & 0xFF));
++            }
++        }
++        texture.upload();
++        this.currentFrame = next;
++    }
++
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaCaptureTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaCaptureTest.java
+new file mode 100644
+index 0000000..4b6195e
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaCaptureTest.java
+@@ -0,0 +1,70 @@
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import java.awt.image.BufferedImage;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.Base64;
++import java.util.List;
++import java.util.Map;
++import net.raphimc.viabedrock.protocol.model.SkinData;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++import static org.junit.jupiter.api.Assertions.*;
++
++/** Runs against a private native login capture without adding account data to the test fixtures. */
++final class BedrockPersonaCaptureTest {
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_PERSONA_CAPTURE", matches = ".+")
++    void rendersEveryAnimatedSurfaceFromNativeClientData() throws Exception {
++        final JsonObject capture = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_PERSONA_CAPTURE")))).getAsJsonObject();
++        final String geometry = decode(capture.get("SkinGeometryData").getAsString());
++        final String patch = decode(capture.get("SkinResourcePatch").getAsString());
++        final var image = image(capture.get("SkinData").getAsString(), capture.get("SkinImageWidth").getAsInt(),
++            capture.get("SkinImageHeight").getAsInt());
++        final List<SkinData.AnimationData> animations = new ArrayList<>();
++        for (final var entry : capture.getAsJsonArray("AnimatedImageData")) {
++            final JsonObject animation = entry.getAsJsonObject();
++            animations.add(new SkinData.AnimationData(image(animation.get("Image").getAsString(),
++                animation.get("ImageWidth").getAsInt(), animation.get("ImageHeight").getAsInt()),
++                animation.get("Type").getAsInt(), animation.get("Frames").getAsFloat(),
++                animation.get("AnimationExpression").getAsInt()));
++        }
++        final var parsed = BedrockPlayerSkins.personaGeometry(BedrockPlayerSkins.geometryName(patch, "default"), Map.of(
++            1, BedrockPlayerSkins.geometryName(patch, "animated_face"),
++            2, BedrockPlayerSkins.geometryName(patch, "animated_32x32"),
++            3, BedrockPlayerSkins.geometryName(patch, "animated_128x128")), geometry, image, animations);
++        assertNotNull(parsed);
++        assertEquals(animations.size(), parsed.surfaces().size());
++        for (final var surface : parsed.surfaces()) {
++            final var animation = new BedrockSkinAnimation(surface.animation(), surface.model());
++            final var first = animation.frame(0);
++            final var last = animation.frame((int) surface.animation().frames() - 1);
++            assertEquals(first.getWidth(), last.getWidth());
++            assertEquals(first.getHeight(), last.getHeight());
++            if (surface.animation().frames() > 1) {
++                assertFalse(java.util.Arrays.equals(first.getRGB(0, 0, first.getWidth(), first.getHeight(), null, 0, first.getWidth()),
++                    last.getRGB(0, 0, last.getWidth(), last.getHeight(), null, 0, last.getWidth())));
++            }
++        }
++    }
++
++    private static String decode(final String value) {
++        return new String(Base64.getDecoder().decode(value), StandardCharsets.UTF_8);
++    }
++
++    private static BufferedImage image(final String value, final int width, final int height) {
++        final byte[] data = Base64.getDecoder().decode(value);
++        assertEquals(width * height * 4, data.length);
++        final BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
++        for (int pixel = 0; pixel < width * height; pixel++) {
++            final int offset = pixel * 4;
++            image.setRGB(pixel % width, pixel / width, (data[offset + 3] & 255) << 24 | (data[offset] & 255) << 16
++                | (data[offset + 1] & 255) << 8 | data[offset + 2] & 255);
++        }
++        return image;
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaGeometryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaGeometryTest.java
 new file mode 100644
-index 0000000..00f8f9e
+index 0000000..0572790
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaGeometryTest.java
 @@ -0,0 +1,243 @@
@@ -657,7 +844,7 @@ index 0000000..00f8f9e
 +        assertEquals(-2, face.vertices()[0].x());
 +        assertEquals(1, face.vertices()[0].y());
 +        assertEquals(0.5F, face.vertices()[0].u());
-+        assertEquals(0.25F, face.vertices()[0].v());
++        assertEquals(0.75F, face.vertices()[0].v());
 +        assertEquals(-1F, face.normal().y());
 +    }
 +
@@ -863,6 +1050,95 @@ index 0000000..00f8f9e
 +            vector.add(value);
 +        }
 +        return vector;
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimationTest.java
+new file mode 100644
+index 0000000..06160fa
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimationTest.java
+@@ -0,0 +1,83 @@
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import java.awt.image.BufferedImage;
++import net.raphimc.viabedrock.protocol.model.SkinData;
++import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockSkinAnimationTest {
++    @Test
++    void normalizesNativeVerticalStripGeometryAndBottomOriginMeshUvs() {
++        final JsonObject model = model(32, 64);
++        final var image = new BufferedImage(32, 64, BufferedImage.TYPE_INT_ARGB);
++        image.setRGB(3, 7, 0xFF112233);
++        image.setRGB(3, 39, 0xFF445566);
++        final var data = new SkinData.AnimationData(image, 1, 2, 1);
++        BedrockSkinAnimation.normalizeGeometry(model, data);
++        final var uv = model.getAsJsonArray("bones").get(0).getAsJsonObject().getAsJsonObject("poly_mesh")
++            .getAsJsonArray("uvs").get(0).getAsJsonArray();
++        assertEquals(0.5F, uv.get(1).getAsFloat());
++        final var animation = new BedrockSkinAnimation(data, parse(model));
++        assertEquals(32, animation.frame(0).getHeight());
++        assertEquals(0xFF112233, animation.frame(0).getRGB(3, 7));
++        assertEquals(0xFF445566, animation.frame(1).getRGB(3, 7));
++        assertEquals(1, animation.frameIndex(0));
++        assertEquals(0, animation.frameIndex(100));
++        assertEquals(1, animation.frameIndex(4000));
++    }
++
++    @Test
++    void handlesHorizontalBodyFramesAndLinearWraparound() {
++        final JsonObject model = model(64, 32);
++        final var image = new BufferedImage(64, 32, BufferedImage.TYPE_INT_ARGB);
++        image.setRGB(5, 8, 0xFF112233);
++        image.setRGB(37, 8, 0xFF445566);
++        final var data = new SkinData.AnimationData(image, 2, 2, 0);
++        BedrockSkinAnimation.normalizeGeometry(model, data);
++        final var animation = new BedrockSkinAnimation(data, parse(model));
++        assertEquals(32, animation.frame(0).getWidth());
++        assertEquals(0xFF445566, animation.frame(1).getRGB(5, 8));
++        assertEquals(0, animation.frameIndex(0));
++        assertEquals(1, animation.frameIndex(100));
++        assertEquals(0, animation.frameIndex(200));
++    }
++
++    @Test
++    void acceptsFrameSizedGeometryAndRejectsIncompleteOrUnboundedStrips() {
++        final JsonObject model = model(32, 32);
++        final var data = new SkinData.AnimationData(new BufferedImage(32, 512, BufferedImage.TYPE_INT_ARGB), 2, 16, 0);
++        BedrockSkinAnimation.normalizeGeometry(model, data);
++        final var animation = new BedrockSkinAnimation(data, parse(model));
++        assertEquals(15, animation.frameIndex(1500));
++        assertEquals(0, animation.frameIndex(1600));
++        assertThrows(IllegalArgumentException.class, () -> animation.frame(16));
++        assertThrows(IllegalArgumentException.class, () -> new BedrockSkinAnimation(
++            new SkinData.AnimationData(data.image(), 2, Float.NaN, 0), parse(model)));
++        assertThrows(IllegalArgumentException.class, () -> new BedrockSkinAnimation(
++            new SkinData.AnimationData(data.image(), 2, 512, 0), parse(model)));
++        assertThrows(IllegalArgumentException.class, () -> new BedrockSkinAnimation(
++            new SkinData.AnimationData(new BufferedImage(32, 511, BufferedImage.TYPE_INT_ARGB), 2, 16, 0), parse(model)));
++    }
++
++    private static JsonObject model(final int width, final int height) {
++        final var model = JsonParser.parseString("""
++            {"description":{"identifier":"geometry.animation","texture_width":32,"texture_height":32},
++             "bones":[{"name":"head","pivot":[0,24,0],"rotation":[0,0,0],
++              "poly_mesh":{"normalized_uvs":true,"uvs":[[0.25,0.75]]}}]}
++            """).getAsJsonObject();
++        model.getAsJsonObject("description").addProperty("texture_width", width);
++        model.getAsJsonObject("description").addProperty("texture_height", height);
++        return model;
++    }
++
++    private static BedrockGeometryModel parse(final JsonObject model) {
++        final JsonObject data = new JsonObject();
++        final var models = new com.viaversion.viaversion.libs.gson.JsonArray();
++        models.add(model);
++        data.add("minecraft:geometry", models);
++        return BedrockGeometryModel.fromJson(data).getFirst();
 +    }
 +}
 -- 
