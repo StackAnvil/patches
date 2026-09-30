@@ -2,7 +2,7 @@
 
 Use native account recipes and catalog items for saved character, limb, color, size, cape, and four-position emote edits. Profile hashes and exact readback protect each account write. Starter recipes match Bedrock 1.26.51.
 
-Owned persona and emote assets use the current inventory receipt, PlayFab catalog, and official Xbox or PlayFab CDN download flow. The runtime decrypts assets in memory without a native installation, copied keys, or an external extractor. Receipts, content keys, screenshots, profiles, and assets stay private. The model service supplies the static body base and unresolved free assets.
+Owned persona and emote assets use the current inventory receipt, PlayFab catalog, and official Xbox or PlayFab CDN download flow. The runtime decrypts assets in memory without a native installation, copied keys, or an external extractor. Receipts, content keys, screenshots, profiles, and assets stay private. Resolved recipes use local body assembly. Recipes with unresolved free assets, capes, or animated shared body textures still use the model service.
 
 ## Built-in persona package
 
@@ -22,6 +22,14 @@ Apply native four-channel weighted tint transfer to face layers and animated bod
 
 Private Bedrock 1.26.51.1 compositor observations establish the HSL, LCh, and luminance contributions. The Java compositor matches all 2,048 pixels of a captured two-frame face. Its tint math matches 512 deterministic native execution cases. Research binaries, execution harnesses, captured images, and assets remain outside the patch.
 
+## Local body assembly
+
+Select skeleton and body zone sources from the licensed package for the equipped height and arm width. Empty arm fields select shared sources. Preserve pose bones and locators when pieces replace body and clothing zones. Independent recipes select their source side before texture decoding. Join polygon layers on shared bones with separate vertex, normal, and UV index offsets.
+
+Compose shared skin and clothing textures in native piece order. Apply compressed BGRA clothing maps before tint blending. Their red and green offsets identify an underlying texel to clear when the incoming source has no coverage there. Pack static surfaces with the native duplicated one-pixel border. Known built-in UUIDs also resolve from the package for free catalog recipes.
+
+Private Bedrock 1.26.51.1 comparisons match all 16,384 captured body pixels and body mesh UVs. Tests assemble all nine starters across four heights and two arm widths. They also validate local body, face, and animated-arm bindings through the geometry parser. These comparisons cover the captured outfit. More overlapping outfits and texture resolutions need native comparison.
+
 ## Emote playback
 
 Play owned and built-in animation sources on the active character with Replay and Stop controls. Preserve root, waist, and body hierarchy and animate clothing surfaces in the same pose. Mocha supplies actor-local Molang expressions with host execution limits. Effects, delays, multiple animation sources, and entity-relative rotations remain unsupported.
@@ -33,11 +41,11 @@ Private native 1.26.51 captures establish Battle Cry's pack UUID, 130 ticks, and
 ## Verification
 
 - Full patch stack builds successfully.
-- 79 add-on tests pass with private persona, login, and emote fixtures enabled.
+- 84 add-on tests pass with private persona, login, and emote fixtures enabled.
 - Private Battle Cry, Kadoosh, and four built-in emote tests sample every frame at 60 Hz.
 - Bundled-helper tests verify official acquisition, archive extraction, face-mask decoding, cache reuse, and failed refresh recovery.
-- A Java GUI recording verifies the locally composed face, open and closed face frames, and animated arms. Geometry parser tests cover native null optional transforms.
+- A Java GUI recording verifies the locally assembled body, face, and animated arms, including open and closed face frames. Geometry parser tests cover native null optional transforms.
 - A Java GUI recording verifies visible Battle Cry motion, attached clothing, completion reset, and readable controls at the default GUI scale.
 - Native arm writes, cape equips, sizes, and account wheel edits have capture evidence. The account is restored after temporary edits.
 
-Complete local body assembly, unresolved free assets, native animation timing, unavailable remote emotes, and free limb side recipes remain incomplete. More face sizes and equipped combinations need native comparison. The Java preview recording uses an offline appearance fixture, so it does not establish live Java account download behavior.
+Unresolved free assets, cape bindings, animated shared body textures, native animation timing, unavailable remote emotes, and free limb side recipes remain incomplete. More face sizes and equipped combinations need native comparison. The Java preview recording uses an offline appearance fixture, so it does not establish live Java account download behavior.

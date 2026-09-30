@@ -54,9 +54,9 @@ The color editor uses swatches captured from Bedrock 1.26.51. Skin tone edits ch
 
 ## Account character assembly
 
-The active character has an authenticated avatar at `GET /api/v1.0/profile/image/avatar`. The same service returns an assembled GLTF model at `/api/v1.0/profile/image/ModelBinary`.
+The active character has an authenticated avatar at `GET /api/v1.0/profile/image/avatar`. The add-on assembles its body locally when all equipped assets and bindings are available. Recipes with unresolved free packs, capes, or animated shared body textures still use the GLTF model from `/api/v1.0/profile/image/ModelBinary`.
 
-**Use in worlds** converts that model's textures and triangle meshes into a Bedrock atlas and geometry. It saves the appearance per account and sends it at login or through a live skin update. Slot selection and edits refresh an active character already selected for use in worlds.
+**Use in worlds** saves the locally assembled character, or converts the service model into a Bedrock atlas and geometry. It saves the appearance per account and sends it at login or through a live skin update. Slot selection and edits refresh an active character already selected for use in worlds.
 
 Native ModelBinary and login captures use different Z conventions. Conversion reflects positions, node translations, and normals across Z, then reverses triangle winding. Skin geometry retains the native face direction.
 
@@ -74,7 +74,11 @@ Local face assembly combines equipped skin, mouth, eyes, facial hair, and hair t
 
 Tint blending uses four weighted mask channels and the native HSL, LCh, and luminance color transfer. The alpha mask uses the character's skin tone, including eyelids. Recipe colors bind the other channels. Source alpha controls composition, and output bytes use native truncation. A private Bedrock 1.26.51.1 face capture matches all 2,048 RGBA pixels; isolated native compositor evaluations match 512 deterministic tint cases. These checks establish the captured composition and tint math. Other face sizes and equipped combinations still need native comparisons.
 
-For animated owned geometry, assembly selects the character's body and arm variants. It replaces matching static preview surfaces and packs looping texture frames into a separate animation atlas. Save/load, login claims, and live packets retain those frames. Independent limb recipes filter animated bones by their limb ancestry and retain separate tint colors and atlas tiles. The opposite side keeps its static geometry. Unresolved free assets continue to use the service's static model.
+Local body assembly selects the equipped skeleton and body sources for the character's height and arm width. Empty `arm_size` fields select shared sources. The skeleton supplies pose bones and item locators. Equipped geometry sources replace their declared body or clothing zones while retaining those pose bones. Static piece surfaces share an atlas with a duplicated one-pixel border. Polygon layers on the same bone retain separate vertex, normal, and UV indices.
+
+Shared skin and clothing textures use native piece order and the same tint compositor as faces. Compressed BGRA clothing maps encode red and green offsets around 128. A layer clears the mapped underlying texel when its source has no coverage there. The compositor then blends the layer's visible texel. A private Steve/HelliArm capture matches all 16,384 body pixels and body mesh UVs. Extracted assets assemble all nine starters across four heights and two arm widths. Other overlapping outfits and texture resolutions still need native comparison.
+
+For animated owned geometry, assembly selects the character's body and arm variants. It replaces matching static preview surfaces and packs looping texture frames into a separate animation atlas. Save/load, login claims, and live packets retain those frames. Independent limb recipes filter animated bones by their limb ancestry and retain separate tint colors and atlas tiles. The opposite side keeps its static geometry. Unresolved free assets continue to use the service's static model. Built-in UUIDs resolve from the official package even when a catalog selection uses `/f` rather than `/d`.
 
 A private HelliArm capture contains ten animated arm cubes, a 16-frame 32×512 strip, and a separate blinking face. Targeted checks decode the entitled arm pack, assemble its variants, preserve every frame through save/load, and render the native face and arm bindings together. These checks use local private fixtures through `STACKANVIL_PERSONA_ASSETS` and `STACKANVIL_PERSONA_CAPTURE`; the repository contains no captured assets or receipts.
 
@@ -102,7 +106,7 @@ Sources: [Xodus package extraction](https://github.com/xodus-gaming/xodus/blob/a
 
 The main Dressing Room and Classic Skin pack screen share the player skin renderer. Custom models use their saved geometry. Account characters include separate animated surfaces in the preview. Each preview owns and releases its textures when the screen changes or closes.
 
-A running Java client displayed the assembled HelliArm body, animated arms, and locally composed face. A private recording shows the open and closed face frames alongside changing arm frames. This checks production rendering; it does not establish native timing. Native geometry exports can contain null optional transforms. The asset loader omits those fields before assembly so the geometry parser applies its defaults. The account character preview stays visible without a world connection. Unsupported geometry reports an error through the existing import or selection flow.
+A running Java client displayed the HelliArm character with its body, face, and animated arms assembled locally from the private licensed fixtures. A private recording shows the open and closed face frames alongside changing arm frames. This checks production rendering; it does not establish native timing. Native geometry exports can contain null optional transforms. The asset loader omits those fields before assembly so the geometry parser applies its defaults. The account character preview stays visible without a world connection. Unsupported geometry reports an error through the existing import or selection flow.
 
 ## Owned emote previews
 
@@ -126,7 +130,7 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 
 ## Work still needed
 
-- Resolve remaining free assets and assemble body geometry, texture layers, and variants locally. The service model still supplies the static body base.
+- Resolve remaining free assets, cape bindings, and animated shared body textures. These recipes still depend on the service model. Compare more overlapping clothing combinations against native results.
 - Compare more face sizes, tint channels, and equipped combinations against native results.
 - Verify native blinking and strip timing. Implement emote effects, timelines, delays, multiple sources, relative rotations, chat announcements, and unavailable remote assets.
 - Add other piece palettes, verify native leg edits, and resolve free limb side recipes. Add paid purchase/redemption flows and account classic-pack downloads.
