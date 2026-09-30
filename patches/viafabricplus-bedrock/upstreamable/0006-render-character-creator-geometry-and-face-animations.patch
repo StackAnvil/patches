@@ -1,4 +1,4 @@
-From 7e01ea2d7132e83f8eb473a3e3484c808233adc2 Mon Sep 17 00:00:00 2001
+From 656af01bd5609f9ba318d08f789ec1f28e9ea88c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 10:44:51 +0200
 Subject: [PATCH] feat(bedrock): render Character Creator geometry and face
@@ -9,22 +9,65 @@ Character Creator skins can split the body and animated face into separate geome
 A native Bedrock 1.26.51, protocol 2193 login with the owned Helli Arm added a type-2 image (32 by 512, 16 frames) and animated_32x32 resource-patch binding alongside a type-1 face (32 by 64, two blinking frames). Both geometry descriptions used the full strip height. Normalize their texture size to one frame, remap bottom-origin mesh UVs, and render each bound surface on its own animated texture. Support the corresponding animated_128x128 binding with the same validated strip layout. Body coverage includes surfaces nested below the player bones.
 
 The captured persona mesh UVs use a bottom origin, while Java vertex UVs use a top origin. Flip V when creating mesh vertices so both native and converted GLTF skins keep their texture orientation. Keep raw login data and textures outside the repository. An opt-in test reads a private capture through STACKANVIL_PERSONA_CAPTURE and verifies that every bound animation surface is accepted. Animation timing retains the existing 100 ms frame and four-second blink cadence; exact timing still needs a native video comparison.
+
+Render menu previews with their actual model and animated layers. The skin widget uses the registered body geometry, and the GUI skin renderer submits additional surfaces with the same pose and independent animation textures. Preview close and skin replacement release those resources through the shared lifecycle.
 ---
- .../bedrock/render/BedrockGeometry.java       | 102 +++++++-
+ .../features/render/MixinGuiSkinRenderer.java |  32 +++
+ .../bedrock/render/BedrockGeometry.java       | 102 ++++++-
  .../bedrock/render/BedrockPersonaLayer.java   |  37 +++
  .../bedrock/render/BedrockPlayerRenderer.java |  10 +-
- .../bedrock/render/BedrockPlayerSkins.java    | 233 ++++++++++++++++-
- .../bedrock/render/BedrockSkinAnimation.java  | 135 ++++++++++
+ .../bedrock/render/BedrockPlayerSkins.java    | 261 ++++++++++++++++--
+ .../bedrock/render/BedrockSkinAnimation.java  | 135 +++++++++
+ .../viafabricplus-bedrock.mixins.json         |   1 +
  .../render/BedrockPersonaCaptureTest.java     |  70 +++++
- .../render/BedrockPersonaGeometryTest.java    | 243 ++++++++++++++++++
+ .../render/BedrockPersonaGeometryTest.java    | 243 ++++++++++++++++
  .../render/BedrockSkinAnimationTest.java      |  83 ++++++
- 8 files changed, 899 insertions(+), 14 deletions(-)
+ 10 files changed, 956 insertions(+), 18 deletions(-)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinGuiSkinRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaLayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimation.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaCaptureTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaGeometryTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimationTest.java
 
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinGuiSkinRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinGuiSkinRenderer.java
+new file mode 100644
+index 0000000..6d30dcd
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinGuiSkinRenderer.java
+@@ -0,0 +1,32 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.mojang.blaze3d.vertex.PoseStack;
++import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
++import net.minecraft.client.gui.render.pip.GuiSkinRenderer;
++import net.minecraft.client.model.Model;
++import net.minecraft.client.renderer.SubmitNodeCollector;
++import net.minecraft.resources.Identifier;
++import net.minecraft.util.Unit;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++@Mixin(GuiSkinRenderer.class)
++public abstract class MixinGuiSkinRenderer {
++    @WrapOperation(method = "renderToTexture(Lnet/minecraft/client/renderer/state/gui/pip/GuiSkinRenderState;Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;)V",
++        at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/SubmitNodeCollector;submitModel(Lnet/minecraft/client/model/Model;Ljava/lang/Object;Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/resources/Identifier;III)V"))
++    private <S> void bedrockPreviewSurfaces(final SubmitNodeCollector collector, final Model<S> model,
++                                          final S state, final PoseStack pose, final Identifier texture,
++                                          final int light, final int overlay, final int tint,
++                                          final Operation<Void> original) {
++        original.call(collector, model, state, pose, texture, light, overlay, tint);
++        for (final var surface : BedrockPlayerSkins.previewSurfaces(texture))
++            original.call(collector, surface.model(), Unit.INSTANCE, pose, surface.texture(), light, overlay, tint);
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 index d0265c4..065fa6d 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
@@ -248,10 +291,10 @@ index 4b9f121..3a9f2f2 100644
 +    }
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 0daed6c..daf4168 100644
+index 2686b85..ea53710 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-@@ -22,9 +22,11 @@ import com.mojang.blaze3d.platform.NativeImage;
+@@ -22,9 +22,12 @@ import com.mojang.blaze3d.platform.NativeImage;
  import com.viaversion.viafabricplus.ViaFabricPlus;
  import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
  import com.viaversion.viaversion.api.connection.UserConnection;
@@ -259,11 +302,12 @@ index 0daed6c..daf4168 100644
  import com.viaversion.viaversion.libs.gson.JsonObject;
  import com.viaversion.viaversion.libs.gson.JsonParser;
  import java.awt.image.BufferedImage;
++import java.io.IOException;
 +import java.util.ArrayList;
  import java.util.HashMap;
  import java.util.List;
  import java.util.Locale;
-@@ -40,11 +42,15 @@ import net.minecraft.world.entity.player.PlayerModelType;
+@@ -42,11 +45,15 @@ import net.minecraft.world.entity.player.PlayerModelType;
  import net.minecraft.world.entity.player.PlayerSkin;
  import net.raphimc.viabedrock.protocol.model.SkinData;
  import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
@@ -279,7 +323,7 @@ index 0daed6c..daf4168 100644
      private static final Map<UUID, Appearance> APPEARANCES = new HashMap<>();
      private static final Map<Identifier, UUID> PLAYER_BY_TEXTURE = new HashMap<>();
      private static volatile EntityRendererProvider.Context rendererContext;
-@@ -54,7 +60,7 @@ public final class BedrockPlayerSkins {
+@@ -56,7 +63,7 @@ public final class BedrockPlayerSkins {
      }
  
      public static void accept(final UserConnection connection, final UUID playerUuid, final SkinData skin) {
@@ -288,42 +332,60 @@ index 0daed6c..daf4168 100644
              return;
          }
          Minecraft.getInstance().execute(() -> {
-@@ -66,18 +72,32 @@ public final class BedrockPlayerSkins {
-                 PLAYER_BY_TEXTURE.remove(previous.bodyId);
-                 release(previous);
-             }
-+            final Geometry geometry = geometry(skin);
-+            if (skin.persona() && geometry == null) {
-+                // A persona can contain a separate animated face or unsupported mesh
-+                // layout. Keep the Java player visible with its ordinary fallback.
-+                return;
-+            }
-             final Identifier bodyId = textureId(playerUuid, "body");
-             register(bodyId, skin.skinData());
-             final Identifier capeId = supportedImage(skin.capeData()) ? textureId(playerUuid, "cape") : null;
-             if (capeId != null) {
-                 register(capeId, skin.capeData());
-             }
-+            final List<AnimatedSurface> surfaces = new ArrayList<>();
-+            if (geometry != null) {
-+                for (final Surface surface : geometry.surfaces()) {
-+                    final Identifier id = textureId(playerUuid, "animation_" + surface.animation().type());
-+                    final BedrockSkinAnimation animation = new BedrockSkinAnimation(surface.animation(), surface.model());
-+                    register(id, animation.frame(0));
-+                    surfaces.add(new AnimatedSurface(surface, id, animation));
-+                }
-+            }
-             final boolean slim = "slim".equalsIgnoreCase(skin.armSize()) || geometryName(skin).toLowerCase(Locale.ROOT).contains("slim");
-             final PlayerModelType modelType = slim ? PlayerModelType.SLIM : PlayerModelType.WIDE;
-             final PlayerSkin playerSkin = PlayerSkin.insecure(new ClientAsset.ResourceTexture(bodyId, bodyId),
-                 capeId == null ? null : new ClientAsset.ResourceTexture(capeId, capeId), null, modelType);
--            final BedrockGeometryModel geometry = geometry(skin);
--            APPEARANCES.put(playerUuid, new Appearance(playerSkin, geometry, slim, bodyId, capeId));
-+            APPEARANCES.put(playerUuid, new Appearance(playerSkin, geometry, slim, bodyId, capeId, List.copyOf(surfaces)));
-             PLAYER_BY_TEXTURE.put(bodyId, playerUuid);
-         });
+@@ -68,12 +75,14 @@ public final class BedrockPlayerSkins {
      }
-@@ -93,9 +113,18 @@ public final class BedrockPlayerSkins {
+ 
+     /** Creates a private menu appearance. Call and close it on the Minecraft thread. */
+-    public static Preview preview(final SkinData skin) {
+-        if (skin == null || skin.skinData() == null || skin.persona() || !supportedImage(skin.skinData())) {
++    public static Preview preview(final SkinData skin) throws IOException {
++        if (skin == null || skin.skinData() == null || !supportedImage(skin.skinData())) {
+             throw new IllegalArgumentException("Invalid skin preview");
+         }
+         final UUID id = UUID.randomUUID();
+-        return new Preview(id, install(id, skin));
++        final PlayerSkin installed = install(id, skin);
++        if (installed == null) throw new IOException("The skin preview geometry is unsupported");
++        return new Preview(id, installed);
+     }
+ 
+     public record Preview(UUID id, PlayerSkin skin) implements AutoCloseable {
+@@ -93,18 +102,32 @@ public final class BedrockPlayerSkins {
+             PLAYER_BY_TEXTURE.remove(previous.bodyId);
+             release(previous);
+         }
++        final Geometry geometry = geometry(skin);
++        if (skin.persona() && geometry == null) {
++            // A persona can contain a separate animated face or unsupported mesh
++            // layout. Keep the Java player visible with its ordinary fallback.
++            return null;
++        }
+         final Identifier bodyId = textureId(playerUuid, "body");
+         register(bodyId, skin.skinData());
+         final Identifier capeId = supportedImage(skin.capeData()) ? textureId(playerUuid, "cape") : null;
+         if (capeId != null) {
+             register(capeId, skin.capeData());
+         }
++        final List<AnimatedSurface> surfaces = new ArrayList<>();
++        if (geometry != null) {
++            for (final Surface surface : geometry.surfaces()) {
++                final Identifier id = textureId(playerUuid, "animation_" + surface.animation().type());
++                final BedrockSkinAnimation animation = new BedrockSkinAnimation(surface.animation(), surface.model());
++                register(id, animation.frame(0));
++                surfaces.add(new AnimatedSurface(surface, id, animation));
++            }
++        }
+         final boolean slim = "slim".equalsIgnoreCase(skin.armSize()) || geometryName(skin).toLowerCase(Locale.ROOT).contains("slim");
+         final PlayerModelType modelType = slim ? PlayerModelType.SLIM : PlayerModelType.WIDE;
+         final PlayerSkin playerSkin = PlayerSkin.insecure(new ClientAsset.ResourceTexture(bodyId, bodyId),
+             capeId == null ? null : new ClientAsset.ResourceTexture(capeId, capeId), null, modelType);
+-        final BedrockGeometryModel geometry = geometry(skin);
+-        APPEARANCES.put(playerUuid, new Appearance(playerSkin, geometry, slim, bodyId, capeId));
++        APPEARANCES.put(playerUuid, new Appearance(playerSkin, geometry, slim, bodyId, capeId, List.copyOf(surfaces)));
+         PLAYER_BY_TEXTURE.put(bodyId, playerUuid);
+         return playerSkin;
+     }
+@@ -120,9 +143,18 @@ public final class BedrockPlayerSkins {
              return null;
          }
          if (appearance.renderer == null || appearance.rendererEpoch != rendererEpoch) {
@@ -343,7 +405,35 @@ index 0daed6c..daf4168 100644
          return appearance.renderer;
      }
  
-@@ -124,6 +153,9 @@ public final class BedrockPlayerSkins {
+@@ -139,10 +171,26 @@ public final class BedrockPlayerSkins {
+         final Appearance appearance = id == null ? null : APPEARANCES.get(id);
+         if (appearance == null || appearance.geometry == null) return null;
+         if (appearance.previewModel == null)
+-            appearance.previewModel = new Model.Simple(BedrockGeometry.playerModel(appearance.geometry, appearance.slim).root(), RenderTypes::entityTranslucent);
++            appearance.previewModel = new Model.Simple(BedrockGeometry.playerModel(appearance.geometry.model(), appearance.slim, appearance.geometry.meshes()).root(), RenderTypes::entityTranslucent);
+         return appearance.previewModel;
+     }
+ 
++    /** Supplies the additional animated surfaces in the same pose as a menu's primary skin. */
++    public static List<PreviewSurface> previewSurfaces(final Identifier texture) {
++        final UUID id = PLAYER_BY_TEXTURE.get(texture);
++        final Appearance appearance = id == null ? null : APPEARANCES.get(id);
++        if (appearance == null || appearance.surfaces.isEmpty()) return List.of();
++        if (appearance.previewSurfaces == null)
++            appearance.previewSurfaces = appearance.surfaces.stream().map(surface -> new PreviewSurface(
++                new Model.Simple(BedrockGeometry.playerModel(surface.geometry().model(), appearance.slim, surface.geometry().meshes()).root(), RenderTypes::entityTranslucent),
++                surface.texture())).toList();
++        final long now = System.currentTimeMillis();
++        for (final AnimatedSurface surface : appearance.surfaces) surface.animation().update(surface.texture(), now);
++        return appearance.previewSurfaces;
++    }
++
++    public record PreviewSurface(Model.Simple model, Identifier texture) {}
++
+     public static void rendererContext(final EntityRendererProvider.Context context) {
+         rendererContext = context;
+         rendererEpoch++;
+@@ -160,6 +208,9 @@ public final class BedrockPlayerSkins {
          if (appearance.capeId != null) {
              textureManager.release(appearance.capeId);
          }
@@ -353,7 +443,7 @@ index 0daed6c..daf4168 100644
      }
  
      private static Identifier textureId(final UUID playerUuid, final String kind) {
-@@ -148,16 +180,29 @@ public final class BedrockPlayerSkins {
+@@ -184,16 +235,29 @@ public final class BedrockPlayerSkins {
      }
  
      private static String geometryName(final SkinData skin) {
@@ -386,7 +476,7 @@ index 0daed6c..daf4168 100644
          if ("geometry.humanoid.custom".equalsIgnoreCase(name) || "geometry.humanoid.customSlim".equalsIgnoreCase(name)) {
              // These are Bedrock's standard Steve and Alex models. Minecraft's
              // player renderer already knows their exact UVs and overlay layout.
-@@ -169,30 +214,194 @@ public final class BedrockPlayerSkins {
+@@ -205,31 +269,196 @@ public final class BedrockPlayerSkins {
          try {
              final JsonObject data = JsonParser.parseString(skin.geometryData()).getAsJsonObject();
              final List<BedrockGeometryModel> models = BedrockGeometryModel.fromJson(data);
@@ -397,10 +487,10 @@ index 0daed6c..daf4168 100644
          } catch (RuntimeException e) {
 -            ViaFabricPlusBedrock.impl().logger().warn("Failed to parse Bedrock player geometry", e);
 +            LOGGER.warn("Failed to parse Bedrock player geometry", e);
-             return null;
-         }
-     }
- 
++            return null;
++        }
++    }
++
 +    static Geometry personaGeometry(final String name, final String faceName, final String geometryData,
 +                                    final BufferedImage skinImage, final List<SkinData.AnimationData> animations) {
 +        return personaGeometry(name, Map.of(1, faceName), geometryData, skinImage, animations);
@@ -409,8 +499,8 @@ index 0daed6c..daf4168 100644
 +    static Geometry personaGeometry(final String name, final Map<Integer, String> bindings, final String geometryData,
 +                                    final BufferedImage skinImage, final List<SkinData.AnimationData> animations) {
 +        if (name.isBlank() || geometryData == null || geometryData.isBlank() || !supportedImage(skinImage)) {
-+            return null;
-+        }
+             return null;
+         }
 +        try {
 +            final JsonObject data = JsonParser.parseString(geometryData).getAsJsonObject();
 +            final JsonArray models = data.getAsJsonArray("minecraft:geometry");
@@ -560,8 +650,8 @@ index 0daed6c..daf4168 100644
 +    }
 +
 +    private record AnimatedSurface(Surface geometry, Identifier texture, BedrockSkinAnimation animation) {
-+    }
-+
+     }
+ 
      private static final class Appearance {
          private final PlayerSkin skin;
 -        private final BedrockGeometryModel geometry;
@@ -571,6 +661,8 @@ index 0daed6c..daf4168 100644
          private final Identifier capeId;
 +        private final List<AnimatedSurface> surfaces;
          private AvatarRenderer<?> renderer;
+         private Model.Simple previewModel;
++        private List<PreviewSurface> previewSurfaces;
          private long rendererEpoch;
  
 -        private Appearance(final PlayerSkin skin, final BedrockGeometryModel geometry, final boolean slim,
@@ -727,6 +819,18 @@ index 0000000..c6d7554
 +    }
 +
 +}
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index d65401a..c6be1bb 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -50,6 +50,7 @@
+     "features.render.MixinEntityRenderDispatcher",
+     "features.render.MixinMinecraftSkinLifecycle",
+     "features.render.MixinPlayerSkinWidget",
++    "features.render.MixinGuiSkinRenderer",
+     "features.movement.MixinEntity",
+     "features.movement.MixinEntityFluidInteraction",
+     "features.movement.MixinEntityFluidInteraction_CurrentAccumulator",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaCaptureTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaCaptureTest.java
 new file mode 100644
 index 0000000..4b6195e

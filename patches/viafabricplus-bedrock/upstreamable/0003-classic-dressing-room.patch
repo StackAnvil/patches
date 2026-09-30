@@ -1,4 +1,4 @@
-From 730e156204d03f2c10248235ea3b51ee6bbe76e2 Mon Sep 17 00:00:00 2001
+From ccf369bd7941b6ca2809b0c595f9b29435443727 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:39 +0200
 Subject: [PATCH] feat(bedrock): add classic Dressing Room
@@ -8,23 +8,31 @@ Import the appearance controls from viafabricplus-bedrock PR #11. Carry the nati
 Place the subtitle and controls beneath the VFP logo without reserving space for the main screen search bar and tabs. This also gives the skin preview more vertical room at common GUI scales.
 
 Resolve archive paths relative to a single manifest and skins.json root, including wrapped exports and nested textures. Reject traversal, duplicate entries, ambiguous roots, and oversized expanded archives before reading assets. Targeted ZIP fixtures cover nested imports and invalid roots.
+
+Accept legacy 64x32 PNGs from file imports and pack textures. Expand each mirrored limb face into the 64x64 layout before persistence and preview, leaving modern overlays clear and preserving authored transparent hats. The face mapping matches the current Minecraft SkinTextureDownloader implementation; tests verify side-face swaps, source immutability, and file/store round trips.
+
+Retain selected custom geometry from local Classic Skin packs, including rectangular model textures. Normalize legacy and modern geometry, reject missing models and cyclic bone hierarchies, persist the model per account, and preserve it through selection and cape edits. Login and live packets use the selected resource patch and geometry instead of silently substituting Steve. The pack and Dressing Room previews own their textures through the shared skin renderer lifecycle.
 ---
  README.md                                     |  12 +
  build.gradle.kts                              |   6 +
  .../bedrock/ViaFabricPlusBedrock.java         |  11 +-
- .../appearance/BedrockAppearanceStore.java    | 268 ++++++++++++++
- .../appearance/BedrockClassicSkinPack.java    | 192 ++++++++++
- .../appearance/ViaFabricPlusSkinProvider.java |  78 +++++
+ .../appearance/BedrockAppearanceStore.java    | 320 ++++++++++++++++++
+ .../appearance/BedrockClassicModel.java       | 117 +++++++
+ .../appearance/BedrockClassicSkinPack.java    | 193 +++++++++++
+ .../bedrock/appearance/BedrockLegacySkin.java |  61 ++++
+ .../appearance/ViaFabricPlusSkinProvider.java |  82 +++++
  .../friends/FriendWorldSkinProvider.java      |  49 ---
- .../screen/BedrockClassicSkinPackScreen.java  | 138 ++++++++
- .../screen/BedrockDressingRoomScreen.java     | 328 ++++++++++++++++++
+ .../screen/BedrockClassicSkinPackScreen.java  | 126 +++++++
+ .../screen/BedrockDressingRoomScreen.java     | 299 ++++++++++++++++
  .../bedrock/settings/BedrockSettings.java     |   5 +
  .../viafabricplus-bedrock/lang/en_us.json     |  23 ++
- .../BedrockAppearanceStoreTest.java           | 102 ++++++
- .../BedrockClassicSkinPackTest.java           |  99 ++++++
- 13 files changed, 1260 insertions(+), 51 deletions(-)
+ .../BedrockAppearanceStoreTest.java           | 126 +++++++
+ .../BedrockClassicSkinPackTest.java           | 152 +++++++++
+ 15 files changed, 1531 insertions(+), 51 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacySkin.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java
  delete mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/friends/FriendWorldSkinProvider.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockClassicSkinPackScreen.java
@@ -125,10 +133,10 @@ index a8f239a..92f1b49 100644
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
 new file mode 100644
-index 0000000..45c0814
+index 0000000..ec94be0
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
-@@ -0,0 +1,268 @@
+@@ -0,0 +1,320 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -160,6 +168,8 @@ index 0000000..45c0814
 +import java.nio.file.Path;
 +import java.nio.file.StandardCopyOption;
 +import java.util.UUID;
++import java.util.List;
++import net.raphimc.viabedrock.protocol.model.SkinData;
 +import java.util.function.Function;
 +import javax.imageio.ImageIO;
 +import javax.imageio.ImageReader;
@@ -173,6 +183,7 @@ index 0000000..45c0814
 +
 +    private static final String METADATA = "appearance.json";
 +    private static final String CUSTOM_SKIN = "skin.png";
++    private static final String CLASSIC_MODEL = "classic-model.json";
 +    private static final String CAPE = "cape.png";
 +    private static final int MAX_FILE_BYTES = 8 * 1024 * 1024;
 +
@@ -216,21 +227,31 @@ index 0000000..45c0814
 +            }
 +        }
 +
++        BedrockClassicModel classicModel = null;
++        final Path modelPath = directory.resolve(CLASSIC_MODEL);
++        if (selection == Selection.CUSTOM && Files.isRegularFile(modelPath)) {
++            if (Files.size(modelPath) > 2 * 1024 * 1024) throw new IOException("The saved skin geometry is too large");
++            try {
++                final JsonObject model = JsonParser.parseString(Files.readString(modelPath)).getAsJsonObject();
++                classicModel = BedrockClassicModel.read(model.get("geometry").getAsString(), model.get("identifier").getAsString());
++            } catch (RuntimeException e) { throw new IOException("The saved skin geometry is invalid", e); }
++        }
 +        BufferedImage skin = switch (selection) {
 +            case STEVE -> this.presets.apply(Selection.STEVE);
 +            case ALEX -> this.presets.apply(Selection.ALEX);
 +            case CUSTOM -> Files.isRegularFile(directory.resolve(CUSTOM_SKIN))
-+                ? readPng(directory.resolve(CUSTOM_SKIN), false) : null;
++                ? readPng(directory.resolve(CUSTOM_SKIN), classicModel == null ? TextureKind.SKIN : TextureKind.MODEL) : null;
 +        };
 +        if (skin == null) {
 +            selection = Selection.STEVE;
 +            skin = this.presets.apply(Selection.STEVE);
++            classicModel = null;
 +        }
 +        final Path capePath = directory.resolve(CAPE);
-+        final BufferedImage cape = Files.isRegularFile(capePath) ? readPng(capePath, true) : null;
++        final BufferedImage cape = Files.isRegularFile(capePath) ? readPng(capePath, TextureKind.CAPE) : null;
 +        return new Appearance(selection, slim,
 +            skin, cape, skinId.isBlank() ? UUID.randomUUID().toString() : skinId,
-+            cape != null && capeId.isBlank() ? UUID.randomUUID().toString() : capeId);
++            cape != null && capeId.isBlank() ? UUID.randomUUID().toString() : capeId, classicModel);
 +    }
 +
 +    public boolean hasCustomSkin(final String accountId) {
@@ -243,43 +264,60 @@ index 0000000..45c0814
 +            throw new IOException("Import a custom skin first");
 +        }
 +        final Appearance updated = new Appearance(selection, current.slim(), current.skin(), current.cape(),
-+            UUID.randomUUID().toString(), current.capeId());
++            UUID.randomUUID().toString(), current.capeId(), current.classicModel());
 +        this.saveMetadata(accountId, updated);
 +        return this.load(accountId);
 +    }
 +
 +    public synchronized Appearance setSlim(final String accountId, final boolean slim) throws IOException {
 +        final Appearance current = this.load(accountId);
++        if (current.classicModel() != null) throw new IOException("This skin pack defines its own model");
 +        final Appearance updated = new Appearance(current.selection(), slim, current.skin(), current.cape(),
-+            UUID.randomUUID().toString(), current.capeId());
++            UUID.randomUUID().toString(), current.capeId(), current.classicModel());
 +        this.saveMetadata(accountId, updated);
 +        return this.load(accountId);
 +    }
 +
 +    public synchronized Appearance importSkin(final String accountId, final Path source) throws IOException {
-+        return this.importSkinImage(accountId, readPng(source, false), this.load(accountId).slim());
++        return this.importSkinImage(accountId, readPng(source, TextureKind.SKIN), this.load(accountId).slim());
 +    }
 +
 +    public synchronized Appearance importSkinImage(final String accountId, final BufferedImage image, final boolean slim) throws IOException {
-+        validateDimensions(image.getWidth(), image.getHeight(), false);
++        return this.importSkinImage(accountId, image, slim, null);
++    }
++
++    public synchronized Appearance importSkinImage(final String accountId, final BufferedImage image,
++                                                   final boolean slim, final BedrockClassicModel model) throws IOException {
++        validateDimensions(image.getWidth(), image.getHeight(), model == null ? TextureKind.SKIN : TextureKind.MODEL);
++        final BedrockClassicModel validatedModel = model == null ? null : BedrockClassicModel.read(model.geometry(), model.identifier());
++        final BufferedImage skin = model == null ? BedrockLegacySkin.convert(image) : image;
 +        final Appearance current = this.load(accountId);
 +        final Path directory = this.directory(accountId);
 +        Files.createDirectories(directory);
-+        writePng(image, directory.resolve(CUSTOM_SKIN));
-+        final Appearance updated = new Appearance(Selection.CUSTOM, slim, image, current.cape(),
-+            UUID.randomUUID().toString(), current.capeId());
++        writePng(skin, directory.resolve(CUSTOM_SKIN));
++        if (validatedModel == null) Files.deleteIfExists(directory.resolve(CLASSIC_MODEL));
++        else {
++            final JsonObject json = new JsonObject();
++            json.addProperty("geometry", validatedModel.geometry());
++            json.addProperty("identifier", validatedModel.identifier());
++            final Path temporary = Files.createTempFile(directory, "classic-", ".json");
++            try { Files.writeString(temporary, json.toString()); moveIntoPlace(temporary, directory.resolve(CLASSIC_MODEL)); }
++            finally { Files.deleteIfExists(temporary); }
++        }
++        final Appearance updated = new Appearance(Selection.CUSTOM, slim, skin, current.cape(),
++            UUID.randomUUID().toString(), current.capeId(), validatedModel);
 +        this.saveMetadata(accountId, updated);
 +        return updated;
 +    }
 +
 +    public synchronized Appearance importCape(final String accountId, final Path source) throws IOException {
-+        final BufferedImage image = readPng(source, true);
++        final BufferedImage image = readPng(source, TextureKind.CAPE);
 +        final Appearance current = this.load(accountId);
 +        final Path directory = this.directory(accountId);
 +        Files.createDirectories(directory);
 +        writePng(image, directory.resolve(CAPE));
 +        final Appearance updated = new Appearance(current.selection(), current.slim(), current.skin(), image,
-+            current.skinId(), UUID.randomUUID().toString());
++            current.skinId(), UUID.randomUUID().toString(), current.classicModel());
 +        this.saveMetadata(accountId, updated);
 +        return updated;
 +    }
@@ -288,7 +326,7 @@ index 0000000..45c0814
 +        Files.deleteIfExists(this.directory(accountId).resolve(CAPE));
 +        final Appearance current = this.load(accountId);
 +        final Appearance updated = new Appearance(current.selection(), current.slim(), current.skin(), null,
-+            current.skinId(), "");
++            current.skinId(), "", current.classicModel());
 +        this.saveMetadata(accountId, updated);
 +        return updated;
 +    }
@@ -314,12 +352,12 @@ index 0000000..45c0814
 +        }
 +    }
 +
-+    private static BufferedImage readPng(final Path path, final boolean cape) throws IOException {
++    private static BufferedImage readPng(final Path path, final TextureKind kind) throws IOException {
 +        if (!Files.isRegularFile(path) || Files.size(path) > MAX_FILE_BYTES) {
 +            throw new IOException("The PNG file is missing or too large");
 +        }
 +        try (ImageInputStream input = ImageIO.createImageInputStream(path.toFile())) {
-+            return decodePng(input, cape);
++            return decodePng(input, kind);
 +        }
 +    }
 +
@@ -328,11 +366,20 @@ index 0000000..45c0814
 +            throw new IOException("The skin PNG is too large");
 +        }
 +        try (ImageInputStream input = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
-+            return decodePng(input, false);
++            return decodePng(input, TextureKind.SKIN);
 +        }
 +    }
 +
-+    private static BufferedImage decodePng(final ImageInputStream input, final boolean cape) throws IOException {
++    static BufferedImage readTexture(final byte[] bytes) throws IOException {
++        if (bytes.length > MAX_FILE_BYTES) throw new IOException("The skin texture is too large");
++        try (ImageInputStream input = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
++            return decodePng(input, TextureKind.MODEL);
++        }
++    }
++
++    private enum TextureKind { SKIN, CAPE, MODEL }
++
++    private static BufferedImage decodePng(final ImageInputStream input, final TextureKind kind) throws IOException {
 +        if (input == null) {
 +            throw new IOException("Could not read the PNG file");
 +        }
@@ -348,20 +395,25 @@ index 0000000..45c0814
 +            reader.setInput(input);
 +            final int width = reader.getWidth(0);
 +            final int height = reader.getHeight(0);
-+            validateDimensions(width, height, cape);
-+            return reader.read(0);
++            validateDimensions(width, height, kind);
++            final BufferedImage image = reader.read(0);
++            return kind == TextureKind.SKIN ? BedrockLegacySkin.convert(image) : image;
 +        } finally {
 +            reader.dispose();
 +        }
 +    }
 +
-+    private static void validateDimensions(final int width, final int height, final boolean cape) throws IOException {
-+        final boolean valid = cape ? width == height * 2 && height >= 32 && height <= 512
-+            : width == height && width >= 64 && width <= 1024;
-+        if (!valid || Integer.bitCount(width) != 1) {
-+            throw new IOException(cape ? "Capes must be 64x32 through 1024x512 PNGs"
-+                : "Skins must be square 64x64 through 1024x1024 PNGs");
-+        }
++    private static void validateDimensions(final int width, final int height, final TextureKind kind) throws IOException {
++        final boolean valid = switch (kind) {
++            case CAPE -> width == height * 2 && height >= 32 && height <= 512 && Integer.bitCount(width) == 1;
++            case SKIN -> ((width == height && width >= 64 && width <= 1024) || (width == 64 && height == 32)) && Integer.bitCount(width) == 1;
++            case MODEL -> width >= 1 && height >= 1 && width <= 1024 && height <= 1024;
++        };
++        if (!valid) throw new IOException(switch (kind) {
++            case CAPE -> "Capes must be 64x32 through 1024x512 PNGs";
++            case SKIN -> "Skins must be 64x32 or square 64x64 through 1024x1024 PNGs";
++            case MODEL -> "Custom geometry textures must fit within 1024x1024 pixels";
++        });
 +    }
 +
 +    private static void writePng(final BufferedImage image, final Path destination) throws IOException {
@@ -389,7 +441,15 @@ index 0000000..45c0814
 +    }
 +
 +    public record Appearance(Selection selection, boolean slim, BufferedImage skin, BufferedImage cape,
-+                             String skinId, String capeId) {
++                             String skinId, String capeId, BedrockClassicModel classicModel) {
++
++        public SkinData skinData(final String standardGeometry) {
++            final String patch = this.classicModel == null ? "{\"geometry\":{\"default\":\"geometry.humanoid.custom" + (this.effectiveSlim() ? "Slim" : "") + "\"}}" : this.classicModel.resourcePatch();
++            return new SkinData(this.skinId, "", patch, this.skin, List.of(),
++                this.cape, this.classicModel == null ? standardGeometry : this.classicModel.geometry(), this.classicModel == null ? "0.0.0" : "1.14.0",
++                "", false, false, this.cape != null, false, this.cape == null ? "" : this.capeId, "", this.effectiveSlim() ? "slim" : "wide", "#0",
++                List.of(), List.of(), false, "False", "");
++        }
 +
 +        public boolean effectiveSlim() {
 +            return this.selection == Selection.CUSTOM ? this.slim : this.selection == Selection.ALEX;
@@ -397,12 +457,135 @@ index 0000000..45c0814
 +    }
 +
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java
+new file mode 100644
+index 0000000..d5b9ea1
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java
+@@ -0,0 +1,117 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonElement;
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++
++import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++
++import java.io.IOException;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.Map;
++
++/** Selected custom geometry from a Classic Skin pack, normalized for persistence and transport. */
++public record BedrockClassicModel(String geometry, String identifier) {
++    public static BedrockClassicModel read(final String data, final String identifier)
++            throws IOException {
++        if (data.length() > 1024 * 1024 || !identifier.matches("geometry\\.[a-zA-Z0-9_.-]{1,128}"))
++            throw new IOException("The classic skin geometry is too large or has an invalid name");
++        try {
++            final JsonObject document = JsonParser.parseString(data).getAsJsonObject();
++            JsonObject selected = null;
++            if (document.has("minecraft:geometry")) {
++                for (final var element : document.getAsJsonArray("minecraft:geometry")) {
++                    final JsonObject model = element.getAsJsonObject();
++                    if (identifier.equals(
++                            model.getAsJsonObject("description").get("identifier").getAsString())) {
++                        if (selected != null)
++                            throw new IOException("The skin geometry name is ambiguous");
++                        selected = model.deepCopy();
++                    }
++                }
++            } else if (document.has(identifier)) {
++                selected = document.getAsJsonObject(identifier).deepCopy();
++                final JsonObject description = new JsonObject();
++                description.addProperty("identifier", identifier);
++                description.add("texture_width", selected.remove("texturewidth"));
++                description.add("texture_height", selected.remove("textureheight"));
++                selected.add("description", description);
++            }
++            if (selected == null)
++                throw new IOException("The pack is missing the selected skin geometry");
++            final JsonObject description = selected.getAsJsonObject("description");
++            for (final String dimension : new String[] {"texture_width", "texture_height"}) {
++                final int size = description.get(dimension).getAsInt();
++                if (size < 1 || size > 1024)
++                    throw new IOException("The skin geometry texture size is invalid");
++            }
++            validateNumbers(selected, 0);
++            final JsonArray bones = selected.getAsJsonArray("bones");
++            if (bones == null || bones.size() > 256)
++                throw new IOException("The skin geometry has too many bones");
++            final Map<String, String> parents = new HashMap<>();
++            int cubes = 0;
++            for (final var element : bones) {
++                final JsonObject bone = element.getAsJsonObject();
++                final String name = bone.get("name").getAsString();
++                if (name.isBlank()
++                        || parents.putIfAbsent(
++                                        name,
++                                        bone.has("parent") ? bone.get("parent").getAsString() : "")
++                                != null)
++                    throw new IOException("The skin geometry has a duplicate or empty bone name");
++                if (bone.has("cubes") && (cubes += bone.getAsJsonArray("cubes").size()) > 2048)
++                    throw new IOException("The skin geometry has too many cubes");
++            }
++            for (final String name : parents.keySet()) {
++                final var visited = new HashSet<String>();
++                String ancestor = name;
++                while (!ancestor.isEmpty()) {
++                    if (!visited.add(ancestor) || !parents.containsKey(ancestor))
++                        throw new IOException("The skin geometry has an invalid bone hierarchy");
++                    ancestor = parents.get(ancestor);
++                }
++            }
++            final JsonArray models = new JsonArray();
++            models.add(selected);
++            final JsonObject normalized = new JsonObject();
++            normalized.addProperty("format_version", "1.12.0");
++            normalized.add("minecraft:geometry", models);
++            final String geometry = normalized.toString();
++            if (BedrockGeometryModel.fromJson(geometry).size() != 1)
++                throw new IOException("The skin geometry could not be decoded");
++            return new BedrockClassicModel(geometry, identifier);
++        } catch (RuntimeException e) {
++            throw new IOException("The classic skin geometry is invalid", e);
++        }
++    }
++
++    private static void validateNumbers(final JsonElement element, final int depth)
++            throws IOException {
++        if (depth > 32) throw new IOException("The skin geometry is nested too deeply");
++        if (element.isJsonObject()) {
++            for (final var entry : element.getAsJsonObject().entrySet())
++                validateNumbers(entry.getValue(), depth + 1);
++        } else if (element.isJsonArray()) {
++            for (final var item : element.getAsJsonArray()) validateNumbers(item, depth + 1);
++        } else if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isNumber()) {
++            final double value = element.getAsDouble();
++            if (!Double.isFinite(value) || Math.abs(value) > 32768)
++                throw new IOException("The skin geometry contains an invalid coordinate");
++        }
++    }
++
++    public String resourcePatch() {
++        final JsonObject bindings = new JsonObject(), patch = new JsonObject();
++        bindings.addProperty("default", this.identifier);
++        patch.add("geometry", bindings);
++        return patch.toString();
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java
 new file mode 100644
-index 0000000..539374b
+index 0000000..41eea2d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPack.java
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,193 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -461,9 +644,9 @@ index 0000000..539374b
 +                }
 +                final JsonObject definition = element.getAsJsonObject();
 +                final String geometry = string(definition, "geometry");
-+                if (!"geometry.humanoid.custom".equals(geometry) && !"geometry.humanoid.customSlim".equals(geometry)) {
-+                    continue;
-+                }
++                final boolean standard = "geometry.humanoid.custom".equals(geometry) || "geometry.humanoid.customSlim".equals(geometry);
++                final BedrockClassicModel model = standard ? null : BedrockClassicModel.read(
++                    json(zip, root + "geometry.json").toString(), geometry);
 +                final String texture = string(definition, "texture");
 +                if (!safePath(texture) || !texture.endsWith(".png")
 +                    || zip.getEntry(root + texture) == null) {
@@ -471,7 +654,7 @@ index 0000000..539374b
 +                }
 +                final String skinKey = string(definition, "localization_name");
 +                final String name = names.getOrDefault("skin." + key + "." + skinKey, skinKey);
-+                skins.add(new Skin(name.isBlank() ? texture : name, root + texture, geometry.endsWith("customSlim")));
++                skins.add(new Skin(name.isBlank() ? texture : name, root + texture, geometry.endsWith("customSlim"), model));
 +                if (skins.size() > 256) {
 +                    throw new IOException("The skin pack contains too many skins");
 +                }
@@ -491,7 +674,8 @@ index 0000000..539374b
 +            throw new IOException("The skin is not in this pack");
 +        }
 +        try (ZipFile zip = new ZipFile(this.path.toFile())) {
-+            return BedrockAppearanceStore.readSkin(bytes(zip, skin.texture(), MAX_SKIN_BYTES));
++            return skin.model() == null ? BedrockAppearanceStore.readSkin(bytes(zip, skin.texture(), MAX_SKIN_BYTES))
++                : BedrockAppearanceStore.readTexture(bytes(zip, skin.texture(), MAX_SKIN_BYTES));
 +        }
 +    }
 +
@@ -591,16 +775,83 @@ index 0000000..539374b
 +        return object.has(key) && object.get(key).isJsonPrimitive() ? object.get(key).getAsString() : "";
 +    }
 +
-+    public record Skin(String name, String texture, boolean slim) {
++    public record Skin(String name, String texture, boolean slim, BedrockClassicModel model) {
 +    }
 +
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacySkin.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacySkin.java
+new file mode 100644
+index 0000000..a9e00fd
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacySkin.java
+@@ -0,0 +1,61 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import java.awt.image.BufferedImage;
++
++/** Expands the mirrored limbs of a legacy skin into independent modern UV regions. */
++final class BedrockLegacySkin {
++    private BedrockLegacySkin() {}
++
++    static BufferedImage convert(final BufferedImage source) {
++        if (source.getWidth() != 64 || source.getHeight() != 32) return source;
++        final BufferedImage result = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
++        result.setRGB(0, 0, 64, 32, source.getRGB(0, 0, 64, 32, null, 0, 64), 0, 64);
++        mirrorLimb(source, result, 0, 16);
++        mirrorLimb(source, result, 40, 32);
++        // Legacy images often filled their unused hat region with an opaque background.
++        boolean opaqueHat = true;
++        for (int y = 0; y < 32 && opaqueHat; y++)
++            for (int x = 32; x < 64; x++)
++                if ((source.getRGB(x, y) >>> 24) < 128) {
++                    opaqueHat = false;
++                    break;
++                }
++        if (opaqueHat)
++            for (int y = 0; y < 16; y++)
++                for (int x = 32; x < 64; x++) result.setRGB(x, y, result.getRGB(x, y) & 0xFFFFFF);
++        return result;
++    }
++
++    private static void mirrorLimb(
++            final BufferedImage source,
++            final BufferedImage target,
++            final int sourceX,
++            final int targetX) {
++        // Top and bottom retain their positions. Mirroring swaps the two side faces.
++        copyFace(source, target, sourceX + 4, 16, targetX + 4, 48, 4);
++        copyFace(source, target, sourceX + 8, 16, targetX + 8, 48, 4);
++        copyFace(source, target, sourceX, 20, targetX + 8, 52, 12);
++        copyFace(source, target, sourceX + 4, 20, targetX + 4, 52, 12);
++        copyFace(source, target, sourceX + 8, 20, targetX, 52, 12);
++        copyFace(source, target, sourceX + 12, 20, targetX + 12, 52, 12);
++    }
++
++    private static void copyFace(
++            final BufferedImage source,
++            final BufferedImage target,
++            final int sourceX,
++            final int sourceY,
++            final int targetX,
++            final int targetY,
++            final int height) {
++        for (int y = 0; y < height; y++)
++            for (int x = 0; x < 4; x++)
++                target.setRGB(
++                        targetX + x, targetY + y, source.getRGB(sourceX + 3 - x, sourceY + y));
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java
 new file mode 100644
-index 0000000..0808013
+index 0000000..79d38c4
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusSkinProvider.java
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,82 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2021-2026 the original authors
@@ -653,8 +904,12 @@ index 0000000..0808013
 +            claims.put("SkinData", Base64.getEncoder().encodeToString(ImageType.getImageData(skin)));
 +            claims.put("SkinImageWidth", skin.getWidth());
 +            claims.put("SkinImageHeight", skin.getHeight());
-+            claims.put("SkinResourcePatch", Base64.getEncoder().encodeToString(("{\"geometry\":{\"default\":\"geometry.humanoid.custom"
-+                + (slim ? "Slim" : "") + "\"}}").getBytes(StandardCharsets.UTF_8)));
++            final SkinData selected = appearance.skinData("");
++            claims.put("SkinResourcePatch", Base64.getEncoder().encodeToString(selected.skinResourcePatch().getBytes(StandardCharsets.UTF_8)));
++            if (appearance.classicModel() != null) {
++                claims.put("SkinGeometryData", Base64.getEncoder().encodeToString(selected.geometryData().getBytes(StandardCharsets.UTF_8)));
++                claims.put("SkinGeometryDataEngineVersion", Base64.getEncoder().encodeToString(selected.geometryDataEngineVersion().getBytes(StandardCharsets.UTF_8)));
++            }
 +            claims.put("ArmSize", slim ? "slim" : "wide");
 +            if (appearance.cape() != null) {
 +                claims.put("CapeId", appearance.capeId());
@@ -736,10 +991,10 @@ index 79efc1d..0000000
 -}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockClassicSkinPackScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockClassicSkinPackScreen.java
 new file mode 100644
-index 0000000..86a6ae4
+index 0000000..4146193
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockClassicSkinPackScreen.java
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,126 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -748,7 +1003,8 @@ index 0000000..86a6ae4
 +
 +package com.viaversion.viafabricplus.bedrock.screen;
 +
-+import com.mojang.blaze3d.platform.NativeImage;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
++import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockClassicSkinPack;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockClassicSkinPack.Skin;
 +import com.viaversion.viafabricplus.screen.base.VFPScreen;
@@ -757,18 +1013,12 @@ index 0000000..86a6ae4
 +import net.minecraft.client.gui.GuiGraphicsExtractor;
 +import net.minecraft.client.gui.components.Button;
 +import net.minecraft.client.gui.components.PlayerSkinWidget;
-+import net.minecraft.client.renderer.texture.DynamicTexture;
-+import net.minecraft.core.ClientAsset;
 +import net.minecraft.network.chat.Component;
-+import net.minecraft.resources.Identifier;
-+import net.minecraft.world.entity.player.PlayerModelType;
 +import net.minecraft.world.entity.player.PlayerSkin;
 +import org.jspecify.annotations.NonNull;
 +
 +/** Lets the player inspect and select one skin from a local Classic Skin pack. */
 +public final class BedrockClassicSkinPackScreen extends VFPScreen {
-+
-+    private static final Identifier PREVIEW = Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "skin_pack/preview");
 +
 +    private final BedrockDressingRoomScreen dressingRoom;
 +    private final BedrockClassicSkinPack pack;
@@ -776,7 +1026,7 @@ index 0000000..86a6ae4
 +    private PlayerSkin previewSkin;
 +    private BufferedImage selectedImage;
 +    private Component error;
-+    private boolean previewRegistered;
++    private BedrockPlayerSkins.Preview preview;
 +
 +    public BedrockClassicSkinPackScreen(final BedrockDressingRoomScreen dressingRoom, final BedrockClassicSkinPack pack) {
 +        super(Component.literal(pack.name()), true);
@@ -845,17 +1095,10 @@ index 0000000..86a6ae4
 +        try {
 +            final Skin skin = this.pack.skins().get(this.selected);
 +            this.selectedImage = this.pack.image(skin);
-+            final NativeImage nativeImage = new NativeImage(this.selectedImage.getWidth(), this.selectedImage.getHeight(), false);
-+            for (int y = 0; y < this.selectedImage.getHeight(); y++) {
-+                for (int x = 0; x < this.selectedImage.getWidth(); x++) {
-+                    final int argb = this.selectedImage.getRGB(x, y);
-+                    nativeImage.setPixelABGR(x, y, (argb & 0xFF00FF00) | ((argb & 0xFF) << 16) | ((argb >>> 16) & 0xFF));
-+                }
-+            }
-+            this.minecraft.getTextureManager().register(PREVIEW, new DynamicTexture(PREVIEW::toString, nativeImage));
-+            this.previewRegistered = true;
-+            this.previewSkin = PlayerSkin.insecure(new ClientAsset.ResourceTexture(PREVIEW, PREVIEW), null, null,
-+                skin.slim() ? PlayerModelType.SLIM : PlayerModelType.WIDE);
++            final var appearance = new BedrockAppearanceStore.Appearance(BedrockAppearanceStore.Selection.CUSTOM,
++                skin.slim(), this.selectedImage, null, "preview", "", skin.model());
++            this.preview = BedrockPlayerSkins.preview(appearance.skinData(""));
++            this.previewSkin = this.preview.skin();
 +        } catch (IOException e) {
 +            this.error = Component.literal(e.getMessage());
 +        }
@@ -867,23 +1110,23 @@ index 0000000..86a6ae4
 +        }
 +        final Skin skin = this.pack.skins().get(this.selected);
 +        this.minecraft.gui.setScreen(this.dressingRoom);
-+        this.dressingRoom.importSkinPackSkin(this.selectedImage, skin.slim());
++        this.dressingRoom.importSkinPackSkin(this.selectedImage, skin);
 +    }
 +
 +    private void releasePreview() {
-+        if (this.previewRegistered) {
-+            this.minecraft.getTextureManager().release(PREVIEW);
-+            this.previewRegistered = false;
++        if (this.preview != null) {
++            this.preview.close();
++            this.preview = null;
 +        }
 +    }
 +
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
 new file mode 100644
-index 0000000..a5d7187
+index 0000000..086b07d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockDressingRoomScreen.java
-@@ -0,0 +1,328 @@
+@@ -0,0 +1,299 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -904,7 +1147,7 @@ index 0000000..a5d7187
 +
 +package com.viaversion.viafabricplus.bedrock.screen;
 +
-+import com.mojang.blaze3d.platform.NativeImage;
++import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
 +import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore.Appearance;
@@ -924,11 +1167,7 @@ index 0000000..a5d7187
 +import net.minecraft.client.gui.components.Button;
 +import net.minecraft.client.gui.components.PlayerSkinWidget;
 +import net.minecraft.client.renderer.RenderPipelines;
-+import net.minecraft.client.renderer.texture.DynamicTexture;
-+import net.minecraft.core.ClientAsset;
 +import net.minecraft.network.chat.Component;
-+import net.minecraft.resources.Identifier;
-+import net.minecraft.world.entity.player.PlayerModelType;
 +import net.minecraft.world.entity.player.PlayerSkin;
 +import org.jspecify.annotations.NonNull;
 +import org.lwjgl.sdl.SDLDialog;
@@ -942,8 +1181,6 @@ index 0000000..a5d7187
 +
 +    public static final Component TITLE = Component.translatable("screen.viafabricplus.bedrock_dressing_room");
 +
-+    private static final Identifier PREVIEW_TEXTURE = Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "dressing_room/preview");
-+    private static final Identifier CAPE_PREVIEW_TEXTURE = Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "dressing_room/cape");
 +    private static final ByteBuffer PNG_FILTER_NAME = MemoryUtil.memUTF8("PNG images");
 +    private static final ByteBuffer PNG_FILTER_PATTERN = MemoryUtil.memUTF8("png");
 +    private static final SDL_DialogFileFilter.Buffer PNG_FILTER = SDL_DialogFileFilter.calloc(1);
@@ -978,8 +1215,7 @@ index 0000000..a5d7187
 +    private Button customButton;
 +    private Button modelButton;
 +    private Button removeCapeButton;
-+    private boolean previewRegistered;
-+    private boolean capePreviewRegistered;
++    private BedrockPlayerSkins.Preview preview;
 +    private boolean filePickerOpen;
 +
 +    public BedrockDressingRoomScreen() {
@@ -1040,8 +1276,8 @@ index 0000000..a5d7187
 +            graphics.text(this.font, Component.translatable(this.appearance.cape() == null
 +                ? "bedrock_dressing_room.viafabricplus.no_cape" : "bedrock_dressing_room.viafabricplus.cape_selected"),
 +                left + 157, previewTop + 56, -1);
-+            if (this.capePreviewRegistered && this.previewHeight() >= 130) {
-+                graphics.blit(RenderPipelines.GUI_TEXTURED, CAPE_PREVIEW_TEXTURE, left + 157, previewTop + 74, 0, 0,
++            if (this.previewSkin != null && this.previewSkin.cape() != null && this.previewHeight() >= 130) {
++                graphics.blit(RenderPipelines.GUI_TEXTURED, this.previewSkin.cape().id(), left + 157, previewTop + 74, 0, 0,
 +                    64, 32, this.appearance.cape().getWidth(), this.appearance.cape().getHeight(),
 +                    this.appearance.cape().getWidth(), this.appearance.cape().getHeight());
 +            }
@@ -1156,53 +1392,31 @@ index 0000000..a5d7187
 +        }
 +    }
 +
-+    void importSkinPackSkin(final BufferedImage image, final boolean slim) {
++    void importSkinPackSkin(final BufferedImage image, final BedrockClassicSkinPack.Skin skin) {
 +        try {
-+            this.showAppearance(this.store.importSkinImage(this.accountId, image, slim));
++            this.showAppearance(this.store.importSkinImage(this.accountId, image, skin.slim(), skin.model()));
 +        } catch (IOException e) {
 +            this.failed(e);
 +        }
 +    }
 +
-+    private void showAppearance(final Appearance appearance) {
++    private void showAppearance(final Appearance appearance) throws IOException {
 +        this.appearance = appearance;
 +        this.releasePreview();
-+        this.registerPreview(PREVIEW_TEXTURE, appearance.skin());
-+        this.previewRegistered = true;
-+        if (appearance.cape() != null) {
-+            this.registerPreview(CAPE_PREVIEW_TEXTURE, appearance.cape());
-+            this.capePreviewRegistered = true;
-+        }
-+        this.previewSkin = PlayerSkin.insecure(new ClientAsset.ResourceTexture(PREVIEW_TEXTURE, PREVIEW_TEXTURE),
-+            appearance.cape() == null ? null : new ClientAsset.ResourceTexture(CAPE_PREVIEW_TEXTURE, CAPE_PREVIEW_TEXTURE),
-+            null, appearance.effectiveSlim() ? PlayerModelType.SLIM : PlayerModelType.WIDE);
++        this.preview = BedrockPlayerSkins.preview(appearance.skinData(""));
++        this.previewSkin = this.preview.skin();
 +        this.customButton.active = appearance.selection() == Selection.CUSTOM || this.store.hasCustomSkin(this.accountId);
-+        this.modelButton.active = appearance.selection() == Selection.CUSTOM;
++        this.modelButton.active = appearance.selection() == Selection.CUSTOM && appearance.classicModel() == null;
 +        this.modelButton.setMessage(Component.translatable(appearance.effectiveSlim()
 +            ? "bedrock_dressing_room.viafabricplus.slim" : "bedrock_dressing_room.viafabricplus.wide"));
 +        this.removeCapeButton.active = appearance.cape() != null;
 +        this.status = Component.translatable("bedrock_dressing_room.viafabricplus.reconnect");
 +    }
 +
-+    private void registerPreview(final Identifier id, final BufferedImage image) {
-+        final NativeImage nativeImage = new NativeImage(image.getWidth(), image.getHeight(), false);
-+        for (int y = 0; y < image.getHeight(); y++) {
-+            for (int x = 0; x < image.getWidth(); x++) {
-+                final int argb = image.getRGB(x, y);
-+                nativeImage.setPixelABGR(x, y, (argb & 0xFF00FF00) | ((argb & 0xFF) << 16) | ((argb >>> 16) & 0xFF));
-+            }
-+        }
-+        this.minecraft.getTextureManager().register(id, new DynamicTexture(id::toString, nativeImage));
-+    }
-+
 +    private void releasePreview() {
-+        if (this.previewRegistered) {
-+            this.minecraft.getTextureManager().release(PREVIEW_TEXTURE);
-+            this.previewRegistered = false;
-+        }
-+        if (this.capePreviewRegistered) {
-+            this.minecraft.getTextureManager().release(CAPE_PREVIEW_TEXTURE);
-+            this.capePreviewRegistered = false;
++        if (this.preview != null) {
++            this.preview.close();
++            this.preview = null;
 +        }
 +    }
 +
@@ -1282,10 +1496,10 @@ index 364ec25..49f0538 100644
    "bedrock_realms.viafabricplus.no_worlds": "No worlds found :(",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStoreTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStoreTest.java
 new file mode 100644
-index 0000000..ccb842c
+index 0000000..b8fbd8a
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStoreTest.java
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,126 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1356,7 +1570,7 @@ index 0000000..ccb842c
 +    @Test
 +    void rejectsInvalidSkinWithoutChangingSelection() throws IOException {
 +        final BedrockAppearanceStore store = this.store();
-+        final Path invalid = this.image(64, 32);
++        final Path invalid = this.image(64, 48);
 +
 +        assertThrows(IOException.class, () -> store.importSkin("123", invalid));
 +        assertEquals(Selection.STEVE, store.load("123").selection());
@@ -1372,8 +1586,32 @@ index 0000000..ccb842c
 +
 +        assertTrue(this.store().load("123").effectiveSlim());
 +        assertThrows(IOException.class, () -> store.importSkinImage("123",
-+            new BufferedImage(64, 32, BufferedImage.TYPE_INT_ARGB), false));
++            new BufferedImage(64, 48, BufferedImage.TYPE_INT_ARGB), false));
 +        assertTrue(this.store().load("123").effectiveSlim());
++    }
++
++    @Test
++    void expandsLegacyLimbsAndPersistsTheConvertedSkin() throws IOException {
++        final BufferedImage source = new BufferedImage(64, 32, BufferedImage.TYPE_INT_ARGB);
++        for (int y = 0; y < 32; y++)
++            for (int x = 0; x < 64; x++) source.setRGB(x, y, 0xFF000000 | y << 8 | x);
++        source.setRGB(32, 0, 0); // Keep the authored hat rather than treating it as a background.
++        final var imported = this.store().importSkinImage("123", source, false);
++        assertEquals(64, imported.skin().getHeight());
++        assertEquals(source.getRGB(7, 16), imported.skin().getRGB(20, 48));
++        assertEquals(source.getRGB(3, 20), imported.skin().getRGB(24, 52));
++        assertEquals(source.getRGB(11, 31), imported.skin().getRGB(16, 63));
++        assertEquals(source.getRGB(43, 20), imported.skin().getRGB(40, 52));
++        assertEquals(source.getRGB(51, 31), imported.skin().getRGB(32, 63));
++        assertEquals(0, imported.skin().getRGB(0, 32));
++        assertEquals(0, imported.skin().getRGB(48, 48));
++        assertEquals(32, source.getHeight());
++        final var restored = this.store().load("123");
++        assertEquals(imported.skin().getRGB(40, 52), restored.skin().getRGB(40, 52));
++        assertEquals(64, restored.skin().getHeight());
++        final Path png = this.directory.resolve("legacy.png");
++        ImageIO.write(source, "png", png.toFile());
++        assertEquals(restored.skin().getRGB(40, 52), this.store().importSkin("456", png).skin().getRGB(40, 52));
 +    }
 +
 +    private BedrockAppearanceStore store() {
@@ -1390,10 +1628,10 @@ index 0000000..ccb842c
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPackTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPackTest.java
 new file mode 100644
-index 0000000..e5ccc03
+index 0000000..53e58a3
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicSkinPackTest.java
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,152 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import java.awt.image.BufferedImage;
@@ -1474,6 +1712,59 @@ index 0000000..e5ccc03
 +        }
 +
 +        assertThrows(IOException.class, () -> BedrockClassicSkinPack.read(archive));
++    }
++
++    @Test
++    void retainsCustomGeometryAndRectangularTextureThroughStoreAndWire() throws IOException {
++        final Path archive = this.directory.resolve("custom.mcpack");
++        final String geometry = """
++            {"format_version":"1.8.0","geometry.robot":{"texturewidth":64,"textureheight":32,
++              "bones":[{"name":"body","pivot":[0,12,0],"cubes":[{"origin":[-4,0,-2],"size":[8,24,4],"uv":[0,0]}]}]}}
++            """;
++        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(archive))) {
++            put(zip, "Robot/manifest.json", "{\"modules\":[{\"type\":\"skin_pack\"}]}");
++            put(zip, "Robot/skins.json", "{\"skins\":[{\"geometry\":\"geometry.robot\",\"texture\":\"robot.png\"}]}");
++            put(zip, "Robot/geometry.json", geometry);
++            put(zip, "Robot/robot.png", image(64, 32));
++        }
++        final var pack = BedrockClassicSkinPack.read(archive);
++        final var skin = pack.skins().getFirst();
++        final var model = skin.model();
++        final var texture = pack.image(skin);
++        assertEquals(32, texture.getHeight());
++        final var store = new BedrockAppearanceStore(this.directory.resolve("appearances"),
++            _ -> new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB));
++        store.importSkinImage("123", texture, skin.slim(), model);
++        final var restored = store.load("123");
++        assertEquals(model, restored.classicModel());
++        assertEquals(32, restored.skin().getHeight());
++        final var wire = restored.skinData("unused standard geometry");
++        assertEquals(model.geometry(), wire.geometryData());
++        assertEquals(model.resourcePatch(), wire.skinResourcePatch());
++        org.junit.jupiter.api.Assertions.assertFalse(wire.persona());
++        assertThrows(IOException.class, () -> store.setSlim("123", true));
++        store.select("123", BedrockAppearanceStore.Selection.STEVE);
++        org.junit.jupiter.api.Assertions.assertNull(store.load("123").classicModel());
++        store.select("123", BedrockAppearanceStore.Selection.CUSTOM);
++        assertEquals(model, store.load("123").classicModel());
++        store.importSkinImage("123", new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB), true);
++        org.junit.jupiter.api.Assertions.assertNull(store.load("123").classicModel());
++    }
++
++    @Test
++    void rejectsCyclesAndMissingGeometryWithoutReplacingTheStoredSkin() throws IOException {
++        final String cyclic = """
++            {"minecraft:geometry":[{"description":{"identifier":"geometry.cycle","texture_width":64,"texture_height":64},
++            "bones":[{"name":"a","parent":"b"},{"name":"b","parent":"a"}]}]}
++            """;
++        assertThrows(IOException.class, () -> BedrockClassicModel.read(cyclic, "geometry.cycle"));
++        assertThrows(IOException.class, () -> BedrockClassicModel.read(cyclic, "geometry.missing"));
++        final var store = new BedrockAppearanceStore(this.directory.resolve("appearances"),
++            _ -> new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB));
++        final var before = store.importSkinImage("123", new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB), false);
++        assertThrows(IOException.class, () -> store.importSkinImage("123", new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB),
++            false, new BedrockClassicModel(cyclic, "geometry.cycle")));
++        assertEquals(before.skinId(), store.load("123").skinId());
 +    }
 +
 +    private static void put(final ZipOutputStream zip, final String name, final String value) throws IOException {

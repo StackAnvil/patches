@@ -10,13 +10,17 @@ ViaBedrock reads skins from `PlayerListPacket` and `PlayerSkinPacket`. Its `Skin
 
 Native captures exposed two details that affect rendering. Geometry descriptions can use the full animation strip dimensions. Bedrock polygon UVs also use a bottom origin. The renderer adjusts the frame dimensions and UVs before it uploads each frame. It checks strip sizes, frame counts, and model bindings, then releases all animation textures when the skin changes.
 
-The add-on sends a [PlayerSkinPacket](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/player-skin-packet/) for classic and account character changes in a connected world. A matching packet from the server confirms the returned skin ID. A private protocol-2193 relay accepted an assembled character update with one animation, ten pieces, and three tint groups, then returned its matching acknowledgement. The run also exposed a PlayerList actor-ID decoding error. ViaBedrock now reads signed actor IDs consistently with StartGame and the native schema. This acknowledgement does not establish how a second client displays the character.
+The add-on sends a [PlayerSkinPacket](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/player-skin-packet/) for classic and account character changes in a connected world. A matching packet from the server confirms the returned skin ID. A private protocol-2193 relay accepted an assembled character update with one animation, ten pieces, and three tint groups, then returned its matching acknowledgement. The run also exposed a PlayerList actor-ID decoding error. ViaBedrock now reads signed actor IDs consistently with StartGame and the native schema. A native second client displayed the assembled HelliArm character. A controlled color probe did not establish which animation frames it used. Acknowledgement and visual presence therefore do not establish native timing or complete format parity.
 
 ## Classic skins
 
-The Dressing Room selects Steve, Alex, an imported PNG, or a skin from a local `.mcpack`. It reads `manifest.json`, `skins.json`, and PNGs from [standard Classic Skin packs](https://learn.microsoft.com/en-us/minecraft/creator/documents/packagingaskinpack?view=minecraft-bedrock-stable). The player can preview each supported skin and select one. Current pack import supports the standard wide and slim models. It resolves nested textures relative to a single pack root, including wrapped archive exports. It rejects ambiguous roots, unsafe paths, duplicate entries, and oversized expanded archives.
+The Dressing Room selects Steve, Alex, an imported PNG, or a skin from a local `.mcpack`. It reads `manifest.json`, `skins.json`, and PNGs from [standard Classic Skin packs](https://learn.microsoft.com/en-us/minecraft/creator/documents/packagingaskinpack?view=minecraft-bedrock-stable). The player can preview each supported skin and select one. Pack import supports wide and slim models, plus selected custom geometry from `geometry.json`. It reads modern geometry arrays and direct legacy geometry definitions. It resolves nested textures relative to a single pack root, including wrapped archive exports. It rejects ambiguous roots, unsafe paths, duplicate entries, and oversized expanded archives.
 
-`BedrockAppearanceStore` keeps the choice per account. `ViaFabricPlusSkinProvider` sends the selected skin in the next login JWT. The store keeps an imported cape separately. Classic pack import still needs custom geometry and animation metadata.
+`BedrockAppearanceStore` keeps the choice per account. `ViaFabricPlusSkinProvider` sends the selected skin in the next login JWT. The store keeps an imported cape and custom geometry separately. Custom model textures retain their dimensions and UV layout. Model selection, save/load, login claims, and live packets use the same selected geometry.
+
+Legacy 64×32 skins expand to 64×64 by mirroring limb faces. The importer preserves transparent hat details and clears unused opaque hat backgrounds. Custom geometry textures retain their original rectangular dimensions.
+
+Custom geometry import checks bone hierarchy, coordinate bounds, texture dimensions, and model size before replacing a saved skin. Inherited legacy geometry and classic animation metadata remain incomplete.
 
 ## Account recipes and editing
 
@@ -53,6 +57,8 @@ The active character has an authenticated avatar at `GET /api/v1.0/profile/image
 
 **Use in worlds** converts that model's textures and triangle meshes into a Bedrock atlas and geometry. It saves the appearance per account and sends it at login or through a live skin update. Slot selection and edits refresh an active character already selected for use in worlds.
 
+Native ModelBinary and login captures use different Z conventions. Conversion reflects positions, node translations, and normals across Z, then reverses triangle winding. Skin geometry retains the native face direction.
+
 The add-on resolves persona handles from the complete recipe and current catalog. Built-in handles use the native default pack UUID. Ordinary catalog handles use the pack UUID for both `PieceId` and `PackId`, plus the Store product UUID. An owned Office Shirt capture confirmed that its encrypted metadata's internal piece UUID differs from the transmitted handle.
 
 Piece claims use native names such as `persona_hair`. Packet fields use ViaBedrock's enum names such as `Hair`. The add-on converts between these names and sends the recipe's four-channel tint groups. The packet codec normalizes `#0` to `#00000000` without changing the color value.
@@ -65,13 +71,19 @@ For animated owned geometry, assembly selects the character's body and arm varia
 
 A private HelliArm capture contains ten animated arm cubes, a 16-frame 32×512 strip, and a separate blinking face. Targeted checks decode the entitled arm pack, assemble its variants, preserve every frame through save/load, and render the native face and arm bindings together. These checks use local private fixtures through `STACKANVIL_PERSONA_ASSETS` and `STACKANVIL_PERSONA_CAPTURE`; the repository contains no captured assets or receipts.
 
+## Dressing Room previews
+
+The main Dressing Room and Classic Skin pack screen share the player skin renderer. Custom models use their saved geometry. Account characters include separate animated surfaces in the preview. Each preview owns and releases its textures when the screen changes or closes.
+
+A running Java client displayed the assembled HelliArm body and animated arm surfaces. The account character preview stays visible without a world connection. Unsupported geometry reports an error through the existing import or selection flow.
+
 ## Work still needed
 
 - Assemble default animated faces and resolve free piece assets beyond the static model service.
 - Apply and verify tint maps for animated pieces.
 - Verify native animation timing and emote playback.
 - Add other piece palettes and independent limb controls after native write captures establish their behavior.
-- Expand classic pack import to custom geometry and animation metadata.
+- Support inherited legacy geometry and classic pack animation metadata.
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits.
 
 Keep login JWTs, receipts, content keys, raw flows, screenshots, player textures, and account data private under `.stackanvil/`.
