@@ -24,7 +24,7 @@ Custom geometry import checks bone hierarchy, coordinate bounds, texture dimensi
 
 Missing legacy parents resolve from the licensed package's base vanilla model library. Pack definitions take precedence, including across library chains. Imports run in the background and request the package only when the pack lacks a selected model or parent. Self-contained packs need no Store sign-in. The importer checks the account and open screen before showing the result.
 
-Licensed tests resolve all seven inherited entries from the base skin-model library, including parents supplied by entity model files. Equal duplicate definitions share one library entry. Conflicting definitions remain errors. Versioned vanilla overlays and native visual comparisons remain pending. A broader library check found an unresolved `rightarm` parent in the native legacy vex model. The importer rejects this model until native parent-name behavior is established. Classic skin animation aliases and render flags survive import and transport. Local alias playback and geometry-provided alias precedence remain incomplete.
+Licensed tests resolve all seven inherited entries from the base skin-model library, including parents supplied by entity model files. Equal duplicate definitions share one library entry. Conflicting definitions remain errors. Versioned vanilla overlays and native visual comparisons remain pending. A broader library check found an unresolved `rightarm` parent in the native legacy vex model. The importer rejects this model until native parent-name behavior is established. Classic skin animation aliases and render flags survive import and transport. Local alias playback uses the licensed player graph. Geometry-provided alias precedence remains incomplete.
 
 ## Classic skin declarations
 
@@ -32,11 +32,25 @@ The importer preserves `skins.json` animation aliases in `SkinResourcePatch`, wi
 
 The account store keeps these options with the classic appearance, including skins that use the standard Steve or Alex model. Preset selection suspends the options. Selecting the saved custom skin restores them. A plain PNG import clears the previous pack options. Model-width and cape edits preserve them.
 
-Private Bedrock 1.26.51.1 loader and serialization observations establish the resource-patch fields. Tests cover metadata parsing, persistence, preset selection, width changes, and live protocol round trips. Preview skin data carries the same declarations. Java does not yet use these aliases for local playback.
+Private Bedrock 1.26.51.1 loader and serialization observations establish the resource-patch fields. Tests cover metadata parsing, persistence, preset selection, width changes, and live protocol round trips. Preview skin data carries the same declarations. Java uses these aliases for local preview and world model playback.
 
 Player equipment layers now use the installed skin's render flags. `enable_attachables=false` hides armor, wings, held items, and equipped head items. `hide_armor=true` hides armor and wings while preserving held items. `held_item_ignores_lighting=true` gives only held-item layers full brightness. Clothing, face, and cape layers keep their ordinary behavior. Missing flags retain the vanilla player defaults. Skin replacement, release, and disconnect clear the previous options.
 
 The target native reader applies only present flags. The matching player definition enables attachables. Microsoft documents the [equipment flags and armor precedence](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/entityreference/examples/cliententitydocumentation/cliententitydocumentationintroduction?view=minecraft-bedrock-stable#enable_attachables). A private running-client probe passed 208 checks across standard and custom models, flag combinations, layer submissions, lighting, replacement, and release. These checks establish Java layer behavior. Native visual and first-person comparisons remain pending.
+
+## Classic animation playback
+
+The package loader also extracts the base vanilla player definition, animations, and animation controllers. Classic aliases override the player defaults. Empty aliases disable their referenced animation. Imports compile the reachable graph before accepting an animated skin pack.
+
+Each actor has separate variables and playback clocks. Initialization runs once. Per-frame scripts run before the ordered animation references. Nested controllers use ordered transitions, entry and exit scripts, and temporary variables with linear remap curves. Controller re-entry starts a new animation clock. Item queries retain string values. Native numeric float suffixes remain distinct from quoted text.
+
+Previews use the player graph's paperdoll state. World models receive posture, motion, item, and rotation bindings. Body and clothing use one sampled pose. Entity-relative rotation cancels animated parent rotation through the authored bone hierarchy.
+
+Licensed package tests establish the zombie-arm alias override and additive riding pose. The full add-on suite passes 106 tests with no skips. A running Java client passes eight checks for the animation bridge, preview pose, and player model pose. The preview shows the alias pose with a synthetic texture and privately downloaded actor assets. This fixture does not establish native motion equivalence or a live account import.
+
+Controller crossfades, completion queries, effects, and complete item-action bindings remain incomplete. Geometry-provided alias precedence and first-person playback remain pending. Native comparisons must also establish blended rotation spaces and nontrivial scale composition.
+
+Sources: [Animation controller variables and transitions](https://learn.microsoft.com/en-us/minecraft/creator/documents/animations/animationcontroller?view=minecraft-bedrock-stable) and [animation rotation spaces](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/actor_animation.v1.8.0?view=minecraft-bedrock-stable).
 
 ## Account recipes and editing
 
@@ -104,15 +118,15 @@ The add-on bundles an Xodus-based package helper. First use opens Microsoft Stor
 
 The current pin selects Bedrock 1.26.51.1, package version 1.26.5101.0, for ViaBedrock protocol 2193. The package URL identifies the matching official Xbox CDN build. Its pinned header checksum anchors the package hash tree. The helper verifies metadata and encrypted file pages before decryption because this CDN serves the package over HTTP.
 
-The helper obtains a device-bound license from Microsoft and unwraps its content key. It reads the segment index or the NTFS persona directory. The NTFS reader handles resident files and ordinary streams with multiple data runs. It downloads persona files, base vanilla model archives, and the metadata needed to locate them.
+The helper obtains a device-bound license from Microsoft and unwraps its content key. It reads the segment index or the NTFS persona directory. The NTFS reader handles resident files and ordinary streams with multiple data runs. It downloads persona files and base vanilla archives for models, animations, controllers, and client entities.
 
 Java unpacks version 1 BR archives beneath their original piece directories. Shared content offsets are valid. Empty archive entries preserve separately supplied loose files. Path, file count, size, and duplicate checks apply before publishing the cache.
 
-The cache lives under the add-on's `bedrock-assets/persona/<account>/<version>.zip` directory. Each file has a checksum, and the cache records the package identity. Cache format 2 includes the model library. Older persona-only caches refresh before use. A failed refresh keeps the previous cache. Store credentials remain in a separate private directory, and the helper reuses its device identity.
+The cache lives under the add-on's `bedrock-assets/persona/<account>/<version>.zip` directory. Each file has a checksum, and the cache records the package identity. Cache format 3 includes the model and actor libraries. Older persona-only and model-only caches refresh before use. A failed refresh keeps the previous cache. Store credentials remain in a separate private directory, and the helper reuses its device identity.
 
 The source loader indexes piece metadata, PNG face strips, BGRA TGA tint masks, and geometry by native piece UUID. Equipped built-in pieces enter the same asset loader as owned pieces. Wave, Clap, Over There, and Follow Me use their extracted animation sources for previews and world playback. Built-in emotes retain their piece UUID as the wire identity.
 
-A live test obtained the official license and extracted 229 files, including both base vanilla model archives. Java tests used the bundled helper, unpacked the archives, sampled all four emotes, decoded face masks, and reused the versioned cache. No downloaded content or credentials enter the repository. Fresh interactive Store sign-in and the Windows and macOS helper builds still need runtime verification.
+A live test obtained the official license and extracted 232 files, including the base vanilla model and actor archives. Java tests used the bundled helper, unpacked the archives, sampled all four emotes, decoded face masks, and reused the versioned cache. No downloaded content or credentials enter the repository. Fresh interactive Store sign-in and the Windows and macOS helper builds still need runtime verification.
 
 Local add-on builds require Rust 1.98.1, Protobuf, and the platform's WebView build libraries. Linux sign-in requires WebKitGTK 4.1. Release and full-stack CI assemble helper resources for Linux x64, Windows x64, and both macOS architectures. Native installations serve only as private research fixtures.
 
@@ -128,7 +142,7 @@ A running Java client displayed the HelliArm character with its body, face, and 
 
 The add-on downloads emote packs through the current account's entitlement receipt. It reads the named animation source and uses the pack UUID as the wire identity. Native captures show that the metadata piece UUID differs. Receipts and content keys remain in memory. Preview uses the active account character and does not change its saved recipe.
 
-Menu models retain the native root, waist, and body hierarchy. Bone poses also apply to animated clothing surfaces. The sampler supports position, rotation, scale, pre/post keyframes, linear and Catmull-Rom interpolation, and Molang frame queries. Each playback has its own variable state. Expressions have size and execution limits. Effects, delays, multiple animation sources, and entity-relative rotations remain unsupported.
+Menu models retain the native root, waist, and body hierarchy. Bone poses also apply to animated clothing surfaces. The sampler supports position, rotation, scale, pre/post keyframes, linear and Catmull-Rom interpolation, and Molang frame queries. Each playback has its own variable state. Expressions have size and execution limits. Entity-relative rotations use the authored hierarchy. Effects, timelines, delays, and multiple animation sources remain unsupported.
 
 Private Bedrock 1.26.51 Battle Cry and Kadoosh assets resolve to 6.5 and 4.75 seconds. Asset tests sample every frame at 60 Hz. A Java GUI recording verifies Battle Cry movement, attached clothing, readable controls at the default GUI scale, and pose reset after completion. The recording uses private native assets and a local appearance fixture. It does not verify a live Java account download.
 
@@ -148,9 +162,9 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 
 - Resolve remaining free assets, cape bindings, and animated shared body textures. These recipes still depend on the service model. Compare more overlapping clothing combinations against native results.
 - Compare more face sizes, tint channels, and equipped combinations against native results.
-- Verify native blinking and strip timing. Implement emote effects, timelines, delays, multiple sources, relative rotations, chat announcements, and unavailable remote assets.
+- Verify native blinking and strip timing. Implement emote effects, timelines, delays, multiple sources, chat announcements, and unavailable remote assets. Compare entity-relative rotations against native playback.
 - Add other piece palettes, verify native leg edits, and resolve free limb side recipes. Add paid purchase/redemption flows and account classic-pack downloads.
-- Verify versioned vanilla model overrides and native parent-name behavior. Implement local classic alias playback and geometry-provided alias precedence. Compare inherited skins and equipment flags with native rendering, including first-person views.
+- Verify versioned vanilla model overrides and native parent-name behavior. Complete classic controller blending, completion queries, item-action bindings, geometry-provided alias precedence, and first-person playback. Compare inherited skins and equipment flags with native rendering, including first-person views.
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. A white quad above the player moved independently with the sky clouds; it was not an extra face surface.
 
 Keep login JWTs, receipts, content keys, raw flows, screenshots, player textures, and account data private under `.stackanvil/`.

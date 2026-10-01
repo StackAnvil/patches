@@ -6,21 +6,33 @@ Owned persona and emote assets use the current inventory receipt, PlayFab catalo
 
 ## Built-in persona package
 
-Bundle an Xodus-based helper that signs into Microsoft Store with the selected Xbox account, obtains a device-bound license, and extracts persona files and base vanilla model archives from the official package. Pin Bedrock 1.26.51.1 / package 1.26.5101.0 to protocol 2193. The pinned header anchors verification of the Merkle tree, metadata, and encrypted pages before decryption.
+The bundled Xodus-based helper signs into Microsoft Store with the selected Xbox account and obtains a device-bound license. It extracts persona files and base vanilla model and actor archives from the official package. Pin Bedrock 1.26.51.1 / package 1.26.5101.0 to protocol 2193. The pinned header anchors verification of the Merkle tree, metadata, and encrypted pages before decryption.
 
 Read resident and ordinary multi-run NTFS streams or the package segment index. Unpack BR archives with shared offsets and empty stubs, then atomically publish a versioned cache with file checksums. Decode native PNG face strips and BGRA TGA tint masks and feed equipped built-in pieces into the asset loader. Wave, Clap, Over There, and Follow Me use their extracted animation sources for preview and world playback.
 
-Local Linux tests acquired the official license and extracted 229 files through the bundled helper. Fresh interactive Store sign-in and Windows and macOS runtime flows still need verification. CI builds the four supported helper variants. The runtime requires no installed game, copied keys, or user-supplied extractor.
+Local Linux tests acquired the official license and extracted 232 files through the bundled helper. Fresh interactive Store sign-in and Windows and macOS runtime flows still need verification. CI builds the four supported helper variants. The runtime requires no installed game, copied keys, or user-supplied extractor.
 
 Sources: [Pinned Xodus extraction](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/commands/streaming.rs), [license acquisition](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/license.rs), and [BR archive format](https://github.com/bedrock-crustaceans/brarchive/blob/main/FORMAT.md).
 
 ## Classic model library
 
-Expand both base vanilla model archives under their original model paths. Index individual legacy and modern definitions and merge equal duplicates. Cache format 2 refreshes older persona-only caches before use. Failed acquisition keeps the existing cache.
+Expand both base vanilla model archives under their original model paths. Index individual legacy and modern definitions and merge equal duplicates. Cache format 3 refreshes older persona-only and model-only caches before use. Actor compilation requires the player definition, animations, and controllers. Failed acquisition keeps the existing cache.
 
 Classic imports resolve missing models and parents lazily through the licensed library. Pack definitions retain precedence. Loading runs on a worker; a changed account or closed screen prevents stale results from opening. Self-contained packs require no asset acquisition.
 
 Licensed tests resolve all seven inherited entries from the base skin-model library, including the zombie parent from an entity file. They verify extraction, equal duplicate definitions, model decoding, cache reuse, and schema refresh. Versioned vanilla model overrides and native visual comparisons remain pending. A broader check found an unresolved `rightarm` parent in the native legacy vex model; native parent-name behavior needs research before importing it.
+
+## Classic actor graph
+
+Compile reachable player animations and nested controllers from the matching licensed package. Apply classic aliases over the player defaults, including empty overrides. Preserve ordered weighted references, initialization, per-frame scripts, entry and exit scripts, state transitions, temporary remapped variables, and independent playback clocks.
+
+Typed queries preserve item strings. Normalize native numeric float suffixes outside quoted text. Apply the graph to preview and world models through the same authored hierarchy as emotes. Entity-relative rotation cancels parent animation rotation before attachment flattening.
+
+Private matching package tests establish the zombie-arm alias and additive riding pose. Targeted tests cover controller cycles, re-entry, nested variable restoration, typed queries, and simultaneous parent rotations. A running Java client passes eight checks for the injected bridge, preview alias, and player model pose. Its visible preview uses a synthetic texture and private licensed actor files.
+
+Controller crossfades, completion queries, effects, full item-action bindings, geometry-provided alias precedence, and first-person playback remain incomplete. Native motion, mixed rotation spaces, and nontrivial scale composition still need comparison. The runtime probe does not establish live account import behavior.
+
+Sources: [Controller semantics](https://learn.microsoft.com/en-us/minecraft/creator/documents/animations/animationcontroller?view=minecraft-bedrock-stable) and [animation rotation spaces](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/actor_animation.v1.8.0?view=minecraft-bedrock-stable).
 
 ## Face composition and tint blending
 
@@ -40,7 +52,7 @@ Private Bedrock 1.26.51.1 comparisons match all 16,384 captured body pixels and 
 
 ## Emote playback
 
-Play owned and built-in animation sources on the active character with Replay and Stop controls. Preserve root, waist, and body hierarchy and animate clothing surfaces in the same pose. Mocha supplies actor-local Molang expressions with host execution limits. Effects, delays, multiple animation sources, and entity-relative rotations remain unsupported.
+Play owned and built-in animation sources on the active character with Replay and Stop controls. Preserve root, waist, and body hierarchy and animate clothing surfaces in the same pose. Mocha supplies actor-local Molang expressions with host execution limits. Entity-relative rotation uses the authored hierarchy. Effects, timelines, delays, and multiple animation sources remain unsupported.
 
 The rebindable B key opens the four-position world wheel with mouse and 1-4 controls. Load entitled wheel assets, advertise `EMOTE_LIST`, and send native `EMOTE` with pack UUIDs and tick durations. Incoming emotes use the same pose sampler and authored model hierarchy. Movement and completion reset playback.
 
@@ -49,7 +61,7 @@ Private native 1.26.51 captures establish Battle Cry's pack UUID, 130 ticks, and
 ## Verification
 
 - Full patch stack builds successfully.
-- 99 add-on tests pass with private persona, login, emote, and legacy geometry fixtures enabled.
+- 106 add-on tests pass with private persona, login, emote, and legacy geometry fixtures enabled.
 - Private Battle Cry, Kadoosh, and four built-in emote tests sample every frame at 60 Hz.
 - Bundled-helper tests verify official acquisition, archive extraction, face-mask decoding, cache reuse, and failed refresh recovery.
 - A Java GUI recording verifies the locally assembled body, face, and animated arms, including open and closed face frames. Geometry parser tests cover native null optional transforms.
