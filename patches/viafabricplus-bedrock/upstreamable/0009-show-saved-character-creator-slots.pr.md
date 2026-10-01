@@ -558,3 +558,17 @@ Sources: Microsoft's [expression lifetime reference](https://learn.microsoft.com
 All 274 fixture-enabled add-on tests pass with no failures or skips. The full dependency build and bundle pass. A muted Java 26.3 probe resolves both emitter types through server player aliases and world extraction. It verifies repeated loop creation, expression deactivation and reactivation, expiration drainage, and resource release.
 
 The existing local server advertises protocol 2169. The runtime probe uses its Java 1.21.11 proxy route. This verifies Java world integration; it does not verify a direct protocol 2193 join or native visible parity. The independent lifetime fixtures use target Bedrock 1.26.51.1.
+
+### Particle birth and aging order
+
+Bedrock 1.26.51.1 emits before updating its particle population. Newborns receive motion in the same frame. Capacity freed during removal becomes available on the next update. Update expressions and motion read the previous particle age. Render expressions read the advanced age, clamped to the lifetime. Lifetime expiration checks the previous age after motion. A particle therefore survives the update that reaches its lifetime.
+
+Use integer nanosecond clocks and the target float-to-nanosecond conversion. Keep `per_update_expression` separate from `per_render_expression`. Remove expired particles by swapping the final particle into their slot, then process that particle before advancing the index. This preserves native population order and avoids delaying a swapped particle until the next frame.
+
+Independent execution of `142158a40` with the actual dynamic motion kernel `1461c9ce0` supplies 40 schedules and 360 updates. Cases cover instant and steady emission, capacity limits, zero and short lifetimes, exact boundaries, overshoot, zero deltas, and expression expiration. Production matches births, callback order, population order, positions, and post-update ages. The probe supplies resource and actor accessors, query refresh, birth allocation, initial position and velocity, and callback bodies. Reset random registration, collision, and render interpolation remain outside these fixtures. Binaries and execution harnesses stay private.
+
+Another 40 native context cases verify lifetime and age variables, including negative values and overshoot. The target query-refresh routine executes with supplied variable lookup and write boundaries. These cases establish the age clamp used by update and render expressions.
+
+Source: [Microsoft particle lifetime reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftparticle_lifetime_expression?view=minecraft-bedrock-stable). The target execution establishes update ordering beyond that reference.
+
+All 276 fixture-enabled add-on tests pass with no failures or skips. The full dependency build and bundle pass. A muted Java 26.3 world probe verifies update and render callbacks, nanosecond clocks, motion, loop creation, activation, expiration drainage, and resource release. It uses the existing older-protocol server through the Java proxy route. Direct protocol 2193 joins and native visible comparisons remain unverified.

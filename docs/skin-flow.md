@@ -316,7 +316,7 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 
 Animation timelines and controller entries now resolve particle aliases through their actor library. Particle requests precede sounds at the same timestamp. Suppressed frames consume their event cursor. Each request retains the source player's Molang variables and queries, including standalone emotes.
 
-The particle runtime supports instant and steady emission with a single emitter lifetime. It accepts point, custom, box, sphere, disc, and entity-bounds shapes. It supports initial speed and spin, dynamic or parametric motion, tint gradients, flipbooks, and rectangular billboards. The two admitted facing modes are `rotate_xyz` and `lookat_xyz`. PNG and TGA textures follow pack precedence. Server libraries retain particle definitions and their referenced textures.
+The particle runtime supports instant and steady emission with once, looping, and expression emitter lifetimes. It accepts point, custom, box, sphere, disc, and entity-bounds shapes. It supports initial speed and spin, dynamic or parametric motion, tint gradients, flipbooks, and rectangular billboards. The two admitted facing modes are `rotate_xyz` and `lookat_xyz`. PNG and TGA textures follow pack precedence. Server libraries retain particle definitions and their referenced textures.
 
 The world renderer creates bounded emitters and images. Attached origins follow static model locators and the current actor position. Unbound origins remain fixed. Account changes and world cleanup invalidate pending work and release textures. Unsupported components report an asset error.
 
@@ -342,7 +342,15 @@ Independent execution supplies 52 schedules and 416 native updates. Production m
 
 A muted Java 26.3 client verifies loop creation, expression deactivation and reactivation, expiration drainage, and resource release through world extraction. The existing local server uses an older Bedrock protocol through a Java proxy route. This establishes Java integration, not direct protocol 2193 joins or native visible parity.
 
-Local-space transforms, other facing modes, manual emission, curves, and nested effect events remain incomplete. Native comparisons still need to establish attachment rotation, particle aging order, random and variable registration, tint quantization, and visible scale. These component tests do not establish complete particle parity.
+Particle emission now precedes motion and removal. Newborn particles update in their birth frame. Capacity freed during removal becomes available on the next update. Particle clocks use integer nanoseconds. Motion and update expressions read the previous age; render expressions read the advanced age, clamped to the lifetime. A particle survives the update that reaches its lifetime. Removal swaps in the final particle and processes it before continuing.
+
+Independent execution supplies 40 schedules and 360 native updates. Production matches birth counts, update and expiration callback order, particle positions, population order, and post-update ages. The probe executes the target emitter update, dynamic motion, age advancement, and removal. It supplies birth allocation, initial values, actor and resource accessors, query refresh, and callback bodies. Collision and render interpolation are outside these schedules.
+
+Another 40 native context cases verify lifetime and age variables, including negative values and overshoot. The target query-refresh routine executes with supplied variable lookup and write boundaries. These cases establish the age clamp used by update and render expressions.
+
+All 276 fixture-enabled add-on tests pass with no failures or skips. The full dependency build and bundle pass. A muted Java world probe verifies update and render callbacks, nanosecond clocks, motion, loop creation, activation, expiration drainage, and resource release. This probe uses the existing older-protocol server through its Java proxy route and does not establish native visible parity.
+
+Local-space transforms, other facing modes, manual emission, curves, and nested effect events remain incomplete. Native comparisons still need to establish attachment rotation, random and variable registration, tint quantization, and visible scale. These component tests do not establish complete particle parity.
 
 ### Missing features
 
