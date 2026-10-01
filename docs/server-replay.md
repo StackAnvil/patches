@@ -42,7 +42,7 @@ bun run server-replay record hive --client native --seconds 120
 
 Use `--native-home /absolute/path/to/installation` to select another prepared installation. Its game and Proton directories must be inside that installation. The tool makes a separate private copy and runs it on the lab display. It does not operate the user's running client.
 
-The native client and saved MinecraftAuth account must belong to the same Xbox account. The relay verifies multiplayer tokens against the official issuer's published signing keys and binds native client properties to the authenticated client key. It preserves those properties and authenticates the upstream connection with a fresh session key. It records decrypted packets without translating gameplay. Pack reconstruction checks hashes and decrypts selected assets for replay. Missing bytes from a cached pack fail the capture.
+The native client and saved MinecraftAuth account must belong to the same Xbox account. The relay verifies multiplayer tokens against the official issuer's published signing keys and binds native client properties to the authenticated client key. It preserves those properties and authenticates the upstream connection with a fresh session key. It records decrypted packets without translating gameplay. Pack reconstruction checks hashes and decrypts selected assets for replay. Missing bytes from a cached pack fail the capture. Pack parsing errors preserve the raw recording for offline repair. Success requires pack export to finish before shutdown.
 
 The launcher must pass its normal graphics safety checks. A failed native launch does not authorize changing those checks or joining Hive through ViaBedrock.
 
@@ -72,9 +72,9 @@ Use `--client proxy --transport-only` to check the separate Java → ViaProxy ro
 
 ## Validation scope
 
-Private regression recordings cover CubeCraft, the public Geyser test server, and Minehut. CubeCraft exercises 240 skin updates, 37 advertised custom actor types, and actual native actor and player submissions. The Geyser scene exercises supplied player geometry and custom block packs.
+Private regression recordings cover CubeCraft, Hive, the public Geyser test server, and Minehut. CubeCraft exercises 240 skin updates, 37 advertised custom actor types, and actual native actor and player submissions. The Geyser scene exercises supplied player geometry and custom block packs.
 
-Minehut reaches its age-selection form. This does not verify admission beyond that form. Hive still needs an official-client recording; relay handshake tests do not prove a successful Hive join.
+Minehut reaches its age-selection form. This does not verify admission beyond that form. An official-client Hive recording reaches playable lobby spawn and includes all 24 advertised resource packs. Local replay validation is pending.
 
 Custom block mapping and model checks cover the captured definitions. They do not prove every state or animation matches the official client. Legacy plain texture-array variation selection, nonuniform scaling of rotated cubes, and double-sided alpha-test back faces remain limitations.
 

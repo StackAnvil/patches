@@ -1,6 +1,7 @@
 package com.enderdash.agent.replay;
 
 import com.google.gson.*;
+import com.sun.net.httpserver.HttpServer;
 import com.viaversion.viaversion.api.type.Types;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Jwks;
@@ -19,6 +20,7 @@ import org.cloudburstmc.netty.channel.raknet.RakChannelFactory;
 import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
 
 import java.nio.file.*;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.io.*;
 import java.util.zip.*;
@@ -46,7 +48,13 @@ public final class NativeCaptureSelfTest {
         byte[] salt = new byte[16]; new SecureRandom().nextBytes(salt);
         if (!Arrays.equals(NativeCaptureProxy.exchange(relay.getPrivate(), remote.getPublic(), salt).getEncoded(),
                 NativeCaptureProxy.exchange(remote.getPrivate(), relay.getPublic(), salt).getEncoded())) throw new AssertionError("ECDH keys differ");
-        packExport();
+        for (boolean bareInfo : List.of(false, true)) {
+            for (boolean bareChunk : List.of(false, true)) packExport(bareInfo, bareChunk);
+        }
+        packIdentityRejections();
+        packStackSelection();
+        packHttpClose(200);
+        packHttpClose(503);
         if (args.length == 2) smoke(Integer.parseInt(args[0]), Path.of(args[1]));
         System.out.println("PASS native relay JWT claim preservation, trusted multiplayer identity and proof of possession, ECDH, and encrypted chunk-pack export" + (args.length == 2 ? ", local backend reached StartGame" : ""));
     }
@@ -121,7 +129,7 @@ public final class NativeCaptureSelfTest {
         throw new AssertionError("Accepted an unauthenticated native identity");
     }
 
-    private static void packExport() throws Exception {
+    private static void packExport(boolean bareInfo, boolean bareChunk) throws Exception {
         Path recording = Files.createTempDirectory("stackanvil-native-pack-test");
         UUID id = UUID.randomUUID(); String name = id + "_1.0.0", contentId = "test-content";
         byte[] key = "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8);
@@ -145,12 +153,12 @@ public final class NativeCaptureSelfTest {
                 info.writeInt(0); BedrockTypes.UUID.write(info, UUID.randomUUID()); BedrockTypes.STRING.write(info, "1");
                 BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(info, 1); BedrockTypes.UUID.write(info, id);
                 BedrockTypes.STRING.write(info, "1.0.0"); info.writeLongLE(bytes.length); BedrockTypes.BYTE_ARRAY.write(info, key);
-                BedrockTypes.STRING.write(info, ""); BedrockTypes.STRING.write(info, contentId); info.writeZero(3); BedrockTypes.STRING.write(info, "");
+                BedrockTypes.STRING.write(info, "Informational display label"); BedrockTypes.STRING.write(info, contentId); info.writeZero(3); BedrockTypes.STRING.write(info, "");
                 packs.accept(6, info);
             } finally { info.release(); }
             ByteBuf descriptor = Unpooled.buffer();
             try {
-                BedrockTypes.STRING.write(descriptor, name); descriptor.writeIntLE(split).writeIntLE(2).writeLongLE(bytes.length);
+                BedrockTypes.STRING.write(descriptor, bareInfo ? id.toString() : name); descriptor.writeIntLE(split).writeIntLE(2).writeLongLE(bytes.length);
                 BedrockTypes.BYTE_ARRAY.write(descriptor, MessageDigest.getInstance("SHA-256").digest(bytes));
                 packs.accept(82, descriptor);
             } finally { descriptor.release(); }
@@ -158,11 +166,18 @@ public final class NativeCaptureSelfTest {
             for (int index : new int[]{1, 0}) {
                 ByteBuf chunk = Unpooled.buffer();
                 try {
-                    BedrockTypes.STRING.write(chunk, name); chunk.writeIntLE(index).writeLongLE((long) index * split);
+                    BedrockTypes.STRING.write(chunk, bareChunk ? id.toString().toUpperCase(Locale.ROOT) : name); chunk.writeIntLE(index).writeLongLE((long) index * split);
                     BedrockTypes.BYTE_ARRAY.write(chunk, Arrays.copyOfRange(bytes, index * split, Math.min(bytes.length, (index + 1) * split)));
                     packs.accept(83, chunk);
                 } finally { chunk.release(); }
             }
+            ByteBuf stack = Unpooled.buffer();
+            try {
+                stack.writeBoolean(false); BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(stack, 1);
+                BedrockTypes.STRING.write(stack, id.toString()); BedrockTypes.STRING.write(stack, "1.0.0");
+                BedrockTypes.STRING.write(stack, "Informational display label");
+                packs.accept(7, stack);
+            } finally { stack.release(); }
             boolean found = false;
             try (ZipInputStream zip = new ZipInputStream(Files.newInputStream(recording.resolve("packs").resolve(name + ".mcpack")))) {
                 for (ZipEntry entry; (entry = zip.getNextEntry()) != null;) {
@@ -175,6 +190,221 @@ public final class NativeCaptureSelfTest {
         } finally {
             try (var paths = Files.walk(recording)) { for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path); }
         }
+    }
+
+    private static void packIdentityRejections() throws Exception {
+        Path recording = Files.createTempDirectory("stackanvil-native-pack-identity-test");
+        UUID id = UUID.randomUUID();
+        Map<String, byte[]> archives = new LinkedHashMap<>();
+        archives.put("1.0.0", identityPack(id, "1.0.0", (byte) 1));
+        archives.put("2.0.0", identityPack(id, "2.0.0", (byte) 2));
+        try (NativeCapturePacks packs = new NativeCapturePacks(recording)) {
+            ByteBuf info = Unpooled.buffer();
+            try {
+                info.writeInt(0); BedrockTypes.UUID.write(info, UUID.randomUUID()); BedrockTypes.STRING.write(info, "1");
+                BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(info, archives.size());
+                for (var archive : archives.entrySet()) {
+                    BedrockTypes.UUID.write(info, id); BedrockTypes.STRING.write(info, archive.getKey()); info.writeLongLE(archive.getValue().length);
+                    BedrockTypes.BYTE_ARRAY.write(info, new byte[0]); BedrockTypes.STRING.write(info, "");
+                    BedrockTypes.STRING.write(info, ""); info.writeZero(3); BedrockTypes.STRING.write(info, "");
+                }
+                packs.accept(6, info);
+            } finally { info.release(); }
+            byte[] first = archives.get("1.0.0");
+            for (String rejected : List.of(id.toString(), UUID.randomUUID().toString(), id + "_3.0.0", "invalid", "invalid_1.0.0")) {
+                rejectPackIdentity(() -> describePack(packs, rejected, first));
+                rejectPackIdentity(() -> deliverPack(packs, rejected, first));
+            }
+            // An ambiguous UUID must not select the first advertised version, while exact
+            // identities must route data and chunks to their own manifest and payload.
+            for (var archive : archives.entrySet()) describePack(packs, id + "_" + archive.getKey(), archive.getValue());
+            rejectPackIdentity(() -> deliverPack(packs, id.toString(), first));
+            for (var archive : archives.entrySet()) deliverPack(packs, id + "_" + archive.getKey(), archive.getValue());
+            int expected = 1;
+            for (String version : archives.keySet()) {
+                byte[] payload = null;
+                try (ZipInputStream zip = new ZipInputStream(Files.newInputStream(recording.resolve("packs").resolve(id + "_" + version + ".mcpack")))) {
+                    for (ZipEntry entry; (entry = zip.getNextEntry()) != null;) {
+                        if (entry.getName().equals("textures/identity.bin")) payload = zip.readAllBytes();
+                    }
+                }
+                if (!Arrays.equals(new byte[]{(byte) expected++}, payload)) throw new AssertionError("Pack versions were mixed");
+            }
+        } finally {
+            try (var paths = Files.walk(recording)) { for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path); }
+        }
+    }
+
+    @FunctionalInterface
+    private interface PackAction { void run() throws Exception; }
+
+    private static void packStackSelection() throws Exception {
+        Path recording = Files.createTempDirectory("stackanvil-native-subpack-test");
+        UUID id = UUID.randomUUID(); String version = "1.0.0", name = id + "_" + version;
+        ByteArrayOutputStream archive = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(archive)) {
+            Map<String, byte[]> files = Map.of(
+                    "manifest.json", ("{\"format_version\":3,\"header\":{\"uuid\":\"" + id + "\",\"version\":\"" + version + "\",\"name\":\"fixture\"},"
+                            + "\"subpacks\":[{\"folder_name\":\"chosen\"},{\"folder_name\":\"other\"}]}").getBytes(StandardCharsets.UTF_8),
+                    "textures/value.bin", new byte[]{1}, "textures/base.bin", new byte[]{4},
+                    "subpacks/chosen/textures/value.bin", new byte[]{2}, "subpacks/chosen/textures/selected.bin", new byte[]{5},
+                    "subpacks/other/textures/value.bin", new byte[]{3}, "subpacks/other/textures/unselected.bin", new byte[]{6});
+            for (var file : files.entrySet()) { zip.putNextEntry(new ZipEntry(file.getKey())); zip.write(file.getValue()); zip.closeEntry(); }
+        }
+        byte[] bytes = archive.toByteArray();
+        try (NativeCapturePacks packs = new NativeCapturePacks(recording)) {
+            ByteBuf info = Unpooled.buffer();
+            try {
+                info.writeInt(0); BedrockTypes.UUID.write(info, UUID.randomUUID()); BedrockTypes.STRING.write(info, "1");
+                BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(info, 1); BedrockTypes.UUID.write(info, id);
+                BedrockTypes.STRING.write(info, version); info.writeLongLE(bytes.length); BedrockTypes.BYTE_ARRAY.write(info, new byte[0]);
+                // Even a label equal to a declared subpack must not select that subpack.
+                BedrockTypes.STRING.write(info, "other"); BedrockTypes.STRING.write(info, ""); info.writeZero(3); BedrockTypes.STRING.write(info, "");
+                packs.accept(6, info);
+            } finally { info.release(); }
+            describePack(packs, id.toString(), bytes); deliverPack(packs, id.toString(), bytes);
+            Path exported = recording.resolve("packs").resolve(name + ".mcpack");
+            if (!Arrays.equals(new byte[]{1}, exportedFiles(exported).get("textures/value.bin"))) throw new AssertionError("Info label selected a subpack");
+            ByteBuf stack = Unpooled.buffer();
+            try {
+                stack.writeBoolean(false); BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(stack, 1);
+                BedrockTypes.STRING.write(stack, id.toString()); BedrockTypes.STRING.write(stack, version); BedrockTypes.STRING.write(stack, "chosen");
+                BedrockTypes.STRING.write(stack, "1.26.51"); stack.writeIntLE(0).writeBoolean(false).writeBoolean(false);
+                packs.accept(7, stack);
+            } finally { stack.release(); }
+            Map<String, byte[]> selected = exportedFiles(exported);
+            if (!selected.keySet().equals(Set.of("manifest.json", "textures/value.bin", "textures/base.bin", "textures/selected.bin"))
+                    || !Arrays.equals(new byte[]{2}, selected.get("textures/value.bin"))
+                    || !Arrays.equals(new byte[]{4}, selected.get("textures/base.bin"))
+                    || !Arrays.equals(new byte[]{5}, selected.get("textures/selected.bin"))) throw new AssertionError("Stack-selected overlay differs");
+        } finally {
+            try (var paths = Files.walk(recording)) { for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path); }
+        }
+    }
+
+    private static Map<String, byte[]> exportedFiles(Path file) throws IOException {
+        Map<String, byte[]> files = new LinkedHashMap<>();
+        try (ZipInputStream zip = new ZipInputStream(Files.newInputStream(file))) {
+            for (ZipEntry entry; (entry = zip.getNextEntry()) != null;) files.put(entry.getName(), zip.readAllBytes());
+        }
+        return files;
+    }
+
+    private static void packHttpClose(int status) throws Exception {
+        Path recording = Files.createTempDirectory("stackanvil-native-http-pack-test");
+        UUID id = UUID.randomUUID();
+        byte[] archive = identityPack(id, "1.0.0", (byte) 7);
+        CountDownLatch requested = new CountDownLatch(1), respond = new CountDownLatch(1);
+        ExecutorService httpExecutor = Executors.newSingleThreadExecutor();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        CompletableFuture<Throwable> closed = new CompletableFuture<>();
+        Thread closer = null;
+        try {
+            server.setExecutor(httpExecutor);
+            server.createContext("/pack", exchange -> {
+                requested.countDown();
+                try {
+                    if (!respond.await(10, TimeUnit.SECONDS)) throw new IOException("Fixture response was not released");
+                    byte[] body = status == 200 ? archive : new byte[0];
+                    exchange.sendResponseHeaders(status, body.length);
+                    exchange.getResponseBody().write(body);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("Fixture response interrupted", interrupted);
+                } finally { exchange.close(); }
+            });
+            server.start();
+            NativeCapturePacks packs = new NativeCapturePacks(recording);
+            ByteBuf info = Unpooled.buffer();
+            try {
+                info.writeInt(0); BedrockTypes.UUID.write(info, UUID.randomUUID()); BedrockTypes.STRING.write(info, "1");
+                BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(info, 1); BedrockTypes.UUID.write(info, id);
+                BedrockTypes.STRING.write(info, "1.0.0"); info.writeLongLE(archive.length); BedrockTypes.BYTE_ARRAY.write(info, new byte[0]);
+                BedrockTypes.STRING.write(info, ""); BedrockTypes.STRING.write(info, ""); info.writeZero(3);
+                BedrockTypes.STRING.write(info, "http://127.0.0.1:" + server.getAddress().getPort() + "/pack");
+                packs.accept(6, info);
+            } finally { info.release(); }
+            if (!requested.await(5, TimeUnit.SECONDS)) throw new AssertionError("Pack HTTP download did not start");
+            closer = new Thread(() -> {
+                try { packs.close(); closed.complete(null); }
+                catch (Throwable error) { closed.complete(error); }
+            }, "native-pack-close-test");
+            closer.start();
+            awaitPackCloseWaiting(closer, closed);
+            Path exported = recording.resolve("packs").resolve(id + "_1.0.0.mcpack");
+            if (Files.exists(exported)) throw new AssertionError("Pack was exported before its HTTP response");
+            respond.countDown();
+            Throwable failure = closed.get(5, TimeUnit.SECONDS);
+            if (status == 200) {
+                if (failure != null) throw new AssertionError("Successful HTTP pack failed during close", failure);
+                if (!Arrays.equals(new byte[]{7}, exportedFiles(exported).get("textures/identity.bin"))) {
+                    throw new AssertionError("Close returned before HTTP pack export completed");
+                }
+            } else {
+                if (failure == null) throw new AssertionError("Close accepted a failed HTTP pack download");
+                Throwable cause = failure;
+                while (cause.getCause() != null) cause = cause.getCause();
+                if (!(cause instanceof IOException)) throw new AssertionError("HTTP failure was not reported by close", failure);
+                if (Files.exists(exported)) throw new AssertionError("Failed HTTP response produced a pack archive");
+            }
+        } finally {
+            respond.countDown();
+            server.stop(0);
+            httpExecutor.shutdownNow();
+            if (closer != null) {
+                closer.join(5_000);
+                if (closer.isAlive()) { closer.interrupt(); closer.join(5_000); }
+                if (closer.isAlive()) throw new AssertionError("Pack close thread did not stop");
+            }
+            if (!httpExecutor.awaitTermination(5, TimeUnit.SECONDS)) throw new AssertionError("Fixture HTTP server did not stop");
+            try (var paths = Files.walk(recording)) { for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path); }
+        }
+    }
+
+    private static void awaitPackCloseWaiting(Thread closer, CompletableFuture<Throwable> closed) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            if (closed.isDone()) throw new AssertionError("Close returned while the HTTP response was withheld");
+            Thread.State state = closer.getState();
+            if ((state == Thread.State.WAITING || state == Thread.State.TIMED_WAITING)
+                    && Arrays.stream(closer.getStackTrace()).anyMatch(frame -> frame.getClassName().equals(NativeCapturePacks.class.getName())
+                    && frame.getMethodName().equals("close"))) return;
+            Thread.yield();
+        }
+        throw new AssertionError("Close did not wait for the pending HTTP pack download");
+    }
+
+    private static void rejectPackIdentity(PackAction action) throws Exception {
+        try { action.run(); }
+        catch (IOException expected) { return; }
+        throw new AssertionError("Accepted unknown or ambiguous resource pack identity");
+    }
+
+    private static void describePack(NativeCapturePacks packs, String name, byte[] bytes) throws Exception {
+        ByteBuf descriptor = Unpooled.buffer();
+        try {
+            BedrockTypes.STRING.write(descriptor, name); descriptor.writeIntLE(bytes.length).writeIntLE(1).writeLongLE(bytes.length);
+            BedrockTypes.BYTE_ARRAY.write(descriptor, MessageDigest.getInstance("SHA-256").digest(bytes));
+            packs.accept(82, descriptor);
+        } finally { descriptor.release(); }
+    }
+
+    private static void deliverPack(NativeCapturePacks packs, String name, byte[] bytes) throws Exception {
+        ByteBuf chunk = Unpooled.buffer();
+        try {
+            BedrockTypes.STRING.write(chunk, name); chunk.writeIntLE(0).writeLongLE(0); BedrockTypes.BYTE_ARRAY.write(chunk, bytes);
+            packs.accept(83, chunk);
+        } finally { chunk.release(); }
+    }
+
+    private static byte[] identityPack(UUID id, String version, byte value) throws IOException {
+        ByteArrayOutputStream archive = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(archive)) {
+            zip.putNextEntry(new ZipEntry("manifest.json"));
+            zip.write(("{\"format_version\":3,\"header\":{\"uuid\":\"" + id + "\",\"version\":\"" + version + "\",\"name\":\"fixture\"}}").getBytes(StandardCharsets.UTF_8));
+            zip.closeEntry(); zip.putNextEntry(new ZipEntry("textures/identity.bin")); zip.write(value); zip.closeEntry();
+        }
+        return archive.toByteArray();
     }
 
     private static byte[] encrypt(byte[] key, byte[] bytes) throws Exception {

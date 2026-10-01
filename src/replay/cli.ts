@@ -217,6 +217,15 @@ async function stopAll(gamePid?: number): Promise<void> {
       console.error("The private Bedrock window could not close normally. Read the native client log before launching it again.");
     }
   }
+  if (nativeClient) {
+    // Pack export may still be finishing after the native client closes its connection.
+    const until = Date.now() + 40_000;
+    const proxyLog = join(nativeClient.directory, "proxy.log");
+    while (Date.now() < until && children.some((child) => alive(child.pid))) {
+      if (/StackAnvil native capture connection closed|Native connection failed:|Native capture failed:/.test(await logText(proxyLog))) break;
+      await Bun.sleep(250);
+    }
+  }
   if (alive(gamePid)) process.kill(gamePid!, "SIGTERM");
   for (const child of children.toReversed()) if (alive(child.pid)) process.kill(-child.pid!, "SIGTERM");
   const until = Date.now() + 10_000;
@@ -317,6 +326,7 @@ async function main(): Promise<void> {
     let lastPackClick = 0;
     while (!stopped && Date.now() < until && alive(gamePid) && (!child || alive(child.pid))) {
       const log = await logText(game.log);
+      if (client === "native" && /Native connection failed:|Native capture failed:|StackAnvil native capture connection closed/.test(await logText(proxyLog))) break;
       if (/Mixin transformation .* failed|Client disconnected with reason: Network Protocol Error|handlerAdded\(\) has thrown|(?:Unreported|Reported) exception thrown!|A fatal error has been detected by the Java Runtime Environment/.test(log)) break;
       accepted ||= /Reloading ResourceManager:.*server\//.test(log);
       if (/All resource packs have been loaded/.test(client === "addon" ? log : await logText(proxyLog))) packReadyAt ??= Date.now();
@@ -343,6 +353,9 @@ async function main(): Promise<void> {
   await writeFile(join(directory, "manifest.json"), `${JSON.stringify({ schema: 1, mode, client, server: mode === "record" ? input : undefined, capturedAt: new Date().toISOString(), summary }, null, 2)}\n`, { mode: 0o600 });
   console.log(JSON.stringify(summary, null, 2));
   console.log(`Saved private ${mode} artifacts: ${directory}`);
+  if (client === "native" && /Native connection failed:|Native capture failed:/.test(await logText(join(directory, "proxy.log")))) throw new Error("The native recorder failed. Read its private proxy log; this capture is incomplete.");
+  if (client === "native" && /Native pack observation failed:/.test(await logText(join(directory, "proxy.log")))) throw new Error("Native pack reconstruction failed. The raw recording is preserved for offline repair; read its private proxy log.");
+  if (client === "native" && !/StackAnvil native pack observation complete/.test(await logText(join(directory, "proxy.log")))) throw new Error("Native pack reconstruction did not finish before shutdown. The raw recording is preserved; read its private proxy log.");
   if (mode === "replay" && (unexpectedClientExit || stopped)) throw new Error("The replay client exited or the run was cancelled before normal cleanup. Read its private client log.");
   if (!summary.reachedStartGame || !summary.reachedSpawn) throw new Error("The session did not reach a playable scene. Read its private logs and screenshot.");
   if (mode === "replay" && !/StackAnvil replay scene complete/.test(await logText(join(directory, "replay.log")))) throw new Error("The replay stopped before the complete scene was sent.");

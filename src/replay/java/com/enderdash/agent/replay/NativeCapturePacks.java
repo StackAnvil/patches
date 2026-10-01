@@ -70,12 +70,11 @@ final class NativeCapturePacks implements AutoCloseable {
             long size = input.readLongLE();
             if (size < 0 || size > MAX_PACK_BYTES) throw new IOException("Pack exceeds size limit");
             byte[] contentKey = BedrockTypes.BYTE_ARRAY.read(input);
-            String selected = BedrockTypes.STRING.read(input);
+            BedrockTypes.STRING.read(input); // Informational pack label; the stack selects subpacks.
             String contentId = BedrockTypes.STRING.read(input);
             input.skipBytes(3);
             String cdn = BedrockTypes.STRING.read(input);
             Pack pack = new Pack(new ResourcePack.Key(id, version), contentKey, contentId);
-            pack.selection = selected;
             if (packs.putIfAbsent(pack.key, pack) != null) throw new IOException("Duplicate pack identity");
             JsonObject key = new JsonObject();
             key.addProperty("id", id.toString()); key.addProperty("version", version);
@@ -122,9 +121,22 @@ final class NativeCapturePacks implements AutoCloseable {
     }
 
     private Pack get(String name) throws IOException {
-        Pack pack = packs.get(ResourcePack.Key.fromString(name));
-        if (pack == null) throw new IOException("Unknown downloaded pack");
-        return pack;
+        if (name.contains("_")) {
+            final ResourcePack.Key key;
+            try { key = ResourcePack.Key.fromString(name); }
+            catch (IllegalArgumentException invalid) { throw new IOException("Invalid downloaded pack identity", invalid); }
+            Pack pack = packs.get(key);
+            if (pack == null) throw new IOException("Unknown downloaded pack");
+            return pack;
+        }
+        Pack match = null;
+        for (Pack pack : packs.values()) {
+            if (!pack.key.id().toString().equalsIgnoreCase(name)) continue;
+            if (match != null) throw new IOException("Ambiguous downloaded pack identity");
+            match = pack;
+        }
+        if (match == null) throw new IOException("Unknown downloaded pack");
+        return match;
     }
 
     private void reserve(int size) throws IOException {
@@ -173,7 +185,10 @@ final class NativeCapturePacks implements AutoCloseable {
     }
 
     private void export(Pack pack) throws IOException {
-        writePrivate(directory.resolve(pack.key + ".mcpack"), pack.parsed.selectSubpack(pack.selection).content().toZip());
+        var manifest = pack.parsed.content().getJson("manifest.json");
+        // Hive sends display labels in the stack even when the manifest has no subpacks.
+        String selection = manifest.has("subpacks") && !manifest.getAsJsonArray("subpacks").isEmpty() ? pack.selection : "";
+        writePrivate(directory.resolve(pack.key + ".mcpack"), pack.parsed.selectSubpack(selection).content().toZip());
     }
 
     private static void writePrivate(Path file, byte[] data) throws IOException {

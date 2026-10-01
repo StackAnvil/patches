@@ -62,6 +62,8 @@ public final class NativeCaptureProxy {
                         .option(RakChannelOption.RAK_ADVERTISEMENT, Unpooled.copiedBuffer(motd, StandardCharsets.UTF_8))
                         .option(RakChannelOption.RAK_SUPPORTED_PROTOCOLS, new int[]{ProtocolConstants.BEDROCK_RAKNET_PROTOCOL_VERSION})
                         .option(RakChannelOption.RAK_MAX_CONNECTIONS, 1)
+                        // Native login data fragments arrive in bursts over this loopback-only connection.
+                        .option(RakChannelOption.RAK_PACKET_LIMIT, 4096)
                         .childHandler(new ChannelInitializer<Channel>() {
                             @Override protected void initChannel(Channel channel) {
                                 if (!proxy.used.compareAndSet(false, true)) { channel.close(); return; }
@@ -148,6 +150,7 @@ public final class NativeCaptureProxy {
         private volatile Channel downstream;
         private PacketJournal journal;
         private NativeCapturePacks packs;
+        private boolean packObservationFailed;
         private volatile int phase;
         private boolean closing;
 
@@ -242,7 +245,10 @@ public final class NativeCaptureProxy {
                                     } else {
                                         record(true, input);
                                         if (id == 85) { fail(new IllegalStateException("Transfer ends this single-host capture")); return; }
-                                        packs.accept(id, view);
+                                        if (!packObservationFailed) {
+                                            try { packs.accept(id, view); }
+                                            catch (Exception error) { packFailure(error); }
+                                        }
                                         upstream.writeAndFlush(input.retainedDuplicate());
                                     }
                                 }
@@ -255,6 +261,11 @@ public final class NativeCaptureProxy {
 
         private synchronized void record(boolean clientbound, ByteBuf input) throws Exception {
             if (!closing) journal.append(clientbound, ReplayPackets.bytes(input));
+        }
+        private void packFailure(Exception error) {
+            packObservationFailed = true;
+            // Preserve the raw scene for offline repair without interrupting native gameplay.
+            System.err.println("Native pack observation failed: " + error.getClass().getSimpleName());
         }
         private void fail(Throwable error) {
             System.err.println("Native connection failed: " + error.getClass().getSimpleName());
@@ -269,7 +280,13 @@ public final class NativeCaptureProxy {
                 if (journal != null) journal.close();
             }
             if (downstream != null) downstream.close();
-            if (packs != null) packs.close();
+            if (packs != null) {
+                try {
+                    packs.close();
+                    if (!packObservationFailed) System.out.println("StackAnvil native pack observation complete");
+                }
+                catch (Exception error) { packFailure(error); }
+            }
             System.out.println("StackAnvil native capture connection closed");
         }
     }
