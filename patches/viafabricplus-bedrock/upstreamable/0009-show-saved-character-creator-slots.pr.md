@@ -428,12 +428,20 @@ Sources: [Mojang sound schema](https://github.com/Mojang/bedrock-schemas/blob/ma
 
 ### Resolve authored sound samples
 
-Parse the effective vanilla catalog into immutable sound events after versioned overrides. Preserve authored sample order, integer weights, scalar volume and pitch, streaming flags, subtitle keys, raw distances, and the legacy distance flag. Keep category defaults separate from the case-sensitive playback group lookup. An explicit `is3D` value remains the default for later samples. Selected FSB banks resolve through the same versioned library and existing bounded decoder.
+Parse the effective vanilla catalog into immutable sound events after versioned overrides. Preserve authored sample order, integer weights, scalar volume and pitch, streaming flags, subtitle keys, raw distances, and the legacy distance flag. Keep category defaults separate from the case-sensitive playback group lookup. An explicit `is3D` value remains the default for later samples. Selected FSB and OGG samples resolve through the same versioned library and bounded decoders.
 
 Another 238 executable cases verify scalar conversions across null, boolean, integer, fractional, string, array, and object values. Null retains each field's default. Numeric strings, arrays, and objects convert to zero for numeric parameters. Nonempty strings and containers are true for boolean flags, including the string `false`. Java fixture comparisons now cover 1,187 native catalog, scalar, weighted-selection, category-routing, and attenuation cases.
 
 An integration test traverses the matching licensed catalog, selects its positive-weight samples, and resolves available FSB banks. It compares decoded PCM, dimensions, and loop boundaries with the independent reference. Tests also check selection limits and cache rollback after a malformed catalog. Licensed assets, native executables, and oracle fixtures remain private.
 
-This change establishes sound resource selection and requested parameters. It does not implement animation effect dispatch, OGG output, locator transforms, audio channels, captions, or audible mixing. The acquired library contains unresolved sample references, including music assets. Their presence does not establish that the official package lacks those files.
+This change establishes sound resource selection and requested parameters. It does not implement animation effect dispatch, locator transforms, audio channels, captions, or audible mixing. The acquired library contains unresolved sample references, including music assets. Their presence does not establish that the official package lacks those files.
 
-The replayed full stack passes all 237 fixture-enabled add-on tests with no skips, including fresh licensed package acquisition and cache reuse. These checks do not establish audible effect playback.
+The replayed full stack passes all 240 fixture-enabled add-on tests with no skips, including fresh licensed package acquisition and cache reuse. These checks do not establish audible effect playback.
+
+### Resolve OGG replacements
+
+Resolve formats within a pack before trying lower packs. A higher OGG sample can replace a lower FSB bank. The target executable's extension-list initializer `FUN_140275490` declares FSB, OGG, then WAV. The implemented formats retain that order. [Microsoft's replacement guide](https://learn.microsoft.com/en-us/minecraft/creator/documents/addcustomsounds?view=minecraft-bedrock-stable) establishes replacement across formats. WAV decoding remains incomplete.
+
+Use Minecraft's JOrbis reader after checking page bounds, stream identity, sequence, end-of-stream, Vorbis channel and rate dimensions, and the final sample count. Bound decoded PCM to 64 MiB before allocation. Missing, truncated, oversized, or inconsistent streams fail through the existing asset-loading error path. Convert floats into interleaved little-endian PCM16. This path needs neither a Bedrock installation nor an external decoder.
+
+Private tests compare three licensed samples and six generated mono/stereo streams at 8,000 through 48,000 Hz with libvorbisfile. All 109,603 scalar samples differ by at most one PCM quantization step. Dimensions, exact frame counts, channel order, extensionless catalog selection, truncation, excessive granules, path safety, and format overrides pass. Vorbis loop comments, FMOD output equivalence, and audible playback remain unverified or incomplete. Independent reference files and licensed content stay private.
