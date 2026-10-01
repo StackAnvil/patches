@@ -248,7 +248,7 @@ The native particle callback resolves aliases, chooses locator or actor position
 
 New particle runtime probes cover 200 dynamic motion cases, 492 billboard cases, and 289 emitter component cases from the target build. Linear velocity uses exponential drag. Flipbooks use `roundf` and change at half-frame boundaries. Private Java calculations match all 6,022 finite motion and billboard values exactly.
 
-The probes supply math-library calls and particle age variables. Emitter cases execute the actual native getter and setter methods. Allocation, collision, lifetime scheduling, and world rendering remain incomplete. The [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md#establish-particle-runtime-calculations) describe the evidence and test boundaries.
+The probes supply math-library calls and particle age variables. Emitter cases execute the actual native getter and setter methods. These probes isolate component calculations. Native allocation, complete lifetime scheduling, and visible world rendering parity remain unverified. The [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md#establish-particle-runtime-calculations) describe the evidence and test boundaries.
 
 Timeline sound declarations contain an effect name and an optional locator. The native parser adds their timestamp to a 104-byte record. Fourteen constructor cases and 24 ordering cases verify defaults, float conversion, and a stable timestamp sort. The animation player queues resolved sounds after particle dispatch and before timeline scripts.
 
@@ -324,7 +324,11 @@ Independent execution of Bedrock 1.26.51.1 supplies 200 motion cases and 492 bil
 
 A muted Java client displays a 4:1 billboard from a TGA atlas. Its runtime probe checks server aliases, world extraction, unsupported component rejection, failed asset cleanup, and texture release. This probe does not compare the visible result with native Bedrock.
 
-Collision, local-space transforms, other shapes and facing modes, looping and manual lifetimes, curves, and nested effect events remain incomplete. Native comparisons still need to establish attachment rotation, emitter scheduling, creation order, tint quantization, and visible scale. These component tests do not establish complete particle parity.
+Particle collision now follows the target swept collision calculation. It limits checked motion to one block and uses up to three response passes. It applies restitution, surface drag, and optional contact expiration. Molang can enable or disable collision per frame.
+
+Independent execution of Bedrock 1.26.51.1 supplies 364 cases. Production matches their position, velocity, and terrain query results exactly as float32. The harness supplies terrain boxes and emitter origin getters. World playback queries block collision shapes, including existing custom block overrides. A muted Java runtime probe verifies bouncing against block collision shapes, contact expiration, and resource release. Native world-shape order and visible collision comparisons remain unverified.
+
+Local-space transforms, other shapes and facing modes, looping and manual lifetimes, curves, and nested effect events remain incomplete. Native comparisons still need to establish attachment rotation, emitter scheduling, creation order, tint quantization, and visible scale. These component tests do not establish complete particle parity.
 
 ### Missing features
 
@@ -345,6 +349,6 @@ The loader now uses the matching 68-alias player definition. Its added tracks in
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. This establishes visual presence, not complete timing or format parity.
 - Verify fresh interactive Store sign-in and helper runtime behavior on Windows and macOS. Linux acquisition, license decryption, extraction, and cache reuse already pass.
 
-The replayed full stack builds, and all 261 fixture-enabled add-on tests pass with no failures or skips. The rebuilt client also passes 13,578 native curve comparisons and a conditional-assignment check. Earlier Java runtime probes passed 1,324 checks across previously implemented paths. The new overlay probe passes 722 checks for the updated graph and renderer paths. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
+The replayed full stack builds, and all 264 fixture-enabled add-on tests pass with no failures or skips. The rebuilt client also passes 13,578 native curve comparisons and a conditional-assignment check. Earlier Java runtime probes passed 1,324 checks across previously implemented paths. The new overlay probe passes 722 checks for the updated graph and renderer paths. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
 
 Keep login JWTs, receipts, content keys, raw flows, screenshots, player textures, and account data private under `.stackanvil/`.

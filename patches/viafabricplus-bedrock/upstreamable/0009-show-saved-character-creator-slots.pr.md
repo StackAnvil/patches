@@ -507,3 +507,18 @@ The native component fixtures do not establish the complete emitter scheduler or
 Particle atlas decoding uses the bounded PNG reader and the existing true-color TGA decoder. A test compares their decoded RGBA pixels and rejects truncated input. A muted Java runtime probe displays a 4:1 TGA billboard and verifies server aliases, world extraction, failed asset cleanup, and texture release. It also verifies explicit rejection of collision effects. Screenshots and fixture assets remain private. This probe does not establish native visible particle parity.
 
 The replayed 14-patch stack builds and produces the Prism bundle. All 261 fixture-enabled add-on tests pass with no failures or skips. This count covers implemented paths and does not establish complete skin, effect, or Dressing Room parity.
+
+
+## Apply particle collision response
+
+Apply collision after particle motion. Target functions `1461c7460` and `1461c80a0` establish the swept bounds and axis response. Checked motion retains only its last block. Terrain cells use ascending X and Z, with descending Y. The first pass collects boxes; subsequent passes reuse them.
+
+Preserve strict broadphase overlap, parallel slab handling, Z/Y/X entry tie priority, and the target contact bias. Use up to three response passes. Reflect the contacted velocity axis through restitution and reduce speed along the surface through collision drag. Contact expiration removes the particle. The native reader clamps radius to zero through half a block. Its runtime constructor initializes radius, drag, and restitution to zero. Missing `enabled` selects true.
+
+Private independent execution of Bedrock 1.26.51.1 supplies 364 cases. Production matches position, velocity, and ordered terrain queries exactly as float32. Cases include both directions, all axes, corners, radius boundaries, long motion, drag, restitution, disabled collision, translated origins, and expiration. Emitter tests verify contact removal and subsequent bounce motion through production updates.
+
+The harness supplies world collision boxes, emitter accessors, and the imported floor operation. Native collection, sweep, response, drag, and expiration code execute. World playback queries block collision shapes and uses existing native custom-block overrides. A bounded cell cache lasts one extraction frame. Native shape ordering and visible collision parity remain unverified. Collision events still require the nested event runtime. Executables, licensed assets, and native reference fixtures stay private.
+
+The replayed full stack passes all 264 fixture-enabled add-on tests with no failures or skips, including fresh package acquisition and cache reuse.
+
+A muted Java runtime probe uses the rebuilt bundle and a temporary client-side stone platform. It verifies world terrain collision, rebound velocity, contact expiration, and texture release. This probe establishes Java integration and does not compare native visible effects.

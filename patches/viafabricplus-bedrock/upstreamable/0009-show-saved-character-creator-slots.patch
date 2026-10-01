@@ -1,4 +1,4 @@
-From 1976f2c8220957be2792cae069238decf265d9ea Mon Sep 17 00:00:00 2001
+From 0cb2b0da74053481e078ac318f57d46935040a7c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -692,6 +692,19 @@ scheduling, attachment rotation, tint quantization and full visible parity
 remain unverified. Collision, curves, local space, other lifetimes, shapes
 and facing modes remain separate work. Decode resource images asynchronously
 and release textures across account changes and world cleanup.
+
+Apply particle collision after motion using the target 1.26.51.1 swept
+bounds algorithm. Native functions 1461c7460 and 1461c80a0 establish the
+one-block sweep limit, x/z/y terrain order, slab tie priority, contact
+bias, three response passes, restitution, tangential drag and contact
+expiration. Independent execution supplies 364 cases; production matches
+all position, velocity and terrain-query results exactly as float32.
+
+Query world block collision shapes by cell, including the existing native
+custom-block shape overrides. Cache a bounded number of cells per render
+frame. Collision events still require the nested particle event runtime.
+The oracle supplies terrain boxes and emitter origin accessors; it does
+not establish complete native world-shape or visible-effect parity.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   54 +
@@ -729,10 +742,11 @@ and release textures across account changes and world cleanup.
  .../appearance/BedrockMolangParser.java       |  193 +
  .../appearance/BedrockOwnedSkinPacks.java     |  156 +
  .../appearance/BedrockPackageHelper.java      |  121 +
+ .../appearance/BedrockParticleCollision.java  |  145 +
  .../appearance/BedrockParticleDefinition.java |  261 +
- .../appearance/BedrockParticleEffect.java     |  420 +
+ .../appearance/BedrockParticleEffect.java     |  431 ++
  .../appearance/BedrockParticleLayouts.java    |  413 +
- .../appearance/BedrockParticlePlayback.java   |  236 +
+ .../appearance/BedrockParticlePlayback.java   |  250 +
  .../appearance/BedrockParticleTexture.java    |   24 +
  .../BedrockPersonaAnimationAtlas.java         |   96 +
  .../appearance/BedrockPersonaAnimations.java  |  128 +
@@ -804,6 +818,7 @@ and release textures across account changes and world cleanup.
  .../appearance/BedrockLimbSideTest.java       |   89 +
  .../bedrock/appearance/BedrockMolangTest.java |  116 +
  .../appearance/BedrockOwnedSkinPacksTest.java |  181 +
+ .../BedrockParticleCollisionTest.java         |  122 +
  .../BedrockParticleDefinitionTest.java        |  190 +
  .../appearance/BedrockParticleEffectTest.java |  220 +
  .../BedrockPersonaAnimationAtlasTest.java     |  109 +
@@ -823,7 +838,7 @@ and release textures across account changes and world cleanup.
  .../render/BedrockModelLocatorsTest.java      |   47 +
  .../render/BedrockPlayerActorStateTest.java   |  124 +
  .../render/BedrockPlayerModelTest.java        |  100 +
- 130 files changed, 31938 insertions(+), 90 deletions(-)
+ 132 files changed, 32230 insertions(+), 90 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -854,6 +869,7 @@ and release textures across account changes and world cleanup.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangParser.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockOwnedSkinPacks.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPackageHelper.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCollision.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleDefinition.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffect.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleLayouts.java
@@ -919,6 +935,7 @@ and release textures across account changes and world cleanup.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLimbSideTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockOwnedSkinPacksTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCollisionTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleDefinitionTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffectTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimationAtlasTest.java
@@ -16423,6 +16440,157 @@ index 0000000..b8ffba8
 +        }
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCollision.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCollision.java
+new file mode 100644
+index 0000000..90ca9fa
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCollision.java
+@@ -0,0 +1,145 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.google.gson.JsonObject;
++import org.joml.Vector3f;
++import net.minecraft.world.phys.Vec3;
++
++import java.io.IOException;
++import java.util.ArrayList;
++import java.util.List;
++
++/** Swept sphere bounds and axis response used by Bedrock 1.26.51 particles. */
++record BedrockParticleCollision(BedrockMolang.Program enabled, float drag, float restitution,
++                                float radius, boolean expireOnContact) {
++    @FunctionalInterface
++    interface Terrain {
++        List<Box> boxes(int x, int y, int z);
++    }
++
++    record Box(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
++        float min(final int axis) { return axis == 0 ? this.minX : axis == 1 ? this.minY : this.minZ; }
++        float max(final int axis) { return axis == 0 ? this.maxX : axis == 1 ? this.maxY : this.maxZ; }
++    }
++
++    static BedrockParticleCollision read(final JsonObject value) throws IOException {
++        if (value.has("events") && (!value.get("events").isJsonArray() || !value.getAsJsonArray("events").isEmpty()))
++            throw new IOException("This particle effect needs collision event playback");
++        final var enabled = value.get("enabled");
++        final BedrockMolang.Program program = enabled != null && enabled.isJsonPrimitive() && enabled.getAsJsonPrimitive().isBoolean()
++                ? new BedrockMolang.Program(enabled.getAsBoolean() ? 1 : 0, null) : BedrockMolang.Program.parse(enabled, 1);
++        final var expire = value.get("expire_on_contact");
++        if (expire != null && (!expire.isJsonPrimitive() || !expire.getAsJsonPrimitive().isBoolean()))
++            throw new IOException("Invalid particle contact expiration");
++        return new BedrockParticleCollision(program, number(value, "collision_drag", 0),
++                number(value, "coefficient_of_restitution", 0), Math.clamp(number(value, "collision_radius", 0), 0, .5F),
++                expire != null && expire.getAsBoolean());
++    }
++
++    /** Positions are relative to the supplied world origin. Returns whether any pass made contact. */
++    boolean collide(final Vector3f previous, final Vector3f position, final Vector3f velocity,
++                    final long nanos, final BedrockMolang environment, final Vec3 origin, final Terrain terrain) {
++        if (environment.evaluate(this.enabled, 1) == 0) return false;
++        final Vector3f translation = new Vector3f((float) origin.x, (float) origin.y, (float) origin.z);
++        final Vector3f start = new Vector3f(previous).add(translation);
++        position.add(translation);
++        final Vector3f displacement = new Vector3f(position).sub(start);
++        final float distance = (float) Math.sqrt(displacement.x * displacement.x + displacement.y * displacement.y + displacement.z * displacement.z);
++        if (distance > 1) {
++            final float scale = 1F / distance;
++            start.set(position.x - displacement.x * scale, position.y - displacement.y * scale, position.z - displacement.z * scale);
++        }
++        final List<Box> boxes = collect(start, position, terrain);
++        final float drag = ((float) nanos / 1_000_000_000F) * this.drag;
++        boolean contacted = false;
++        for (int pass = 0; pass < 3; pass++) {
++            final int axis = sweep(start, position, velocity, boxes);
++            if (axis < 0) break;
++            contacted = true;
++            // Native drag removes speed in the contact plane once per collision pass.
++            final Vector3f tangent = new Vector3f(velocity).setComponent(axis, 0);
++            final float squared = tangent.x * tangent.x + tangent.y * tangent.y + tangent.z * tangent.z;
++            float changeX = 0, changeY = 0, changeZ = 0;
++            if (squared > 0) {
++                final float length = (float) Math.sqrt(squared);
++                final float remaining = Math.max(0, length - drag);
++                final float x = length >= .0001F ? tangent.x / length : 0;
++                final float y = length >= .0001F ? tangent.y / length : 0;
++                final float z = length >= .0001F ? tangent.z / length : 0;
++                changeX = x * remaining - tangent.x;
++                changeY = y * remaining - tangent.y;
++                changeZ = z * remaining - tangent.z;
++            }
++            velocity.add(changeX, changeY, changeZ);
++        }
++        position.sub(translation);
++        return contacted;
++    }
++
++    private List<Box> collect(final Vector3f start, final Vector3f end, final Terrain terrain) {
++        final List<Box> result = new ArrayList<>();
++        final int minX = Math.max(floor(Math.min(start.x, end.x) - this.radius), floor(start.x) - 1);
++        final int minY = Math.max(floor(Math.min(start.y, end.y) - this.radius), floor(start.y) - 1);
++        final int minZ = Math.max(floor(Math.min(start.z, end.z) - this.radius), floor(start.z) - 1);
++        final int maxX = Math.min(floor(Math.max(start.x, end.x) + this.radius), floor(start.x) + 1);
++        final int maxY = Math.min(floor(Math.max(start.y, end.y) + this.radius), floor(start.y) + 1);
++        final int maxZ = Math.min(floor(Math.max(start.z, end.z) + this.radius), floor(start.z) + 1);
++        for (int x = minX; x <= maxX; x++) for (int z = minZ; z <= maxZ; z++) for (int y = maxY; y >= minY; y--)
++            result.addAll(terrain.boxes(x, y, z));
++        return result;
++    }
++
++    private int sweep(final Vector3f start, final Vector3f end, final Vector3f velocity, final List<Box> boxes) {
++        final Vector3f minimum = new Vector3f(Math.min(start.x, end.x) - this.radius,
++                Math.min(start.y, end.y) - this.radius, Math.min(start.z, end.z) - this.radius);
++        final Vector3f maximum = new Vector3f(Math.max(start.x, end.x) + this.radius,
++                Math.max(start.y, end.y) + this.radius, Math.max(start.z, end.z) + this.radius);
++        final Vector3f delta = new Vector3f(end).sub(start);
++        float first = Float.MAX_VALUE;
++        int axis = -1;
++        final float[] near = new float[3], far = new float[3];
++        for (final Box box : boxes) {
++            boolean admitted = true;
++            for (int dimension = 0; dimension < 3; dimension++) {
++                if (!(minimum.get(dimension) < box.max(dimension) && box.min(dimension) < maximum.get(dimension))) {
++                    admitted = false;
++                    break;
++                }
++                final float lower = box.min(dimension) - this.radius, upper = box.max(dimension) + this.radius;
++                if (Math.abs(delta.get(dimension)) >= Math.ulp(1F)) {
++                    final float inverse = 1F / delta.get(dimension);
++                    final float from = (lower - start.get(dimension)) * inverse, to = (upper - start.get(dimension)) * inverse;
++                    near[dimension] = Math.min(from, to);
++                    far[dimension] = Math.max(from, to);
++                } else {
++                    if (end.get(dimension) <= lower || upper <= end.get(dimension)) { admitted = false; break; }
++                    near[dimension] = -Float.MAX_VALUE;
++                    far[dimension] = Float.MAX_VALUE;
++                }
++            }
++            if (!admitted) continue;
++            final int candidate = near[0] > near[1] && near[0] > near[2] ? 0 : near[1] > near[2] ? 1 : 2;
++            final float time = near[candidate];
++            if (!(time >= 0 && time <= 1 && time <= far[0] && time <= far[1] && time <= far[2])) continue;
++            final float biased = time != 1 && time > 0x1.0p-15F ? time - 0x1.0p-15F : time;
++            if (biased < first) { first = biased; axis = candidate; }
++        }
++        if (axis >= 0) {
++            final float correction = (1 - first) * -delta.get(axis);
++            end.setComponent(axis, end.get(axis) + correction);
++            velocity.setComponent(axis, -velocity.get(axis) * this.restitution);
++        }
++        return axis;
++    }
++
++    private static int floor(final float value) { return (int) Math.floor(value); }
++    private static float number(final JsonObject value, final String name, final float fallback) throws IOException {
++        final float number = value.has(name) ? value.get(name).getAsFloat() : fallback;
++        if (!Float.isFinite(number) || Math.abs(number) > 32768) throw new IOException("Invalid particle collision number");
++        return number;
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleDefinition.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleDefinition.java
 new file mode 100644
 index 0000000..bebb9e5
@@ -16692,10 +16860,10 @@ index 0000000..bebb9e5
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffect.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffect.java
 new file mode 100644
-index 0000000..2fb4795
+index 0000000..7102684
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffect.java
-@@ -0,0 +1,420 @@
+@@ -0,0 +1,431 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -16722,7 +16890,7 @@ index 0000000..2fb4795
 +            "minecraft:emitter_shape_point", "minecraft:emitter_shape_custom",
 +            "minecraft:particle_initialization", "minecraft:particle_initial_speed",
 +            "minecraft:particle_initial_spin", "minecraft:particle_lifetime_expression",
-+            "minecraft:particle_motion_dynamic", "minecraft:particle_motion_parametric",
++            "minecraft:particle_motion_dynamic", "minecraft:particle_motion_parametric", "minecraft:particle_motion_collision",
 +            "minecraft:particle_appearance_billboard", "minecraft:particle_appearance_tinting",
 +            "minecraft:particle_appearance_lighting");
 +    final String texture, material;
@@ -16732,6 +16900,7 @@ index 0000000..2fb4795
 +    private final BedrockMolang.Program rotation, rotationRate;
 +    private final List<BedrockMolang.Program> offset, direction, speed;
 +    private final Motion motion;
++    private final BedrockParticleCollision collision;
 +    private final List<BedrockMolang.Program> parametric, parametricDirection;
 +    private final BedrockMolang.Program parametricRotation;
 +    private final Billboard billboard;
@@ -16788,6 +16957,8 @@ index 0000000..2fb4795
 +            throw new IOException("Ambiguous particle motion");
 +        this.motion = components.has("minecraft:particle_motion_dynamic")
 +                ? Motion.read(object(components, "particle_motion_dynamic")) : null;
++        this.collision = components.has("minecraft:particle_motion_collision")
++                ? BedrockParticleCollision.read(object(components, "particle_motion_collision")) : null;
 +        final JsonObject parameter = components.getAsJsonObject("minecraft:particle_motion_parametric");
 +        this.parametric = parameter == null ? null : vector(parameter.get("relative_position"), 3, 0);
 +        this.parametricDirection = parameter == null ? null : vector(parameter.get("direction"), 3, 0);
@@ -16828,14 +16999,14 @@ index 0000000..2fb4795
 +        boolean alive() { return !this.emitted || this.age < this.duration || !this.particles.isEmpty(); }
 +        int size() { return this.particles.size(); }
 +
-+        void advance(final long nanos, final int available, final net.minecraft.world.phys.Vec3 origin) {
++        void advance(final long nanos, final int available, final net.minecraft.world.phys.Vec3 origin, final BedrockParticleCollision.Terrain terrain) {
 +            final float seconds = (float) nanos / 1_000_000_000F;
 +            this.age += seconds;
 +            this.environment.variable("emitter_age", this.age);
 +            this.environment.clock(this.age, this.age, seconds);
 +            this.environment.evaluate(update, 0);
 +            final int previousSize = this.particles.size();
-+            this.particles.removeIf(particle -> !particle.advance(nanos, this.age, this.duration));
++            this.particles.removeIf(particle -> !particle.advance(nanos, this.age, this.duration, terrain));
 +            int requested = 0;
 +            if (count != null) {
 +                if (!this.emitted) {
@@ -16899,7 +17070,7 @@ index 0000000..2fb4795
 +            return direction.mul(environment.evaluate(speed.getFirst(), 0));
 +        }
 +
-+        private boolean advance(final long nanos, final float emitterAge, final float emitterLifetime) {
++        private boolean advance(final long nanos, final float emitterAge, final float emitterLifetime, final BedrockParticleCollision.Terrain terrain) {
 +            final float seconds = (float) nanos / 1_000_000_000F;
 +            this.age += seconds;
 +            this.environment.variable("particle_age", this.age);
@@ -16907,6 +17078,7 @@ index 0000000..2fb4795
 +            this.environment.variable("emitter_lifetime", emitterLifetime);
 +            this.environment.clock(this.age, this.age, seconds);
 +            if (this.age >= this.duration || this.environment.evaluate(expiration, 0) != 0) return false;
++            final Vector3f previous = collision == null ? null : new Vector3f(this.position);
 +            if (parametric != null) {
 +                this.position.set(this.origin).add(evaluated(parametric, this.environment));
 +                this.facing.set(evaluated(parametricDirection, this.environment));
@@ -16917,7 +17089,14 @@ index 0000000..2fb4795
 +                this.rotation = spin.angle;
 +                this.rotationRate = spin.speed;
 +            }
-+            return this.position.isFinite() && this.velocity.isFinite();
++            if (!this.position.isFinite() || !this.velocity.isFinite()) return false;
++            if (collision != null) {
++                for (int axis = 0; axis < 3; axis++)
++                    if (Math.abs(this.position.get(axis)) > 30_000_000 || Math.abs(previous.get(axis)) > 30_000_000) return false;
++                final boolean contact = collision.collide(previous, this.position, this.velocity, nanos, this.environment, this.worldOrigin, terrain);
++                if (contact && collision.expireOnContact() && this.duration > 0) return false;
++            }
++            return true;
 +        }
 +
 +        private Visual visual() {
@@ -17537,10 +17716,10 @@ index 0000000..e638562
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePlayback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePlayback.java
 new file mode 100644
-index 0000000..eb0aa00
+index 0000000..37612df
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePlayback.java
-@@ -0,0 +1,236 @@
+@@ -0,0 +1,250 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -17704,13 +17883,27 @@ index 0000000..eb0aa00
 +                ? 0 : Math.round((clock - previousClock) * 50_000_000D);
 +        previousClock = clock;
 +        final List<Quad> quads = new ArrayList<>();
++        final Map<BlockPos, List<BedrockParticleCollision.Box>> collisionBoxes = new HashMap<>();
++        final BedrockParticleCollision.Terrain terrain = (x, y, z) -> {
++            final BlockPos cell = new BlockPos(x, y, z);
++            final var cached = collisionBoxes.get(cell);
++            if (cached != null) return cached;
++            final List<BedrockParticleCollision.Box> boxes = new ArrayList<>();
++            for (final var shape : level.getBlockCollisions(null, new AABB(x, y, z, x + 1D, y + 1D, z + 1D)))
++                for (final AABB box : shape.toAabbs())
++                    boxes.add(new BedrockParticleCollision.Box((float) box.minX, (float) box.minY, (float) box.minZ,
++                            (float) box.maxX, (float) box.maxY, (float) box.maxZ));
++            final var result = List.copyOf(boxes);
++            if (collisionBoxes.size() < 4096) collisionBoxes.put(cell, result);
++            return result;
++        };
 +        int population = EMITTERS.stream().mapToInt(playing -> playing.emitter.size()).sum();
 +        for (final var iterator = EMITTERS.iterator(); iterator.hasNext();) {
 +            final Playing playing = iterator.next();
 +            final Vec3 origin = playing.origin.get();
 +            if (!valid(origin)) { population -= playing.emitter.size(); iterator.remove(); continue; }
 +            final int before = playing.emitter.size();
-+            playing.emitter.advance(elapsed, MAX_PARTICLES - population, origin);
++            playing.emitter.advance(elapsed, MAX_PARTICLES - population, origin, terrain);
 +            population += playing.emitter.size() - before;
 +            if (!playing.emitter.alive()) { iterator.remove(); continue; }
 +            for (final var visual : playing.emitter.visuals()) {
@@ -30226,6 +30419,134 @@ index 0000000..97e0298
 +        return result;
 +    }
 +}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCollisionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCollisionTest.java
+new file mode 100644
+index 0000000..46ec76d
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleCollisionTest.java
+@@ -0,0 +1,122 @@
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++import org.joml.Vector3f;
++import net.minecraft.world.phys.Vec3;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockParticleCollisionTest {
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_PARTICLE_REFERENCE", matches = ".+")
++    void matchesNativeSweepsResponseDragAndWorldCollection() throws Exception {
++        final var fixture = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_PARTICLE_REFERENCE"),
++                "native-particle-collision-result.json"))).getAsJsonObject();
++        final var cases = fixture.getAsJsonArray("cases");
++        for (int index = 0; index < cases.size(); index++) {
++            final var row = cases.get(index).getAsJsonObject();
++            final var config = row.getAsJsonObject("config");
++            final var expected = row.getAsJsonObject("values");
++            final var declaration = new JsonObject();
++            if (config.has("enabled")) declaration.add("enabled", config.get("enabled"));
++            declaration.addProperty("collision_radius", number(config, "radius", .1F));
++            declaration.addProperty("collision_drag", number(config, "drag", 0));
++            declaration.addProperty("coefficient_of_restitution", number(config, "restitution", .5F));
++            final var component = BedrockParticleCollision.read(declaration);
++            final Vector3f position = vector(config, "current"), previous = vector(config, "previous"), velocity = vector(config, "velocity");
++            final var origin = config.has("origin") && !config.get("absolute").getAsBoolean() ? vector(config, "origin") : new Vector3f();
++            final List<List<Integer>> queried = new ArrayList<>();
++            final boolean hit = component.collide(previous, position, velocity,
++                    config.has("nanos") ? config.get("nanos").getAsLong() : 50_000_000, new BedrockMolang(), new Vec3(origin.x, origin.y, origin.z), (x, y, z) -> {
++                        queried.add(List.of(x, y, z));
++                        final List<BedrockParticleCollision.Box> result = new ArrayList<>();
++                        for (final var element : config.getAsJsonArray("boxes")) {
++                            final var box = element.getAsJsonArray();
++                            if ((int) Math.floor(box.get(0).getAsFloat()) == x && (int) Math.floor(box.get(1).getAsFloat()) == y
++                                    && (int) Math.floor(box.get(2).getAsFloat()) == z)
++                                result.add(new BedrockParticleCollision.Box(box.get(0).getAsFloat(), box.get(1).getAsFloat(),
++                                        box.get(2).getAsFloat(), box.get(3).getAsFloat(), box.get(4).getAsFloat(), box.get(5).getAsFloat()));
++                        }
++                        return result;
++                    });
++            for (int axis = 0; axis < 3; axis++) {
++                assertEquals(vector(expected, "position").get(axis), position.get(axis), "position case " + index + " axis " + axis);
++                assertEquals(vector(expected, "velocity").get(axis), velocity.get(axis), "velocity case " + index + " axis " + axis);
++            }
++            final var expectedQueries = expected.getAsJsonArray("queries");
++            assertEquals(expectedQueries.size(), queried.size(), "queries case " + index);
++            for (int query = 0; query < queried.size(); query++) for (int axis = 0; axis < 3; axis++)
++                assertEquals(expectedQueries.get(query).getAsJsonArray().get(axis).getAsInt(), queried.get(query).get(axis));
++            if (config.has("expire") && config.get("expire").getAsBoolean())
++                assertEquals(expected.get("lifetime").getAsLong() == 50_000_000, hit);
++        }
++        assertEquals(364, cases.size());
++    }
++
++    @Test
++    void appliesContactResponseAndExpirationDuringEmitterUpdates() throws Exception {
++        for (final boolean enabled : new boolean[]{false, true}) for (final boolean expire : new boolean[]{false, true}) {
++            final var document = BedrockParticleEffectTest.burst();
++            final var components = document.getAsJsonObject("particle_effect").getAsJsonObject("components");
++            components.add("minecraft:emitter_shape_point", JsonParser.parseString("{\"offset\":[0.5,0.5,0.5]}"));
++            components.add("minecraft:particle_initial_speed", JsonParser.parseString("[20,0,0]"));
++            components.add("minecraft:particle_motion_collision", JsonParser.parseString("""
++                    {"enabled":"v.contact", "collision_radius":0.1,"coefficient_of_restitution":0.5}
++                    """));
++            components.getAsJsonObject("minecraft:particle_motion_collision").addProperty("expire_on_contact", expire);
++            final var environment = new BedrockMolang();
++            environment.variable("contact", enabled ? 1 : 0);
++            final var emitter = BedrockParticleEffect.read(document).emitter(environment, new java.util.Random(1));
++            final var origin = new Vec3(10, 0, 0);
++            final BedrockParticleCollision.Terrain terrain = (x, y, z) -> {
++                assertTrue(enabled);
++                return x == 11 && y == 0 && z == 0 ? List.of(new BedrockParticleCollision.Box(11, 0, 0, 12, 1, 1)) : List.of();
++            };
++            emitter.advance(0, 2, origin, terrain);
++            emitter.advance(50_000_000, 0, origin, terrain);
++            if (enabled && expire) {
++                assertEquals(0, emitter.size());
++            } else {
++                assertEquals(2, emitter.size());
++                final float first = emitter.visuals().getFirst().position().x;
++                if (enabled) assertTrue(first < .9F && first > .899F);
++                else assertEquals(1.5F, first);
++                emitter.advance(50_000_000, 0, origin, terrain);
++                final float next = emitter.visuals().getFirst().position().x;
++                if (enabled) assertEquals(first - .5F, next);
++                else assertEquals(2.5F, next);
++            }
++        }
++    }
++
++    @Test
++    void boundsRadiusAndRejectsUnsupportedContactEvents() throws Exception {
++        final var value = new JsonObject();
++        assertEquals(0, BedrockParticleCollision.read(value).radius());
++        for (final float radius : new float[]{-1, 0, .2F, .5F, 1}) {
++            value.addProperty("collision_radius", radius);
++            assertEquals(Math.clamp(radius, 0, .5F), BedrockParticleCollision.read(value).radius());
++        }
++        value.add("events", JsonParser.parseString("[{\"event\":\"impact\"}]"));
++        assertThrows(java.io.IOException.class, () -> BedrockParticleCollision.read(value));
++        value.remove("events");
++        value.addProperty("expire_on_contact", 1);
++        assertThrows(java.io.IOException.class, () -> BedrockParticleCollision.read(value));
++    }
++
++    private static float number(final JsonObject value, final String name, final float fallback) {
++        return value.has(name) ? value.get(name).getAsFloat() : fallback;
++    }
++    private static Vector3f vector(final JsonObject value, final String name) {
++        final var array = value.getAsJsonArray(name);
++        return new Vector3f(array.get(0).getAsFloat(), array.get(1).getAsFloat(), array.get(2).getAsFloat());
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleDefinitionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleDefinitionTest.java
 new file mode 100644
 index 0000000..17fee14
@@ -30424,7 +30745,7 @@ index 0000000..17fee14
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffectTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffectTest.java
 new file mode 100644
-index 0000000..e1f932e
+index 0000000..f079a03
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffectTest.java
 @@ -0,0 +1,220 @@
@@ -30483,12 +30804,12 @@ index 0000000..e1f932e
 +        environment.variable("phase", 9);
 +        environment.queries(Map.of("scale", 2), 0, 0, 0);
 +        final var emitter = BedrockParticleEffect.read(document).emitter(environment.copy(), new Random(1));
-+        emitter.advance(0, 10, Vec3.ZERO);
++        emitter.advance(0, 10, Vec3.ZERO, (x, y, z) -> List.of());
 +        final var first = emitter.visuals();
 +        assertEquals(2, first.size());
 +        assertEquals(3, first.get(0).width());
 +        assertEquals(first.get(0).width(), first.get(1).width());
-+        emitter.advance(50_000_000, 8, Vec3.ZERO);
++        emitter.advance(50_000_000, 8, Vec3.ZERO, (x, y, z) -> List.of());
 +        assertEquals(4, emitter.visuals().getFirst().width());
 +        assertEquals(9, environment.evaluate(BedrockMolang.Program.parse(JsonParser.parseString("\"v.phase\""), 0), 0));
 +    }
@@ -30503,14 +30824,14 @@ index 0000000..e1f932e
 +        final var emitter = BedrockParticleEffect.read(document).emitter(new BedrockMolang(), new Random(2));
 +        final var first = new Vec3(1, 2, 3);
 +        final var second = new Vec3(4, 5, 6);
-+        emitter.advance(100_000_000, 1, first);
++        emitter.advance(100_000_000, 1, first, (x, y, z) -> List.of());
 +        assertEquals(first, emitter.visuals().getFirst().origin());
-+        emitter.advance(50_000_000, 0, second);
++        emitter.advance(50_000_000, 0, second, (x, y, z) -> List.of());
 +        assertEquals(first, emitter.visuals().getFirst().origin());
-+        emitter.advance(50_000_000, 0, second);
++        emitter.advance(50_000_000, 0, second, (x, y, z) -> List.of());
 +        assertEquals(1, emitter.size());
 +        assertEquals(second, emitter.visuals().getFirst().origin());
-+        emitter.advance(1_000_000_000, 0, second);
++        emitter.advance(1_000_000_000, 0, second, (x, y, z) -> List.of());
 +        assertEquals(0, emitter.size());
 +        assertFalse(emitter.alive());
 +    }
@@ -30530,14 +30851,14 @@ index 0000000..e1f932e
 +        final int[] counts = {0,1,1,2,10};
 +        for (int index = 0; index < deltas.length; index++) {
 +            environment.variable("rate", rates[index]);
-+            emitter.advance(deltas[index], 50, Vec3.ZERO);
++            emitter.advance(deltas[index], 50, Vec3.ZERO, (x, y, z) -> List.of());
 +            assertEquals(counts[index], emitter.size());
 +        }
 +    }
 +
 +    @Test
 +    void rejectsComponentsThatNeedAnotherRuntime() throws Exception {
-+        for (final String name : List.of("emitter_local_space", "particle_motion_collision", "particle_lifetime_events",
++        for (final String name : List.of("emitter_local_space", "particle_lifetime_events",
 +                "emitter_lifetime_looping", "emitter_rate_manual", "emitter_shape_sphere")) {
 +            final var document = burst();
 +            components(document).add("minecraft:" + name, new JsonObject());
