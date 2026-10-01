@@ -74,11 +74,13 @@ Use `--client proxy --transport-only` to check the separate Java → ViaProxy ro
 
 ## Validation scope
 
+The native recording screenshot shows the official Bedrock client. The local replay screenshot shows ViaFabricPlus with the Bedrock add-on.
+
 Private regression recordings cover CubeCraft, Hive, the public Geyser test server, and Minehut. CubeCraft exercises 240 skin updates, 37 advertised custom actor types, and actual native actor and player submissions. The Geyser scene exercises supplied player geometry and custom block packs.
 
-Minehut reaches its age-selection form. This does not verify admission beyond that form. An official-client Hive recording reaches playable lobby spawn and includes all 24 advertised resource packs, 49 supplied geometry skin updates, and 36 registered custom actor types. Hive omits the local-player skin. Local replay validation is pending.
+Minehut reaches its age-selection form. This does not verify admission beyond that form. An official-client Hive recording reaches playable lobby spawn and includes all 24 advertised resource packs, 49 supplied geometry skin updates, and 36 registered custom actor types. Hive omits the local-player skin. Local replay passes complete-payload transport checks and the skin and model rendering checks. All 49 geometry skins retain their recorded pixels. Actual remote-player and custom actor draws are verified. The 36 registered custom actor types resolve, and all 11 referenced vanilla item images load from the private licensed cache.
 
-Custom block mapping and model checks cover the captured definitions. They do not prove every state or animation matches the official client. Legacy plain texture-array variation selection, nonuniform scaling of rotated cubes, and double-sided alpha-test back faces remain limitations.
+Custom block mapping and model checks cover the captured definitions. They do not prove every state or animation matches the official client. Legacy plain texture-array variation selection, nonuniform scaling of rotated cubes, and double-sided alpha-test back faces remain limitations. Custom blocks using carriers without fluid support also lose a second water layer. The Hive recording includes wet and dry `hive:cat_tail` plants, so a future fluid fix must preserve water by position.
 
 ## Limits
 

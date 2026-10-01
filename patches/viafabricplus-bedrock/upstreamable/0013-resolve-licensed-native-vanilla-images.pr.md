@@ -9,3 +9,7 @@ Return image-only layers in native order. Preserve exact path case and PNG, JPG 
 The existing licensed acquisition patch must first publish the complete texture projection with cache schema 6. Accounts, package bytes and saved captures remain private.
 
 Targeted synthetic tests cover missing-account acquisition, layer order, exact-case lookup, metadata exclusion, pixel isolation, native extension replacement and server overrides. All three provider tests pass against the matching core provider API. Main and test compilation pass. Together with the asset-cache tests, 20 cases pass with no failures or errors; two private licensed probes are skipped.
+
+A private probe also checks the actual licensed cache against the saved HiveSky pack. Both potion images with uppercase native path characters export correctly. Every exported pixel matches the effective native image. The cache contains all 11 native item images referenced by the captured Hive stack.
+
+The saved Hive scene passes strict local transport and rendering checks with the licensed cache: playable spawn, complete scene bytes, 49 geometry skins, and actual remote-player and custom actor draws. All 36 registered custom actor types resolve. The previous 11 missing item images and forced white actor outlines are absent. This checks the captured scene and does not establish full visual parity; custom blocks without fluid support still lose a second water layer.
