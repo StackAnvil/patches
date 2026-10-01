@@ -90,11 +90,13 @@ The Capes category equips, replaces, or removes free and owned capes. Persona ca
 
 The Size screen provides four native heights and two arm widths. Arm edits change `arm` and preserve `cs_arm`. Height edits replace the recognized pair of height entries. The wardrobe provides Both, Left, and Right controls for owned arms and legs. Native arm captures saved separate `/l` and `/r` entries even when both sides used the same piece. An edit keeps the opposite limb, its colors, and the emote wheel. Packet handles use the corresponding left or right limb type. The leg flow uses the same recipe structure and has targeted tests; it still needs a native write capture. Side controls stay disabled for unresolved free limb recipes. At small GUI sizes, Minecraft's category selector replaces the full category list, and limb and emote controls remain above the footer.
 
-The color editor uses swatches captured from Bedrock 1.26.51. Skin tone edits change `skcol`. Hair and iris edits change channel zero in `col`; eyebrow and sclera edits change channels one and two. It preserves the remaining channels. Other piece palettes and channel controls remain incomplete.
+The color editor uses swatches captured from Bedrock 1.26.51. Skin tone edits change `skcol`. Hair, facial hair, and iris edits change channel zero in `col`. Eyebrow edits change channel one. Sclera and mouth edits change channel two. Mouths use their own 29-color palette; facial hair uses the hair palette. Every edit preserves the remaining channels. Independent execution of the target client verifies the swatches and channel order. Premium piece palettes and channel controls remain incomplete.
+
+The full stack builds, and all 148 fixture-enabled add-on tests pass with no skips. A running Java client passes 33 checks for color controls, saved swatch selection, Apply availability, eye channel cycling, and returning to the wardrobe. The runtime probe uses a local recipe fixture and writes no account changes. A fresh native mouth or facial hair write capture remains pending.
 
 ## Account character assembly
 
-The active character has an authenticated avatar at `GET /api/v1.0/profile/image/avatar`. The add-on assembles its body locally when all equipped assets and bindings are available. Recipes with unavailable receipt keys or animated shared body textures still use the GLTF model from `/api/v1.0/profile/image/ModelBinary`.
+The active character has an authenticated avatar at `GET /api/v1.0/profile/image/avatar`. The add-on assembles its body locally when all equipped assets and bindings are available. Recipes with unavailable receipt keys still use the GLTF model from `/api/v1.0/profile/image/ModelBinary`.
 
 **Use in worlds** saves the locally assembled character, or converts the service model into a Bedrock atlas and geometry. It saves the appearance per account and sends it at login or through a live skin update. Slot selection and edits refresh an active character already selected for use in worlds.
 
@@ -221,7 +223,7 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 - Resolve free assets for accounts without usable receipt keys. These recipes still depend on the service model. Verify native cape motion. Compare more overlapping clothing combinations against native results.
 - Compare more face sizes, tint channels, and equipped combinations against native results.
 - Compare corrected blink and strip timing with native multiplayer video. Implement emote effects, named actor events, chat announcements, and unavailable remote assets. Compare entity-relative rotations against native playback.
-- Add other piece palettes, verify native leg edits, and resolve free limb side recipes. Add paid purchase/redemption flows and account classic-pack downloads.
+- Add premium piece palettes and channels, verify native leg edits, and resolve free limb side recipes. Add paid purchase/redemption flows and account classic-pack downloads.
 - Verify versioned vanilla model overrides and native parent-name behavior. Complete classic item-action bindings, geometry-provided alias precedence, and first-person playback. Compare inherited skins and equipment flags with native rendering, including first-person views.
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. A white quad above the player moved independently with the sky clouds; it was not an extra face surface.
 
