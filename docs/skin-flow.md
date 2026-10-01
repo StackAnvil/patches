@@ -138,7 +138,7 @@ The asset reader checks archive limits, manifest UUID, and encrypted content ID.
 
 Local face assembly combines equipped skin, mouth, eyes, facial hair, and hair textures in native piece order. Static layers repeat across animated frames. Extracted head and hat meshes replace the service model's corresponding surfaces and bind to the new face strip. Two-frame faces retain the native blink expression.
 
-Tint blending uses four weighted mask channels and the native HSL, LCh, and luminance color transfer. The alpha mask uses the character's skin tone, including eyelids. Recipe colors bind the other channels. Source alpha controls composition, and output bytes use native truncation. A private Bedrock 1.26.51.1 face capture matches all 2,048 RGBA pixels; isolated native compositor evaluations match 512 deterministic tint cases. These checks establish the captured composition and tint math. Other face sizes and equipped combinations still need native comparisons.
+Tint blending uses four weighted mask channels and the native HSL, LCh, and luminance color transfer. The alpha mask uses the equipped skin's selected red tint, including eyelids. Recipe colors bind the other channels when the piece allows overrides. Source alpha controls composition, and output bytes use native truncation. A private Bedrock 1.26.51.1 face capture matches all 2,048 RGBA pixels; isolated native compositor evaluations match 512 deterministic tint cases. These checks establish the captured composition and tint math. Other face sizes and equipped combinations still need native comparisons.
 
 Local body assembly selects the equipped skeleton and body sources for the character's height and arm width. Empty `arm_size` fields select shared sources. The skeleton supplies pose bones and item locators. Equipped geometry sources replace their declared body or clothing zones while retaining those pose bones. Static piece surfaces share an atlas with a duplicated one-pixel border. Polygon layers on the same bone retain separate vertex, normal, and UV indices.
 
@@ -159,6 +159,16 @@ Animated collections use separate 32-pixel and 128-pixel groups. Each source has
 Independent Bedrock 1.26.51.1 execution establishes source validation, column dimensions, and strip repetition. Native compositor output matches all 32,768 pixels of a synthetic two-frame body fixture. The fixture includes changing tint masks, translucent pixels, and a clothing-map offset across the frame boundary. These checks establish the tested composition rules. Native equipped-outfit and multiplayer comparisons remain pending.
 
 The replayed full stack builds, and all 144 fixture-enabled add-on tests pass with no skips. A running Java client passes 58 checks for local assembly, texture groups, preview uploads, world uploads, frame phases, and release. The runtime probe combines licensed starter assets with synthetic animated clothing and geometry. It changes no account recipes. These checks do not establish native visible outfit parity.
+
+## Persona tint selection
+
+Palette selection honors `allow_tint_override`. Fixed-color pieces retain their metadata tint instead of recipe colors. A missing selected tint falls back to the authored base colors. Skin pieces use the slot tone on all four channels when overrides are allowed. Capes bypass selected tint.
+
+Other pieces use the equipped skin's selected red tint for their alpha mask. A fixed skin supplies its metadata tint. Missing skin assets preserve each piece's existing alpha tint. Face layers, shared body layers, static surfaces, and animated surfaces use these rules.
+
+Independent execution of Bedrock 1.26.51.1's palette-selection branches verifies 448 combinations. The probe supplies decoded colors at metadata accessor boundaries. Native code selects palettes, checks override flags, reads recipe groups, and resolves skin alpha. These checks establish palette selection. They do not establish premium palette availability or native visible outfit parity.
+
+The replayed stack builds and passes 166 fixture-enabled tests with no skips. A running Java client passes 506 checks. These cover the native palette cases, animated preview and world texture uploads, frame phases, and release. The probe changes no account profiles.
 
 ## Texture animation timing
 

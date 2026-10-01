@@ -1,4 +1,4 @@
-From c588994711b3e2d1598fcdfd749aac9f8db66160 Mon Sep 17 00:00:00 2001
+From c9e1ce77276ae3a7a420d67496843e796bd829f9 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -365,6 +365,20 @@ Validate the Store page's version against the published product, not the
 pack manifest version. The current Earth Skin publication uses 1.0.1,
 while its downloaded manifest declares 1.0.0. Comparing those different
 version domains would reject a valid owned pack.
+
+Honor metadata allow_tint_override during palette selection. Use authored
+base colors when no selected tint exists, and preserve fixed piece colors
+instead of replacing them with recipe channels. Resolve other pieces'
+alpha tint from the equipped skin's selected red channel, including a
+fixed skin tint. Missing skin assets preserve the piece alpha tint. Skin
+pieces use the slot tone on all channels only when overrides are allowed;
+capes bypass selected tint in the target assembler.
+
+Independent execution of Bedrock 1.26.51.1 FUN_141490e10 verifies 448
+palette-selection combinations. The probe supplies decoded colors at
+metadata accessor boundaries and executes the native selection branches,
+including recipe lookup, fixed skin colors, missing defaults, and capes.
+This evidence establishes palette selection, not premium UI availability.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   54 +
@@ -398,16 +412,16 @@ version domains would reject a valid owned pack.
  .../appearance/BedrockPackageHelper.java      |  121 +
  .../BedrockPersonaAnimationAtlas.java         |   96 +
  .../appearance/BedrockPersonaAnimations.java  |  128 +
- .../appearance/BedrockPersonaAssembler.java   |  190 +
+ .../appearance/BedrockPersonaAssembler.java   |  193 +
  .../appearance/BedrockPersonaAssets.java      |  120 +
- .../appearance/BedrockPersonaBody.java        |  388 +
- .../appearance/BedrockPersonaCape.java        |  234 +
- .../appearance/BedrockPersonaFace.java        |  154 +
+ .../appearance/BedrockPersonaBody.java        |  389 +
+ .../appearance/BedrockPersonaCape.java        |  235 +
+ .../appearance/BedrockPersonaFace.java        |  156 +
  .../appearance/BedrockPersonaGeometry.java    |  202 +
  .../appearance/BedrockPersonaModel.java       |  442 ++
  .../appearance/BedrockPersonaProfile.java     |  184 +
  .../appearance/BedrockPersonaSources.java     |  253 +
- .../appearance/BedrockPersonaTint.java        |  282 +
+ .../appearance/BedrockPersonaTint.java        |  325 +
  .../ViaFabricPlusEmoteProvider.java           |   37 +
  .../appearance/ViaFabricPlusSkinProvider.java |   16 +-
  .../render/MixinAvatarAnimationRenderer.java  |   34 +
@@ -449,10 +463,10 @@ version domains would reject a valid owned pack.
  .../appearance/BedrockPersonaFaceTest.java    |  277 +
  .../appearance/BedrockPersonaModelTest.java   |   91 +
  .../appearance/BedrockPersonaProfileTest.java |   92 +
- .../appearance/BedrockPersonaTintTest.java    |   87 +
+ .../appearance/BedrockPersonaTintTest.java    |  280 +
  .../render/BedrockAnimatedModelTest.java      |   55 +
  .../render/BedrockPlayerModelTest.java        |  100 +
- 86 files changed, 24756 insertions(+), 86 deletions(-)
+ 86 files changed, 24999 insertions(+), 86 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -14923,10 +14937,10 @@ index 0000000..5582677
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssembler.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssembler.java
 new file mode 100644
-index 0000000..ec13ce2
+index 0000000..3c94c2b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssembler.java
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,193 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -14956,6 +14970,7 @@ index 0000000..ec13ce2
 +            final Map<String, BedrockMarketplaceAssets.Pack> packs)
 +            throws IOException {
 +        if (packs.isEmpty()) return preview;
++        final var skinColor = BedrockPersonaTint.skinColor(slot, packs);
 +        final var composed = BedrockPersonaFace.assemble(preview, slot, packs);
 +        final JsonObject geometry = JsonParser.parseString(composed.geometry()).getAsJsonObject();
 +        final JsonArray models = geometry.getAsJsonArray("minecraft:geometry");
@@ -15029,7 +15044,9 @@ index 0000000..ec13ce2
 +                                            + "/"
 +                                            + recipe,
 +                                    BedrockPersonaTint.apply(
-+                                            asset, BedrockPersonaTint.palette(asset, slot, recipe)),
++                                            asset,
++                                            BedrockPersonaTint.palette(
++                                                    asset, slot, recipe, skinColor)),
 +                                    asset.frames());
 +                    final JsonObject model = geometries.get(source.get("geometry").getAsString());
 +                    if (model == null)
@@ -15245,10 +15262,10 @@ index 0000000..3d350d9
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaBody.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaBody.java
 new file mode 100644
-index 0000000..0338a3c
+index 0000000..642cc8d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaBody.java
-@@ -0,0 +1,388 @@
+@@ -0,0 +1,389 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -15300,6 +15317,7 @@ index 0000000..0338a3c
 +            final JsonObject capeModel)
 +            throws IOException {
 +        final var cape = BedrockPersonaCape.read(slot, packs);
++        final var skinColor = BedrockPersonaTint.skinColor(slot, packs);
 +        final List<Piece> pieces = new ArrayList<>();
 +        for (final var pack : packs.values()) {
 +            final var recipes = BedrockPersonaSources.recipes(pack, slot);
@@ -15364,7 +15382,7 @@ index 0000000..0338a3c
 +                        new Layer(
 +                                texture,
 +                                BedrockPersonaTint.palette(
-+                                        texture, slot, piece.recipes().getFirst())));
++                                        texture, slot, piece.recipes().getFirst(), skinColor)));
 +            }
 +            if (!piece.metadata().has("geometry_sources")) continue;
 +            final var geometries = BedrockPersonaSources.geometries(piece.pack());
@@ -15421,7 +15439,7 @@ index 0000000..0338a3c
 +                        BedrockPersonaTint.apply(
 +                                surface.texture(),
 +                                BedrockPersonaTint.palette(
-+                                        surface.texture(), slot, surface.recipe())));
++                                        surface.texture(), slot, surface.recipe(), skinColor)));
 +        if (cape != null) images.put("cape", cape.image());
 +        final Map<String, Tile> tiles = pack(images);
 +        final int atlasSize = tiles.values().iterator().next().atlasSize();
@@ -15639,10 +15657,10 @@ index 0000000..0338a3c
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaCape.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaCape.java
 new file mode 100644
-index 0000000..f8a3254
+index 0000000..3f63a27
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaCape.java
-@@ -0,0 +1,234 @@
+@@ -0,0 +1,235 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -15729,7 +15747,8 @@ index 0000000..f8a3254
 +    }
 +
 +    BufferedImage image() throws IOException {
-+        return BedrockPersonaTint.apply(texture, BedrockPersonaTint.palette(texture, slot, recipe));
++        return BedrockPersonaTint.apply(
++                texture, BedrockPersonaTint.palette(texture, slot, recipe, 0));
 +    }
 +
 +    void bind(
@@ -15879,10 +15898,10 @@ index 0000000..f8a3254
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaFace.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaFace.java
 new file mode 100644
-index 0000000..6a235e3
+index 0000000..61b5871
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaFace.java
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,156 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -15915,6 +15934,7 @@ index 0000000..6a235e3
 +            final BedrockCharacterProfiles.Slot slot,
 +            final Map<String, BedrockMarketplaceAssets.Pack> packs)
 +            throws IOException {
++        final var skinColor = BedrockPersonaTint.skinColor(slot, packs);
 +        final List<Layer> layers = new ArrayList<>();
 +        final Map<String, JsonObject> meshes = new LinkedHashMap<>();
 +        int size = 32, frames = 1;
@@ -15938,7 +15958,8 @@ index 0000000..6a235e3
 +                layers.add(
 +                        new Layer(
 +                                texture,
-+                                BedrockPersonaTint.palette(texture, slot, recipes.getFirst()),
++                                BedrockPersonaTint.palette(
++                                        texture, slot, recipes.getFirst(), skinColor),
 +                                BedrockPersonaSources.order(type)));
 +            }
 +            for (final var file : pack.files().entrySet()) {
@@ -17144,10 +17165,10 @@ index 0000000..150b37b
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaTint.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaTint.java
 new file mode 100644
-index 0000000..0873d74
+index 0000000..48b4d0f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaTint.java
-@@ -0,0 +1,282 @@
+@@ -0,0 +1,325 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -17157,6 +17178,8 @@ index 0000000..0873d74
 +
 +import com.google.gson.JsonElement;
 +import com.google.gson.JsonObject;
++
++import org.jspecify.annotations.Nullable;
 +
 +import java.awt.image.BufferedImage;
 +import java.io.IOException;
@@ -17169,25 +17192,66 @@ index 0000000..0873d74
 +
 +    private BedrockPersonaTint() {}
 +
++    static @Nullable Integer skinColor(
++            final BedrockCharacterProfiles.Slot slot,
++            final Map<String, BedrockMarketplaceAssets.Pack> packs)
++            throws IOException {
++        JsonObject skin = null;
++        for (final var pack : packs.values()) {
++            if (BedrockPersonaSources.recipes(pack, slot).isEmpty()) continue;
++            for (final var metadata : BedrockPersonaSources.metadata(pack)) {
++                if (!metadata.has("piece_type")
++                        || !"persona_skin".equals(metadata.get("piece_type").getAsString()))
++                    continue;
++                if (skin != null && !skin.equals(metadata))
++                    throw new IOException("The equipped skin tint assets are ambiguous");
++                skin = metadata;
++            }
++        }
++        if (skin == null) return null;
++        return allowsOverride(skin)
++                ? parseColor(slot.skinColor())
++                : channels(skin.get("tint_color"))[0];
++    }
++
 +    static Palette palette(
 +            final BedrockPersonaSources.Texture texture,
 +            final BedrockCharacterProfiles.Slot slot,
-+            final JsonObject recipe)
++            final JsonObject recipe,
++            final @Nullable Integer skinColor)
 +            throws IOException {
-+        final int[] authored = channels(texture.metadata().get("tint_base_color"));
-+        final int[] selected = channels(texture.metadata().get("tint_color"));
-+        if (recipe.has("col")) {
-+            final var colors = recipe.getAsJsonArray("col");
-+            if (colors.size() != 4)
-+                throw new IOException("A persona piece has an incomplete tint group");
-+            for (int i = 0; i < 4; i++) selected[i] = parseColor(colors.get(i).getAsString());
++        final JsonObject metadata = texture.metadata();
++        final int[] authored = channels(metadata.get("tint_base_color"));
++        final String type =
++                metadata.has("piece_type") ? metadata.get("piece_type").getAsString() : "";
++        final int[] selected;
++        if ("persona_capes".equals(type)) {
++            selected = new int[4];
++        } else if ("persona_skin".equals(type)) {
++            selected = new int[4];
++            if (allowsOverride(metadata))
++                java.util.Arrays.fill(selected, parseColor(slot.skinColor()));
++        } else {
++            final JsonElement tint = metadata.get("tint_color");
++            selected = tint == null || tint.isJsonNull() ? authored.clone() : channels(tint);
++            if (allowsOverride(metadata) && recipe.has("col")) {
++                final var colors = recipe.getAsJsonArray("col");
++                if (colors.size() != 4)
++                    throw new IOException("A persona piece has an incomplete tint group");
++                for (int i = 0; i < 4; i++) selected[i] = parseColor(colors.get(i).getAsString());
++            }
++            // Every non-skin, non-cape piece uses the equipped skin's red tint as its alpha tint.
++            if (skinColor != null) selected[3] = skinColor;
 +        }
-+        // The character's skin tone always supplies the alpha mask channel, including eyelids.
-+        selected[3] = parseColor(slot.skinColor());
-+        if (texture.metadata().has("piece_type")
-+                && "persona_skin".equals(texture.metadata().get("piece_type").getAsString()))
-+            selected[0] = selected[3];
 +        return new Palette(authored, selected);
++    }
++
++    private static boolean allowsOverride(final JsonObject metadata) throws IOException {
++        final JsonElement value = metadata.get("allow_tint_override");
++        if (value == null || value.isJsonNull()) return true;
++        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isBoolean())
++            throw new IOException("A persona piece has an invalid tint override flag");
++        return value.getAsBoolean();
 +    }
 +
 +    static BufferedImage apply(final BedrockPersonaSources.Texture texture, final Palette palette) {
@@ -26118,19 +26182,27 @@ index 0000000..aa4d35b
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaTintTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaTintTest.java
 new file mode 100644
-index 0000000..28dfb7e
+index 0000000..188c1ce
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaTintTest.java
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,280 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
++import com.google.gson.JsonArray;
 +import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
 +
 +import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 +
 +import java.awt.image.BufferedImage;
++import java.io.IOException;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.Map;
 +
 +final class BedrockPersonaTintTest {
 +    @Test
@@ -26190,11 +26262,16 @@ index 0000000..28dfb7e
 +        final var slot =
 +                BedrockPersonaProfileTest.starterSlot(BedrockCharacterProfiles.Starter.STEVE);
 +        final JsonObject recipe = new JsonObject();
-+        final var colors = new com.google.gson.JsonArray();
++        final var colors = new JsonArray();
 +        for (final String color : new String[] {"#805A3480", "#0", "#EFEFEA", "#0"})
 +            colors.add(color);
 +        recipe.add("col", colors);
-+        final var palette = BedrockPersonaTint.palette(texture, slot, recipe);
++        final var palette =
++                BedrockPersonaTint.palette(
++                        texture,
++                        slot,
++                        recipe,
++                        (int) Long.parseLong(slot.skinColor().substring(1), 16));
 +        assertArrayEquals(new int[] {0xFFCC9966, 0, 0, 0xFFFF7040}, palette.authored());
 +        assertArrayEquals(
 +                new int[] {
@@ -26206,7 +26283,187 @@ index 0000000..28dfb7e
 +                palette.selected());
 +        colors.remove(3);
 +        assertThrows(
-+                java.io.IOException.class, () -> BedrockPersonaTint.palette(texture, slot, recipe));
++                IOException.class,
++                () ->
++                        BedrockPersonaTint.palette(
++                                texture,
++                                slot,
++                                recipe,
++                                (int) Long.parseLong(slot.skinColor().substring(1), 16)));
++    }
++
++    @Test
++    void fallsBackToAuthoredTintAndHonorsFixedColors() throws Exception {
++        final var slot =
++                BedrockPersonaProfileTest.starterSlot(BedrockCharacterProfiles.Starter.STEVE);
++        final JsonObject metadata = new JsonObject(), recipe = new JsonObject();
++        metadata.addProperty("piece_type", "persona_hair");
++        metadata.addProperty("tint_base_color", "#406080");
++        final var texture = texture(metadata);
++        assertArrayEquals(
++                new int[] {0xFF406080, 0xFF406080, 0xFF406080, 0xFF765432},
++                BedrockPersonaTint.palette(texture, slot, recipe, 0xFF765432).selected());
++        metadata.addProperty("allow_tint_override", false);
++        metadata.addProperty("tint_color", "#807060");
++        recipe.add(
++                "col",
++                JsonParser.parseString(
++                        "[\"#FF102030\",\"#FF203040\",\"#FF304050\",\"#FF405060\"]"));
++        assertArrayEquals(
++                new int[] {0xFF807060, 0xFF807060, 0xFF807060, 0xFF765432},
++                BedrockPersonaTint.palette(texture, slot, recipe, 0xFF765432).selected());
++        metadata.addProperty("allow_tint_override", true);
++        assertArrayEquals(
++                new int[] {0xFF102030, 0xFF203040, 0xFF304050, 0xFF765432},
++                BedrockPersonaTint.palette(texture, slot, recipe, 0xFF765432).selected());
++        metadata.addProperty("allow_tint_override", 1);
++        assertThrows(
++                IOException.class,
++                () -> BedrockPersonaTint.palette(texture, slot, recipe, 0xFF765432));
++    }
++
++    @Test
++    void resolvesFixedSkinAlphaAndBypassesSkinAndCapeTintOverrides() throws Exception {
++        final var slot =
++                BedrockPersonaProfileTest.starterSlot(BedrockCharacterProfiles.Starter.STEVE);
++        final String id =
++                slot.pieceIds().stream()
++                        .map(piece -> piece.split("/", 2)[0])
++                        .filter(
++                                piece ->
++                                        "persona_skin"
++                                                .equals(BedrockPersonaProfile.defaultType(piece)))
++                        .findFirst()
++                        .orElseThrow();
++        final JsonObject skin = new JsonObject();
++        skin.addProperty("piece_type", "persona_skin");
++        skin.addProperty("allow_tint_override", false);
++        skin.addProperty("tint_color", "#765432");
++        final var pack =
++                new BedrockMarketplaceAssets.Pack(
++                        id,
++                        Map.of("skin.meta.json", skin.toString().getBytes(StandardCharsets.UTF_8)));
++        assertEquals(0xFF765432, BedrockPersonaTint.skinColor(slot, Map.of(id, pack)));
++        assertArrayEquals(
++                new int[4],
++                BedrockPersonaTint.palette(texture(skin), slot, new JsonObject(), 0xFF765432)
++                        .selected());
++        skin.addProperty("allow_tint_override", true);
++        final int color = (int) Long.parseLong(slot.skinColor().substring(1), 16);
++        assertArrayEquals(
++                new int[] {color, color, color, color},
++                BedrockPersonaTint.palette(texture(skin), slot, new JsonObject(), 0xFF765432)
++                        .selected());
++        skin.addProperty("piece_type", "persona_capes");
++        assertArrayEquals(
++                new int[4],
++                BedrockPersonaTint.palette(texture(skin), slot, new JsonObject(), color)
++                        .selected());
++        assertNull(BedrockPersonaTint.skinColor(slot, Map.of()));
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_TINT_SELECTION_RESULT", matches = ".+")
++    void matchesNativePaletteSelectionAcrossOverrideAndSkinDefaults() throws Exception {
++        final JsonObject fixture =
++                JsonParser.parseString(
++                                Files.readString(
++                                        Path.of(System.getenv("STACKANVIL_TINT_SELECTION_RESULT"))))
++                        .getAsJsonObject();
++        final var original =
++                BedrockPersonaProfileTest.starterSlot(BedrockCharacterProfiles.Starter.STEVE);
++        final var slot =
++                new BedrockCharacterProfiles.Slot(
++                        original.number(),
++                        original.arm(),
++                        fixture.get("skinColor").getAsString(),
++                        original.pieceIds(),
++                        original.profileHash(),
++                        original.profile());
++        final String skinId =
++                slot.pieceIds().stream()
++                        .map(piece -> piece.split("/", 2)[0])
++                        .filter(
++                                piece ->
++                                        "persona_skin"
++                                                .equals(BedrockPersonaProfile.defaultType(piece)))
++                        .findFirst()
++                        .orElseThrow();
++        int checked = 0;
++        for (final var element : fixture.getAsJsonArray("cases")) {
++            final var row = element.getAsJsonObject();
++            final JsonObject skin = new JsonObject(),
++                    metadata = new JsonObject(),
++                    recipe = new JsonObject();
++            skin.addProperty("piece_type", "persona_skin");
++            skin.addProperty("allow_tint_override", row.get("skinAllowsOverride").getAsBoolean());
++            if (row.get("skinHasDefaultTint").getAsBoolean())
++                skin.add("tint_color", channels(fixture.getAsJsonArray("skinTint")));
++            final Map<String, BedrockMarketplaceAssets.Pack> packs =
++                    row.get("skinPresent").getAsBoolean()
++                            ? Map.of(
++                                    skinId,
++                                    new BedrockMarketplaceAssets.Pack(
++                                            skinId,
++                                            Map.of(
++                                                    "skin.meta.json",
++                                                    skin.toString()
++                                                            .getBytes(StandardCharsets.UTF_8))))
++                            : Map.of();
++            final String type =
++                    switch (row.get("pieceType").getAsInt()) {
++                        case 3 -> "persona_skin";
++                        case 7 -> "persona_top";
++                        case 11 -> "persona_facial_hair";
++                        case 12 -> "persona_mouth";
++                        case 13 -> "persona_eyes";
++                        case 14 -> "persona_hair";
++                        case 25 -> "persona_capes";
++                        default -> throw new AssertionError("Unknown native piece type");
++                    };
++            metadata.addProperty("piece_type", type);
++            metadata.addProperty("allow_tint_override", row.get("allowOverride").getAsBoolean());
++            metadata.add("tint_base_color", channels(fixture.getAsJsonArray("authored")));
++            if (row.get("hasDefaultTint").getAsBoolean())
++                metadata.add("tint_color", channels(fixture.getAsJsonArray("defaultTint")));
++            if (row.get("hasRecipe").getAsBoolean())
++                recipe.add("col", fixture.getAsJsonArray("recipe").deepCopy());
++            final var palette =
++                    BedrockPersonaTint.palette(
++                            texture(metadata),
++                            slot,
++                            recipe,
++                            BedrockPersonaTint.skinColor(slot, packs));
++            final int[] expected = new int[4];
++            for (int i = 0; i < 4; i++)
++                expected[i] =
++                        (int)
++                                Long.parseLong(
++                                        row.getAsJsonArray("selected")
++                                                .get(i)
++                                                .getAsString()
++                                                .substring(1),
++                                        16);
++            assertArrayEquals(expected, palette.selected(), row.toString());
++            checked++;
++        }
++        assertEquals(448, checked);
++    }
++
++    private static JsonObject channels(final JsonArray values) {
++        final var result = new JsonObject();
++        final String[] names = {"r_color", "g_color", "b_color", "a_color"};
++        for (int i = 0; i < 4; i++) result.add(names[i], values.get(i).deepCopy());
++        return result;
++    }
++
++    private static BedrockPersonaSources.Texture texture(final JsonObject metadata) {
++        return new BedrockPersonaSources.Texture(
++                new JsonObject(),
++                metadata,
++                new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB),
++                null,
++                1);
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModelTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModelTest.java
