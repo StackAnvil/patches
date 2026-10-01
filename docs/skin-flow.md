@@ -248,7 +248,9 @@ The sound consumer passes a position callback to the sound engine. Native callba
 
 Another 512 native cases execute the engine method, backend method, and actual position callback together. A missing catalog event produces no request. The inspected backend invokes the callback once, then requests ordinary playback with volume `2`, pitch `1`, and no server sound handle. It does not retain the callback for later movement. The harness supplies catalog lookup and captures the playback request without audio output.
 
-Another 328 native cases verify weighted sample selection, zero weights, sample volume and pitch multipliers, positional overrides, and handle allocation. The harness supplies the random draw and stops before sample loading. Attenuation, category volume, captions, audible output, and production effect playback remain incomplete.
+Another 328 native cases verify weighted sample selection, zero weights, sample volume and pitch multipliers, positional overrides, and handle allocation. The harness supplies the random draw and stops before sample loading.
+
+Catalog setup and sample construction pass 141 native cases. They establish category defaults, scalar volume and pitch conversion, sample flags, and the `is3D` default carried between entries. Another 400 cases establish native minimum and maximum distance requests, inverse and linear rolloff requests, default restoration, and subsound propagation. FMOD calls are supplied boundaries. These checks do not establish audible attenuation. Category volume, captions, audible output, and production effect playback remain incomplete.
 
 Another native probe verifies 64 binding availability and lifetime cases. The binder assigns separate particle and sound tables through two weak resources. Absent or expired resources leave existing bindings unchanged. This verifies native table assignment, not production resource loading or named actor events. The native emote loader adds its first declared source to the shared actor-animation library.
 
