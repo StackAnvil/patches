@@ -1,0 +1,426 @@
+From 0618de6bb571d1c078931f8ba398f8274be40994 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 16:22:35 +0200
+Subject: [PATCH] feat(entities): evaluate named actor properties and
+ pre-animation
+
+Retain immutable named actor property snapshots across sparse updates and
+bind query.property and query.has_property before pre_animation and render
+controller selection. Reevaluate custom actor selections on ticks so a
+property or time-driven controller can change the visible model.
+
+Correct Mocha parser and evaluator boundaries for string equality,
+assignment/ternary precedence and unary calls. CubeCraft controllers use
+all three behaviors, and Geyser mushroom permutations negate property
+queries. Shared semantic tests cover enum comparison, chained and nested
+assignments, conditional branches and negated calls.
+
+The Bedrock Molang reference documents string comparison and operator
+precedence: https://mojang.github.io/bedrock-samples/Molang.html . Typed
+wire-property decoding remains in the separate metadata feature.
+---
+ .../api/model/entity/CustomEntity.java        |  19 ++
+ .../viabedrock/api/model/entity/Entity.java   |  15 ++
+ .../viabedrock/api/util/MoLangEngine.java     | 191 +++++++++++++++++-
+ .../viabedrock/api/util/MoLangEngineTest.java |  81 ++++++++
+ 4 files changed, 305 insertions(+), 1 deletion(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
+index 53394efe..015c49c2 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
+@@ -112,6 +112,15 @@ public class CustomEntity extends Entity {
+         this.entityScope.readOnly(true);
+     }
+ 
++    @Override
++    public void tick() {
++        super.tick();
++        if (this.spawned && this.evaluateRenderControllerChange()) {
++            this.despawn();
++            this.spawn();
++        }
++    }
++
+     @Override
+     public void setPosition(final Position3f position) {
+         super.setPosition(position);
+@@ -219,6 +228,9 @@ public class CustomEntity extends Entity {
+     private boolean evaluateRenderControllerChange() {
+         final Scope executionScope = this.entityScope.copy();
+         final MutableObjectBinding queryBinding = new MutableObjectBinding();
++        MoLangEngine.bindPropertyQueries(queryBinding, this.entityProperties());
++        queryBinding.set("life_time", Value.of(this.age / 20F));
++        queryBinding.set("delta_time", Value.of(0.05F));
+         if (this.entityData.containsKey(ActorDataIds.VARIANT)) {
+             queryBinding.set("variant", Value.of(this.entityData.get(ActorDataIds.VARIANT).<Integer>value()));
+         }
+@@ -240,6 +252,13 @@ public class CustomEntity extends Entity {
+         executionScope.set("query", queryBinding);
+         executionScope.set("q", queryBinding);
+ 
++        try {
++            MoLangEngine.runPreAnimation(executionScope, this.entityDefinition.entityData().getScripts().pre_animation());
++        } catch (final Throwable e) {
++            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to evaluate entity pre_animation", e);
++            return replaceModels(this.models, List.of());
++        }
++
+         final List<EvaluatedModel> newModels = new ArrayList<>();
+         final ResourcePackStorage resourcePackStorage = user.get(ResourcePackStorage.class);
+         for (BedrockEntityData.RenderController entityRenderController : this.entityDefinition.entityData().getControllers()) {
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
+index 615e9da4..bcfcedf9 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
+@@ -61,6 +61,7 @@ public class Entity {
+     protected Position3f rotation = Position3f.ZERO;
+     protected boolean onGround;
+     protected final Map<ActorDataIds, EntityData> entityData = new EnumMap<>(ActorDataIds.class);
++    private final Map<String, Object> entityProperties = new HashMap<>();
+     protected String name;
+     protected int age;
+     protected boolean hasBossBar;
+@@ -79,6 +80,20 @@ public class Entity {
+         this.javaType = javaType;
+     }
+ 
++    public final Map<String, Object> entityProperties() {
++        return Map.copyOf(this.entityProperties);
++    }
++
++    public final void retainEntityProperties(final Map<String, Object> properties) {
++        boolean changed = false;
++        for (Map.Entry<String, Object> entry : properties.entrySet()) {
++            changed |= !Objects.equals(this.entityProperties.put(entry.getKey(), entry.getValue()), entry.getValue());
++        }
++        if (changed) {
++            this.onEntityDataChanged();
++        }
++    }
++
+     public void tick() {
+         this.age++;
+     }
+diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java b/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
+index 8f4c4f89..1a50382f 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
++++ b/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
+@@ -19,20 +19,42 @@ package net.raphimc.viabedrock.api.util;
+ 
+ import team.unnamed.mocha.parser.MolangParser;
+ import team.unnamed.mocha.parser.ast.Expression;
++import team.unnamed.mocha.parser.ast.BinaryExpression;
++import team.unnamed.mocha.parser.ast.CallExpression;
++import team.unnamed.mocha.parser.ast.IdentifierExpression;
++import team.unnamed.mocha.parser.ast.UnaryExpression;
++import team.unnamed.mocha.parser.ast.AccessExpression;
++import team.unnamed.mocha.parser.ast.ArrayAccessExpression;
++import team.unnamed.mocha.parser.ast.ExecutionScopeExpression;
++import team.unnamed.mocha.parser.ast.TernaryConditionalExpression;
+ import team.unnamed.mocha.runtime.ExpressionInterpreter;
+ import team.unnamed.mocha.runtime.Scope;
+ import team.unnamed.mocha.runtime.value.MutableObjectBinding;
+ import team.unnamed.mocha.runtime.value.NumberValue;
+ import team.unnamed.mocha.runtime.value.Value;
++import team.unnamed.mocha.runtime.value.Function;
+ 
+ import java.io.IOException;
+ import java.io.Reader;
+ import java.io.StringReader;
+ import java.util.List;
++import java.util.Map;
++import java.util.ArrayList;
+ 
+ @SuppressWarnings("UnstableApiUsage")
+ public final class MoLangEngine {
+ 
++    public static void bindPropertyQueries(final MutableObjectBinding queries, final Map<String, Object> properties) {
++        queries.set("has_property", (Function<Object>) (context, arguments) -> Value.of(arguments.length() > 0 && properties.containsKey(arguments.next().eval().getAsString())));
++        queries.set("property", (Function<Object>) (context, arguments) -> arguments.length() == 0 ? NumberValue.zero() : Value.of(properties.getOrDefault(arguments.next().eval().getAsString(), 0)));
++    }
++
++    public static void runPreAnimation(final Scope scope, final List<String> expressions) throws IOException {
++        for (String expression : expressions) {
++            eval(scope, expression);
++        }
++    }
++
+     public static Value eval(final Scope scope, final String expression) throws IOException {
+         return eval(scope, parse(expression));
+     }
+@@ -42,6 +64,14 @@ public final class MoLangEngine {
+         final MutableObjectBinding tempBinding = new MutableObjectBinding();
+         localScope.set("temp", tempBinding);
+         localScope.set("t", tempBinding);
++        localScope.set("viabedrock_equal", (Function<Object>) (context, arguments) -> {
++            final Value left = arguments.next().eval();
++            final Value right = arguments.next().eval();
++            final boolean equal = left != null && right != null && (left.isString() || right.isString()
++                ? left.isString() && right.isString() && left.getAsString().equals(right.getAsString())
++                : left.getAsNumber() == right.getAsNumber());
++            return Value.of(equal);
++        });
+         localScope.readOnly(true);
+ 
+         final ExpressionInterpreter<Void> evaluator = new ExpressionInterpreter<>(null, localScope);
+@@ -67,7 +97,166 @@ public final class MoLangEngine {
+     }
+ 
+     public static List<Expression> parse(final Reader reader) throws IOException {
+-        return MolangParser.parser(reader).parseAll();
++        final StringBuilder source = new StringBuilder();
++        final char[] buffer = new char[1024];
++        int length;
++        while ((length = reader.read(buffer)) != -1) {
++            source.append(buffer, 0, length);
++        }
++        return MolangParser.parser(new StringReader(normalizeAssignments(source.toString()))).parseAll().stream().map(expression -> normalizeOperators(expression, true)).toList();
++    }
++
++    /** Preserve Bedrock's lowest-precedence, right-associative assignments when parsing with Mocha. */
++    public static String normalizeAssignments(final String expression) {
++        final List<Integer> assignments = new ArrayList<>();
++        char quote = 0;
++        int position = 0;
++        while (position < expression.length()) {
++            final char current = expression.charAt(position);
++            if (quote != 0) {
++                if (current == '\\') {
++                    position++;
++                } else if (current == quote) {
++                    quote = 0;
++                }
++            } else if (current == '\'' || current == '"') {
++                quote = current;
++            } else if (current == '=' && (position == 0 || "=!<>".indexOf(expression.charAt(position - 1)) < 0)
++                && (position + 1 == expression.length() || expression.charAt(position + 1) != '=')) {
++                assignments.add(position);
++            }
++            position++;
++        }
++        final StringBuilder result = new StringBuilder(expression);
++        for (int index = assignments.size() - 1; index >= 0; index--) {
++            final int assignment = assignments.get(index);
++            final int start = assignmentStart(result, assignment);
++            final int end = assignmentEnd(result, assignment + 1);
++            result.insert(end, "))");
++            result.insert(assignment + 1, '(');
++            result.insert(start, '(');
++        }
++        return result.toString();
++    }
++
++    private static int assignmentStart(final CharSequence source, final int assignment) {
++        int position = assignment - 1;
++        int brackets = 0;
++        int parentheses = 0;
++        while (position >= 0) {
++            final char current = source.charAt(position);
++            if (current == ']') {
++                brackets++;
++            } else if (current == ')') {
++                parentheses++;
++            } else if (current == '[') {
++                brackets--;
++            } else if (current == '(') {
++                if (parentheses == 0) {
++                    break;
++                }
++                parentheses--;
++            } else if (brackets == 0 && parentheses == 0 && ";,{}?:=+-*/!|&<>".indexOf(current) >= 0) {
++                break;
++            }
++            position--;
++        }
++        return position + 1;
++    }
++
++    private static int assignmentEnd(final CharSequence source, final int start) {
++        int end = start;
++        int parentheses = 0;
++        int brackets = 0;
++        int braces = 0;
++        int ternaries = 0;
++        char quote = 0;
++        while (end < source.length()) {
++            final char current = source.charAt(end);
++            if (quote != 0) {
++                if (current == '\\') {
++                    end++;
++                } else if (current == quote) {
++                    quote = 0;
++                }
++            } else if (current == '\'' || current == '"') {
++                quote = current;
++            } else if (current == '(') {
++                parentheses++;
++            } else if (current == '[') {
++                brackets++;
++            } else if (current == '{') {
++                braces++;
++            } else if (current == ')') {
++                if (parentheses == 0) {
++                    break;
++                }
++                parentheses--;
++            } else if (current == ']') {
++                if (brackets == 0) {
++                    break;
++                }
++                brackets--;
++            } else if (current == '}') {
++                if (braces == 0) {
++                    break;
++                }
++                braces--;
++            } else if (parentheses == 0 && brackets == 0 && braces == 0) {
++                if (current == ';' || current == ',') {
++                    break;
++                } else if (current == '?') {
++                    if (end + 1 < source.length() && source.charAt(end + 1) == '?') {
++                        end++;
++                    } else {
++                        ternaries++;
++                    }
++                } else if (current == ':') {
++                    if (ternaries == 0) {
++                        break;
++                    }
++                    ternaries--;
++                }
++            }
++            end++;
++        }
++        return end;
++    }
++
++    /** Correct Mocha's unary/postfix binding before an evaluator adds its own query handling. */
++    public static Expression normalizeOperators(final Expression expression) {
++        return normalizeOperators(expression, false);
++    }
++
++    private static Expression normalizeOperators(final Expression expression, final boolean compareStrings) {
++        if (expression instanceof BinaryExpression binary) {
++            final Expression left = normalizeOperators(binary.left(), compareStrings);
++            final Expression right = normalizeOperators(binary.right(), compareStrings);
++            if (compareStrings && (binary.op() == BinaryExpression.Op.EQ || binary.op() == BinaryExpression.Op.NEQ)) {
++                final Expression equality = new CallExpression(new IdentifierExpression("viabedrock_equal"), List.of(left, right));
++                return binary.op() == BinaryExpression.Op.EQ ? equality : new UnaryExpression(UnaryExpression.Op.LOGICAL_NEGATION, equality);
++            }
++            return new BinaryExpression(binary.op(), left, right);
++        } else if (expression instanceof UnaryExpression unary) {
++            return new UnaryExpression(unary.op(), normalizeOperators(unary.expression(), compareStrings));
++        } else if (expression instanceof TernaryConditionalExpression ternary) {
++            return new TernaryConditionalExpression(normalizeOperators(ternary.condition(), compareStrings), normalizeOperators(ternary.trueExpression(), compareStrings), normalizeOperators(ternary.falseExpression(), compareStrings));
++        } else if (expression instanceof ExecutionScopeExpression scope) {
++            return new ExecutionScopeExpression(scope.expressions().stream().map(child -> normalizeOperators(child, compareStrings)).toList());
++        } else if (expression instanceof CallExpression call) {
++            if (call.function() instanceof UnaryExpression unary) {
++                return new UnaryExpression(unary.op(), normalizeOperators(new CallExpression(unary.expression(), call.arguments()), compareStrings));
++            }
++            return new CallExpression(normalizeOperators(call.function(), compareStrings), call.arguments().stream().map(child -> normalizeOperators(child, compareStrings)).toList());
++        } else if (expression instanceof AccessExpression access) {
++            return new AccessExpression(normalizeOperators(access.object(), compareStrings), access.property());
++        } else if (expression instanceof ArrayAccessExpression array) {
++            if (array.array() instanceof UnaryExpression unary) {
++                return new UnaryExpression(unary.op(), normalizeOperators(new ArrayAccessExpression(unary.expression(), array.index()), compareStrings));
++            }
++            return new ArrayAccessExpression(normalizeOperators(array.array(), compareStrings), normalizeOperators(array.index(), compareStrings));
++        }
++        return expression;
+     }
+ 
+     private MoLangEngine() {
+diff --git a/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java b/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
+new file mode 100644
+index 00000000..1ca7a40e
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
+@@ -0,0 +1,81 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.util;
++
++import org.junit.jupiter.api.Test;
++import team.unnamed.mocha.runtime.Scope;
++import team.unnamed.mocha.runtime.value.MutableObjectBinding;
++import team.unnamed.mocha.runtime.value.Function;
++import team.unnamed.mocha.runtime.value.Value;
++
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class MoLangEngineTest {
++
++    @Test
++    void comparesEnumPropertiesWithoutNumericCoercion() throws Exception {
++        final Scope scope = scope();
++        final MutableObjectBinding queries = new MutableObjectBinding();
++        MoLangEngine.bindPropertyQueries(queries, Map.of("example:part", "middle", "example:enabled", true));
++        scope.set("query", queries);
++        scope.set("q", queries);
++        assertFalse(MoLangEngine.eval(scope, "q.property('example:part') == 'left'").getAsBoolean());
++        assertTrue(MoLangEngine.eval(scope, "q.property('example:part') == 'middle' && q.property('example:enabled')").getAsBoolean());
++        assertTrue(MoLangEngine.eval(scope, "q.property('example:part') != 'left'").getAsBoolean());
++        assertFalse(MoLangEngine.eval(scope, "'Middle' == 'middle'").getAsBoolean());
++        assertFalse(MoLangEngine.eval(scope, "'0' == 0").getAsBoolean());
++        assertTrue(MoLangEngine.eval(scope, "1 == 1 && 1 != 2").getAsBoolean());
++    }
++
++    @Test
++    void assignsConditionalResultsAfterLogicalExpressions() throws Exception {
++        final Scope scope = scope();
++        assertEquals(2D, MoLangEngine.eval(scope, "v.frames = 1 && 1 ? 2 : 1; v.frames").getAsNumber());
++        assertEquals(1D, MoLangEngine.eval(scope, "v.frames = 1 && 0 ? 2 : 1; v.frames").getAsNumber());
++        assertEquals(2D, MoLangEngine.eval(scope, "v.animated = 1 && 1; v.frames = v.animated ? 2 : 1; v.frames").getAsNumber());
++        assertEquals(3D, MoLangEngine.eval(scope, "v.a = v.b = 0 ? 2 : 3; v.a + v.b - 3").getAsNumber());
++        assertEquals(4D, MoLangEngine.eval(scope, "v.a = 0 ? 2 : 0 ? 3 : 4; v.a").getAsNumber());
++    }
++
++    @Test
++    void preservesExplicitAssignmentConditionsAndNestedBoundaries() throws Exception {
++        final Scope scope = scope();
++        scope.set("first", (Function<Object>) (context, arguments) -> arguments.next().eval());
++        assertEquals(2D, MoLangEngine.eval(scope, "(v.a = 1) ? 2 : 3").getAsNumber());
++        assertEquals(1D, MoLangEngine.eval(scope, "v.a").getAsNumber());
++        assertEquals(3D, MoLangEngine.eval(scope, "v.a = first((v.b = 0 ? 2 : 3), 1); v.a").getAsNumber());
++        assertEquals(2D, MoLangEngine.eval(scope, "1 ? v.a = 2 : v.a = 3; v.a").getAsNumber());
++        assertEquals("a=b?:c", MoLangEngine.eval(scope, "v.text = 'a=b?:c'; v.text").getAsString());
++    }
++
++    @Test
++    void appliesUnaryOperatorsToQueryResultsAndArrayElements() throws Exception {
++        final Scope scope = scope();
++        final MutableObjectBinding queries = new MutableObjectBinding();
++        MoLangEngine.bindPropertyQueries(queries, Map.of("example:enabled", false, "example:amount", 3));
++        scope.set("query", queries);
++        scope.set("q", queries);
++        final MutableObjectBinding arrays = new MutableObjectBinding();
++        arrays.set("values", Value.of(new double[]{2, 0}));
++        scope.set("array", arrays);
++        assertTrue(MoLangEngine.eval(scope, "!q.property('example:enabled')").getAsBoolean());
++        assertFalse(MoLangEngine.eval(scope, "!q.has_property('example:enabled')").getAsBoolean());
++        assertEquals(-3D, MoLangEngine.eval(scope, "-q.property('example:amount')").getAsNumber());
++        assertFalse(MoLangEngine.eval(scope, "!-q.property('example:amount')").getAsBoolean());
++        assertTrue(MoLangEngine.eval(scope, "!array.values[1]").getAsBoolean());
++    }
++
++    private static Scope scope() {
++        final Scope scope = Scope.create();
++        final MutableObjectBinding variables = new MutableObjectBinding();
++        scope.set("variable", variables);
++        scope.set("v", variables);
++        return scope;
++    }
++
++}
+-- 
+2.55.0
+
+

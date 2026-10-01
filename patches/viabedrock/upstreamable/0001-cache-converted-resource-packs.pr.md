@@ -10,3 +10,5 @@ Please check that a changed source pack cannot reuse an older conversion, and th
 - [x] Join the same server with Fabulously Optimized after the cache checks.
 
 The live joins used the full StackAnvil patch stack and a local ViaProxy build compatible with the current ViaBedrock API.
+
+Cache hit regressions also compare typed converter metadata across disk and shared memory hits. Model scale, attachable readiness and unresolved-asset diagnostics remain available when conversion is skipped. The full 252-test core suite passes.

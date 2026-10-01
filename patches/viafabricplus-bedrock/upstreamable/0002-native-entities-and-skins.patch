@@ -1,4 +1,4 @@
-From e007349c46c41477742096d56b7099801f645f71 Mon Sep 17 00:00:00 2001
+From 858a2e287d484f0812d2e1712e0ce71f6cc56129 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:07 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -8,22 +8,33 @@ Import native Bedrock entity and skin rendering from viafabricplus-bedrock PR #9
 Use vanilla rendering for standard skin geometry, honor alpha-tested custom materials, and submit base renderer name displays for named custom actors.
 
 Share player appearance installation with local menu previews. Each preview owns a distinct identity and releases its textures and renderer mapping when closed, so pack geometry can use the same dispatcher path as in-world skins.
+
+Preserve explicitly supplied geometry even when its identifier is the
+standard humanoid alias. Retain ordered skin updates for their exact live
+connection during Java configuration and install them when the play
+listener appears. A supplemental resource pack can extend configuration,
+so dropping those early updates loses remote skins. Closed connections
+cannot install stale updates into a later world. Log unresolved active
+native actor assets instead of silently rendering an incomplete model.
 ---
+ build.gradle.kts                              |   6 +
  .../friends/FriendWorldSkinProvider.java      |   8 +
  .../render/MixinAbstractClientPlayer.java     |  38 +++
  .../features/render/MixinCustomEntity.java    |  59 +++++
  .../render/MixinEntityRenderDispatcher.java   |  93 +++++++
- .../render/MixinMinecraftSkinLifecycle.java   |  41 +++
+ .../render/MixinMinecraftSkinLifecycle.java   |  46 ++++
  .../render/MixinPlayerSkinWidget.java         |  28 +++
- .../bedrock/render/BedrockEntityRenderer.java | 165 ++++++++++++
+ .../bedrock/render/BedrockEntityRenderer.java | 172 +++++++++++++
  .../bedrock/render/BedrockGeometry.java       | 209 ++++++++++++++++
  .../bedrock/render/BedrockPlayerRenderer.java |  33 +++
  .../bedrock/render/BedrockPlayerSkins.java    | 236 ++++++++++++++++++
+ .../bedrock/render/BedrockSkinQueue.java      |  40 +++
  .../render/CustomEntityRenderStore.java       |  54 ++++
  .../bedrock/visual/BedrockPlayerImages.java   |   2 +-
  .../viafabricplus-bedrock.mixins.json         |   5 +
  .../render/BedrockEntityRendererTest.java     |  27 ++
- 14 files changed, 997 insertions(+), 1 deletion(-)
+ .../bedrock/render/BedrockSkinQueueTest.java  |  83 ++++++
+ 17 files changed, 1138 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractClientPlayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinCustomEntity.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
@@ -33,9 +44,32 @@ Share player appearance installation with local menu previews. Each preview owns
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinQueue.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStore.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRendererTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinQueueTest.java
 
+diff --git a/build.gradle.kts b/build.gradle.kts
+index 73b09ff..5962de8 100644
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -50,6 +50,8 @@ val shade = configureJarInJar()
+ 
+ dependencies {
+     implementation(viaFabricPlusDependency)
++    testImplementation("org.junit.jupiter:junit-jupiter:5.12.2")
++    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+ 
+     shade(viaBedrockDependency) {
+         exclude(group = "com.mojang", module = "brigadier")
+@@ -82,3 +84,7 @@ includeTransitiveJijDependencies()
+ tasks.withType<Jar>().configureEach {
+     manifest.attributes["Implementation-Vendor"] = "StackAnvil"
+ }
++
++tasks.test {
++    useJUnitPlatform()
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/friends/FriendWorldSkinProvider.java b/src/main/java/com/viaversion/viafabricplus/bedrock/friends/FriendWorldSkinProvider.java
 index a81e5ca..79efc1d 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/friends/FriendWorldSkinProvider.java
@@ -272,10 +306,10 @@ index 0000000..629db3e
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftSkinLifecycle.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftSkinLifecycle.java
 new file mode 100644
-index 0000000..4ac84b7
+index 0000000..43639a8
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftSkinLifecycle.java
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,46 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -307,6 +341,11 @@ index 0000000..4ac84b7
 +
 +@Mixin(Minecraft.class)
 +public abstract class MixinMinecraftSkinLifecycle {
++
++    @Inject(method = "tick", at = @At("TAIL"))
++    private void tickBedrockSkins(final CallbackInfo ci) {
++        BedrockPlayerSkins.tick();
++    }
 +
 +    @Inject(method = "setLevel", at = @At("HEAD"))
 +    private void clearBedrockSkinsOnDisconnect(final ClientLevel level, final CallbackInfo ci) {
@@ -353,10 +392,10 @@ index 0000000..582c708
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 new file mode 100644
-index 0000000..8f70176
+index 0000000..89ddc8d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,172 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -380,12 +419,14 @@ index 0000000..8f70176
 +import com.mojang.blaze3d.vertex.PoseStack;
 +import com.mojang.math.Axis;
 +import com.viaversion.viafabricplus.ViaFabricPlus;
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
 +import com.viaversion.viafabricplus.bedrock.render.CustomEntityRenderStore.RenderData;
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import java.util.ArrayList;
 +import java.util.HashMap;
 +import java.util.List;
 +import java.util.Map;
++import net.minecraft.client.Minecraft;
 +import net.minecraft.client.model.Model;
 +import net.minecraft.client.renderer.SubmitNodeCollector;
 +import net.minecraft.client.renderer.culling.Frustum;
@@ -465,11 +506,16 @@ index 0000000..8f70176
 +        for (var evaluated : renderData.models()) {
 +            final BedrockGeometryModel geometry = packs.getModels().entityModels().get(evaluated.geometryValue());
 +            if (geometry == null) {
++                ViaFabricPlusBedrock.impl().logger().warn("Unresolved native entity geometry {} for {}", evaluated.geometryValue(), renderData.identifier());
 +                continue;
 +            }
 +            final Model<EntityRenderState> model = this.models.computeIfAbsent(evaluated.geometryValue(), _ -> BedrockGeometry.entityModel(geometry));
 +            final String path = "textures/item/entities/" + StringUtil.makeIdentifierValueSafe(evaluated.textureValue().replace("textures/", "")) + ".png";
 +            final Identifier texture = Identifier.fromNamespaceAndPath("viabedrock", path);
++            if (Minecraft.getInstance().getResourceManager().getResource(texture).isEmpty()) {
++                ViaFabricPlusBedrock.impl().logger().warn("Unresolved native entity texture {} for {}", evaluated.textureValue(), renderData.identifier());
++                continue;
++            }
 +            resolved.add(new RenderedModel(model, alphaTest ? RenderTypes.entityCutout(texture) : RenderTypes.entityTranslucent(texture)));
 +        }
 +        return List.copyOf(resolved);
@@ -778,7 +824,7 @@ index 0000000..4b9f121
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 new file mode 100644
-index 0000000..2686b85
+index 0000000..cf63d31
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -0,0 +1,236 @@
@@ -833,6 +879,7 @@ index 0000000..2686b85
 +    private static final int MAX_TEXTURE_DIMENSION = 1024;
 +    private static final Map<UUID, Appearance> APPEARANCES = new HashMap<>();
 +    private static final Map<Identifier, UUID> PLAYER_BY_TEXTURE = new HashMap<>();
++    private static final BedrockSkinQueue PENDING = new BedrockSkinQueue();
 +    private static volatile EntityRendererProvider.Context rendererContext;
 +    private static volatile long rendererEpoch;
 +
@@ -844,11 +891,14 @@ index 0000000..2686b85
 +            return;
 +        }
 +        Minecraft.getInstance().execute(() -> {
-+            if (ViaFabricPlus.api().userConnection() != connection) {
-+                return;
-+            }
-+            install(playerUuid, skin);
++            PENDING.add(connection, playerUuid, skin);
++            tick();
 +        });
++    }
++
++    /** Runs on the Minecraft thread after the configuration listener becomes the play listener. */
++    public static void tick() {
++        PENDING.drain(ViaFabricPlus.api().userConnection(), BedrockPlayerSkins::install);
 +    }
 +
 +    /** Creates a private menu appearance. Call and close it on the Minecraft thread. */
@@ -936,6 +986,7 @@ index 0000000..2686b85
 +        APPEARANCES.values().forEach(BedrockPlayerSkins::release);
 +        APPEARANCES.clear();
 +        PLAYER_BY_TEXTURE.clear();
++        PENDING.discardDisconnected();
 +    }
 +
 +    private static void release(final Appearance appearance) {
@@ -978,11 +1029,6 @@ index 0000000..2686b85
 +
 +    private static BedrockGeometryModel geometry(final SkinData skin) {
 +        final String name = geometryName(skin);
-+        if ("geometry.humanoid.custom".equalsIgnoreCase(name) || "geometry.humanoid.customSlim".equalsIgnoreCase(name)) {
-+            // These are Bedrock's standard Steve and Alex models. Minecraft's
-+            // player renderer already knows their exact UVs and overlay layout.
-+            return null;
-+        }
 +        if (skin.geometryData() == null || skin.geometryData().isBlank() || "null".equalsIgnoreCase(skin.geometryData())) {
 +            return null;
 +        }
@@ -1017,6 +1063,52 @@ index 0000000..2686b85
 +        }
 +    }
 +
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinQueue.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinQueue.java
+new file mode 100644
+index 0000000..fc3f57c
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinQueue.java
+@@ -0,0 +1,40 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import java.util.ArrayList;
++import java.util.IdentityHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++import java.util.function.BiConsumer;
++import net.raphimc.viabedrock.protocol.model.SkinData;
++
++/** Keeps ordered skin updates until their source connection has a client play listener. */
++final class BedrockSkinQueue {
++    private final Map<UserConnection, List<Update>> pending = new IdentityHashMap<>();
++
++    void add(final UserConnection connection, final UUID player, final SkinData skin) {
++        if (connection.getChannel().isActive()) {
++            this.pending.computeIfAbsent(connection, _ -> new ArrayList<>()).add(new Update(player, skin));
++        }
++    }
++
++    void drain(final UserConnection current, final BiConsumer<UUID, SkinData> install) {
++        this.discardDisconnected();
++        final List<Update> updates = this.pending.remove(current);
++        if (updates != null) {
++            for (final Update update : updates) install.accept(update.player(), update.skin());
++        }
++    }
++
++    void discardDisconnected() {
++        this.pending.keySet().removeIf(connection -> !connection.getChannel().isActive());
++    }
++
++    private record Update(UUID player, SkinData skin) {}
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStore.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStore.java
 new file mode 100644
@@ -1139,6 +1231,95 @@ index 0000000..5659db2
 +        assertDoesNotThrow(() -> renderer.submit(new EntityRenderState(), null, null, null));
 +    }
 +
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinQueueTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinQueueTest.java
+new file mode 100644
+index 0000000..8a6499d
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinQueueTest.java
+@@ -0,0 +1,83 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import io.netty.channel.embedded.EmbeddedChannel;
++import java.awt.image.BufferedImage;
++import java.lang.reflect.Proxy;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.UUID;
++import net.raphimc.viabedrock.protocol.model.SkinData;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockSkinQueueTest {
++    @Test
++    void retainsEveryConfigurationUpdateInOrderUntilTheMatchingPlayListenerExists() {
++        final var queue = new BedrockSkinQueue();
++        final var channel = new EmbeddedChannel();
++        try {
++            final UserConnection connection = connection(channel);
++            final UUID player = UUID.randomUUID();
++            final SkinData first = skin(0xFFFF0000), second = skin(0xFF0000FF);
++            final List<SkinData> installed = new ArrayList<>();
++            queue.add(connection, player, first);
++            queue.add(connection, player, second);
++            queue.drain(null, (_, skin) -> installed.add(skin));
++            assertTrue(installed.isEmpty());
++            queue.discardDisconnected();
++            queue.drain(connection, (id, skin) -> {
++                assertEquals(player, id);
++                installed.add(skin);
++            });
++            assertEquals(List.of(first, second), installed);
++            queue.drain(connection, (_, skin) -> fail("A drained update was installed again"));
++        } finally {
++            channel.finishAndReleaseAll();
++        }
++    }
++
++    @Test
++    void keepsReconnectsSeparateAndDiscardsUpdatesFromClosedConnections() {
++        final var queue = new BedrockSkinQueue();
++        final var oldChannel = new EmbeddedChannel();
++        final var newChannel = new EmbeddedChannel();
++        try {
++            final UserConnection oldConnection = connection(oldChannel), newConnection = connection(newChannel);
++            final UUID player = UUID.randomUUID();
++            final SkinData oldSkin = skin(0xFFFF0000), newSkin = skin(0xFF0000FF);
++            final List<SkinData> installed = new ArrayList<>();
++            queue.add(oldConnection, player, oldSkin);
++            queue.add(newConnection, player, newSkin);
++            queue.drain(newConnection, (_, skin) -> installed.add(skin));
++            assertEquals(List.of(newSkin), installed);
++            oldChannel.close();
++            queue.add(oldConnection, player, oldSkin);
++            queue.drain(oldConnection, (_, skin) -> fail("A disconnected skin crossed into the replacement connection"));
++        } finally {
++            oldChannel.finishAndReleaseAll();
++            newChannel.finishAndReleaseAll();
++        }
++    }
++
++    private static UserConnection connection(final EmbeddedChannel channel) {
++        return (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(), new Class<?>[]{UserConnection.class},
++                (_, method, _) -> {
++                    if (method.getName().equals("getChannel")) return channel;
++                    throw new UnsupportedOperationException(method.getName());
++                });
++    }
++
++    private static SkinData skin(final int color) {
++        final var image = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
++        image.setRGB(0, 0, color);
++        return new SkinData("", "", "", image, List.of(), null, "", "", "", false, false, false, false,
++                "", "", "wide", "", List.of(), List.of(), false, "", "");
++    }
 +}
 -- 
 2.55.0

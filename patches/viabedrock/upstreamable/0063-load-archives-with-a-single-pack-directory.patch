@@ -1,0 +1,167 @@
+From 833f6d74faf064f7d63be898b4681c352b5e460d Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 14:53:41 +0200
+Subject: [PATCH] fix(resource-packs): load archives with a single pack
+ directory
+
+Some server archives place their manifest and assets beneath one pack
+folder. Select that root only when unambiguous, while preferring an
+existing root manifest. Normalize repeated Windows path separators before
+looking up manifests and assets; Geyser's advertised test pack uses those
+separators for terrain definitions and model paths.
+
+Minehut's hash-valid advertised ZIP exercises the nested-root case, and
+the saved Geyser pack exercises Windows paths. Both recordings can now be
+replayed locally without downloading them again. Archive tests preserve
+root preference and reject ambiguous nested manifests.
+---
+ .../api/resourcepack/ResourcePack.java        | 15 ++++
+ .../api/resourcepack/content/ZipContent.java  |  3 +-
+ .../resourcepack/ResourcePackArchiveTest.java | 89 +++++++++++++++++++
+ 3 files changed, 106 insertions(+), 1 deletion(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackArchiveTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java
+index ebab0034..e4632f65 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ResourcePack.java
+@@ -22,6 +22,7 @@ import com.viaversion.viaversion.libs.gson.JsonElement;
+ import com.viaversion.viaversion.libs.gson.JsonObject;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
+ import net.raphimc.viabedrock.api.resourcepack.content.SubpackContent;
+ import net.raphimc.viabedrock.api.resourcepack.content.ZipContent;
+ 
+@@ -60,6 +61,20 @@ public class ResourcePack {
+                     content = new ZipContent(content.get(files.get(0)));
+                 }
+             }
++            if (!content.contains("manifest.json") && !content.contains("pack_manifest.json")) {
++                final List<String> manifests = content.getFilesDeep("", "").stream()
++                    .filter(path -> path.endsWith("/manifest.json") || path.endsWith("/pack_manifest.json"))
++                    .toList();
++                if (manifests.size() == 1) {
++                    final String manifest = manifests.get(0);
++                    final String prefix = manifest.substring(0, manifest.lastIndexOf('/') + 1);
++                    final Content root = new InMemoryContent();
++                    for (String file : content.getFilesDeep(prefix, "")) {
++                        root.put(file.substring(prefix.length()), content.get(file));
++                    }
++                    content = root;
++                }
++            }
+             if (!content.contains("manifest.json") && !content.contains("pack_manifest.json")) {
+                 throw new IllegalStateException("Missing manifest.json");
+             }
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContent.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContent.java
+index 4264b66b..aaaba4ca 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContent.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ZipContent.java
+@@ -29,7 +29,8 @@ public class ZipContent extends InMemoryContent {
+         ZipEntry zipEntry;
+         while ((zipEntry = zipInputStream.getNextEntry()) != null) {
+             if (!zipEntry.isDirectory()) {
+-                this.content.put(zipEntry.getName(), zipInputStream.readAllBytes());
++                final String path = zipEntry.getName().replace('\\', '/').replaceAll("/{2,}", "/");
++                this.content.put(path, zipInputStream.readAllBytes());
+             }
+         }
+     }
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackArchiveTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackArchiveTest.java
+new file mode 100644
+index 00000000..1ffcc9dd
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ResourcePackArchiveTest.java
+@@ -0,0 +1,89 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.api.resourcepack;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.api.resourcepack.content.ZipContent;
++import org.junit.jupiter.api.Test;
++
++import java.util.UUID;
++import java.awt.image.BufferedImage;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class ResourcePackArchiveTest {
++
++    @Test
++    void archiveWithOnePackDirectoryPreservesRelativeAssets() throws Exception {
++        final UUID id = UUID.randomUUID();
++        final InMemoryContent content = new InMemoryContent();
++        content.putJson("skull_resource_pack/manifest.json", manifest(id));
++        content.put("skull_resource_pack/textures/blocks/skull.png", new byte[]{1, 2, 3});
++        content.put("skull_resource_pack/subpacks/high/textures/skull.png", new byte[]{4, 5});
++        content.put("outside.txt", new byte[]{9});
++
++        final ResourcePack pack = new ResourcePack(new ZipContent(content.toZip()));
++        assertEquals(id, pack.id());
++        assertArrayEquals(new byte[]{1, 2, 3}, pack.content().get("textures/blocks/skull.png"));
++        assertArrayEquals(new byte[]{4, 5}, pack.content().get("subpacks/high/textures/skull.png"));
++        assertFalse(pack.content().contains("outside.txt"));
++        assertTrue(content.contains("skull_resource_pack/manifest.json"));
++    }
++
++    @Test
++    void archiveWithMultiplePacksRequiresAnExplicitRootManifest() throws Exception {
++        final InMemoryContent content = new InMemoryContent();
++        content.putJson("first/manifest.json", manifest(UUID.randomUUID()));
++        content.putJson("second/manifest.json", manifest(UUID.randomUUID()));
++        assertThrows(RuntimeException.class, () -> new ResourcePack(new ZipContent(content.toZip())));
++
++        final UUID root = UUID.randomUUID();
++        content.putJson("manifest.json", manifest(root));
++        assertEquals(root, new ResourcePack(new ZipContent(content.toZip())).id());
++    }
++
++    @Test
++    void windowsArchiveSeparatorsPreserveTextureLookup() throws Exception {
++        final InMemoryContent content = new InMemoryContent();
++        content.putJson("manifest.json", manifest(UUID.randomUUID()));
++        final BufferedImage texture = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
++        texture.setRGB(0, 0, 0x80123456);
++        content.putPngImage("textures\\\\blocks\\\\ruby.png", texture);
++
++        final ResourcePack pack = new ResourcePack(new ZipContent(content.toZip()));
++        assertEquals(0x80123456, pack.content().getShortnameImage("textures/blocks/ruby").getImage().getRGB(0, 0));
++    }
++
++    private static JsonObject manifest(final UUID id) {
++        final JsonObject header = new JsonObject();
++        header.addProperty("uuid", id.toString());
++        header.addProperty("name", "archive fixture");
++        final JsonArray version = new JsonArray();
++        version.add(1);
++        version.add(0);
++        version.add(0);
++        header.add("version", version);
++        final JsonObject manifest = new JsonObject();
++        manifest.addProperty("format_version", 2);
++        manifest.add("header", header);
++        return manifest;
++    }
++
++}
+-- 
+2.55.0

@@ -1,4 +1,4 @@
-From 3f8a6269fe4b3269b3bbfd9a6d72fd13d430c703 Mon Sep 17 00:00:00 2001
+From 257ce227bf46be2caa3f6fd0465360f3e0942c8c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 00:27:08 +0200
 Subject: [PATCH] feat(entities): translate Bedrock metadata and properties
@@ -10,32 +10,39 @@ Track property definitions across configuration and play, resolve sparse values 
 Bedrock sends reduced entity scale for several baby species while its renderer compensates with a second multiplier. Java already selects their baby models, so compensate for the verified species on both scale and age updates. Translate Bedrock item-use and blocking flags into Java active-hand metadata so remote shield poses follow the server state.
 
 Map cushion colors, fish variants, boat paddles, and minecart displays with the metadata translation. Suppress names on non-nameable items, projectiles, fireballs, eyes of ender, and experience orbs while preserving names on actors that can legitimately show them.
+
+Resolve bool, int, float and enum wire properties to named values before
+notifying the actor renderer. Preserve previous values for omitted
+properties and reject invalid enum indices and non-finite floats.
+Semantic tests cover sparse typed updates and pre-animation selection.
 ---
  .../viabedrock/api/model/entity/Entity.java   |  35 ++
  .../api/model/entity/LivingEntity.java        |   7 +-
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
  .../data/enums/bedrock/ActorFlags.java        |   6 +-
  .../protocol/model/entity/EntityProperty.java |  40 ++
- .../model/entity/EntityPropertyList.java      |  97 ++++
+ .../model/entity/EntityPropertyList.java      | 121 +++++
  .../protocol/packet/EntityPackets.java        |  33 +-
  .../protocol/packet/JoinPackets.java          |   2 +-
  .../protocol/packet/OtherPlayerPackets.java   |   5 +-
- .../rewriter/EntityMetadataRewriter.java      | 505 +++++++++++++++++-
+ .../rewriter/EntityMetadataRewriter.java      | 507 +++++++++++++++++-
  .../storage/EntityPropertyTracker.java        |  61 +++
  .../entity_flag_molang_query_mappings.json    |   6 +-
+ .../entity/EntityPropertyRenderTest.java      |  74 +++
  .../enums/bedrock/ActorFlagsMappingTest.java  |  27 +
  .../model/entity/EntityPropertyListTest.java  |  79 +++
  .../rewriter/EntityMetadataRewriterTest.java  | 151 ++++++
- 15 files changed, 1013 insertions(+), 43 deletions(-)
+ 16 files changed, 1113 insertions(+), 43 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityProperty.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyList.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/EntityPropertyTracker.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/EntityPropertyRenderTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/ActorFlagsMappingTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyListTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index b671f8b0..40d338ff 100644
+index 1d60a979..9c17c3cf 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 @@ -32,6 +32,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
@@ -46,7 +53,7 @@ index b671f8b0..40d338ff 100644
  import net.raphimc.viabedrock.protocol.model.Position3f;
  import net.raphimc.viabedrock.protocol.rewriter.EntityMetadataRewriter;
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
-@@ -64,10 +65,12 @@ public class Entity {
+@@ -65,10 +66,12 @@ public class Entity {
      protected String name;
      protected int age;
      protected boolean hasBossBar;
@@ -59,7 +66,7 @@ index b671f8b0..40d338ff 100644
  
      public Entity(final UserConnection user, final long uniqueId, final long runtimeId, final String type, final int javaId, final UUID javaUuid, final EntityTypes26_3 javaType) {
          this.user = user;
-@@ -102,6 +105,18 @@ public class Entity {
+@@ -117,6 +120,18 @@ public class Entity {
          setEntityData.send(BedrockProtocol.class);
      }
  
@@ -78,7 +85,7 @@ index b671f8b0..40d338ff 100644
      public final void updateEntityData(final EntityData[] entityData, final List<EntityData> javaEntityData) {
          for (EntityData data : entityData) {
              final ActorDataIds dataId = ActorDataIds.getByValue(data.id());
-@@ -123,6 +138,10 @@ public class Entity {
+@@ -138,6 +153,10 @@ public class Entity {
          this.onEntityDataChanged();
      }
  
@@ -89,7 +96,7 @@ index b671f8b0..40d338ff 100644
      public void playSound(final String soundEvent) {
          final PacketWrapper levelSoundEvent = PacketWrapper.create(ClientboundBedrockPackets.LEVEL_SOUND_EVENT, this.user);
          levelSoundEvent.write(BedrockTypes.STRING, soundEvent); // event
-@@ -164,6 +183,14 @@ public class Entity {
+@@ -179,6 +198,14 @@ public class Entity {
          return this.javaType;
      }
  
@@ -104,7 +111,7 @@ index b671f8b0..40d338ff 100644
      public Position3f position() {
          return this.position;
      }
-@@ -266,6 +293,14 @@ public class Entity {
+@@ -281,6 +308,14 @@ public class Entity {
          return this.mountRuntimeId;
      }
  
@@ -152,10 +159,10 @@ index 8f927e66..f90269e6 100644
                  })); // attribute id
                  javaAttributes.write(Types.DOUBLE, (double) attribute.computeClampedValue()); // base value
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
-index 00e3cb1b..e7a0e11a 100644
+index 78e16922..28e0feae 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
-@@ -75,6 +75,7 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
+@@ -80,6 +80,7 @@ public class BedrockProtocol
          ClientboundBedrockPackets.BIOME_DEFINITION_LIST,
          ClientboundBedrockPackets.DIMENSION_DATA,
          ClientboundBedrockPackets.AVAILABLE_COMMANDS,
@@ -163,7 +170,7 @@ index 00e3cb1b..e7a0e11a 100644
          ClientboundBedrockPackets.START_GAME
      );
  
-@@ -159,6 +160,7 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
+@@ -164,6 +165,7 @@ public class BedrockProtocol
  
          user.put(new InventoryTransactionRewriter(user));
          user.put(new MapTracker(user));
@@ -236,10 +243,10 @@ index 00000000..2b7c2dfd
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyList.java b/src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyList.java
 new file mode 100644
-index 00000000..a4a5a22a
+index 00000000..aafbb26c
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyList.java
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,121 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -264,10 +271,13 @@ index 00000000..a4a5a22a
 +import com.viaversion.nbt.tag.StringTag;
 +import com.viaversion.viaversion.libs.fastutil.ints.Int2IntMap;
 +import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectMap;
++import net.raphimc.viabedrock.protocol.model.EntityProperties;
 +
 +import java.util.ArrayList;
 +import java.util.List;
 +import java.util.Optional;
++import java.util.HashMap;
++import java.util.Map;
 +
 +public record EntityPropertyList(List<EntityProperty> intProperties, List<EntityProperty.FloatProperty> floatProperties) {
 +
@@ -328,6 +338,27 @@ index 00000000..a4a5a22a
 +            }
 +        }
 +        return resolved;
++    }
++
++    public Map<String, Object> resolveValues(final EntityProperties values) {
++        final Map<String, Object> resolved = new HashMap<>();
++        for (IntValue entry : this.resolveInts(values.intProperties())) {
++            if (entry.property() instanceof EntityProperty.BooleanProperty property) {
++                resolved.put(property.identifier(), entry.value() != 0);
++            } else if (entry.property() instanceof EntityProperty.IntProperty property) {
++                resolved.put(property.identifier(), entry.value());
++            } else if (entry.property() instanceof EntityProperty.EnumProperty property) {
++                if (entry.value() >= 0 && entry.value() < property.possibleValues().size()) {
++                    resolved.put(property.identifier(), property.possibleValues().get(entry.value()));
++                }
++            }
++        }
++        for (FloatValue entry : this.resolveFloats(values.floatProperties())) {
++            if (Float.isFinite(entry.value())) {
++                resolved.put(entry.property().identifier(), entry.value());
++            }
++        }
++        return Map.copyOf(resolved);
 +    }
 +
 +    public record IntValue(EntityProperty property, int value) {
@@ -450,7 +481,7 @@ index 38966ed3..808592f4 100644
  
      static EntityEvent javaEntityEvent(final ActorEvent event, final EntityTypes26_3 javaEntityType) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-index 83b3f405..889f7371 100644
+index a93a015c..e189294c 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 @@ -286,7 +286,7 @@ public final class JoinPackets {
@@ -493,7 +524,7 @@ index 48767edb..545c61a9 100644
                  entityTracker.applyEntityLink(link);
              }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
-index ed40425a..7c5eb9e5 100644
+index ed40425a..c02a5946 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
 @@ -17,29 +17,66 @@
@@ -862,7 +893,7 @@ index ed40425a..7c5eb9e5 100644
              case AGENT, BALLOON_ANCHOR -> {
              } // Education edition only, ignore
              default -> {
-@@ -649,6 +790,314 @@ public final class EntityMetadataRewriter {
+@@ -649,6 +790,316 @@ public final class EntityMetadataRewriter {
          return true;
      }
  
@@ -874,6 +905,7 @@ index ed40425a..7c5eb9e5 100644
 +            //ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to find expected properties for entity " + entity.type());
 +            return;
 +        }
++        entity.retainEntityProperties(expectedProperties.resolveValues(properties));
 +
 +        for (EntityPropertyList.IntValue propertyValue : expectedProperties.resolveInts(properties.intProperties())) {
 +            final int i = propertyValue.value();
@@ -901,7 +933,8 @@ index ed40425a..7c5eb9e5 100644
 +                            ViaBedrock.getPlatform().getLogger().warning("Received has_nectar property for non-BEE entity " + entity.type());
 +                        }
 +                    }
-+                    default -> ViaBedrock.getPlatform().getLogger().warning("Received boolean property " + booleanProperty.identifier() + " for entity " + entity.type() + " with value " + value);
++                    default -> {
++                    }
 +                }
 +            } else if (property instanceof EntityProperty.IntProperty integerProperty) {
 +                ViaBedrock.getPlatform().getLogger().fine("Ignoring int property " + integerProperty.identifier() + " for entity " + entity.type());
@@ -1261,6 +1294,86 @@ index 7227df27..20bcb045 100644
    "SEARCHING": "is_searching",
    "CRAWLING": "is_crawling",
    "TIMER_FLAG_1": "timer_flag_1",
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/EntityPropertyRenderTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/EntityPropertyRenderTest.java
+new file mode 100644
+index 00000000..86d122af
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/entity/EntityPropertyRenderTest.java
+@@ -0,0 +1,74 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.entity;
++
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.libs.fastutil.ints.Int2IntOpenHashMap;
++import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectOpenHashMap;
++import net.raphimc.viabedrock.api.util.MoLangEngine;
++import net.raphimc.viabedrock.protocol.model.EntityProperties;
++import net.raphimc.viabedrock.protocol.model.entity.EntityProperty;
++import net.raphimc.viabedrock.protocol.model.entity.EntityPropertyList;
++import org.junit.jupiter.api.Test;
++import team.unnamed.mocha.runtime.Scope;
++import team.unnamed.mocha.runtime.value.MutableObjectBinding;
++
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class EntityPropertyRenderTest {
++
++    private static final EntityPropertyList DEFINITIONS = new EntityPropertyList(List.of(
++        new EntityProperty.BooleanProperty("example:show_hat"),
++        new EntityProperty.IntProperty("example:hat", 0, 10),
++        new EntityProperty.EnumProperty("example:color", List.of("red", "blue"))
++    ), List.of(new EntityProperty.FloatProperty("example:size", 0, 2)));
++
++    @Test
++    void retainsTypedSparseUpdatesAndImmutableSnapshots() {
++        final Entity actor = new Entity(null, 1, 2, "example:actor", 3, UUID.randomUUID(), EntityTypes26_3.INTERACTION);
++        actor.retainEntityProperties(DEFINITIONS.resolveValues(values(Map.of(0, 1, 1, 2, 2, 1), Map.of(0, 1.5F))));
++        final Map<String, Object> snapshot = actor.entityProperties();
++        assertEquals(Map.of("example:show_hat", true, "example:hat", 2, "example:color", "blue", "example:size", 1.5F), snapshot);
++        assertThrows(UnsupportedOperationException.class, () -> snapshot.put("example:hat", 5));
++
++        actor.retainEntityProperties(DEFINITIONS.resolveValues(values(Map.of(0, 0), Map.of())));
++        assertEquals(false, actor.entityProperties().get("example:show_hat"));
++        assertEquals(2, actor.entityProperties().get("example:hat"));
++        assertEquals(true, snapshot.get("example:show_hat"));
++
++        actor.retainEntityProperties(DEFINITIONS.resolveValues(values(Map.of(2, 9, 99, 7), Map.of(0, Float.NaN, 99, 1F))));
++        assertEquals("blue", actor.entityProperties().get("example:color"));
++        assertEquals(1.5F, actor.entityProperties().get("example:size"));
++        assertEquals(4, actor.entityProperties().size());
++    }
++
++    @Test
++    void appliesPreAnimationBeforeSelectingThePropertyDrivenHat() throws Exception {
++        final Scope scope = Scope.create();
++        final MutableObjectBinding variables = new MutableObjectBinding();
++        scope.set("variable", variables);
++        scope.set("v", variables);
++        for (boolean show : new boolean[]{true, false, true}) {
++            final MutableObjectBinding queries = new MutableObjectBinding();
++            MoLangEngine.bindPropertyQueries(queries, Map.of("example:show_hat", show, "example:hat", 2));
++            scope.set("query", queries);
++            scope.set("q", queries);
++            MoLangEngine.runPreAnimation(scope, List.of("v.show_hat = q.has_property('example:show_hat') && q.property('example:show_hat'); v.hat = q.property('example:hat');"));
++            assertEquals(show, MoLangEngine.eval(scope, "v.show_hat").getAsBoolean());
++            assertEquals(2D, MoLangEngine.eval(scope, "v.hat").getAsNumber());
++            assertEquals(0D, MoLangEngine.eval(scope, "q.property('example:missing')").getAsNumber());
++        }
++    }
++
++    private static EntityProperties values(final Map<Integer, Integer> integers, final Map<Integer, Float> floats) {
++        return new EntityProperties(new Int2IntOpenHashMap(integers), new Int2ObjectOpenHashMap<>(floats));
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/ActorFlagsMappingTest.java b/src/test/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/ActorFlagsMappingTest.java
 new file mode 100644
 index 00000000..b1c87249

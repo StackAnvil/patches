@@ -1,0 +1,79 @@
+# Record and replay a Bedrock server scene
+
+The replay lab records one authenticated connection through ViaBedrock or an official Bedrock client. Local runs replay the captured world without another public server connection.
+
+The recorder saves decrypted packets before ViaBedrock translates them. It excludes login tokens and encryption handshakes. It also saves the decrypted, selected server packs.
+
+Raw recordings still contain player names, chat, skins, and licensed server assets. They stay under the ignored `.stackanvil/replay/` directory with private permissions.
+
+## Record a scene
+
+Build ViaProxy and the client add-on, then prepare the integration Prism instance:
+
+```bash
+bun run build viaproxy
+bun run build viafabricplus-bedrock
+bun run test:integration -- --route java-java --reuse-build
+bun run server-replay record cubecraft --seconds 120
+```
+
+Other targets are `minehut` and `geyser`. The Hive uses `geo.hivebedrock.cloud`, but ViaBedrock blacklists its network because translated clients can be banned. Use the official client to record Hive. The tool preserves the translated-client guard. A translated diagnostic join requires the explicit `--allow-hive` option.
+
+The default login comes from the separate `StackAnvil Desktop 26.3` profile. Use `--account /absolute/path/bedrock.json` for another saved MinecraftAuth Bedrock account. The tool copies that account into its private proxy directory. It does not change the source account file.
+
+The Java client uses a private copy of the integration instance. Its runtime libraries stay shared, while settings, mods, logs, and account files stay isolated. The client runs on the lab's private virtual display with silent audio. A recording lasts between 20 and 300 seconds. It allows one connection and blocks automatic reconnects. The tool accepts the Java pack prompt, saves a screenshot, and stops its processes.
+
+For a local fixture, use:
+
+```bash
+bun run server-replay record local --target 127.0.0.1:19132 --seconds 120
+```
+
+Local fixtures use offline authentication. Recording a public server always requires the saved Bedrock account.
+
+### Record with the official client
+
+Prepare BedrockOnLinux through the capture lab, then use a Bedrock 1.26.51 installation:
+
+```bash
+bun run capture prepare-launcher
+bun run server-replay record hive --client native --seconds 120
+```
+
+Use `--native-home /absolute/path/to/installation` to select another prepared installation. Its game and Proton directories must be inside that installation. The tool makes a separate private copy and runs it on the lab display. It does not operate the user's running client.
+
+The native client and saved MinecraftAuth account must belong to the same Xbox account. The relay verifies multiplayer tokens against the official issuer's published signing keys and binds native client properties to the authenticated client key. It preserves those properties and authenticates the upstream connection with a fresh session key. It records decrypted packets without translating gameplay. Pack reconstruction checks hashes and decrypts selected assets for replay. Missing bytes from a cached pack fail the capture.
+
+The launcher must pass its normal graphics safety checks. A failed native launch does not authorize changing those checks or joining Hive through ViaBedrock.
+
+## Replay locally
+
+Use the private directory printed by the recording command:
+
+```bash
+bun run server-replay inspect .stackanvil/replay/<recording>
+bun run server-replay replay .stackanvil/replay/<recording> --seconds 150
+bun run server-replay selftest
+```
+
+Allow enough time for Java startup, pack conversion, and the full recorded scene. A replay preserves the original scene timing after pack negotiation.
+
+The replay server binds only to loopback. It creates a fresh offline handshake and serves packs through a loopback HTTP endpoint. It preserves the captured entity IDs, skins, world data, and packet order. Server transfers and recorded disconnects do not run.
+
+Replay connects the Fabric add-on directly to the local Bedrock replay server. This exercises its native skin and entity renderer. A separate recorder mod exists only in the private test instance.
+
+Transport checks require playable spawn, a Java pack reload, and delivery of the complete scene. A SHA-256 comparison checks scene payloads against the recording. Pack negotiation, session status, and latency probes are excluded because replay creates them again.
+
+Rendering checks compare installed skin dimensions and pixel hashes against packet-derived expectations. They also check supplied skin geometry, native player renderer selection, and custom actor model evaluation. A replay uses the captured local player identity for its loopback session and renders that avatar in third person. The audit requires an actual native renderer frame, without rewriting the recorded scene packets. Model parsing failures, unresolved block mappings, missing textures, and client disconnects fail the replay. Actors absent from the post-spawn server registry are reported separately and follow the protocol's existing unknown-type handling. Registered actors still require valid models and textures. Private `render-audit.json` and `verification.json` files explain the result.
+
+These assertions cover asset installation and model resolution. They cannot prove every animation frame, shader effect, or camera view matches the official client. Inspect the saved screenshot and add a focused regression for those behaviors.
+
+Use `--client proxy --transport-only` to check the separate Java → ViaProxy route. The proxy route does not exercise the add-on's native appearance renderer. `--transport-only` preserves rendering failures in the report while allowing a transport check to finish.
+
+## Limits
+
+This server replays a recorded scene. It does not simulate new gameplay decisions, collisions, inventory changes, commands, or unexplored chunks. New actions receive no authoritative response beyond the recording.
+
+Blob caching is disabled during capture, so chunk payloads do not depend on an older client cache. Replays require the same pinned Bedrock protocol and all advertised packs. Incomplete or incompatible recordings fail.
+
+The tool never runs live captures as part of `bun test`. Public recordings require the explicit `record` command. Regular regression runs use `replay` and private fixtures.
