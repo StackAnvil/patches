@@ -28,7 +28,7 @@ public final class ReplayServer {
         Path directory = Path.of(args[0]).toAbsolutePath();
         List<PacketJournal.Entry> entries = PacketJournal.read(directory.resolve("packets.sbr"), ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
         byte[] info = entries.stream().filter(e -> e.clientbound() && e.id() == 6).findFirst().orElseThrow().payload();
-        byte[] stack = entries.stream().filter(e -> e.clientbound() && e.id() == 7).findFirst().orElseThrow().payload();
+        PacketJournal.Entry stack = entries.stream().filter(e -> e.clientbound() && e.id() == 7).findFirst().orElseThrow();
         if (entries.stream().noneMatch(e -> e.clientbound() && e.id() == 11)) throw new IllegalStateException("Recording did not reach StartGame");
         List<PacketJournal.Entry> scene = entries.stream().filter(e -> e.clientbound() && !Set.of(3, 5, 6, 7, 82, 83, 85, 143).contains(e.id()))
                 .filter(e -> !(e.id() == 2 && e.payload().length == 5 && e.payload()[4] == 0)).toList();
@@ -47,7 +47,7 @@ public final class ReplayServer {
             try (var output = exchange.getResponseBody()) { Files.copy(file, output); }
         });
         byte[] localInfo = ReplayPackets.resourceInfo(info, directory.resolve("packs"), http.getAddress().getPort());
-        byte[] localStack = ReplayPackets.resourceStack(stack);
+        byte[] localStack = ReplayPackets.resourceStack(stack.payload());
         http.start();
         EventLoopGroup loops = new MultiThreadIoEventLoopGroup(2, NioIoHandler.newFactory());
         try {
@@ -91,7 +91,7 @@ public final class ReplayServer {
                                             ctx.writeAndFlush(Unpooled.wrappedBuffer(localStack));
                                         } else if (phase == 3 && response.equals("resourcepackstackfinished")) {
                                             phase = 4;
-                                            timeline = new ScenePlayback(scene, System.nanoTime());
+                                            timeline = new ScenePlayback(scene, System.nanoTime(), stack.nanos());
                                             playback = ctx.executor().scheduleAtFixedRate(() -> {
                                                 try {
                                                     boolean complete = timeline.advance(System.nanoTime(), payload -> ctx.write(Unpooled.wrappedBuffer(payload)));

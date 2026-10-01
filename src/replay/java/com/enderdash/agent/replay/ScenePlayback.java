@@ -28,11 +28,11 @@ final class ScenePlayback {
     private int cursor;
     private long delayed, waitingSince = -1, frozenTime;
 
-    ScenePlayback(List<PacketJournal.Entry> scene, long now) {
+    ScenePlayback(List<PacketJournal.Entry> scene, long now, long origin) {
         if (scene.isEmpty()) throw new IllegalArgumentException("Empty replay scene");
         frames = new ArrayList<>(scene.size());
         for (var entry : scene) frames.add(new Frame(entry, entry.id() == 174 ? subchunks(entry.payload()) : Set.of()));
-        origin = scene.getFirst().nanos();
+        this.origin = origin;
         started = now;
     }
 
@@ -61,7 +61,7 @@ final class ScenePlayback {
         long elapsed = now - started - delayed;
         while (cursor < frames.size()) {
             Frame frame = frames.get(cursor);
-            long due = frame.entry().nanos() - origin;
+            long due = Math.max(0, frame.entry().nanos() - origin);
             if (due > elapsed) break;
             if (!requested.containsAll(frame.subchunks())) {
                 waitingSince = now;

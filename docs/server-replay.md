@@ -56,7 +56,7 @@ bun run server-replay replay .stackanvil/replay/<recording> --seconds 150
 bun run server-replay selftest
 ```
 
-Allow enough time for Java startup, pack conversion, and the full recorded scene. A replay follows the recorded timing after pack negotiation. Subchunk replies wait for matching requests from the local client, which can load packs more slowly than the captured client. The scene clock pauses during that wait; a missing request fails after 15 seconds. Packet bytes and order stay unchanged.
+Allow enough time for Java startup, pack conversion, and the full recorded scene. The scene clock starts at the recorded resource-pack stack. Earlier scene packets keep their order and arrive immediately after local pack negotiation. This skips the captured download delay and preserves world timing. Subchunk replies wait for matching requests from the local client, which can load packs more slowly than the captured client. The scene clock pauses during that wait; a missing request fails after 15 seconds. Packet bytes and order stay unchanged.
 
 The replay server binds only to loopback. It creates a fresh offline handshake and serves packs through a loopback HTTP endpoint. It preserves the captured entity IDs, skins, world data, and packet order. Server transfers and recorded disconnects do not run.
 

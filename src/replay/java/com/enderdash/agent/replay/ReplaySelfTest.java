@@ -61,6 +61,7 @@ public final class ReplaySelfTest {
             } finally { info.release(); if (local != null) local.release(); }
             registryFeatures();
             playerAppearanceFeatures();
+            packNegotiationPacing();
             requestPacing();
             System.out.println("PASS replay journal integrity, secret exclusion, offline resource negotiation, actor registry expectations, and request-aware scene pacing");
         } finally {
@@ -68,6 +69,23 @@ public final class ReplaySelfTest {
                 for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
             }
         }
+    }
+
+    private static void packNegotiationPacing() {
+        long packReady = java.util.concurrent.TimeUnit.SECONDS.toNanos(70);
+        List<PacketJournal.Entry> scene = List.of(
+                new PacketJournal.Entry(true, 5, new byte[]{86, 1}),
+                new PacketJournal.Entry(true, 10, new byte[]{9, 1}),
+                new PacketJournal.Entry(true, packReady + 20, new byte[]{11, 0}),
+                new PacketJournal.Entry(true, packReady + 30, new byte[]{9, 2}));
+        ScenePlayback playback = new ScenePlayback(scene, 100, packReady);
+        List<byte[]> emitted = new ArrayList<>();
+        require(!playback.advance(100, emitted::add) && emitted.size() == 2);
+        require(!playback.advance(119, emitted::add) && emitted.size() == 2);
+        require(!playback.advance(120, emitted::add) && emitted.size() == 3);
+        require(!playback.advance(129, emitted::add) && emitted.size() == 3);
+        require(playback.advance(130, emitted::add) && emitted.size() == 4);
+        for (int i = 0; i < scene.size(); i++) require(Arrays.equals(scene.get(i).payload(), emitted.get(i)));
     }
 
     private static void requestPacing() {
@@ -80,7 +98,7 @@ public final class ReplaySelfTest {
                 new PacketJournal.Entry(true, 20, new byte[]{9, 1}),
                 new PacketJournal.Entry(true, 30, reply.clone()),
                 new PacketJournal.Entry(true, 40, new byte[]{9, 2}));
-        ScenePlayback playback = new ScenePlayback(scene, 0);
+        ScenePlayback playback = new ScenePlayback(scene, 0, 0);
         List<byte[]> emitted = new ArrayList<>();
         require(!playback.advance(0, emitted::add) && emitted.size() == 1);
         require(!playback.advance(10, emitted::add) && emitted.size() == 1);
@@ -100,13 +118,13 @@ public final class ReplaySelfTest {
         for (int i = 0; i < scene.size(); i++) require(Arrays.equals(scene.get(i).payload(), emitted.get(i)));
         require(Arrays.equals(reply, snapshot));
 
-        ScenePlayback timeout = new ScenePlayback(scene, 0);
+        ScenePlayback timeout = new ScenePlayback(scene, 0, 0);
         timeout.advance(10, ignored -> { });
         try { timeout.advance(java.util.concurrent.TimeUnit.SECONDS.toNanos(15) + 10, ignored -> { }); throw new AssertionError("Replay waited without a deadline"); }
         catch (ScenePlayback.RequestTimeout expected) { }
 
         ScenePlayback changed = new ScenePlayback(List.of(scene.getFirst(),
-                new PacketJournal.Entry(true, 1, new byte[]{61, 0}), new PacketJournal.Entry(true, 2, reply)), 0);
+                new PacketJournal.Entry(true, 1, new byte[]{61, 0}), new PacketJournal.Entry(true, 2, reply)), 0, 0);
         List<byte[]> changedOutput = new ArrayList<>();
         changed.advance(0, changedOutput::add);
         request(changed, 0, offsets);
