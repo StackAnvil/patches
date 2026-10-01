@@ -48,7 +48,17 @@ Previews use the player graph's paperdoll state. World models receive posture, m
 
 Licensed package tests establish the zombie-arm alias override and additive riding pose. The full add-on suite passes 106 tests with no skips. A running Java client passes eight checks for the animation bridge, preview pose, and player model pose. The preview shows the alias pose with a synthetic texture and privately downloaded actor assets. This fixture does not establish native motion equivalence or a live account import.
 
-Controller crossfades, completion queries, effects, and complete item-action bindings remain incomplete. Geometry-provided alias precedence and first-person playback remain pending. Native comparisons must also establish blended rotation spaces and nontrivial scale composition.
+Effects and complete item-action bindings remain incomplete. Geometry-provided alias precedence and first-person playback remain pending. Native comparisons must also establish blended rotation spaces and nontrivial scale composition.
+
+Controller transitions now read `all_animations_finished`, `any_animation_finished`, and `state_time` from the native state context. Conditions run before the current animation update. Empty states satisfy all-completion and fail any-completion. Zero-weight tracks retain their clock and completion flag. Nested controllers report their current state's completion and clear the query binding after their update.
+
+Outgoing states supply `blend_transition` and `blend_via_shortest_path`. Crossfades update both states with the target's weights. Ordinary blending composes weighted tracks in order. Shortest-path blending interpolates each Euler axis, position, and scale before composition with the existing pose. A 180-degree tie uses the negative direction. State re-entry resets child clocks; nested controllers retain their selected state. Self-transitions reset playback without repeating entry or exit scripts.
+
+The loader retains each controller file's format version. Formats before 1.18.10 can transition during their first update. Newer formats enter the initial state first. This distinction preserves the matching package's older player graph. Duplicate render passes reuse the pose, and a rewound lifetime starts a fresh actor graph.
+
+Independent Bedrock 1.26.51.1 execution verifies completion handlers, state clocks, crossfade weights, delay boundaries, and shortest-path composition. Native fixtures also verify the 1.18.10 version boundary. These checks isolate controller behavior. Constant-only animation length defaults, visible native motion, and mixed rotation spaces still need verification.
+
+The replayed full stack builds, and all 138 fixture-enabled add-on tests pass with no skips. A running Java client passes 46 checks for preview geometry, world model geometry, completion-triggered crossfades, repeated frames, and rewind. These checks use synthetic controller data. They do not establish visible native motion equivalence.
 
 Sources: [Animation controller variables and transitions](https://learn.microsoft.com/en-us/minecraft/creator/documents/animations/animationcontroller?view=minecraft-bedrock-stable) and [animation rotation spaces](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/actor_animation.v1.8.0?view=minecraft-bedrock-stable).
 
@@ -204,7 +214,7 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 - Compare more face sizes, tint channels, and equipped combinations against native results.
 - Compare corrected blink and strip timing with native multiplayer video. Implement emote effects, named actor events, chat announcements, and unavailable remote assets. Compare entity-relative rotations against native playback.
 - Add other piece palettes, verify native leg edits, and resolve free limb side recipes. Add paid purchase/redemption flows and account classic-pack downloads.
-- Verify versioned vanilla model overrides and native parent-name behavior. Complete classic controller blending, completion queries, item-action bindings, geometry-provided alias precedence, and first-person playback. Compare inherited skins and equipment flags with native rendering, including first-person views.
+- Verify versioned vanilla model overrides and native parent-name behavior. Complete classic item-action bindings, geometry-provided alias precedence, and first-person playback. Compare inherited skins and equipment flags with native rendering, including first-person views.
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. A white quad above the player moved independently with the sky clouds; it was not an extra face surface.
 
 Keep login JWTs, receipts, content keys, raw flows, screenshots, player textures, and account data private under `.stackanvil/`.

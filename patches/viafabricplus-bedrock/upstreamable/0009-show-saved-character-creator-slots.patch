@@ -1,4 +1,4 @@
-From d6d82d3ba9e4ae3019f677ca94034418335bb338 Mon Sep 17 00:00:00 2001
+From 10b1dc82f9fc555101ed832fa55c5f3a0696eeae Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -266,6 +266,30 @@ Named actor events, sounds, and particles still report unsupported data.
 Independent execution of the licensed target's timeline normalizer and
 animation player verifies ordering, delays, loop boundaries, held frames,
 custom clocks, and bone-before-event sampling with synthetic inputs.
+
+Port controller completion and transition blending from Bedrock
+1.26.51.1 (protocol 2193). Independent execution of the target query
+handlers, controller updater, version comparator, and Euler blend helper
+establishes completion ordering, empty states, persistent loop flags,
+state clocks, crossfade weights, and the negative 180-degree tie.
+
+Retain each controller resource's format version. The target constructor
+uses the 1.18.10 boundary for immediate initial transitions versus initial
+state entry. Keep the older licensed player graph's posture behavior.
+Outgoing states continue updating during blends. A completed fade clears
+its outgoing state clock after sampling the incoming state. Nested
+controller resets retain their selected state, and self-transitions do
+not repeat entry or exit scripts. Zero-weight players freeze. Duplicate
+render passes reuse the pose; lifetime rewind creates fresh actor state.
+
+Private native fixtures compare controller clocks and sampled child
+weights, including a fade completed on its transition frame. Other
+fixtures compare shortest-path position, rotation, scale composition, and
+format-version initialization. Targeted tests cover re-entry, nested
+completion, query binding cleanup, zero weights, and repeated frames.
+Research executables, licensed assets, and probe outputs remain private.
+Native visual motion, mixed rotation spaces, and constant-only animation
+length defaults remain unverified.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   54 +
@@ -281,9 +305,9 @@ custom clocks, and bone-before-event sampling with synthetic inputs.
  native/persona-assets/src/store.rs            |   92 +
  native/persona-assets/src/webview.rs          |  399 +
  .../bedrock/ViaFabricPlusBedrock.java         |    3 +
- .../appearance/BedrockActorAnimation.java     |  421 ++
+ .../appearance/BedrockActorAnimation.java     |  572 ++
  .../appearance/BedrockAppearanceStore.java    |  110 +-
- .../appearance/BedrockBoneAnimation.java      |  440 ++
+ .../appearance/BedrockBoneAnimation.java      |  474 ++
  .../bedrock/appearance/BedrockBrArchive.java  |   73 +
  .../appearance/BedrockBuiltinAssets.java      |  392 +
  .../appearance/BedrockCharacterProfiles.java  | 1213 +++
@@ -325,11 +349,12 @@ custom clocks, and bone-before-event sampling with synthetic inputs.
  .../persona-package.json                      |    7 +
  .../persona-piece-types.json                  |   67 +
  .../viafabricplus-bedrock.mixins.json         |    3 +
- .../appearance/BedrockActorAnimationTest.java |  236 +
+ .../appearance/BedrockActorAnimationTest.java |  244 +
  .../BedrockAppearanceStoreTest.java           |   28 +
  .../appearance/BedrockBoneAnimationTest.java  |  450 ++
  .../appearance/BedrockBuiltinAssetsTest.java  |  367 +
  .../BedrockCharacterProfilesTest.java         |  461 ++
+ .../BedrockControllerAnimationTest.java       |  386 +
  .../bedrock/appearance/BedrockEmotesTest.java |  141 +
  .../appearance/BedrockLimbSelectionTest.java  |  173 +
  .../BedrockPersonaAssemblerTest.java          |  233 +
@@ -342,7 +367,7 @@ custom clocks, and bone-before-event sampling with synthetic inputs.
  .../appearance/BedrockPersonaTintTest.java    |   87 +
  .../render/BedrockAnimatedModelTest.java      |   55 +
  .../render/BedrockPlayerModelTest.java        |  100 +
- 75 files changed, 22599 insertions(+), 59 deletions(-)
+ 76 files changed, 23178 insertions(+), 59 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -393,6 +418,7 @@ custom clocks, and bone-before-event sampling with synthetic inputs.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimationTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssetsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockControllerAnimationTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLimbSelectionTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssemblerTest.java
@@ -9756,10 +9782,10 @@ index 92f1b49..3f458ef 100644
      public static ViaFabricPlusBedrock impl() {
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 new file mode 100644
-index 0000000..c180ae8
+index 0000000..422963f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
-@@ -0,0 +1,421 @@
+@@ -0,0 +1,572 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -9805,7 +9831,7 @@ index 0000000..c180ae8
 +            final JsonObject entity,
 +            final Map<String, String> overrides,
 +            final Map<String, JsonObject> animationDefinitions,
-+            final Map<String, JsonObject> controllerDefinitions)
++            final Map<String, ControllerResource> controllerDefinitions)
 +            throws IOException {
 +        final Map<String, String> aliases = new LinkedHashMap<>();
 +        entity.getAsJsonObject("animations")
@@ -9827,8 +9853,8 @@ index 0000000..c180ae8
 +    static BedrockActorAnimation read(
 +            final Map<String, byte[]> files, final BedrockClassicOptions options)
 +            throws IOException {
-+        final Map<String, JsonObject> animations = new LinkedHashMap<>(),
-+                controllers = new LinkedHashMap<>();
++        final Map<String, JsonObject> animations = new LinkedHashMap<>();
++        final Map<String, ControllerResource> controllers = new LinkedHashMap<>();
 +        try {
 +            for (final var entry : files.entrySet()) {
 +                final String name = entry.getKey();
@@ -9839,17 +9865,31 @@ index 0000000..c180ae8
 +                                        ? "animation_controllers"
 +                                        : null;
 +                if (field == null || !name.endsWith(".json")) continue;
-+                final JsonObject definitions = json(entry.getValue()).getAsJsonObject(field);
++                final JsonObject document = json(entry.getValue());
++                final JsonObject definitions = document.getAsJsonObject(field);
 +                if (definitions == null) continue;
-+                final Map<String, JsonObject> target =
-+                        field.equals("animations") ? animations : controllers;
++                final boolean deferred =
++                        field.equals("animation_controllers")
++                                && deferredEntry(
++                                        document.has("format_version")
++                                                ? document.get("format_version").getAsString()
++                                                : "1.10.0");
 +                for (final var definition : definitions.entrySet()) {
 +                    final JsonObject value = definition.getValue().getAsJsonObject();
-+                    final JsonObject previous = target.putIfAbsent(definition.getKey(), value);
-+                    if (previous != null && !previous.equals(value))
-+                        throw new IOException("Ambiguous actor animation resource");
++                    if (field.equals("animations")) {
++                        final JsonObject previous =
++                                animations.putIfAbsent(definition.getKey(), value);
++                        if (previous != null && !previous.equals(value))
++                            throw new IOException("Ambiguous actor animation resource");
++                    } else {
++                        final ControllerResource resource = new ControllerResource(value, deferred);
++                        final ControllerResource previous =
++                                controllers.putIfAbsent(definition.getKey(), resource);
++                        if (previous != null && !previous.equals(resource))
++                            throw new IOException("Ambiguous actor animation resource");
++                    }
 +                }
-+                if (target.size() > 4096)
++                if (animations.size() > 4096 || controllers.size() > 4096)
 +                    throw new IOException("Too many actor animation resources");
 +            }
 +            return new BedrockActorAnimation(
@@ -9868,10 +9908,12 @@ index 0000000..c180ae8
 +            final JsonObject entity,
 +            final Map<String, String> overrides,
 +            final JsonObject animations,
-+            final JsonObject controllers)
++            final JsonObject controllers,
++            final String controllerFormat)
 +            throws IOException {
-+        final Map<String, JsonObject> animationDefinitions = new LinkedHashMap<>(),
-+                controllerDefinitions = new LinkedHashMap<>();
++        final Map<String, JsonObject> animationDefinitions = new LinkedHashMap<>();
++        final Map<String, ControllerResource> controllerDefinitions = new LinkedHashMap<>();
++        final boolean deferred = deferredEntry(controllerFormat);
 +        animations
 +                .entrySet()
 +                .forEach(
@@ -9883,7 +9925,9 @@ index 0000000..c180ae8
 +                .forEach(
 +                        entry ->
 +                                controllerDefinitions.put(
-+                                        entry.getKey(), entry.getValue().getAsJsonObject()));
++                                        entry.getKey(),
++                                        new ControllerResource(
++                                                entry.getValue().getAsJsonObject(), deferred)));
 +        return new BedrockActorAnimation(
 +                entity, overrides, animationDefinitions, controllerDefinitions);
 +    }
@@ -9891,7 +9935,7 @@ index 0000000..c180ae8
 +    private void resolve(
 +            final String alias,
 +            final Map<String, JsonObject> animations,
-+            final Map<String, JsonObject> controllers,
++            final Map<String, ControllerResource> controllers,
 +            final Set<String> chain,
 +            final int depth)
 +            throws IOException {
@@ -9902,10 +9946,11 @@ index 0000000..c180ae8
 +            throw new IOException("Cyclic actor animation controller");
 +        if (name.startsWith("controller.animation.")) {
 +            if (!this.controllers.containsKey(name)) {
-+                final JsonObject definition = controllers.get(name);
-+                if (definition == null)
++                final ControllerResource resource = controllers.get(name);
++                if (resource == null)
 +                    throw new IOException("The actor animation controller is missing: " + name);
-+                final Controller controller = Controller.read(definition);
++                final Controller controller =
++                        Controller.read(resource.definition, resource.deferredEntry);
 +                for (final State state : controller.states.values())
 +                    for (final Reference reference : state.animations)
 +                        this.resolve(reference.name, animations, controllers, chain, depth + 1);
@@ -9925,115 +9970,208 @@ index 0000000..c180ae8
 +    }
 +
 +    public final class Playback {
-+        private final BedrockMolang molang = new BedrockMolang();
-+        private final Map<String, Active> active = new HashMap<>();
-+        private float previousTime;
++        private BedrockMolang molang = new BedrockMolang();
++        private List<Active> active;
++        private StatePlayback queryState;
++        private float previousTime = Float.NaN;
 +        private float delta;
-+        private long frame;
-+        private boolean initialized;
++        private int allocated;
++        private Map<String, BedrockBoneAnimation.Transform> pose = Map.of();
 +
 +        public Map<String, BedrockBoneAnimation.Transform> sample(
 +                final float time, final Frame input) {
-+            final float delta = this.initialized ? Math.max(0, time - this.previousTime) : 0;
-+            this.delta = delta;
++            if (!Float.isFinite(time)) return Map.of();
++            if (time == this.previousTime) return this.pose;
++            if (time < this.previousTime) {
++                this.molang = new BedrockMolang();
++                this.active = null;
++                this.allocated = 0;
++            }
++            this.delta = this.active == null ? 0 : Math.max(0, time - this.previousTime);
 +            this.previousTime = time;
-+            this.frame++;
-+            this.molang.queries(input.queries, time, time, delta);
-+            if (!this.initialized) {
++            this.queryState = null;
++            final Map<String, Object> queries = new HashMap<>(input.queries);
++            queries.put(
++                    "state_time", (Query) _ -> this.queryState == null ? 0F : this.queryState.time);
++            queries.put(
++                    "all_animations_finished",
++                    (Query) _ -> this.queryState != null && this.queryState.allFinished());
++            queries.put(
++                    "any_animation_finished",
++                    (Query) _ -> this.queryState != null && this.queryState.anyFinished());
++            this.molang.queries(queries, 0, time, this.delta);
++            if (this.active == null) {
++                this.active = this.create(roots);
 +                this.run(initialize);
-+                this.initialized = true;
 +            }
 +            this.molang.variables(input.variables);
 +            this.run(preAnimation);
-+            final Map<String, BedrockBoneAnimation.Transform> pose = new LinkedHashMap<>();
-+            for (int index = 0; index < roots.size(); index++)
-+                this.apply(roots.get(index), "root/" + index, time, 1, input.queries, pose, 0);
-+            this.active.entrySet().removeIf(entry -> entry.getValue().frame != this.frame);
-+            return Map.copyOf(pose);
++            final Map<String, BedrockBoneAnimation.Transform> result = new LinkedHashMap<>();
++            for (final Active value : this.active) value.apply(time, 1, queries, result);
++            this.pose = Map.copyOf(result);
++            return this.pose;
++        }
++
++        private List<Active> create(final List<Reference> references) {
++            final List<Active> values = new ArrayList<>();
++            for (final Reference reference : references) {
++                final String name = aliases.get(reference.name);
++                if (name == null || name.isEmpty()) continue;
++                if (++this.allocated > 4096) break;
++                values.add(new Active(reference, animations.get(name), controllers.get(name)));
++            }
++            return List.copyOf(values);
 +        }
 +
 +        private void run(final List<BedrockMolang.Program> programs) {
 +            programs.forEach(program -> this.molang.evaluate(program, 0));
 +        }
 +
-+        private void apply(
-+                final Reference reference,
-+                final String path,
-+                final float time,
-+                final float inheritedWeight,
-+                final Map<String, ?> queries,
-+                final Map<String, BedrockBoneAnimation.Transform> pose,
-+                final int depth) {
-+            if (depth > 32 || this.active.size() > 4096) return;
-+            final float weight =
-+                    inheritedWeight * Math.clamp(this.molang.evaluate(reference.weight, 1), 0, 1);
-+            final String name = aliases.get(reference.name);
-+            if (weight <= 0 || name == null || name.isEmpty()) return;
-+            Active value = this.active.get(path);
-+            if (value == null || value.frame < this.frame - 1) {
-+                value =
-+                        new Active(
-+                                time,
-+                                animations.containsKey(name)
-+                                        ? animations.get(name).playback(this.molang)
-+                                        : null);
-+                this.active.put(path, value);
++        private final class Active {
++            private final Reference reference;
++            private final BedrockBoneAnimation animation;
++            private final Controller controller;
++            private final Map<String, StatePlayback> states = new HashMap<>();
++            private BedrockBoneAnimation.Playback playback;
++            private StatePlayback current, outgoing;
++            private float elapsed, blendTime;
++
++            private Active(
++                    final Reference reference,
++                    final BedrockBoneAnimation animation,
++                    final Controller controller) {
++                this.reference = reference;
++                this.animation = animation;
++                this.controller = controller;
++                if (animation != null) this.playback = animation.playback(molang);
 +            }
-+            value.frame = this.frame;
-+            if (value.animation != null) {
-+                final BedrockBoneAnimation animation = animations.get(name);
-+                animation.compose(
-+                        pose, value.animation.sample(time - value.started, queries), weight);
-+                this.molang.queries(queries, time, time, this.delta);
-+                return;
++
++            private boolean completed() {
++                return this.playback != null
++                        ? this.playback.completed()
++                        : this.current != null && this.current.completed;
 +            }
-+            final Controller controller = controllers.get(name);
-+            final var saved = this.molang.saveVariables(controller.variables);
-+            try {
-+                if (value.state == null) {
-+                    value.state = controller.initial;
-+                    this.run(controller.states.get(value.state).entry);
++
++            private void reset() {
++                this.elapsed = 0;
++                if (this.animation != null) this.playback = this.animation.playback(molang);
++                // Native nested controllers retain their selected state when their player resets.
++                else if (this.current != null) this.current.reset();
++            }
++
++            private StatePlayback state(final String name) {
++                return this.states.computeIfAbsent(
++                        name, key -> new StatePlayback(this.controller.states.get(key)));
++            }
++
++            private void apply(
++                    final float time,
++                    final float inheritedWeight,
++                    final Map<String, ?> queries,
++                    final Map<String, BedrockBoneAnimation.Transform> pose) {
++                final float weight = inheritedWeight * molang.evaluate(this.reference.weight, 1);
++                if (weight < Math.ulp(1F)) return;
++                if (this.playback != null) {
++                    this.elapsed += delta;
++                    this.animation.compose(
++                            pose, this.playback.sample(this.elapsed, queries), weight);
++                    molang.queries(queries, 0, time, delta);
++                    return;
 +                }
-+                State state = controller.states.get(value.state);
-+                for (final var variable : state.variables.entrySet())
-+                    this.molang.variable(
-+                            variable.getKey(), variable.getValue().sample(this.molang));
-+                for (final Transition transition : state.transitions) {
-+                    if (this.molang.evaluate(transition.condition, 0) == 0) continue;
-+                    this.run(state.exit);
-+                    this.molang.restoreVariables(saved);
-+                    value.state = transition.target;
-+                    state = controller.states.get(value.state);
-+                    this.run(state.entry);
-+                    for (final var variable : state.variables.entrySet())
-+                        this.molang.variable(
-+                                variable.getKey(), variable.getValue().sample(this.molang));
-+                    break;
++                final var saved = molang.saveVariables(this.controller.variables);
++                try {
++                    final boolean first = this.current == null;
++                    if (first) this.current = this.state(this.controller.initial);
++                    if (first && this.controller.deferredEntry) {
++                        this.current.reset();
++                        run(this.current.definition.entry);
++                    } else {
++                        queryState = this.current;
++                        this.current.time += delta;
++                        boolean transitioned = false;
++                        for (final Transition transition : this.current.definition.transitions) {
++                            if (molang.evaluate(transition.condition, 0) == 0) continue;
++                            final StatePlayback previous = this.current;
++                            this.current = this.state(transition.target);
++                            this.current.reset();
++                            this.outgoing = previous.definition.blend.isEmpty() ? null : previous;
++                            this.blendTime = 0;
++                            if (!first && previous != this.current) run(previous.definition.exit);
++                            if (first || previous != this.current)
++                                run(this.current.definition.entry);
++                            transitioned = true;
++                            break;
++                        }
++                        if (first && !transitioned) run(this.current.definition.entry);
++                    }
++                    if (this.outgoing == null) {
++                        this.current.apply(time, weight, queries, pose);
++                        return;
++                    }
++                    this.outgoing.time += delta;
++                    this.blendTime += delta;
++                    final float oldWeight = curve(this.outgoing.definition.blend, this.blendTime);
++                    if (oldWeight < Math.ulp(1F)) {
++                        final StatePlayback previous = this.outgoing;
++                        this.outgoing = null;
++                        this.blendTime = 0;
++                        this.current.apply(time, weight, queries, pose);
++                        previous.time = 0;
++                    } else if (this.outgoing.definition.shortestPath) {
++                        final Map<String, BedrockBoneAnimation.Transform>
++                                before = new LinkedHashMap<>(),
++                                after = new LinkedHashMap<>();
++                        this.outgoing.apply(time, 1, queries, before);
++                        this.current.apply(time, 1, queries, after);
++                        BedrockBoneAnimation.blendStates(pose, before, after, 1 - oldWeight);
++                    } else {
++                        // The target controller uses curve weights directly during a crossfade.
++                        this.outgoing.apply(time, oldWeight, queries, pose);
++                        this.current.apply(time, 1 - oldWeight, queries, pose);
++                    }
++                } finally {
++                    queryState = null;
++                    molang.restoreVariables(saved);
 +                }
-+                for (int index = 0; index < state.animations.size(); index++)
-+                    this.apply(
-+                            state.animations.get(index),
-+                            path + "/" + value.state + "/" + index,
-+                            time,
-+                            weight,
-+                            queries,
-+                            pose,
-+                            depth + 1);
-+            } finally {
-+                this.molang.restoreVariables(saved);
 +            }
 +        }
-+    }
 +
-+    private static final class Active {
-+        final float started;
-+        final BedrockBoneAnimation.Playback animation;
-+        String state;
-+        long frame;
++        private final class StatePlayback {
++            private final State definition;
++            private final List<Active> children;
++            private float time;
++            private boolean completed;
 +
-+        Active(final float started, final BedrockBoneAnimation.Playback animation) {
-+            this.started = started;
-+            this.animation = animation;
++            private StatePlayback(final State definition) {
++                this.definition = definition;
++                this.children = create(definition.animations);
++            }
++
++            private boolean allFinished() {
++                return this.children.stream().allMatch(Active::completed);
++            }
++
++            private boolean anyFinished() {
++                return this.children.stream().anyMatch(Active::completed);
++            }
++
++            private void reset() {
++                this.time = 0;
++                this.completed = false;
++                this.children.forEach(Active::reset);
++            }
++
++            private void apply(
++                    final float time,
++                    final float weight,
++                    final Map<String, ?> queries,
++                    final Map<String, BedrockBoneAnimation.Transform> pose) {
++                if (weight < Math.ulp(1F)) return;
++                for (final var variable : this.definition.variables.entrySet())
++                    molang.variable(variable.getKey(), variable.getValue().sample(molang));
++                for (final Active child : this.children) child.apply(time, weight, queries, pose);
++                this.completed = this.allFinished();
++            }
 +        }
 +    }
 +
@@ -10046,18 +10184,21 @@ index 0000000..c180ae8
 +    private record Variable(BedrockMolang.Program input, List<Point> curve) {
 +        float sample(final BedrockMolang molang) {
 +            final float value = molang.evaluate(this.input, 0);
-+            if (this.curve.isEmpty()) return value;
-+            if (value <= this.curve.getFirst().input) return this.curve.getFirst().output;
-+            for (int index = 1; index < this.curve.size(); index++) {
-+                final Point right = this.curve.get(index), left = this.curve.get(index - 1);
-+                if (value <= right.input)
-+                    return left.output
-+                            + (right.output - left.output)
-+                                    * (value - left.input)
-+                                    / (right.input - left.input);
-+            }
-+            return this.curve.getLast().output;
++            return this.curve.isEmpty() ? value : BedrockActorAnimation.curve(this.curve, value);
 +        }
++    }
++
++    private static float curve(final List<Point> points, final float value) {
++        if (value <= points.getFirst().input) return points.getFirst().output;
++        for (int index = 1; index < points.size(); index++) {
++            final Point right = points.get(index), left = points.get(index - 1);
++            if (value <= right.input)
++                return left.output
++                        + (right.output - left.output)
++                                * (value - left.input)
++                                / (right.input - left.input);
++        }
++        return points.getLast().output;
 +    }
 +
 +    private record State(
@@ -10065,25 +10206,28 @@ index 0000000..c180ae8
 +            List<Transition> transitions,
 +            List<BedrockMolang.Program> entry,
 +            List<BedrockMolang.Program> exit,
-+            Map<String, Variable> variables) {}
++            Map<String, Variable> variables,
++            List<Point> blend,
++            boolean shortestPath) {}
 +
-+    private record Controller(String initial, Map<String, State> states, Set<String> variables) {
-+        static Controller read(final JsonObject definition) throws IOException {
++    private record ControllerResource(JsonObject definition, boolean deferredEntry) {}
++
++    private record Controller(
++            String initial,
++            Map<String, State> states,
++            Set<String> variables,
++            boolean deferredEntry) {
++        static Controller read(final JsonObject definition, final boolean deferredEntry)
++                throws IOException {
 +            final Map<String, State> states = new LinkedHashMap<>();
 +            final JsonObject source = definition.getAsJsonObject("states");
 +            if (source == null || source.isEmpty() || source.size() > 128)
 +                throw new IOException("Invalid actor controller state count");
 +            for (final var entry : source.entrySet()) {
 +                final JsonObject state = entry.getValue().getAsJsonObject();
-+                for (final String unsupported :
-+                        List.of(
-+                                "blend_transition",
-+                                "blend_via_shortest_path",
-+                                "particle_effects",
-+                                "sound_effects"))
++                for (final String unsupported : List.of("particle_effects", "sound_effects"))
 +                    if (state.has(unsupported))
-+                        throw new IOException(
-+                                "This actor controller needs state blending or effects");
++                        throw new IOException("This actor controller needs effect playback");
 +                final List<Transition> transitions = new ArrayList<>();
 +                if (state.has("transitions"))
 +                    for (final JsonElement transition : state.getAsJsonArray("transitions")) {
@@ -10129,7 +10273,10 @@ index 0000000..c180ae8
 +                                List.copyOf(transitions),
 +                                programs(state.get("on_entry")),
 +                                programs(state.get("on_exit")),
-+                                java.util.Collections.unmodifiableMap(variables)));
++                                java.util.Collections.unmodifiableMap(variables),
++                                blend(state.get("blend_transition")),
++                                state.has("blend_via_shortest_path")
++                                        && state.get("blend_via_shortest_path").getAsBoolean()));
 +            }
 +            final String initial =
 +                    definition.has("initial_state")
@@ -10139,8 +10286,38 @@ index 0000000..c180ae8
 +                throw new IOException("The actor controller initial state is missing");
 +            final Set<String> variables = new HashSet<>();
 +            states.values().forEach(state -> variables.addAll(state.variables.keySet()));
-+            return new Controller(initial, Map.copyOf(states), Set.copyOf(variables));
++            return new Controller(
++                    initial, Map.copyOf(states), Set.copyOf(variables), deferredEntry);
 +        }
++    }
++
++    private static boolean deferredEntry(final String version) throws IOException {
++        final String[] parts = version.split("\\.", -1);
++        if (parts.length != 3) throw new IOException("Invalid actor controller format version");
++        final int[] threshold = {1, 18, 10};
++        int comparison = 0;
++        for (int index = 0; index < parts.length; index++) {
++            final int value;
++            try {
++                if (!parts[index].matches("[0-9]{1,5}")) throw new NumberFormatException();
++                value = Integer.parseInt(parts[index]);
++                if (value > 65535) throw new NumberFormatException();
++            } catch (NumberFormatException e) {
++                throw new IOException("Invalid actor controller format version", e);
++            }
++            if (comparison == 0) comparison = Integer.compare(value, threshold[index]);
++        }
++        return comparison >= 0;
++    }
++
++    private static List<Point> blend(final JsonElement definition) throws IOException {
++        if (definition == null) return List.of();
++        if (!definition.isJsonPrimitive() || !definition.getAsJsonPrimitive().isNumber())
++            throw new IOException("Invalid actor transition blend");
++        final float duration = definition.getAsFloat();
++        if (!Float.isFinite(duration) || duration < 0 || duration > 600)
++            throw new IOException("Invalid actor transition duration");
++        return duration == 0 ? List.of() : List.of(new Point(0, 1), new Point(duration, 0));
 +    }
 +
 +    private static List<Reference> references(final JsonElement definitions) throws IOException {
@@ -10401,10 +10578,10 @@ index d54e7f7..5eebd99 100644
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimation.java
 new file mode 100644
-index 0000000..9cafa5c
+index 0000000..e004493
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimation.java
-@@ -0,0 +1,440 @@
+@@ -0,0 +1,474 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -10595,6 +10772,40 @@ index 0000000..9cafa5c
 +                                    base.rotation.add(transform.rotation.multiply(weight)),
 +                                    base.scale.multiply(transform.scale.blend(ONE, weight)), base.entityRelativeRotation || transform.entityRelativeRotation));
 +                });
++    }
++
++    static void blendStates(
++            final Map<String, Transform> pose,
++            final Map<String, Transform> before,
++            final Map<String, Transform> after,
++            final float fraction) {
++        final var names = new java.util.HashSet<>(before.keySet());
++        names.addAll(after.keySet());
++        final Transform identity = new Transform(ZERO, ZERO, ONE, false);
++        for (final String name : names) {
++            final Transform base = pose.getOrDefault(name, identity),
++                    old = before.getOrDefault(name, identity),
++                    next = after.getOrDefault(name, identity);
++            pose.put(
++                    name,
++                    new Transform(
++                            base.position.add(old.position.interpolate(next.position, fraction)),
++                            base.rotation.add(
++                                    new Vector(
++                                            angle(old.rotation.x, next.rotation.x, fraction),
++                                            angle(old.rotation.y, next.rotation.y, fraction),
++                                            angle(old.rotation.z, next.rotation.z, fraction))),
++                            base.scale.multiply(old.scale.interpolate(next.scale, fraction)),
++                            base.entityRelativeRotation
++                                    || old.entityRelativeRotation
++                                    || next.entityRelativeRotation));
++        }
++    }
++
++    private static float angle(final float before, final float after, final float fraction) {
++        final float shifted = after - before + 180;
++        final float remainder = shifted % 360;
++        return before + ((remainder < 0 ? remainder + 360 : remainder) - 180) * fraction;
 +    }
 +
 +    public final class Playback {
@@ -19946,10 +20157,10 @@ index 5f77f05..45aeea0 100644
      "features.movement.MixinEntity",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimationTest.java
 new file mode 100644
-index 0000000..a7421ce
+index 0000000..cfe4eab
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimationTest.java
-@@ -0,0 +1,236 @@
+@@ -0,0 +1,244 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -19984,7 +20195,8 @@ index 0000000..a7421ce
 +                                {"animation.a":{"loop":true,"bones":{"arm":{"rotation":["variable.counter",0,0],"position":[1,0,0]}}},
 +                                 "animation.b":{"loop":true,"bones":{"arm":{"rotation":[2,0,0],"position":[0,3,0]}}}}
 +                                """),
-+                        new JsonObject());
++                        new JsonObject(),
++                        "1.10.0");
 +        final var frame = new BedrockActorAnimation.Frame(Map.of(), Map.of());
 +        final var actor = graph.playback();
 +        final var first = actor.sample(0, frame).get("arm");
@@ -20014,13 +20226,15 @@ index 0000000..a7421ce
 +                                   "idle":{"animations":["idle"],"transitions":[{"first":"query.get_equipped_item_name == 'bow'"},{"second":"query.enabled"}]},
 +                                   "first":{"animations":["child","removed"]},"second":{"animations":["idle"]}}},
 +                                 "controller.animation.child":{"initial_state":"default","states":{"default":{"animations":[{"selected":"query.get_equipped_item_name('off_hand') != 'bow'"}]}}}}
-+                                """));
++                                """),
++                        "1.10.0");
 +        final BedrockActorAnimation.Query items = arguments -> arguments.isEmpty() ? "bow" : "map";
++        final var selected = graph.playback();
++        selected.sample(0, new BedrockActorAnimation.Frame(Map.of(), Map.of()));
 +        assertEquals(
 +                9,
-+                graph.playback()
-+                        .sample(
-+                                0,
++                selected.sample(
++                                0.1F,
 +                                new BedrockActorAnimation.Frame(
 +                                        Map.of("get_equipped_item_name", items, "enabled", 1F),
 +                                        Map.of()))
@@ -20062,7 +20276,8 @@ index 0000000..a7421ce
 +                                {"controller.animation.root":{"states":{
 +                                   "default":{"animations":["before"],"transitions":[{"ready":"v.ready"}]},
 +                                   "ready":{"animations":["after"]}}}}
-+                                """));
++                                """),
++                        "1.10.0");
 +        final var actor = graph.playback();
 +        final var frame = new BedrockActorAnimation.Frame(Map.of(), Map.of());
 +        assertEquals(0, actor.sample(0, frame).get("head").position().x());
@@ -20088,14 +20303,15 @@ index 0000000..a7421ce
 +                                """
 +                                {"controller.animation.root":{"initial_state":"on","states":{"on":{"on_entry":["variable.count=variable.count+1;"],"on_exit":["variable.count=variable.count+10;"],
 +                                 "animations":["move"],"transitions":[{"off":"!query.enabled"}]},"off":{"transitions":[{"on":"query.enabled"}]}}}}
-+                                """));
++                                """),
++                        "1.10.0");
 +        final var actor = graph.playback();
 +        final var on = new BedrockActorAnimation.Frame(Map.of("enabled", 1F), Map.of());
 +        assertEquals(0, actor.sample(0, on).get("arm").rotation().x());
 +        assertEquals(5, actor.sample(0.5F, on).get("arm").rotation().x());
 +        assertTrue(actor.sample(1, new BedrockActorAnimation.Frame(Map.of(), Map.of())).isEmpty());
 +        final var restarted = actor.sample(1.5F, on).get("arm");
-+        assertEquals(0, restarted.rotation().x());
++        assertEquals(5, restarted.rotation().x());
 +        assertEquals(12, restarted.position().x());
 +    }
 +
@@ -20119,7 +20335,8 @@ index 0000000..a7421ce
 +                                """
 +                                {"controller.animation.parent":{"states":{"default":{"variables":{"level":{"input":"query.speed","remap_curve":{"0":2,"1":6}}},"animations":["child","pose"]}}},
 +                                 "controller.animation.child":{"states":{"default":{"variables":{"level":{"input":3}},"animations":["pose"]}}}}
-+                                """));
++                                """),
++                        "1.10.0");
 +        final var actor = graph.playback();
 +        final var frame =
 +                new BedrockActorAnimation.Frame(
@@ -20144,7 +20361,8 @@ index 0000000..a7421ce
 +                                Map.of(),
 +                                new JsonObject(),
 +                                json(
-+                                        "{\"controller.animation.root\":{\"states\":{\"default\":{\"animations\":[\"root\"]}}}}")));
++                                        "{\"controller.animation.root\":{\"states\":{\"default\":{\"animations\":[\"root\"]}}}}"),
++                                "1.10.0"));
 +        assertThrows(
 +                IOException.class,
 +                () ->
@@ -20153,7 +20371,8 @@ index 0000000..a7421ce
 +                                Map.of(),
 +                                new JsonObject(),
 +                                json(
-+                                        "{\"controller.animation.root\":{\"states\":{\"default\":{\"transitions\":[{\"absent\":1}]}}}}")));
++                                        "{\"controller.animation.root\":{\"states\":{\"default\":{\"transitions\":[{\"absent\":1}]}}}}"),
++                                "1.10.0"));
 +    }
 +
 +    @Test
@@ -21520,6 +21739,398 @@ index 0000000..589993a
 +        assertEquals("wide", wardrobe.slots().getFirst().arm());
 +    }
 +
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockControllerAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockControllerAnimationTest.java
+new file mode 100644
+index 0000000..da11d28
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockControllerAnimationTest.java
+@@ -0,0 +1,386 @@
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++import java.io.IOException;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++final class BedrockControllerAnimationTest {
++    private static final BedrockActorAnimation.Frame FRAME =
++            new BedrockActorAnimation.Frame(Map.of(), Map.of());
++
++    private static JsonObject json(final String source) {
++        return JsonParser.parseString(source).getAsJsonObject();
++    }
++
++    private static BedrockActorAnimation graph(final String states, final String animations)
++            throws IOException {
++        return BedrockActorAnimation.read(
++                json(
++                        """
++                        {"animations":{"root":"controller.animation.root","a":"animation.a","b":"animation.b","c":"animation.c"},
++                         "scripts":{"animate":["root"]}}
++                        """),
++                Map.of(),
++                json(animations),
++                json("{\"controller.animation.root\":{\"states\":" + states + "}}"),
++                "1.18.10");
++    }
++
++    @Test
++    void readsPreviousCompletionResetsOnReentryAndFreezesZeroWeightTracks() throws IOException {
++        final var actor =
++                graph(
++                                """
++                                {"default":{"animations":["a",{"b":"q.enabled"}],"transitions":[{"done":"q.all_animations_finished"}]},
++                                 "done":{"animations":["c"],"transitions":[{"default":"q.restart"}]}}
++                                """,
++                                """
++                                {"animation.a":{"animation_length":0.25,"loop":true,"bones":{"a":{"position":[1,0,0]}}},
++                                 "animation.b":{"animation_length":0.5,"loop":"hold_on_last_frame","bones":{"b":{"position":[2,0,0]}}},
++                                 "animation.c":{"loop":true,"bones":{"c":{"position":[3,"q.state_time",0]}}}}
++                                """)
++                        .playback();
++        final var enabled = new BedrockActorAnimation.Frame(Map.of("enabled", 1F), Map.of());
++        assertTrue(actor.sample(0, FRAME).containsKey("a"));
++        assertTrue(actor.sample(0.5F, FRAME).containsKey("a"));
++        assertTrue(actor.sample(0.75F, enabled).containsKey("b"));
++        assertTrue(actor.sample(1, enabled).containsKey("a"));
++        final var done = actor.sample(1.25F, enabled);
++        assertFalse(done.containsKey("a"));
++        assertEquals(1.25F, done.get("c").position().y());
++        assertEquals(0.25F, actor.sample(1.5F, enabled).get("c").position().y());
++        final var restart =
++                new BedrockActorAnimation.Frame(Map.of("enabled", 1F, "restart", 1F), Map.of());
++        assertTrue(actor.sample(1.75F, restart).containsKey("a"));
++        assertTrue(actor.sample(2, enabled).containsKey("a"));
++        assertTrue(actor.sample(2.25F, enabled).containsKey("c"));
++        assertTrue(actor.sample(0, enabled).containsKey("a"));
++    }
++
++    @Test
++    void handlesEmptyCompletionInitialEntryAndDuplicateRenderPasses() throws IOException {
++        final var actor =
++                graph(
++                                """
++                                {"default":{"on_entry":["v.entries=(v.entries??0)+1;"],"transitions":[{"done":"q.all_animations_finished && !q.any_animation_finished"}]},
++                                 "done":{"animations":["a"]}}
++                                """,
++                                """
++                                {"animation.a":{"loop":true,"bones":{"head":{"position":["v.entries","q.state_time",0]}}}}
++                                """)
++                        .playback();
++        assertTrue(actor.sample(0, FRAME).isEmpty());
++        assertTrue(actor.sample(0, FRAME).isEmpty());
++        final var transitioned = actor.sample(0.25F, FRAME);
++        assertEquals(
++                new BedrockBoneAnimation.Vector(1, 0.25F, 0), transitioned.get("head").position());
++        assertSame(transitioned, actor.sample(0.25F, FRAME));
++        assertEquals(0.25F, actor.sample(0.5F, FRAME).get("head").position().y());
++        assertTrue(actor.sample(0, FRAME).isEmpty());
++    }
++
++    @Test
++    void keepsBothStatesAdvancingAndUsesNativeWeightsDuringCrossfades() throws IOException {
++        final var graph =
++                graph(
++                        """
++                        {"default":{"animations":["a"],"blend_transition":1,"transitions":[{"next":"q.state_time>=0.5"}]},
++                         "next":{"animations":["b"]}}
++                        """,
++                        """
++                        {"animation.a":{"animation_length":5,"bones":{"head":{"rotation":[0,0,0],"position":["q.anim_time",0,0],"scale":[2,1,1]}}},
++                         "animation.b":{"animation_length":5,"bones":{"head":{"rotation":[100,0,0],"position":[0,"q.anim_time",0],"scale":[4,1,1]}}}}
++                        """);
++        final var actor = graph.playback();
++        actor.sample(0, FRAME);
++        actor.sample(0.25F, FRAME);
++        var pose = actor.sample(0.5F, FRAME).get("head");
++        assertEquals(25, pose.rotation().x());
++        assertEquals(new BedrockBoneAnimation.Vector(0.375F, 0.0625F, 0), pose.position());
++        assertEquals(3.0625F, pose.scale().x());
++        pose = actor.sample(0.75F, FRAME).get("head");
++        assertEquals(50, pose.rotation().x());
++        assertEquals(new BedrockBoneAnimation.Vector(0.375F, 0.25F, 0), pose.position());
++        assertEquals(100, actor.sample(1.25F, FRAME).get("head").rotation().x());
++    }
++
++    @Test
++    void blendsShortestEulerPathsAndMissingBonesIntoExistingPose() throws IOException {
++        final var actor =
++                graph(
++                                """
++                                {"default":{"animations":["a"],"blend_transition":1,"blend_via_shortest_path":true,"transitions":[{"next":"q.state_time>=0.5"}]},
++                                 "next":{"animations":["b"]}}
++                                """,
++                                """
++                                {"animation.a":{"animation_length":5,"bones":{"head":{"rotation":[170,0,0],"scale":[2,1,1]},"old":{"position":[4,0,0]}}},
++                                 "animation.b":{"animation_length":5,"bones":{"head":{"rotation":[-170,0,0],"scale":[4,1,1]},"new":{"position":[0,4,0]}}}}
++                                """)
++                        .playback();
++        actor.sample(0, FRAME);
++        actor.sample(0.25F, FRAME);
++        final var pose = actor.sample(0.75F, FRAME);
++        assertEquals(180, pose.get("head").rotation().x());
++        assertEquals(3, pose.get("head").scale().x());
++        assertEquals(2, pose.get("old").position().x());
++        assertEquals(2, pose.get("new").position().y());
++    }
++
++    @Test
++    void completionOfNestedControllerUsesCurrentStateAndClearsQueryBindingAfterItsUpdate()
++            throws IOException {
++        final var graph =
++                BedrockActorAnimation.read(
++                        json(
++                                """
++                                {"animations":{"root":"controller.animation.root","child":"controller.animation.child","a":"animation.a","b":"animation.b"},
++                                 "scripts":{"animate":["root","b"]}}
++                                """),
++                        Map.of(),
++                        json(
++                                """
++                                {"animation.a":{"animation_length":0.25,"loop":"hold_on_last_frame","bones":{"a":{"position":[1,0,0]}}},
++                                 "animation.b":{"loop":true,"bones":{"b":{"position":["q.state_time","q.all_animations_finished",0]}}}}
++                                """),
++                        json(
++                                """
++                                {"controller.animation.root":{"states":{"default":{"animations":["child","b"],"transitions":[{"done":"q.any_animation_finished"}]},"done":{"animations":["a"]}}},
++                                 "controller.animation.child":{"states":{"default":{"animations":["a"]}}}}
++                                """),
++                        "1.18.10");
++        final var actor = graph.playback();
++        actor.sample(0, FRAME);
++        final var before = actor.sample(0.25F, FRAME);
++        assertTrue(before.containsKey("a"));
++        assertEquals(new BedrockBoneAnimation.Vector(0, 0, 0), before.get("b").position());
++        assertEquals(1, actor.sample(0.5F, FRAME).get("a").position().x());
++    }
++
++    @Test
++    void resetsSelfTransitionsWithoutRepeatingEntryOrExitScripts() throws IOException {
++        final var actor =
++                graph(
++                                """
++                                {"default":{"on_entry":["v.entries=(v.entries??0)+1;"],"on_exit":["v.exits=(v.exits??0)+1;"],
++                                 "animations":["a"],"transitions":[{"default":"q.restart"}]}}
++                                """,
++                                """
++                                {"animation.a":{"animation_length":5,"bones":{"head":{"position":["q.anim_time","v.entries","v.exits??0"]}}}}
++                                """)
++                        .playback();
++        actor.sample(0, FRAME);
++        actor.sample(0.25F, FRAME);
++        final var restart = new BedrockActorAnimation.Frame(Map.of("restart", 1F), Map.of());
++        assertEquals(
++                new BedrockBoneAnimation.Vector(0.25F, 1, 0),
++                actor.sample(0.5F, restart).get("head").position());
++        assertEquals(
++                new BedrockBoneAnimation.Vector(0.25F, 1, 0),
++                actor.sample(0.75F, restart).get("head").position());
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_ANIMATION_CONTROLLER_RESULT", matches = ".+")
++    void matchesNativeVersionDependentInitialTransitions() throws IOException {
++        final var results =
++                json(
++                        Files.readString(
++                                Path.of(System.getenv("STACKANVIL_ANIMATION_CONTROLLER_RESULT"))));
++        for (final var element : results.getAsJsonArray("versions")) {
++            final var entry = element.getAsJsonObject();
++            final var actor =
++                    BedrockActorAnimation.read(
++                                    json(
++                                            """
++                                            {"animations":{"root":"controller.animation.root","a":"animation.a"},"scripts":{"animate":["root"]}}
++                                            """),
++                                    Map.of(),
++                                    json(
++                                            """
++                                            {"animation.a":{"loop":true,"bones":{"head":{"position":["v.initial??0","v.exit??0","v.entered??0"]}}}}
++                                            """),
++                                    json(
++                                            """
++                                            {"controller.animation.root":{"states":{
++                                               "default":{"on_entry":["v.initial=1;"],"on_exit":["v.exit=1;"],"transitions":[{"next":"q.all_animations_finished"}]},
++                                               "next":{"on_entry":["v.entered=1;"],"animations":["a"]}}}}
++                                            """),
++                                    entry.get("version").getAsString())
++                            .playback();
++            final boolean deferred = entry.get("deferred").getAsBoolean();
++            final var first = actor.sample(0, FRAME);
++            assertEquals(deferred, first.isEmpty(), entry.get("version").getAsString());
++            final var pose = actor.sample(0.25F, FRAME).get("head");
++            assertEquals(
++                    new BedrockBoneAnimation.Vector(deferred ? 1 : 0, deferred ? 1 : 0, 1),
++                    pose.position());
++        }
++    }
++
++    @Test
++    void rejectsInvalidBlendDurations() {
++        for (final String value : List.of("-1", "601", "\"nan\"", "{}"))
++            assertThrows(
++                    IOException.class,
++                    () -> graph("{\"default\":{\"blend_transition\":" + value + "}}", "{}"));
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_ANIMATION_CONTROLLER_RESULT", matches = ".+")
++    void matchesIndependentNativeControllerUpdates() throws IOException {
++        final var results =
++                json(
++                        Files.readString(
++                                Path.of(System.getenv("STACKANVIL_ANIMATION_CONTROLLER_RESULT"))));
++        for (final String name :
++                List.of("any", "all", "time", "blend_1", "blend_0.25", "blend_0", "blend_jump")) {
++            final var result = results.getAsJsonObject(name);
++            final var config = result.getAsJsonObject("config");
++            final var lengths = config.getAsJsonArray("lengths");
++            final JsonObject entity =
++                    json(
++                            "{\"animations\":{\"root\":\"controller.animation.root\"},\"scripts\":{\"animate\":[{\"root\":\"q.weight\"}]}}");
++            final JsonObject animations = new JsonObject(), states = new JsonObject();
++            for (int index = 0; index < lengths.size(); index++) {
++                entity.getAsJsonObject("animations")
++                        .addProperty("a" + index, "animation.a" + index);
++                animations.add(
++                        "animation.a" + index,
++                        json(
++                                "{\"animation_length\":"
++                                        + lengths.get(index)
++                                        + ",\"loop\":\"hold_on_last_frame\",\"bones\":{\"bone"
++                                        + index
++                                        + "\":{\"rotation\":[\"q.state_time\",0,0],\"position\":[1,\"q.anim_time\",0]}}}"));
++            }
++            for (int index = 0; index < 2; index++) {
++                final JsonObject state = new JsonObject();
++                final JsonArray refs = new JsonArray();
++                for (final var child :
++                        config.getAsJsonArray("children").get(index).getAsJsonArray())
++                    refs.add("a" + child.getAsInt());
++                state.add("animations", refs);
++                if (index == 0) {
++                    state.add(
++                            "transitions",
++                            json("{\"values\":[{\"next\":\""
++                                            + (name.startsWith("blend") || name.equals("time")
++                                                    ? "q.state_time>=0.5"
++                                                    : name.equals("any")
++                                                            ? "q.any_animation_finished"
++                                                            : "q.all_animations_finished")
++                                            + "\"}]}")
++                                    .get("values"));
++                    if (config.has("curve")) state.addProperty("blend_transition", 1);
++                }
++                states.add(index == 0 ? "default" : "next", state);
++            }
++            final JsonObject controller = new JsonObject(), definition = new JsonObject();
++            definition.add("states", states);
++            controller.add("controller.animation.root", definition);
++            final var actor =
++                    BedrockActorAnimation.read(entity, Map.of(), animations, controller, "1.18.10")
++                            .playback();
++            float time = 0;
++            for (final var element : result.getAsJsonArray("steps")) {
++                final var step = element.getAsJsonObject();
++                time += step.get("delta").getAsFloat();
++                final var pose =
++                        actor.sample(
++                                time,
++                                new BedrockActorAnimation.Frame(
++                                        Map.of("weight", step.get("weight").getAsFloat()),
++                                        Map.of()));
++                assertEquals(
++                        step.getAsJsonArray("updates").size(), pose.size(), name + " at " + time);
++                for (final var update : step.getAsJsonArray("updates")) {
++                    final var child = update.getAsJsonObject();
++                    final int index = child.get("child").getAsInt();
++                    final float weight = child.get("weight").getAsFloat();
++                    final var transform = pose.get("bone" + index);
++                    assertEquals(weight, transform.position().x(), 1E-5, name);
++                    assertEquals(
++                            weight
++                                    * Math.min(
++                                            lengths.get(index).getAsFloat(),
++                                            child.get("clock").getAsFloat()),
++                            transform.position().y(),
++                            1E-5,
++                            name);
++                    assertEquals(
++                            weight * child.get("state_time").getAsFloat(),
++                            transform.rotation().x(),
++                            1E-5,
++                            name);
++                }
++            }
++        }
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_ANIMATION_SHORTEST_RESULT", matches = ".+")
++    void matchesIndependentNativeShortestPathComposition() throws IOException {
++        for (final var element :
++                JsonParser.parseString(
++                                Files.readString(
++                                        Path.of(
++                                                System.getenv(
++                                                        "STACKANVIL_ANIMATION_SHORTEST_RESULT"))))
++                        .getAsJsonArray()) {
++            final var entry = element.getAsJsonObject();
++            final Map<String, BedrockBoneAnimation.Transform> pose = new LinkedHashMap<>();
++            pose.put(
++                    "head",
++                    transform(
++                            new float[] {2, 0, 0}, new float[] {10, 0, 0}, new float[] {2, 1, 1}));
++            BedrockBoneAnimation.blendStates(
++                    pose,
++                    Map.of(
++                            "head",
++                            transform(
++                                    new float[] {1, 2, 3},
++                                    vector(entry.getAsJsonArray("before")),
++                                    new float[] {2, 3, 4})),
++                    Map.of(
++                            "head",
++                            transform(
++                                    new float[] {5, 6, 7},
++                                    vector(entry.getAsJsonArray("after")),
++                                    new float[] {4, 5, 6})),
++                    entry.get("weight").getAsFloat());
++            assertEquals(
++                    transform(
++                            vector(entry.getAsJsonArray("position")),
++                            vector(entry.getAsJsonArray("rotation")),
++                            vector(entry.getAsJsonArray("scale"))),
++                    pose.get("head"));
++        }
++    }
++
++    private static float[] vector(final JsonArray array) {
++        return new float[] {
++            array.get(0).getAsFloat(), array.get(1).getAsFloat(), array.get(2).getAsFloat()
++        };
++    }
++
++    private static BedrockBoneAnimation.Transform transform(
++            final float[] position, final float[] rotation, final float[] scale) {
++        return new BedrockBoneAnimation.Transform(
++                new BedrockBoneAnimation.Vector(position[0], position[1], position[2]),
++                new BedrockBoneAnimation.Vector(rotation[0], rotation[1], rotation[2]),
++                new BedrockBoneAnimation.Vector(scale[0], scale[1], scale[2]),
++                false);
++    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotesTest.java
 new file mode 100644
