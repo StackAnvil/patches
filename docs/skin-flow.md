@@ -122,6 +122,18 @@ For animated owned geometry, assembly selects the character's body and arm varia
 
 A private HelliArm capture contains ten animated arm cubes, a 16-frame 32×512 strip, and a separate blinking face. Targeted checks decode the entitled arm pack, assemble its variants, preserve every frame through save/load, and render the native face and arm bindings together. These checks use local private fixtures through `STACKANVIL_PERSONA_ASSETS` and `STACKANVIL_PERSONA_CAPTURE`; the repository contains no captured assets or receipts.
 
+## Texture animation timing
+
+The matching package's persona render controllers select looping frames with `floor(query.life_time * 7)`, modulo the strip frame count. Face and body strips run at seven frames per second. World surfaces use actor render-state age. Preview surfaces use elapsed monotonic time from appearance creation. Renderer lookup does not advance the clock.
+
+Blinking faces use the package's `default`, `open`, and `blink` states. Eyes start open. Each open-state evaluation samples the native 3-40 second threshold and 0-0.2 second return delay. State transitions retain the outgoing state's variable value for that frame. Repeated passes at the same lifetime do not resample. A rewound entity lifetime resets the controller. Body strips ignore face blink expressions.
+
+Targeted tests cover frame boundaries, lifetime phase, cyclic wrapping, random threshold resampling, delayed return, repeated passes, and reset. Official package extraction establishes the controller inputs. The full stack builds, and all 116 fixture-enabled add-on tests pass with no skips.
+
+A rebuilt Java client uses a private native skin fixture with separate arm and face bindings. All sixteen arm frames follow world render-state age and match the uploaded texture pixels. Blink uploads, duplicate-pass sampling, preview time, renderer lookup, and resource release pass. These checks establish the Java runtime path. Native multiplayer video comparison remains pending.
+
+Sources: [Persona render controllers](https://github.com/Mojang/bedrock-samples/blob/main/resource_pack/render_controllers/persona.render_controllers.json) and [blink controller](https://github.com/Mojang/bedrock-samples/blob/main/resource_pack/animation_controllers/persona.animation_controllers.json).
+
 ## Built-in persona assets
 
 The add-on bundles an Xodus-based package helper. First use opens Microsoft Store sign-in when no Store session exists. Sign in with the selected Bedrock account. The helper checks the Xbox user ID before requesting the package license.
@@ -172,7 +184,7 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 
 - Resolve free assets for accounts without usable receipt keys and implement animated shared body textures. Verify native cape motion. These recipes still depend on the service model. Compare more overlapping clothing combinations against native results.
 - Compare more face sizes, tint channels, and equipped combinations against native results.
-- Verify native blinking and strip timing. Implement emote effects, timelines, delays, multiple sources, chat announcements, and unavailable remote assets. Compare entity-relative rotations against native playback.
+- Compare corrected blink and strip timing with native multiplayer video. Implement emote effects, timelines, delays, multiple sources, chat announcements, and unavailable remote assets. Compare entity-relative rotations against native playback.
 - Add other piece palettes, verify native leg edits, and resolve free limb side recipes. Add paid purchase/redemption flows and account classic-pack downloads.
 - Verify versioned vanilla model overrides and native parent-name behavior. Complete classic controller blending, completion queries, item-action bindings, geometry-provided alias precedence, and first-person playback. Compare inherited skins and equipment flags with native rendering, including first-person views.
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. A white quad above the player moved independently with the sky clouds; it was not an extra face surface.

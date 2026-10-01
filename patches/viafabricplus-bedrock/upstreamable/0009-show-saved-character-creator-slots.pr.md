@@ -68,7 +68,7 @@ Private native 1.26.51 captures establish Battle Cry's pack UUID, 130 ticks, and
 - A Java GUI recording verifies visible Battle Cry motion, attached clothing, completion reset, and readable controls at the default GUI scale.
 - Native arm writes, cape equips, sizes, and account wheel edits have capture evidence. The account is restored after temporary edits.
 
-Unresolved free assets, animated shared body textures, native animation timing, unavailable remote emotes, and free limb side recipes remain incomplete. More face sizes and equipped combinations need native comparison. The Java preview recording uses an offline appearance fixture, so it does not establish live Java account download behavior.
+Free assets without usable receipt keys, animated shared body textures, unavailable remote emotes, and free limb side recipes remain incomplete. The renderer patch corrects texture timing from the licensed controllers. Native multiplayer timing comparison remains pending. More face sizes and equipped combinations need native comparison. The Java preview recording uses an offline appearance fixture, so it does not establish live Java account download behavior.
 
 ### Local persona cape assembly
 

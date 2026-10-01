@@ -1,4 +1,4 @@
-From 3cf72292af9cf32d519ad794674303b41af4a75a Mon Sep 17 00:00:00 2001
+From 19108d3aa0f594d01a8657adcf396882cf37426f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 10:44:51 +0200
 Subject: [PATCH] feat(bedrock): render Character Creator geometry and face
@@ -8,21 +8,43 @@ Character Creator skins can split the body and animated face into separate geome
 
 A native Bedrock 1.26.51, protocol 2193 login with the owned Helli Arm added a type-2 image (32 by 512, 16 frames) and animated_32x32 resource-patch binding alongside a type-1 face (32 by 64, two blinking frames). Both geometry descriptions used the full strip height. Normalize their texture size to one frame, remap bottom-origin mesh UVs, and render each bound surface on its own animated texture. Support the corresponding animated_128x128 binding with the same validated strip layout. Body coverage includes surfaces nested below the player bones.
 
-The captured persona mesh UVs use a bottom origin, while Java vertex UVs use a top origin. Flip V when creating mesh vertices so both native and converted GLTF skins keep their texture orientation. Keep raw login data and textures outside the repository. An opt-in test reads a private capture through STACKANVIL_PERSONA_CAPTURE and verifies that every bound animation surface is accepted. Animation timing retains the existing 100 ms frame and four-second blink cadence; exact timing still needs a native video comparison.
+The captured persona mesh UVs use a bottom origin, while Java vertex UVs use a top origin. Flip V when creating mesh vertices so both native and converted GLTF skins keep their texture orientation. Keep raw login data and textures outside the repository. An opt-in test reads a private capture through STACKANVIL_PERSONA_CAPTURE and verifies that every bound animation surface is accepted. Native multiplayer timing still needs a video comparison.
 
 Render menu previews with their actual model and animated layers. The skin widget uses the registered body geometry, and the GUI skin renderer submits additional surfaces with the same pose and independent animation textures. Preview close and skin replacement release those resources through the shared lifecycle.
+
+Bedrock 1.26.51.1's licensed persona.render_controllers.json selects looping
+face and body strips with floor(query.life_time * 7), modulo their frame
+count. Use seven frames per second and actor render-state age for world
+surfaces. Preview lifetime starts when its appearance is created and uses
+the monotonic clock. Renderer lookup no longer advances animations with
+absolute wall-clock time.
+
+The matching persona blink controller starts with open eyes, evaluates one
+state per frame, samples its 3-40 second threshold on every open-state
+evaluation, and holds blinking for the sampled 0-0.2 second return time.
+Retain transition-frame variable values and do not resample a repeated
+render pass at the same lifetime. Reset state when an entity's lifetime
+rewinds. Only face surfaces use the blink expression; body strips retain
+their linear phase. Targeted tests cover frame boundaries, cyclic phase,
+state transitions, repeated evaluation and lifetime reset. These checks
+establish controller behavior, not a native multiplayer video comparison.
+
+Reference:
+https://github.com/Mojang/bedrock-samples/blob/main/resource_pack/render_controllers/persona.render_controllers.json
+https://github.com/Mojang/bedrock-samples/blob/main/resource_pack/animation_controllers/persona.animation_controllers.json
 ---
+ .../render/MixinEntityRenderDispatcher.java   |   2 +-
  .../features/render/MixinGuiSkinRenderer.java |  32 +++
  .../bedrock/render/BedrockGeometry.java       | 102 ++++++-
  .../bedrock/render/BedrockPersonaLayer.java   |  37 +++
  .../bedrock/render/BedrockPlayerRenderer.java |  10 +-
- .../bedrock/render/BedrockPlayerSkins.java    | 260 ++++++++++++++++--
- .../bedrock/render/BedrockSkinAnimation.java  | 135 +++++++++
+ .../bedrock/render/BedrockPlayerSkins.java    | 269 ++++++++++++++++--
+ .../bedrock/render/BedrockSkinAnimation.java  | 220 ++++++++++++++
  .../viafabricplus-bedrock.mixins.json         |   1 +
  .../render/BedrockPersonaCaptureTest.java     |  70 +++++
  .../render/BedrockPersonaGeometryTest.java    | 243 ++++++++++++++++
- .../render/BedrockSkinAnimationTest.java      |  83 ++++++
- 10 files changed, 955 insertions(+), 18 deletions(-)
+ .../render/BedrockSkinAnimationTest.java      | 157 ++++++++++
+ 11 files changed, 1122 insertions(+), 21 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinGuiSkinRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaLayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimation.java
@@ -30,6 +52,19 @@ Render menu previews with their actual model and animated layers. The skin widge
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaGeometryTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimationTest.java
 
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
+index 629db3e..c343816 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
+@@ -84,7 +84,7 @@ public abstract class MixinEntityRenderDispatcher {
+ 
+     @Inject(method = "getRenderer(Lnet/minecraft/client/renderer/entity/state/AvatarRenderState;)Lnet/minecraft/client/renderer/entity/player/AvatarRenderer;", at = @At("HEAD"), cancellable = true)
+     private void bedrockPlayerRenderState(final AvatarRenderState state, final CallbackInfoReturnable<AvatarRenderer<?>> cir) {
+-        final AvatarRenderer<?> renderer = BedrockPlayerSkins.renderer(state.skin);
++        final AvatarRenderer<?> renderer = BedrockPlayerSkins.renderer(state.skin, state.ageInTicks);
+         if (renderer != null) {
+             cir.setReturnValue(renderer);
+         }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinGuiSkinRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinGuiSkinRenderer.java
 new file mode 100644
 index 0000000..6d30dcd
@@ -291,7 +326,7 @@ index 4b9f121..3a9f2f2 100644
 +    }
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index a5539e5..0a1f0db 100644
+index a5539e5..78bb51f 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -23,10 +23,12 @@ import com.viaversion.viafabricplus.bedrock.appearance.BedrockClassicOptions;
@@ -385,7 +420,7 @@ index a5539e5..0a1f0db 100644
          PLAYER_BY_TEXTURE.put(bodyId, playerUuid);
          return playerSkin;
      }
-@@ -141,9 +163,18 @@ public final class BedrockPlayerSkins {
+@@ -141,18 +163,31 @@ public final class BedrockPlayerSkins {
              return null;
          }
          if (appearance.renderer == null || appearance.rendererEpoch != rendererEpoch) {
@@ -398,14 +433,29 @@ index a5539e5..0a1f0db 100644
 +                appearance.slim, surfaces);
              appearance.rendererEpoch = rendererEpoch;
          }
-+        final long now = System.currentTimeMillis();
-+        for (final AnimatedSurface surface : appearance.surfaces) {
-+            surface.animation().update(surface.texture(), now);
-+        }
          return appearance.renderer;
      }
  
-@@ -160,10 +191,26 @@ public final class BedrockPlayerSkins {
+-    public static AvatarRenderer<?> renderer(final PlayerSkin skin) {
++    public static AvatarRenderer<?> renderer(final PlayerSkin skin, final float ageInTicks) {
+         if (skin == null || skin.body() == null) {
+             return null;
+         }
+         final UUID playerUuid = PLAYER_BY_TEXTURE.get(skin.body().id());
+-        return playerUuid == null ? null : renderer(playerUuid);
++        if (playerUuid == null) return null;
++        final AvatarRenderer<?> renderer = renderer(playerUuid);
++        final Appearance appearance = APPEARANCES.get(playerUuid);
++        if (renderer != null) {
++            for (final AnimatedSurface surface : appearance.surfaces) {
++                surface.animation().update(surface.texture(), ageInTicks / 20F);
++            }
++        }
++        return renderer;
+     }
+ 
+     public static Model.Simple previewModel(final Identifier texture) {
+@@ -160,10 +195,26 @@ public final class BedrockPlayerSkins {
          final Appearance appearance = id == null ? null : APPEARANCES.get(id);
          if (appearance == null || appearance.geometry == null) return null;
          if (appearance.previewModel == null)
@@ -423,8 +473,8 @@ index a5539e5..0a1f0db 100644
 +            appearance.previewSurfaces = appearance.surfaces.stream().map(surface -> new PreviewSurface(
 +                new Model.Simple(BedrockGeometry.playerModel(surface.geometry().model(), appearance.slim, surface.geometry().meshes()).root(), RenderTypes::entityTranslucent),
 +                surface.texture())).toList();
-+        final long now = System.currentTimeMillis();
-+        for (final AnimatedSurface surface : appearance.surfaces) surface.animation().update(surface.texture(), now);
++        final float lifeTime = (System.nanoTime() - appearance.started) / 1_000_000_000F;
++        for (final AnimatedSurface surface : appearance.surfaces) surface.animation().update(surface.texture(), lifeTime);
 +        return appearance.previewSurfaces;
 +    }
 +
@@ -433,7 +483,7 @@ index a5539e5..0a1f0db 100644
      public static void rendererContext(final EntityRendererProvider.Context context) {
          rendererContext = context;
          rendererEpoch++;
-@@ -181,6 +228,9 @@ public final class BedrockPlayerSkins {
+@@ -181,6 +232,9 @@ public final class BedrockPlayerSkins {
          if (appearance.capeId != null) {
              textureManager.release(appearance.capeId);
          }
@@ -443,7 +493,7 @@ index a5539e5..0a1f0db 100644
      }
  
      private static Identifier textureId(final UUID playerUuid, final String kind) {
-@@ -205,16 +255,29 @@ public final class BedrockPlayerSkins {
+@@ -205,16 +259,29 @@ public final class BedrockPlayerSkins {
      }
  
      private static String geometryName(final SkinData skin) {
@@ -476,7 +526,7 @@ index a5539e5..0a1f0db 100644
          if ("geometry.humanoid.custom".equalsIgnoreCase(name) || "geometry.humanoid.customSlim".equalsIgnoreCase(name)) {
              // These are Bedrock's standard Steve and Alex models. Minecraft's
              // player renderer already knows their exact UVs and overlay layout.
-@@ -226,33 +289,198 @@ public final class BedrockPlayerSkins {
+@@ -226,33 +293,199 @@ public final class BedrockPlayerSkins {
          try {
              final JsonObject data = JsonParser.parseString(skin.geometryData()).getAsJsonObject();
              final List<BedrockGeometryModel> models = BedrockGeometryModel.fromJson(data);
@@ -487,10 +537,10 @@ index a5539e5..0a1f0db 100644
          } catch (RuntimeException e) {
 -            ViaFabricPlusBedrock.impl().logger().warn("Failed to parse Bedrock player geometry", e);
 +            LOGGER.warn("Failed to parse Bedrock player geometry", e);
-+            return null;
-+        }
-+    }
-+
+             return null;
+         }
+     }
+ 
 +    static Geometry personaGeometry(final String name, final String faceName, final String geometryData,
 +                                    final BufferedImage skinImage, final List<SkinData.AnimationData> animations) {
 +        return personaGeometry(name, Map.of(1, faceName), geometryData, skinImage, animations);
@@ -499,8 +549,8 @@ index a5539e5..0a1f0db 100644
 +    static Geometry personaGeometry(final String name, final Map<Integer, String> bindings, final String geometryData,
 +                                    final BufferedImage skinImage, final List<SkinData.AnimationData> animations) {
 +        if (name.isBlank() || geometryData == null || geometryData.isBlank() || !supportedImage(skinImage)) {
-             return null;
-         }
++            return null;
++        }
 +        try {
 +            final JsonObject data = JsonParser.parseString(geometryData).getAsJsonObject();
 +            final JsonArray models = data.getAsJsonArray("minecraft:geometry");
@@ -650,11 +700,12 @@ index a5539e5..0a1f0db 100644
 +    }
 +
 +    private record AnimatedSurface(Surface geometry, Identifier texture, BedrockSkinAnimation animation) {
-     }
- 
++    }
++
      private static final class Appearance {
          private final PlayerSkin skin;
 -        private final BedrockGeometryModel geometry;
++        private final long started = System.nanoTime();
 +        private final Geometry geometry;
          private final boolean slim;
          private final Identifier bodyId;
@@ -682,10 +733,10 @@ index a5539e5..0a1f0db 100644
  
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimation.java
 new file mode 100644
-index 0000000..c6d7554
+index 0000000..d4bb2ec
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimation.java
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,220 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -695,50 +746,78 @@ index 0000000..c6d7554
 +
 +import com.mojang.blaze3d.platform.NativeImage;
 +import com.viaversion.viaversion.libs.gson.JsonObject;
-+import java.awt.image.BufferedImage;
++
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.client.renderer.texture.DynamicTexture;
 +import net.minecraft.resources.Identifier;
 +import net.raphimc.viabedrock.protocol.model.SkinData;
++
 +import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++
++import java.awt.image.BufferedImage;
++import java.util.function.DoubleSupplier;
++import java.util.random.RandomGenerator;
 +
 +/** Uploads frames for the separate animated surfaces in a Bedrock skin. */
 +final class BedrockSkinAnimation {
 +
-+    private static final long FRAME_DURATION_MS = 100;
-+    private static final long BLINK_PERIOD_MS = 4_000;
++    private static final int FRAMES_PER_SECOND = 7;
 +
 +    private final BufferedImage image;
 +    private final int width;
 +    private final int height;
 +    private final int frameCount;
 +    private final boolean vertical;
-+    private final int expression;
++    private final boolean blinkingExpression;
++    private final DoubleSupplier random;
++    private BlinkState blinkState = BlinkState.DEFAULT;
++    private float lastBlinkTime;
++    private float returnFromBlink;
++    private float lastSampleTime = Float.NaN;
++    private boolean blinking;
 +    private int currentFrame;
 +
 +    BedrockSkinAnimation(final SkinData.AnimationData animation, final BedrockGeometryModel model) {
++        this(animation, model, RandomGenerator.getDefault()::nextDouble);
++    }
++
++    BedrockSkinAnimation(
++            final SkinData.AnimationData animation,
++            final BedrockGeometryModel model,
++            final DoubleSupplier random) {
++        this.random = java.util.Objects.requireNonNull(random);
 +        this.image = animation.image();
 +        this.width = (int) model.getTextureSize().getX();
 +        this.height = (int) model.getTextureSize().getY();
-+        this.expression = animation.expression();
++        this.blinkingExpression = animation.type() == 1 && animation.expression() == 1;
 +        final int declaredFrames = (int) animation.frames();
-+        if (this.image == null || this.width <= 0 || this.height <= 0 || declaredFrames < 1
-+            || declaredFrames > 256 || declaredFrames != animation.frames()
-+            || this.width > 1024 || this.height > 1024
-+            || (long) this.image.getWidth() * this.image.getHeight() > 4 * 1024 * 1024) {
++        if (this.image == null
++                || this.width <= 0
++                || this.height <= 0
++                || declaredFrames < 1
++                || declaredFrames > 256
++                || declaredFrames != animation.frames()
++                || this.width > 1024
++                || this.height > 1024
++                || (long) this.image.getWidth() * this.image.getHeight() > 4 * 1024 * 1024) {
 +            throw new IllegalArgumentException("Invalid Bedrock skin animation");
 +        }
-+        if (declaredFrames == 1 && this.image.getWidth() == this.width && this.image.getHeight() == this.height) {
++        if (declaredFrames == 1
++                && this.image.getWidth() == this.width
++                && this.image.getHeight() == this.height) {
 +            this.frameCount = 1;
 +            this.vertical = true;
-+        } else if (this.image.getWidth() == this.width && this.image.getHeight() == this.height * declaredFrames) {
++        } else if (this.image.getWidth() == this.width
++                && this.image.getHeight() == this.height * declaredFrames) {
 +            this.frameCount = declaredFrames;
 +            this.vertical = true;
-+        } else if (this.image.getWidth() == this.width * declaredFrames && this.image.getHeight() == this.height) {
++        } else if (this.image.getWidth() == this.width * declaredFrames
++                && this.image.getHeight() == this.height) {
 +            this.frameCount = declaredFrames;
 +            this.vertical = false;
 +        } else {
-+            throw new IllegalArgumentException("Animation frames do not match geometry texture size");
++            throw new IllegalArgumentException(
++                    "Animation frames do not match geometry texture size");
 +        }
 +    }
 +
@@ -748,8 +827,12 @@ index 0000000..c6d7554
 +        final int height = description.get("texture_height").getAsInt();
 +        final BufferedImage image = animation.image();
 +        final int frames = (int) animation.frames();
-+        if (image == null || frames < 1 || frames > 256 || frames != animation.frames()
-+            || width < 1 || height < 1) {
++        if (image == null
++                || frames < 1
++                || frames > 256
++                || frames != animation.frames()
++                || width < 1
++                || height < 1) {
 +            throw new IllegalArgumentException("Invalid animated geometry texture");
 +        }
 +        if (frames == 1 || image.getWidth() != width || image.getHeight() != height) {
@@ -770,56 +853,109 @@ index 0000000..c6d7554
 +                continue;
 +            }
 +            final JsonObject mesh = bone.getAsJsonObject("poly_mesh");
-+            final boolean normalized = mesh.has("normalized_uvs") && mesh.get("normalized_uvs").getAsBoolean();
++            final boolean normalized =
++                    mesh.has("normalized_uvs") && mesh.get("normalized_uvs").getAsBoolean();
 +            for (final var entry : mesh.getAsJsonArray("uvs")) {
 +                final var uv = entry.getAsJsonArray();
 +                if (normalized) {
-+                    uv.set(0, new com.viaversion.viaversion.libs.gson.JsonPrimitive(uv.get(0).getAsFloat() * width / frameWidth));
-+                    uv.set(1, new com.viaversion.viaversion.libs.gson.JsonPrimitive(1F - (1F - uv.get(1).getAsFloat()) * height / frameHeight));
++                    uv.set(
++                            0,
++                            new com.viaversion.viaversion.libs.gson.JsonPrimitive(
++                                    uv.get(0).getAsFloat() * width / frameWidth));
++                    uv.set(
++                            1,
++                            new com.viaversion.viaversion.libs.gson.JsonPrimitive(
++                                    1F - (1F - uv.get(1).getAsFloat()) * height / frameHeight));
 +                } else {
-+                    uv.set(1, new com.viaversion.viaversion.libs.gson.JsonPrimitive(uv.get(1).getAsFloat() - height + frameHeight));
++                    uv.set(
++                            1,
++                            new com.viaversion.viaversion.libs.gson.JsonPrimitive(
++                                    uv.get(1).getAsFloat() - height + frameHeight));
 +                }
 +            }
 +        }
 +    }
 +
-+    int frameIndex(final long elapsedMillis) {
-+        final long elapsed = Math.max(0, elapsedMillis);
-+        return this.expression == 1
-+            ? elapsed % BLINK_PERIOD_MS < (long) (this.frameCount - 1) * FRAME_DURATION_MS
-+                ? 1 + (int) (elapsed % BLINK_PERIOD_MS / FRAME_DURATION_MS) : 0
-+            : (int) (elapsed / FRAME_DURATION_MS % this.frameCount);
++    int frameIndex(final float lifeTimeSeconds) {
++        if (!Float.isFinite(lifeTimeSeconds)) {
++            throw new IllegalArgumentException("Invalid skin animation lifetime");
++        }
++        final float lifeTime = Math.max(0, lifeTimeSeconds);
++        if (!this.blinkingExpression) {
++            return (int) (Math.floor(lifeTime * FRAMES_PER_SECOND) % this.frameCount);
++        }
++        if (lifeTime < this.lastSampleTime) {
++            this.blinkState = BlinkState.DEFAULT;
++            this.blinking = false;
++        }
++        if (lifeTime != this.lastSampleTime) {
++            // Bedrock 1.26.51.1's persona blink controller evaluates one state per frame.
++            // Its random threshold is sampled on every open-state evaluation.
++            switch (this.blinkState) {
++                case DEFAULT -> {
++                    this.blinking = false;
++                    this.lastBlinkTime = lifeTime;
++                    if (lifeTime != 0) this.blinkState = BlinkState.OPEN;
++                }
++                case OPEN -> {
++                    this.blinking = false;
++                    this.returnFromBlink = lifeTime + (float) (this.random.getAsDouble() * 0.2);
++                    if (lifeTime
++                            > this.lastBlinkTime + (float) (3 + this.random.getAsDouble() * 37)) {
++                        this.blinkState = BlinkState.BLINK;
++                    }
++                }
++                case BLINK -> {
++                    this.blinking = true;
++                    this.lastBlinkTime = lifeTime;
++                    // This controller's blink state has no animations to await.
++                    if (lifeTime > this.returnFromBlink) this.blinkState = BlinkState.OPEN;
++                }
++            }
++            this.lastSampleTime = lifeTime;
++        }
++        return this.blinking ? this.frameCount / 2 : 0;
++    }
++
++    private enum BlinkState {
++        DEFAULT,
++        OPEN,
++        BLINK
 +    }
 +
 +    BufferedImage frame(final int index) {
 +        if (index < 0 || index >= this.frameCount) {
 +            throw new IllegalArgumentException("Invalid animation frame index");
 +        }
-+        return this.image.getSubimage(this.vertical ? 0 : index * this.width,
-+            this.vertical ? index * this.height : 0, this.width, this.height);
++        return this.image.getSubimage(
++                this.vertical ? 0 : index * this.width,
++                this.vertical ? index * this.height : 0,
++                this.width,
++                this.height);
 +    }
 +
-+    void update(final Identifier textureId, final long nowMillis) {
++    void update(final Identifier textureId, final float lifeTimeSeconds) {
 +        if (this.frameCount == 1) {
 +            return;
 +        }
-+        final int next = this.frameIndex(nowMillis);
++        final int next = this.frameIndex(lifeTimeSeconds);
 +        if (next == this.currentFrame) {
 +            return;
 +        }
-+        final DynamicTexture texture = (DynamicTexture) Minecraft.getInstance().getTextureManager().getTexture(textureId);
++        final DynamicTexture texture =
++                (DynamicTexture) Minecraft.getInstance().getTextureManager().getTexture(textureId);
 +        final NativeImage pixels = texture.getPixels();
 +        final BufferedImage frame = this.frame(next);
 +        for (int y = 0; y < this.height; y++) {
 +            for (int x = 0; x < this.width; x++) {
 +                final int argb = frame.getRGB(x, y);
-+                pixels.setPixelABGR(x, y, (argb & 0xFF00FF00) | ((argb & 0xFF) << 16) | ((argb >>> 16) & 0xFF));
++                pixels.setPixelABGR(
++                        x, y, (argb & 0xFF00FF00) | ((argb & 0xFF) << 16) | ((argb >>> 16) & 0xFF));
 +            }
 +        }
 +        texture.upload();
 +        this.currentFrame = next;
 +    }
-+
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
 index 6be3c49..32eb0ba 100644
@@ -1160,19 +1296,24 @@ index 0000000..0572790
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimationTest.java
 new file mode 100644
-index 0000000..06160fa
+index 0000000..8cc01bf
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimationTest.java
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,157 @@
 +package com.viaversion.viafabricplus.bedrock.render;
++
++import static org.junit.jupiter.api.Assertions.*;
 +
 +import com.viaversion.viaversion.libs.gson.JsonObject;
 +import com.viaversion.viaversion.libs.gson.JsonParser;
-+import java.awt.image.BufferedImage;
++
 +import net.raphimc.viabedrock.protocol.model.SkinData;
++
 +import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
 +import org.junit.jupiter.api.Test;
-+import static org.junit.jupiter.api.Assertions.*;
++
++import java.awt.image.BufferedImage;
++import java.util.List;
 +
 +final class BedrockSkinAnimationTest {
 +    @Test
@@ -1183,16 +1324,20 @@ index 0000000..06160fa
 +        image.setRGB(3, 39, 0xFF445566);
 +        final var data = new SkinData.AnimationData(image, 1, 2, 1);
 +        BedrockSkinAnimation.normalizeGeometry(model, data);
-+        final var uv = model.getAsJsonArray("bones").get(0).getAsJsonObject().getAsJsonObject("poly_mesh")
-+            .getAsJsonArray("uvs").get(0).getAsJsonArray();
++        final var uv =
++                model.getAsJsonArray("bones")
++                        .get(0)
++                        .getAsJsonObject()
++                        .getAsJsonObject("poly_mesh")
++                        .getAsJsonArray("uvs")
++                        .get(0)
++                        .getAsJsonArray();
 +        assertEquals(0.5F, uv.get(1).getAsFloat());
 +        final var animation = new BedrockSkinAnimation(data, parse(model));
 +        assertEquals(32, animation.frame(0).getHeight());
 +        assertEquals(0xFF112233, animation.frame(0).getRGB(3, 7));
 +        assertEquals(0xFF445566, animation.frame(1).getRGB(3, 7));
-+        assertEquals(1, animation.frameIndex(0));
-+        assertEquals(0, animation.frameIndex(100));
-+        assertEquals(1, animation.frameIndex(4000));
++        assertEquals(0, animation.frameIndex(0));
 +    }
 +
 +    @Test
@@ -1207,33 +1352,98 @@ index 0000000..06160fa
 +        assertEquals(32, animation.frame(0).getWidth());
 +        assertEquals(0xFF445566, animation.frame(1).getRGB(5, 8));
 +        assertEquals(0, animation.frameIndex(0));
-+        assertEquals(1, animation.frameIndex(100));
-+        assertEquals(0, animation.frameIndex(200));
++        assertEquals(0, animation.frameIndex(Math.nextDown(1F / 7)));
++        assertEquals(1, animation.frameIndex(Math.nextUp(1F / 7)));
++        assertEquals(0, animation.frameIndex(2F / 7));
 +    }
 +
 +    @Test
 +    void acceptsFrameSizedGeometryAndRejectsIncompleteOrUnboundedStrips() {
 +        final JsonObject model = model(32, 32);
-+        final var data = new SkinData.AnimationData(new BufferedImage(32, 512, BufferedImage.TYPE_INT_ARGB), 2, 16, 0);
++        final var data =
++                new SkinData.AnimationData(
++                        new BufferedImage(32, 512, BufferedImage.TYPE_INT_ARGB), 2, 16, 0);
 +        BedrockSkinAnimation.normalizeGeometry(model, data);
 +        final var animation = new BedrockSkinAnimation(data, parse(model));
-+        assertEquals(15, animation.frameIndex(1500));
-+        assertEquals(0, animation.frameIndex(1600));
++        assertEquals(15, animation.frameIndex(15F / 7));
++        assertEquals(0, animation.frameIndex(16F / 7));
 +        assertThrows(IllegalArgumentException.class, () -> animation.frame(16));
-+        assertThrows(IllegalArgumentException.class, () -> new BedrockSkinAnimation(
-+            new SkinData.AnimationData(data.image(), 2, Float.NaN, 0), parse(model)));
-+        assertThrows(IllegalArgumentException.class, () -> new BedrockSkinAnimation(
-+            new SkinData.AnimationData(data.image(), 2, 512, 0), parse(model)));
-+        assertThrows(IllegalArgumentException.class, () -> new BedrockSkinAnimation(
-+            new SkinData.AnimationData(new BufferedImage(32, 511, BufferedImage.TYPE_INT_ARGB), 2, 16, 0), parse(model)));
++        assertThrows(
++                IllegalArgumentException.class,
++                () ->
++                        new BedrockSkinAnimation(
++                                new SkinData.AnimationData(data.image(), 2, Float.NaN, 0),
++                                parse(model)));
++        assertThrows(
++                IllegalArgumentException.class,
++                () ->
++                        new BedrockSkinAnimation(
++                                new SkinData.AnimationData(data.image(), 2, 512, 0), parse(model)));
++        assertThrows(
++                IllegalArgumentException.class,
++                () ->
++                        new BedrockSkinAnimation(
++                                new SkinData.AnimationData(
++                                        new BufferedImage(32, 511, BufferedImage.TYPE_INT_ARGB),
++                                        2,
++                                        16,
++                                        0),
++                                parse(model)));
++    }
++
++    @Test
++    void followsBlinkControllerStateBoundariesAndSamplesEachOpenEvaluation() {
++        final var draws = new java.util.ArrayDeque<Double>(List.of(0.5, 1.0, 0.5, 0.0));
++        final var animation =
++                new BedrockSkinAnimation(
++                        new SkinData.AnimationData(
++                                new BufferedImage(32, 64, BufferedImage.TYPE_INT_ARGB), 1, 2, 1),
++                        parse(model(32, 32)),
++                        draws::removeFirst);
++        assertEquals(0, animation.frameIndex(0));
++        assertEquals(0, animation.frameIndex(0.1F));
++        assertEquals(0, animation.frameIndex(4F)); // High threshold keeps the eyes open.
++        assertEquals(0, animation.frameIndex(4F)); // Repeated render passes do not resample.
++        assertEquals(0, animation.frameIndex(4.01F)); // Enter blink after a new low threshold.
++        assertTrue(draws.isEmpty());
++        assertEquals(1, animation.frameIndex(4.02F));
++        assertEquals(1, animation.frameIndex(4.11F));
++        assertEquals(1, animation.frameIndex(4.12F)); // Exit transition keeps this state's value.
++        draws.addAll(List.of(0.5, 1.0));
++        assertEquals(0, animation.frameIndex(4.13F));
++        assertTrue(draws.isEmpty());
++        assertEquals(0, animation.frameIndex(0)); // A new entity lifetime resets the controller.
++        assertEquals(0, animation.frameIndex(0.1F));
++    }
++
++    @Test
++    void appliesBlinkExpressionOnlyToFacesAndKeepsLifetimePhase() {
++        final var animation =
++                new BedrockSkinAnimation(
++                        new SkinData.AnimationData(
++                                new BufferedImage(32, 512, BufferedImage.TYPE_INT_ARGB), 2, 16, 1),
++                        parse(model(32, 32)),
++                        () -> {
++                            throw new AssertionError("Body animation sampled blink randomness");
++                        });
++        assertEquals(6, animation.frameIndex(10));
++        assertEquals(13, animation.frameIndex(11));
++        assertEquals(0, animation.frameIndex(-1));
++        assertThrows(IllegalArgumentException.class, () -> animation.frameIndex(Float.NaN));
++        assertThrows(
++                IllegalArgumentException.class,
++                () -> animation.frameIndex(Float.POSITIVE_INFINITY));
 +    }
 +
 +    private static JsonObject model(final int width, final int height) {
-+        final var model = JsonParser.parseString("""
-+            {"description":{"identifier":"geometry.animation","texture_width":32,"texture_height":32},
-+             "bones":[{"name":"head","pivot":[0,24,0],"rotation":[0,0,0],
-+              "poly_mesh":{"normalized_uvs":true,"uvs":[[0.25,0.75]]}}]}
-+            """).getAsJsonObject();
++        final var model =
++                JsonParser.parseString(
++                                """
++                                {"description":{"identifier":"geometry.animation","texture_width":32,"texture_height":32},
++                                 "bones":[{"name":"head","pivot":[0,24,0],"rotation":[0,0,0],
++                                  "poly_mesh":{"normalized_uvs":true,"uvs":[[0.25,0.75]]}}]}
++                                """)
++                        .getAsJsonObject();
 +        model.getAsJsonObject("description").addProperty("texture_width", width);
 +        model.getAsJsonObject("description").addProperty("texture_height", height);
 +        return model;
