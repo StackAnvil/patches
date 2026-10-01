@@ -445,3 +445,19 @@ Resolve formats within a pack before trying lower packs. A higher OGG sample can
 Use Minecraft's JOrbis reader after checking page bounds, stream identity, sequence, end-of-stream, Vorbis channel and rate dimensions, and the final sample count. Bound decoded PCM to 64 MiB before allocation. Missing, truncated, oversized, or inconsistent streams fail through the existing asset-loading error path. Convert floats into interleaved little-endian PCM16. This path needs neither a Bedrock installation nor an external decoder.
 
 Private tests compare three licensed samples and six generated mono/stereo streams at 8,000 through 48,000 Hz with libvorbisfile. All 109,603 scalar samples differ by at most one PCM quantization step. Dimensions, exact frame counts, channel order, extensionless catalog selection, truncation, excessive granules, path safety, and format overrides pass. Vorbis loop comments, FMOD output equivalence, and audible playback remain unverified or incomplete. Independent reference files and licensed content stay private.
+
+
+### Play timeline sound requests
+
+Timeline sounds resolve through the actor's declared aliases. Missing bindings produce no request. Stable timestamps, suppression cursor advancement, repeat frames, and loop boundaries match 19 target executable queue fixtures. Sound events also contribute to inferred animation length, as [Mojang's schema](https://mojang.github.io/bedrock-samples/Schemas.html) specifies.
+
+Static model locators follow the final sampled bone pose. Missing locators use actor position. The attached backend snapshots this position once with gain two and pitch one. Unit tests cover bone inheritance and scale suppression. Scaled world positions and dynamic locators still need native comparisons.
+
+Decode selected FSB and OGG samples off the render thread. Bound pending decodes and active PCM. Use Minecraft's shared audio device, listener, source pools, and category sliders. Preserve authored pitch, source-relative playback, and distance requests. Release static buffers after channels, and invalidate pending requests on reload or disconnect.
+
+Streaming uses the stream pool after full PCM decoding. Gain above one requires `AL_SOFT_gain_clamp_ex`. Native audible mixing, captions, stream concurrency, controller entry effects, particles, dynamic emote resource assignment, and exact render suppression conditions remain incomplete.
+
+All 246 fixture-enabled add-on tests pass with no failures or skips. The dependency build and bundle pass. Licensed content, executables, native exports, and runtime probes remain private.
+
+
+A muted Java runtime test verifies static and streamed PCM channels, licensed FSB and OGG playback, server pack catalog overrides, and snapshot positions. It also verifies authored pitch and attenuation, pause exceptions, natural completion, restart after stopping all sounds, and cancellation of pending decodes. Source gain remains zero throughout. These checks do not establish native audible mixing or locator placement against a native scene.
