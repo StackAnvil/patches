@@ -629,10 +629,22 @@ Bedrock 1.26.51.1 schema callbacks `148fa0750` and `148fa0960` map `allow_tint_o
 
 Independent execution runs the factory assignment, move, and inspected legacy picker branches across 186 cases. These cover native types -1 through 29, loaded and unloaded pieces, and absent, false, or true overrides. The harness supplies decoded optional metadata and the piece-validity accessor. Native instructions choose the default, copy the state, reject unavailable controls, and select channels. The JSON decoder and other UI implementations remain outside these cases.
 
-The Java tests compare the same fixtures and read the licensed starter eye asset. They also reject conflicting metadata and invalid flags. Free pieces without usable receipt keys still lack decoded assets. Color editing still requires a saved four-channel tint group. Creating the first group, additional palette callers, and native visible picker comparisons remain unverified.
+The Java tests compare the same fixtures and read the licensed starter eye asset. They also reject conflicting metadata and invalid flags. Free pieces without usable receipt keys still lack decoded assets. Additional palette callers and native visible picker comparisons remain unverified. The first-group implementation and its verification limits are recorded below.
 
 Source lead: [LeviLamina's versioned persona metadata definition](https://github.com/LiteLDev/LeviLamina/blob/main/src/mc/deps/shared_types/v1_26_40/actor/PersonaPieceMeta.h). The matching executable establishes the field mapping and omitted-value behavior.
 
 All 293 fixture-enabled tests pass with no failures, errors, or skips. This includes fresh standalone package acquisition, extraction, and cache reuse. The new fixture cases establish metadata and channel decisions; the screen's asynchronous controls still need a native visible comparison.
 
 After moving asset acquisition before the final profile hash check, all 18 targeted color, tint, and recipe tests pass with no skips.
+
+## First color edit without saved channels
+
+Eligible equipped pieces now open their color picker without a saved tint group. The first edit creates four transparent channels and replaces the selected channel. Existing groups keep their other colors. Invalid saved groups still fail. Metadata eligibility, palette validation, the final profile hash check, and exact service readback remain required.
+
+Bedrock 1.26.51.1 picker `14713b490` routes single-channel writes through `1470e86f0` and wrapper `14496b9e0`. Interface slot `0x58` points to thunk `141429410`, which reaches editor `1486238a0`. The editor calls recipe setter `148618b90`. That setter initializes four transparent colors before inserting a missing group. It updates only the selected channel in an existing group. Skin edits update the global skin color.
+
+Independent execution covers 240 combinations of type, channel, existing state, and selected color. The probe supplies decoded map state and the security-cookie call. Native instructions build the new key/color pair, observed at insertion boundary `1404b5b40`, or update the existing group directly. Allocation, JSON serialization, HTTPS writes, and visible native UI remain outside the probe.
+
+Java tests compare every exposed color target against the applicable native cases. An unconditional regression test checks first-group creation and preservation of the source profile. All 20 targeted color, tint, and recipe tests pass with no failures, errors, or skips. A live service save of a newly created group remains unverified.
+
+The complete fixture suite passes all 296 tests with no failures, errors, or skips. This includes fresh standalone package acquisition, extraction, and cache reuse.
