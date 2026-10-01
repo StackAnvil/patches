@@ -11,3 +11,11 @@ The [Bedrock 1.26.51 Emote schema](https://github.com/Mojang/bedrock-protocol-do
 - Native client captures verify both emote packets and local input state.
 
 This patch exposes the protocol data. Animation assets and rendering belong to the client integration. Captures, account identifiers, and assets stay private.
+
+## World emote-chat policy
+
+Retain the existing StartGame mute-emote-chat boolean in `GameSessionStorage`. Client integrations can use it to suppress announcements while continuing animation playback. This keeps the protocol field order unchanged.
+
+The [Mojang LevelSettings schema](https://mojang.github.io/bedrock-protocol-docs/1.26.50-preview.24/types/level-settings/) includes this field. Inspection of the target Bedrock 1.26.51.1 local announcement path confirms the world policy gate. Incoming emote flag bit 2 independently suppresses remote announcements. The target outgoing packet constructor retains zero flags.
+
+The replayed full stack passes its build, Checkstyle, and tests. A running add-on client verifies world muting, incoming flags, animation playback while muted, and local echo suppression using a mock connection. Live native multiplayer announcement comparison remains pending.
