@@ -198,7 +198,9 @@ The source loader indexes piece metadata, PNG face strips, BGRA TGA tint masks, 
 
 A live Java test used the bundled helper to obtain the official license and acquire the expanded libraries. It unpacked the archives and reused the versioned cache. Earlier fixture tests sample all four emotes and decode face masks. No downloaded content or credentials enter the repository. Fresh interactive Store sign-in and the Windows and macOS helper builds still need runtime verification.
 
-The matching package contains 4,761 FSB5 sound banks: 4,691 use FADPCM, and 70 use PCM16. Its particle archive contains 114 compiled MCB definitions and one text definition. Cache storage preserves these bytes. Production still needs audio and MCB decoding before effect playback can use them.
+The matching package contains 4,761 FSB5 sound banks: 4,691 use FADPCM, and 70 use PCM16. Its particle archive contains 114 compiled MCB definitions and one text definition. Cache storage preserves these bytes. The asset loader now decodes sound banks on demand. Particle decoding and effect dispatch remain incomplete.
+
+Sound decoding preserves stereo interleaving, sample rates, sample counts, and inclusive loop boundaries. It trims final FADPCM frames to the declared sample count. Input, metadata, and output limits apply before allocation. Private comparisons match all licensed banks and 96 generated banks against the [vgmstream decoder](https://github.com/vgmstream/vgmstream/blob/7dc938fa2f210943b37c7b6511852b516ef432ab/src/coding/fadpcm_decoder.c). These comparisons establish PCM output. Audible playback, sound parameters, captions, and attachment behavior still need implementation and verification.
 
 Local add-on builds require Rust 1.98.1, Protobuf, and the platform's WebView build libraries. Linux sign-in requires WebKitGTK 4.1. Release and full-stack CI assemble helper resources for Linux x64, Windows x64, and both macOS architectures. Native installations serve only as private research fixtures.
 
@@ -218,7 +220,7 @@ Menu models retain the native root, waist, and body hierarchy. Bone poses also a
 
 The target native loader selects the first declared emote animation source. The add-on preserves that order and accepts additional declarations. An unavailable first source remains an error. Sounds, particles, and named actor events remain unsupported.
 
-Native effect research now verifies sound alias lookup, event boundaries, locator fallback, actor attachment, and render-pass suppression. Playback still needs resource bindings, model locator transforms, audio decoding, particle decoding, and effect lifecycle management. The matching vanilla player library has no sound or particle bindings. The two captured owned emotes contain neither effect type, so those fixtures cannot establish audible or particle parity.
+Native effect research now verifies sound alias lookup, event boundaries, locator fallback, actor attachment, and render-pass suppression. Playback still needs resource bindings, model locator transforms, audio output, particle decoding, and effect lifecycle management. The matching vanilla player library has no sound or particle bindings. The two captured owned emotes contain neither effect type, so those fixtures cannot establish audible or particle parity.
 
 Another native probe verifies 64 binding availability and lifetime cases. The binder assigns separate sound and named actor event tables through two weak resources. Absent or expired resources leave existing bindings unchanged. This verifies native table assignment, not production resource loading or particle bindings. The native emote loader adds its first declared source to the shared actor-animation library.
 
@@ -271,6 +273,6 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. This establishes visual presence, not complete timing or format parity.
 - Verify fresh interactive Store sign-in and helper runtime behavior on Windows and macOS. Linux acquisition, license decryption, extraction, and cache reuse already pass.
 
-The latest full stack build passes all 193 fixture-enabled add-on tests with no skips. The latest recorded Java runtime probe passes 1,324 checks. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
+The latest full stack build passes all 198 fixture-enabled add-on tests with no skips. The latest recorded Java runtime probe passes 1,324 checks. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
 
 Keep login JWTs, receipts, content keys, raw flows, screenshots, player textures, and account data private under `.stackanvil/`.

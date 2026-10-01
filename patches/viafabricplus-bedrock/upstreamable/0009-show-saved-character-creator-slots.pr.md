@@ -304,4 +304,18 @@ Private inspection identifies 4,691 FADPCM and 70 PCM16 banks. The particle arch
 
 Sources: [MCB reference decoder](https://github.com/LPaicen/brarchive-extractor) and [server schema export workflow](https://github.com/SmokeyStack/brarchaeology/blob/main/tools/Dump-BdsSchema.ps1). These references guide format research; the live licensed package supplies the target-version data.
 
+## Decode licensed sound banks
+
+Decode the matching package's single-stream FSB5 version 1 banks through the asset loader. Preserve signed PCM16 samples and decode FADPCM prediction, shifts, clipping, frame histories, and stereo interleaving. Custom sample-rate chunks override the header rate. Loop metadata retains its inclusive end as an exclusive sample boundary. Padded final frames stop at the declared sample count.
+
+Validate bank layout, chunk lengths, channel counts, rates, loops, and encoded frame availability. Reject unknown codecs and unsupported flags. Limit decoded PCM to 64 MiB before allocation. The loader resolves banks only beneath the vanilla sound directory and retains the original versioned cache data. The packaged ISC notice preserves vgmstream's copyright and license.
+
+A private harness compiles the unmodified vgmstream FADPCM decoder with file-access adapters. Its PCM checksums match all 4,761 licensed banks through the production asset loader. Another 96 generated banks vary histories, predictors, shifts, clipping, channels, offsets, loop markers, and final-frame lengths. The same checks verify sample rates, channel counts, sample counts, and loop boundaries. Unit tests cover malformed dimensions, truncated metadata and frames, signed PCM, prediction, clipping, and stereo output. Private banks, harnesses, and reference results remain outside the repository.
+
+Sound event parsing, alias bindings, locators, audio output, captions, and effect lifecycle remain incomplete. This change establishes decoding and makes no claim about audible emote playback.
+
+The replayed full stack builds, and all 198 fixture-enabled add-on tests pass with no skips. This includes fresh licensed acquisition through the bundled helper and the complete sound-bank reference comparison.
+
+Sources: [FSB5 layout](https://github.com/vgmstream/vgmstream/blob/7dc938fa2f210943b37c7b6511852b516ef432ab/src/meta/fsb5.c) and [FADPCM decoder](https://github.com/vgmstream/vgmstream/blob/7dc938fa2f210943b37c7b6511852b516ef432ab/src/coding/fadpcm_decoder.c).
+
 Sources: [Microsoft animation effects reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/actor_animation.v1.8.0?view=minecraft-bedrock-stable) and [Mojang particle integration reference](https://mojang.github.io/bedrock-samples/Particles.html). The target executable establishes the callback behavior and render-context suppression above.
