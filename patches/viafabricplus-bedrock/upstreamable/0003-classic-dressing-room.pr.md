@@ -22,7 +22,7 @@ Native Bedrock 1.26.51.1 copies skin animation aliases and three render flags in
 
 Store the options for standard and custom models. Preserve them across preset selection, width changes, cape changes, previews, and transport. A new PNG import clears the previous pack options. Bound aliases and validate field types before storage.
 
-Private loader and constructor observations establish the serialized fields. Tests cover metadata decoding, preset switching, persistence, PNG replacement, malformed input, and protocol round trips. The account asset patch supplies local alias playback through the licensed player graph. Geometry-provided alias precedence remains pending.
+Private loader and constructor observations establish the serialized fields. Tests cover metadata decoding, preset switching, persistence, PNG replacement, malformed input, and protocol round trips. The account asset patch supplies local alias playback through the licensed player graph. Selected legacy geometry flags override conflicting skin aliases in native conversion order.
 
 Apply equipment flags to both ordinary and custom player renderers through the shared layer submission call. Disable armor, wings, held items, and equipped head items when attachables are disabled. Hide armor and wings independently when `hide_armor` is true. Apply full brightness only to held-item layers. Keep clothing, face, and cape layers. Resolve flags from the installed texture so replacement, release, and disconnect cannot retain stale options.
 
@@ -34,4 +34,18 @@ Eighteen classic tests pass with the private model library enabled. Tests cover 
 
 A private running-client probe passed 208 checks across standard and custom models, flag combinations, layer submissions, lighting, replacement, and release. The client loads the injected layer handler. Native visual and first-person comparisons of the equipment flags remain pending.
 
-The account asset patch supplies the licensed base vanilla model library through the model-source interface. Pack definitions retain precedence across library chains. Tests cover external parents, modern library models, absent selections, cross-library cycles, and persistence. The account asset patch compiles the licensed player graph for classic alias playback. Versioned vanilla overrides, native parent-name behavior, geometry-provided alias precedence, full controller playback, and native visual comparisons remain pending.
+The account asset patch supplies the licensed base vanilla model library through the model-source interface. Pack definitions retain precedence across library chains. Tests cover external parents, modern library models, absent selections, cross-library cycles, and persistence. The account asset patch compiles the licensed player graph for classic alias playback. Versioned vanilla overrides, native parent-name behavior, item-action bindings, first-person playback, and native visual comparisons remain pending.
+
+## Legacy geometry animation flags
+
+Convert the nine legacy geometry animation flags into classic aliases before storage and transport. Apply geometry-derived aliases after explicit skin aliases. False flags retain existing bindings. Unrelated aliases, empty bindings, and explicit render flags retain their values. Modern geometry does not use this legacy conversion.
+
+Bedrock 1.26.51.1 converts arm posture flags in order: arms down, arms out front, Statue of Liberty, then single arm. Stationary legs override single legs. Upside-down legs override both. Head bob, riding arms, holding, sneaking, base pose, and look-at-target aliases also follow native conversion.
+
+Independent execution of `FUN_141433350` verifies all 512 flag combinations. Execution of the alias merge block in `FUN_141444960` verifies another 512 combinations. These cases include conflicting skin aliases and empty or non-string internal metadata. The runtime reads the selected raw legacy definition. Native inheritance edge cases remain pending.
+
+The native inverted-crouch flag emits `animation.player.move.sneaking.inverted`. That resource is absent from the matching licensed package. Preserve the native alias. The actor graph follows native missing-resource behavior instead of rejecting the pack or substituting an animation.
+
+Tests cover geometry selection, precedence, persistence, and skin claims. Executable files, execution fixtures, probes, and licensed assets remain private.
+
+The replayed full stack builds, and all 174 fixture-enabled add-on tests pass with no skips. A running Java client passes 1,059 checks. These cover the 1,024 native flag and merge cases, pack import, persistence, skin claims, and all nine licensed legacy graphs. The imported zombie-arm alias reaches both preview and world model geometry. The probe changes no account profiles. Native visible motion comparison remains pending.
