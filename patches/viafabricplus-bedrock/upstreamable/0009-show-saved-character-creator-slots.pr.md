@@ -538,3 +538,23 @@ The replayed full stack passes all 269 fixture-enabled add-on tests with no fail
 Native initial-speed function `1461c2690` supplies 128 additional reference cases. Production matches every velocity exactly as float32, including tiny directions and signed zeros. Tests also verify scalar expression side effects across all three axis evaluations.
 
 The full stack build and bundle pass. A muted Java runtime probe verifies all four new shapes through server aliases and world extraction. It checks 64 sampled particles, live actor bounds, and texture release. A private screenshot confirms visible world rendering. Native visible parity remains unverified.
+
+## Emitter lifetime scheduling
+
+Generalize the emitter clock to once, looping, and expression lifetimes. Preserve nanosecond ages and the target float conversion for active and sleep durations. Expression emitters retain the constructor's 1,000,000-second active duration. Missing `active_time` defaults to zero in once and looping components, as the target schema and readers specify. An inactive expression suppresses emission; expiration permanently stops new births. Existing particles continue until their own expiration.
+
+Target Bedrock 1.26.51.1 `142158a40` evaluates activation before per-update expressions. It then checks cycle reset and expression expiration. The initial update can emit even when it expires during that update. Later expired updates cannot emit. A cycle reset reevaluates durations, resets capacity and the emitted counter, refreshes emitter random variables, and runs creation expressions. It preserves existing particles and the steady rate remainder. It discards age overshoot and resets at most once per update. Molang retains the age and lifetime sampled before reset until the next update. Repeating cycles require an actor context. Expression lifetimes can accompany either duration component, as the official reverse portal definition demonstrates. Native repeat permissions combine across lifetime components, so an expression component can permit a once duration to reset repeatedly.
+
+The native constructor `14216c59b` supplies the default duration. Duration setters, lifetime components, cycle reset `142157210`, and the emission gate establish these rules. The target retains deltas below 101 milliseconds; larger deltas become 100 milliseconds. Production uses the same elapsed interval for its emitter and particle updates. An instant rate retries when capacity prevented every requested birth, because the native counter tracks actual births.
+
+Private independent execution supplies 52 schedules and 416 updates. Production matches birth counts, creation counts, Molang ages, and expiration state. The schedules cover both automatic rates, all three lifetimes, actor presence, zero duration, exact boundaries, sleep, expiration on the initial update, combined expression and duration lifetimes, and large frame deltas. Focused tests also cover expression evaluation order, changed loop times, retained pre-reset context, actor removal, and particle drainage.
+
+The harness executes actual native scheduling, activation, expiration, duration setters, rate components, capacity setters, and cycle reset. It supplies weak resource and actor handles, actor-query refresh, expression callbacks, and birth allocation. It skips random generation and variable registration inside reset. It stops before physics, acknowledges the initial-update flag, and clears the particle population between updates. These checks do not prove native particle aging order, visible timing, local-space transforms, or nested event playback. Licensed assets, executables, exports, and fixtures remain private.
+
+Sources: Microsoft's [expression lifetime reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftemitter_lifetime_expression?view=minecraft-bedrock-stable) and [Mojang particle reference](https://mojang.github.io/bedrock-samples/Particles.html). The matching executable establishes the target scheduling behavior.
+
+### Lifetime verification
+
+All 274 fixture-enabled add-on tests pass with no failures or skips. The full dependency build and bundle pass. A muted Java 26.3 probe resolves both emitter types through server player aliases and world extraction. It verifies repeated loop creation, expression deactivation and reactivation, expiration drainage, and resource release.
+
+The existing local server advertises protocol 2169. The runtime probe uses its Java 1.21.11 proxy route. This verifies Java world integration; it does not verify a direct protocol 2193 join or native visible parity. The independent lifetime fixtures use target Bedrock 1.26.51.1.

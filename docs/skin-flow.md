@@ -336,7 +336,13 @@ Another 128 native cases verify initial speed exactly as float32. Scalar speed n
 
 A muted Java client verifies all four added shapes through server aliases and world extraction. Its probe checks 64 sampled particles, live actor bounds, and texture release. A private screenshot confirms visible world rendering. This establishes Java integration, not native visible parity.
 
-Local-space transforms, other facing modes, looping and manual lifetimes, curves, and nested effect events remain incomplete. Native comparisons still need to establish attachment rotation, emitter scheduling, creation order, tint quantization, and visible scale. These component tests do not establish complete particle parity.
+Once, looping, and expression emitter lifetimes now use the target scheduling rules. Activation precedes update expressions; cycle reset and expiration follow them. The initial update can emit even when it expires during that update. Loops reevaluate durations and creation expressions, preserve existing particles, and discard elapsed overshoot. Expression emitters use the native constructor duration and can accompany once or looping durations. Frame deltas at or above 101 milliseconds become 100 milliseconds.
+
+Independent execution supplies 52 schedules and 416 native updates. Production matches births, creation counts, Molang ages, and expiration state. The harness supplies resource and actor accessors, query refresh, expression callbacks, and birth allocation. Reset random generation and variable registration are outside the probe. Physics and particle drainage are outside these native schedule fixtures.
+
+A muted Java 26.3 client verifies loop creation, expression deactivation and reactivation, expiration drainage, and resource release through world extraction. The existing local server uses an older Bedrock protocol through a Java proxy route. This establishes Java integration, not direct protocol 2193 joins or native visible parity.
+
+Local-space transforms, other facing modes, manual emission, curves, and nested effect events remain incomplete. Native comparisons still need to establish attachment rotation, particle aging order, random and variable registration, tint quantization, and visible scale. These component tests do not establish complete particle parity.
 
 ### Missing features
 
