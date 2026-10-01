@@ -1,6 +1,7 @@
 package com.enderdash.agent.integration.probe;
 
 import com.google.gson.Gson;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -39,6 +40,7 @@ import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.FireworkMeta;
@@ -131,7 +133,13 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
     boolean consumedInFlight;
     double speedBeforeUse;
     double speedAfterUse;
-    double previousSpeed;
+    final ArrayDeque<Double> flightSteps = new ArrayDeque<>();
+    Location lastFlightPosition;
+    Location firstGlidingPosition;
+    boolean lastFlightGliding;
+    boolean flightStarted;
+    int movementTicksBeforeUse;
+    int movementTicksAfterUse;
     double maxStep;
     double maxDistance;
     int previousRockets = 3;
@@ -226,6 +234,7 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
             new Fixture(id, run, player, new Location(arenaWorld, serial++ * 128, 250, 0));
         active = fixture;
         prepare(player, fixture);
+        player.updateInventory();
         record(id, run, phase, "ready", Map.of());
       } else {
         Fixture fixture = Objects.requireNonNull(active, "No active scenario.");
@@ -239,6 +248,8 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
             if (!id.endsWith("elytra-rocket"))
               throw new IllegalArgumentException("This scenario has no start phase.");
             face(player, fixture.position(0.5, 50, 0.5), fixture.position(0.5, 50, 8.5));
+            fixture.flightStarted = true;
+            fixture.lastFlightPosition = null;
             record(id, run, phase, "ready", Map.of());
           }
           case "invalidate" -> {
@@ -640,14 +651,8 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
     f.usingShield |= p.isBlocking();
     if (p.isGliding()) f.glidingSamples++;
     int rockets = count(p.getInventory(), Material.FIREWORK_ROCKET);
-    double speed = p.getVelocity().clone().setY(0).length();
-    if (p.isGliding() && rockets < f.previousRockets && !f.consumedInFlight) {
-      f.consumedInFlight = true;
-      f.speedBeforeUse = f.previousSpeed;
-    }
-    if (f.consumedInFlight) f.speedAfterUse = Math.max(f.speedAfterUse, speed);
+    if (f.flightStarted) observeFlight(f, p, rockets);
     f.previousRockets = rockets;
-    f.previousSpeed = speed;
     if (f.vehicle != null && f.vehicle.isValid()) {
       Location current = f.vehicle.getLocation();
       boolean riding = f.vehicle.getPassengers().contains(p);
@@ -674,6 +679,49 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
         f.block(-5, 0, 16).setType(f.updates % 2 == 0 ? Material.NOTE_BLOCK : Material.SEA_LANTERN);
       }
     }
+  }
+
+  private static Map<String, Number> flightPosition(Location position) {
+    return Map.of(
+        "x", position.getX(), "y", position.getY(), "z", position.getZ(),
+        "yaw", position.getYaw(), "pitch", position.getPitch());
+  }
+
+  private static void observeFlight(Fixture f, Player p, int rockets) {
+    Location current = p.getLocation();
+    boolean gliding = p.isGliding();
+    if (gliding && f.firstGlidingPosition == null) f.firstGlidingPosition = current.clone();
+    boolean consumedNow = gliding && rockets < f.previousRockets && !f.consumedInFlight;
+    if (consumedNow) {
+      f.consumedInFlight = true;
+    }
+    if (!consumedNow
+        && gliding
+        && f.lastFlightGliding
+        && f.lastFlightPosition != null
+        && current.getWorld() == f.lastFlightPosition.getWorld()) {
+      double step =
+          Math.hypot(
+              current.getX() - f.lastFlightPosition.getX(),
+              current.getZ() - f.lastFlightPosition.getZ());
+      int windowTicks = f.consumedInFlight ? 8 : 4;
+      f.flightSteps.addLast(step);
+      if (f.flightSteps.size() > windowTicks) f.flightSteps.removeFirst();
+      if (f.consumedInFlight) f.movementTicksAfterUse++;
+      else f.movementTicksBeforeUse++;
+      if (f.flightSteps.size() == windowTicks) {
+        // Paper velocity does not track this client's movement. Average positions
+        // across several server ticks; require a longer window to establish a boost.
+        double speed =
+            f.flightSteps.stream().mapToDouble(Double::doubleValue).average().orElseThrow();
+        if (f.consumedInFlight) f.speedAfterUse = Math.max(f.speedAfterUse, speed);
+        else f.speedBeforeUse = Math.max(f.speedBeforeUse, speed);
+      }
+    } else {
+      f.flightSteps.clear();
+    }
+    f.lastFlightPosition = current;
+    f.lastFlightGliding = gliding;
   }
 
   private void inspect(Player p, Fixture f) {
@@ -707,9 +755,21 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
                 new int[] {0, 1, 3}))
           if (f.block(offset[0], offset[1], offset[2]).getType() == material) placed++;
         int remaining = count(inv, material);
-        passed = placed == 1 && remaining == 1;
+        if (f.id.equals("offhand-block-place")) {
+          ItemStack offhand = p.getInventory().getItemInOffHand();
+          passed =
+              placed == 0
+                  && remaining == 2
+                  && offhand.getType() == Material.DIRT
+                  && offhand.getAmount() == 2
+                  && p.getInventory().getItemInMainHand().getType().isAir()
+                  && f.block(0, 1, 2).getType() == Material.STONE;
+          expected = "Bedrock leaves offhand dirt unused with an empty main hand.";
+        } else {
+          passed = placed == 1 && remaining == 1;
+          expected = "One placed block and one remaining item.";
+        }
         observed.putAll(Map.of("placed", placed, "remaining", remaining));
-        expected = "One placed block and one remaining item.";
       }
       case "tnt-explosion" -> {
         int crater = 0;
@@ -742,14 +802,23 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
         int slot = f.id.equals("creative-replace-main") ? 9 : 0;
         Material wanted =
             f.id.equals("creative-replace-twice") ? Material.ENDER_PEARL : Material.NETHER_STAR;
+        ItemStack selected = inv.getItem(slot);
+        int quantity = selected == null ? 0 : selected.getAmount();
+        int totalWanted = count(inv, wanted);
+        int emeralds = count(inv, Material.EMERALD);
         passed =
-            f.id.equals("creative-select")
-                ? count(inv, wanted) > 0
-                : p.getInventory().getItem(slot) != null
-                    && p.getInventory().getItem(slot).getType() == wanted;
+            selected != null
+                && selected.getType() == wanted
+                && quantity > 0
+                && totalWanted == quantity
+                && emeralds == 0;
         if (f.id.equals("creative-replace-twice"))
-          passed &= count(inv, Material.EMERALD) == 0 && count(inv, Material.NETHER_STAR) == 0;
-        observed.put("selected", type(inv.getItem(slot)));
+          passed &= count(inv, Material.NETHER_STAR) == 0;
+        observed.put("selected", type(selected));
+        observed.put("slot", slot);
+        observed.put("quantity", quantity);
+        observed.put("totalWanted", totalWanted);
+        observed.put("emeralds", emeralds);
         expected = wanted.getKey().toString();
       }
       case "equip-helmet", "equip-offhand", "offhand-remove" -> {
@@ -918,9 +987,26 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
       case "offhand-elytra-rocket", "mainhand-elytra-rocket" -> {
         passed =
             f.glidingSamples > 0
-                && f.consumedInFlight
-                && f.speedAfterUse > f.speedBeforeUse + 0.15
+                && f.movementTicksBeforeUse >= 4
+                && f.speedBeforeUse > 0
                 && !p.isDead();
+        if (f.id.startsWith("offhand")) {
+          ItemStack offhand = p.getInventory().getItemInOffHand();
+          passed &=
+              !f.consumedInFlight
+                  && offhand.getType() == Material.FIREWORK_ROCKET
+                  && offhand.getAmount() == 3
+                  && count(inv, Material.FIREWORK_ROCKET) == 3
+                  && p.getInventory().getItemInMainHand().getType().isAir();
+          expected = "Bedrock glides while all three offhand rockets remain unused.";
+        } else {
+          passed &=
+              f.consumedInFlight
+                  && f.movementTicksAfterUse >= 8
+                  && f.speedAfterUse > f.speedBeforeUse + 0.15;
+          expected = "A rocket is consumed during glide and increases speed.";
+        }
+        observed.put("remaining", count(inv, Material.FIREWORK_ROCKET));
         observed.putAll(
             Map.of(
                 "glidingSamples",
@@ -930,13 +1016,24 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
                 "speedBeforeUse",
                 f.speedBeforeUse,
                 "speedAfterUse",
-                f.speedAfterUse));
-        expected = "A rocket is consumed during glide and increases speed.";
+                f.speedAfterUse,
+                "movementTicksBeforeUse",
+                f.movementTicksBeforeUse,
+                "movementTicksAfterUse",
+                f.movementTicksAfterUse));
+        if (f.firstGlidingPosition != null) {
+          observed.put("flightStart", flightPosition(f.firstGlidingPosition));
+        }
+        observed.put("flightEnd", flightPosition(p.getLocation()));
       }
       case "boat-forward" -> {
+        Location boat = f.vehicle.getLocation();
+        double forward = boat.getZ() - f.arena.getZ() - 0.5;
+        double lateral = Math.abs(boat.getX() - f.arena.getX() - 0.5);
         passed =
             f.ridingSamples > 0
-                && f.maxDistance > 2
+                && forward > 2
+                && lateral < 1
                 && f.maxStep < 2
                 && f.vehicle.getPassengers().contains(p);
         observed.putAll(
@@ -947,9 +1044,13 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
                 f.maxDistance,
                 "maxStep",
                 f.maxStep,
+                "forward",
+                forward,
+                "lateral",
+                lateral,
                 "mounted",
                 f.vehicle.getPassengers().contains(p)));
-        expected = "The player remains mounted while the boat moves smoothly.";
+        expected = "The player remains mounted while the boat moves smoothly forward.";
       }
       case "minecart-dismount" -> {
         double fromStart = p.getLocation().distance(f.position(0.5, 0.2, 0.5));
@@ -1032,9 +1133,22 @@ public final class ProbePlugin extends JavaPlugin implements Listener {
   }
 
   @EventHandler
+  public void teleport(PlayerTeleportEvent event) {
+    if (active != null && active.player.equals(event.getPlayer().getUniqueId())) {
+      active.lastFlightPosition = null;
+      active.lastFlightGliding = false;
+      active.flightSteps.clear();
+    }
+  }
+
+  @EventHandler
   public void worldChange(PlayerChangedWorldEvent event) {
-    if (active != null && active.player.equals(event.getPlayer().getUniqueId()))
+    if (active != null && active.player.equals(event.getPlayer().getUniqueId())) {
       active.worldChanges++;
+      active.lastFlightPosition = null;
+      active.lastFlightGliding = false;
+      active.flightSteps.clear();
+    }
   }
 
   @EventHandler

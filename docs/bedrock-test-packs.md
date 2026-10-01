@@ -36,6 +36,9 @@ The default gameplay run includes movement, block actions, inventory, creative s
 | `creative-select` | Search for a nether star and place it in the hotbar | The server sees a nether star in the player inventory. |
 | `creative-replace` | Replace an emerald in the first hotbar slot with a nether star | The server sees the nether star in that slot. |
 | `equip-helmet`, `equip-offhand`, `eat-golden-apple` | Use or swap the held item | The equipment slot or effect state changes. |
+| `offhand-block-place` | Right-click with dirt in the offhand and an empty main hand | Both dirt blocks remain in the offhand and no dirt block appears, matching native Bedrock. |
+| `offhand-elytra-rocket` | Glide and right-click with offhand rockets | Glide and movement samples exist, and all three offhand rockets remain unused. |
+| `mainhand-elytra-rocket` | Glide and use a mainhand rocket | A rocket is consumed during glide and horizontal speed increases. |
 | `entity-attack`, `entity-name` | Hit or name a cow | The cow loses health or has the expected name. |
 | `map-hold` | Use an empty map | The held item becomes a filled map. The runner saves a Java screenshot for visual review. |
 | `command-time`, `command-completion`, `command-denied` | Submit `/time set day`, including Tab completion | Time changes for an allowed player and stays at night for a denied player. |

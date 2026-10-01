@@ -285,6 +285,15 @@ async function javaJoin(route: "java-java" | "java-bedrock" | "java-geyser", mod
     gamePid = await waitForGameProcess(child, log, name);
     if (route === "java-bedrock" || route === "java-geyser") {
       await waitForLog(clientLog, /Connecting to 127\.0\.0\.1/, () => alive(gamePid), 120_000);
+      if (route === "java-geyser" && target.proxyLog) {
+        const log = async () => (await textFile(target.proxyLog!)).slice(connectionLogStart);
+        const deadline = Date.now() + 120_000;
+        while (!/All resource packs have been loaded/.test(await log())) {
+          if (!alive(gamePid)) throw new Error("The Java client stopped before resource packs were ready.");
+          if (Date.now() > deadline) throw new Error(`Resource packs did not become ready. Read ${target.proxyLog}.`);
+          await Bun.sleep(250);
+        }
+      }
       await Bun.sleep(3500);
       await capture(["ui", "click", "0.32", "0.69", "--client", "java"]);
     }

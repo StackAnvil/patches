@@ -183,11 +183,18 @@ async function removeOffhandToInventory(ui: Ui): Promise<void> {
 
 async function openChest(ui: Ui, sneak = false): Promise<{ width: number; height: number }> {
   const window = await javaWindow(ui);
-  const guiX = (window.width - 176 * 2) / 2 + 20;
-  const guiY = (window.height - 168 * 2) / 2 + 20;
-  const pixel = async () => (await ui(["ui", "pixel", String(guiX / window.width), String(guiY / window.height), "--client", "java"]))
-    .trim().split(/\s+/).map(Number);
-  const before = await pixel();
+  const left = (window.width - 176 * 2) / 2;
+  const top = (window.height - 168 * 2) / 2;
+  const screenVisible = async () => {
+    // Check blank parts of both the header and footer. The world's color at one
+    // pixel can match the panel, especially when looking at a chest boat.
+    const pixels = await Promise.all(([[10, 15], [150, 15], [10, 162], [150, 162]] as const).map(async ([x, y]) =>
+      (await ui(["ui", "pixel", String((left + x * 2) / window.width),
+        String((top + y * 2) / window.height), "--client", "java"]))
+        .trim().split(/\s+/).map(Number)));
+    return pixels.every((pixel) => pixel.length === 3
+      && pixel.every((channel) => Math.abs(channel - 198) <= 2));
+  };
   if (sneak) {
     await Promise.all([
       ui(["ui", "key-hold", "Shift_L", "1000", "--client", "java"]),
@@ -197,10 +204,7 @@ async function openChest(ui: Ui, sneak = false): Promise<{ width: number; height
     await uiMouse(ui, "right");
   }
   await Bun.sleep(500);
-  const after = await pixel();
-  const opened = before.length === 3 && after.length === 3
-    && before.some((value, index) => Math.abs(value - after[index]!) > 30);
-  if (!opened) {
+  if (!await screenVisible()) {
     throw new Error("The Java chest screen did not open after right click.");
   }
   return window;
@@ -372,6 +376,9 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
         await ui(["ui", "screenshot", "crafting-book-output", "--client", "java", "--output-dir", join(root, ".stackanvil", "integration")]);
         await ui(["ui", "click", String((window.width / 2 + 45) / window.width),
           String((window.height / 2 + 134) / window.height), "left", "--client", "java"]);
+        // Recipe-book visibility persists and shifts the next crafting screen.
+        await ui(["ui", "click", String((window.width / 2 + 3) / window.width),
+          String((window.height / 2 - 86) / window.height), "left", "--client", "java"]);
         await uiKey(ui, "Escape");
       }
       return;

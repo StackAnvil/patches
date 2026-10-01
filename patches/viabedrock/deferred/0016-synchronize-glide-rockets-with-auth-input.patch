@@ -1,26 +1,55 @@
-From 94781180b7c867a5d25df4c855552d320b62bc87 Mon Sep 17 00:00:00 2001
+From d41c2bbd9c2fad4edf2fc5046054ccd98539e64b Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 10:48:24 +0200
 Subject: [PATCH] fix(movement): synchronize glide rockets with auth input
 
-Bedrock protocol 2193 embeds item use in PlayerAuthInput without the normal inventory transaction type field. Encode that packed form for flight rockets so the server processes the use on the movement tick. Apply the corrected Bedrock velocity to Java while gliding so correction packets do not preserve stale local motion.
+Apply corrected Bedrock velocity to Java while gliding so movement
+corrections do not preserve stale local motion. Keep protocol 2193 packed
+item-use encoding for mining actions embedded in PlayerAuthInput.
+
+Queue mainhand flight rocket use as a standalone inventory transaction
+after the auth-input frame that establishes glide start and position.
+Keep this queue independent of packed mining actions.
+
+Official Bedrock 1.26.51.1 captures through unchanged Geyser build 1247
+show one predicted inventory action reducing three rockets to two. The
+transaction uses a negative even legacy request ID, InventoryContainer
+29 with the physical hotbar slot, descriptors without stack network IDs,
+hand 0, face 255, Unknown trigger, and Failure interaction prediction.
+Allocate legacy IDs separately from the odd item-stack-request sequence.
+Static analysis of the matching 1.26.51.1 client confirms an independent
+counter that starts at -4 and decreases by two.
+
+Keep the local inventory and its network IDs unchanged until the server
+confirms the result. The captured Geyser route answers this legacy use
+with an authoritative InventorySlot update, without ItemStackResponse.
+Targeted tests cover input ordering, legacy metadata serialization,
+counter isolation, descriptor copies, and the final-rocket debit.
 ---
- .../api/model/entity/ClientPlayerEntity.java  |  11 +-
- .../protocol/packet/ClientPlayerPackets.java  |  10 +-
- .../protocol/packet/InteractionPackets.java   |  14 ++-
+ .../api/model/entity/ClientPlayerEntity.java  |  16 +-
+ .../protocol/packet/ClientPlayerPackets.java  |  30 +++-
+ .../protocol/packet/InteractionPackets.java   |  96 +++++++----
  .../InventoryTransactionRewriter.java         |  10 +-
- .../InventoryTransactionPacketType.java       |  50 ++++----
- .../packet/ClientPlayerPacketsTest.java       |  22 ++++
- .../packet/InteractionPacketsTest.java        |   7 ++
- .../InventoryTransactionPacketTypeTest.java   | 111 ++++++++++++++++++
- 8 files changed, 206 insertions(+), 29 deletions(-)
+ .../InventoryTransactionPacketType.java       |  50 +++---
+ .../packet/ClientPlayerPacketsTest.java       |  90 +++++++++++
+ .../packet/InteractionPacketsTest.java        | 149 ++++++++++++++++++
+ .../InventoryTransactionPacketTypeTest.java   | 143 +++++++++++++++++
+ 8 files changed, 524 insertions(+), 60 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/inventory/InventoryTransactionPacketTypeTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
-index 42b22342..d22cd0cb 100644
+index 19b6f9d7..4be6b34b 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
-@@ -128,15 +128,20 @@ public class ClientPlayerEntity extends PlayerEntity {
+@@ -74,6 +74,7 @@ public class ClientPlayerEntity extends PlayerEntity {
+     private final List<AuthInputBlockAction> authInputBlockActions = new ArrayList<>();
+     private ItemStackRequestInfo authInputItemStackRequest;
+     private BedrockInventoryTransaction authInputItemInteraction;
++    private final Deque<BedrockInventoryTransaction> pendingFlightItemUses = new ArrayDeque<>();
+     private Set<InputFlag> inputFlags = EnumSet.noneOf(InputFlag.class);
+     private Set<InputFlag> prevInputFlags = EnumSet.noneOf(InputFlag.class);
+     private boolean horizontalCollision;
+@@ -128,15 +129,20 @@ public class ClientPlayerEntity extends PlayerEntity {
      }
  
      public void writePlayerPositionPacketToClient(final PacketWrapper wrapper, final Set<Relative> relatives, final boolean fakeTeleport) {
@@ -44,11 +73,53 @@ index 42b22342..d22cd0cb 100644
          wrapper.write(Types.FLOAT, relatives.contains(Relative.Y_ROT) ? 0F : this.rotation.y()); // yaw
          wrapper.write(Types.FLOAT, relatives.contains(Relative.X_ROT) ? 0F : this.rotation.x()); // pitch
          wrapper.write(Types.INT, EnumUtil.getIntBitmaskFromEnumSet(relatives, Relative::ordinal)); // flags
+@@ -567,6 +573,10 @@ public class ClientPlayerEntity extends PlayerEntity {
+         return this.authInputItemInteraction;
+     }
+ 
++    public Deque<BedrockInventoryTransaction> pendingFlightItemUses() {
++        return this.pendingFlightItemUses;
++    }
++
+     public void setAuthInputItemInteraction(final BedrockInventoryTransaction transaction) {
+         this.authInputItemInteraction = transaction;
+         if (transaction != null) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index 5270cd9c..8a677079 100644
+index a1f7fc86..cf09eb56 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-@@ -313,7 +313,7 @@ public final class ClientPlayerPackets {
+@@ -28,6 +28,7 @@ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+ import com.viaversion.viaversion.api.protocol.remapper.PacketHandler;
+ import com.viaversion.viaversion.api.protocol.remapper.PacketHandlers;
+ import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.api.type.Type;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
+ import com.viaversion.viaversion.util.Pair;
+@@ -216,6 +217,22 @@ public final class ClientPlayerPackets {
+         wrapper.write(BedrockTypes.OPTIONAL_POSITION_3F, null);
+     }
+ 
++    static void flushFlightItemUses(final PacketWrapper authInput, final ClientPlayerEntity player,
++                                    final Type<BedrockInventoryTransaction> transactionType) {
++        if (player.pendingFlightItemUses().isEmpty()) {
++            return;
++        }
++        // Establish this frame's glide start and movement before applying item use.
++        // Native air-use transactions are separate packets paired with the next input frame.
++        authInput.sendToServer(BedrockProtocol.class);
++        authInput.cancel();
++        while (!player.pendingFlightItemUses().isEmpty()) {
++            final PacketWrapper itemUse = authInput.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION);
++            itemUse.write(transactionType, player.pendingFlightItemUses().removeFirst());
++            itemUse.sendToServer(BedrockProtocol.class);
++        }
++    }
++
+     public static void register(final BedrockProtocol protocol) {
+         protocol.registerClientbound(ClientboundBedrockPackets.RESPAWN, ClientboundPackets26_3.RESPAWN, wrapper -> {
+             final Position3f position = wrapper.read(BedrockTypes.POSITION_3F); // position
+@@ -313,7 +330,7 @@ public final class ClientPlayerPackets {
                  return;
              }
              final Position3f position = wrapper.read(BedrockTypes.POSITION_3F); // position
@@ -57,7 +128,7 @@ index 5270cd9c..8a677079 100644
              final Position2f vehicleRotation = wrapper.read(BedrockTypes.POSITION_2F);
              if (wrapper.read(Types.BOOLEAN)) {
                  wrapper.read(BedrockTypes.FLOAT_LE); // vehicle angular velocity
-@@ -329,7 +329,11 @@ public final class ClientPlayerPackets {
+@@ -329,7 +346,11 @@ public final class ClientPlayerPackets {
                  case Player -> {
                      clientPlayer.setPosition(position);
                      clientPlayer.setOnGround(onGround);
@@ -70,7 +141,15 @@ index 5270cd9c..8a677079 100644
                  }
                  case Vehicle -> {
                      final Entity vehicle = predictedVehicle(wrapper.user().get(EntityTracker.class), clientPlayer);
-@@ -815,7 +819,7 @@ public final class ClientPlayerPackets {
+@@ -707,6 +728,7 @@ public final class ClientPlayerPackets {
+                 clientPlayer.setShieldBlockingHand(null);
+                 clientPlayer.setAuthInputItemInteraction(null);
+                 clientPlayer.setAuthInputItemStackRequest(null);
++                clientPlayer.pendingFlightItemUses().clear();
+                 wrapper.cancel();
+                 return;
+             }
+@@ -819,7 +841,7 @@ public final class ClientPlayerPackets {
              wrapper.write(Types.BOOLEAN, itemInteraction != null);
              if (itemInteraction != null) {
                  wrapper.write(wrapper.user().get(InventoryTransactionRewriter.class)
@@ -79,45 +158,128 @@ index 5270cd9c..8a677079 100644
              }
              final ItemStackRequestInfo itemStackRequest = clientPlayer.authInputItemStackRequest();
              wrapper.write(Types.BOOLEAN, itemStackRequest != null);
+@@ -860,6 +882,8 @@ public final class ClientPlayerPackets {
+             clientPlayer.authInputBlockActions().clear();
+             clientPlayer.setAuthInputItemInteraction(null);
+             clientPlayer.setAuthInputItemStackRequest(null);
++            flushFlightItemUses(wrapper, clientPlayer,
++                    wrapper.user().get(InventoryTransactionRewriter.class).getInventoryTransactionType());
+         });
+         protocol.registerServerbound(ServerboundPackets26_3.PLAYER_ABILITIES, null, wrapper -> {
+             wrapper.cancel();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-index a27603b3..96a25caf 100644
+index b4aa562f..fdeb2f23 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-@@ -268,6 +268,7 @@ public final class InteractionPackets {
-                 clientPlayer.setShieldBlockingHand(null);
-             }
-             final String itemIdentifier = itemRewriter.getItems().inverse().get(usedItem.identifier());
-+            final boolean flightRocket = isFlightRocket(itemIdentifier, clientPlayer.isGliding());
-             if (isContinuousUseItem(itemIdentifier, BedrockProtocol.MAPPINGS.getBedrockItemTags().getOrDefault(itemIdentifier, Set.of()))) {
-                 clientPlayer.addAuthInputData(PlayerAuthInputData.StartUsingItem);
-             }
-@@ -281,7 +282,7 @@ public final class InteractionPackets {
-                     ComplexInventoryTransaction_Type.ItemUseTransaction,
-                     new InventoryTransactionData.UseItemTransactionData(
-                             ItemUseActionType.Use,
--                            ItemUseTriggerType.Unknown,
-+                            flightRocket ? ItemUseTriggerType.Player_Input : ItemUseTriggerType.Unknown,
-                             new BlockPosition(0, 0, 0), // block position
-                             255, // block face
-                             slot,
-@@ -290,10 +291,15 @@ public final class InteractionPackets {
-                             entityTracker.getClientPlayer().position(),
-                             Position3f.ZERO, // click position
-                             0, // block runtime id
--                            ItemUsePredictedResult.Failure,
-+                            flightRocket ? ItemUsePredictedResult.Success : ItemUsePredictedResult.Failure,
-                             ItemUseClientCooldownState.Off
-                     )
-             );
-+            if (flightRocket) {
-+                clientPlayer.setAuthInputItemInteraction(inventoryTransaction);
-+                wrapper.cancel();
-+                return;
-+            }
-             wrapper.write(inventoryTransactionRewriter.getInventoryTransactionType(), inventoryTransaction);
-         });
+@@ -34,6 +34,7 @@ import net.raphimc.viabedrock.protocol.model.inventory.BedrockInventoryTransacti
+ import net.raphimc.viabedrock.protocol.model.inventory.InventoryActionData;
+ import net.raphimc.viabedrock.protocol.model.inventory.InventorySource;
+ import net.raphimc.viabedrock.protocol.model.inventory.InventoryTransactionData;
++import net.raphimc.viabedrock.protocol.model.inventory.LegacySetItemSlotData;
+ import net.raphimc.viabedrock.protocol.rewriter.InventoryTransactionRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+@@ -52,6 +53,7 @@ import net.raphimc.viabedrock.protocol.storage.BlockInteractionSoundTracker;
+ import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
+ import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+ import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
  
-@@ -384,6 +390,10 @@ public final class InteractionPackets {
+ import java.util.List;
+@@ -243,7 +245,8 @@ public final class InteractionPackets {
+             final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
+             final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
+             final String itemIdentifier = itemRewriter.getItems().inverse().get(usedItem.identifier());
+-            final BedrockInventoryTransaction transaction = beginItemUse(clientPlayer, hand,
++            final BedrockInventoryTransaction transaction = beginItemUse(clientPlayer,
++                    wrapper.user().get(InventoryRequestTracker.class), hand,
+                     inventoryContainer.getSelectedHotbarSlot(), usedItem, itemIdentifier,
+                     itemIdentifier == null ? Set.of()
+                             : BedrockProtocol.MAPPINGS.getBedrockItemTags().getOrDefault(itemIdentifier, Set.of()));
+@@ -278,22 +281,20 @@ public final class InteractionPackets {
+                 PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
+                 return;
+             }
++            final ChunkTracker chunkTracker = wrapper.user().get(ChunkTracker.class);
++            final BlockPosition placedPosition = insideBlock ? position : position.getRelative(direction.blockFace());
+             if (hand == InteractionHand.OFF_HAND) {
+-                final ChunkTracker chunkTracker = wrapper.user().get(ChunkTracker.class);
+-                final BlockPosition placedPosition = insideBlock ? position : position.getRelative(direction.blockFace());
+                 PacketFactory.sendJavaBlockUpdate(wrapper.user(), position, chunkTracker.getJavaBlockState(position));
+                 if (!placedPosition.equals(position)) {
+                     PacketFactory.sendJavaBlockUpdate(wrapper.user(), placedPosition, chunkTracker.getJavaBlockState(placedPosition));
+                 }
++                PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
+                 PacketFactory.sendJavaContainerSetContent(wrapper.user(),
+                         wrapper.user().get(InventoryTracker.class).getInventoryContainer());
+-                PacketFactory.sendJavaBlockChangedAck(wrapper.user(), sequence);
+                 return;
+             }
+-            final ChunkTracker chunkTracker = wrapper.user().get(ChunkTracker.class);
+             wrapper.user().get(BlockInteractionSoundTracker.class).recordInteraction(position,
+                     BedrockProtocol.MAPPINGS.getJavaBlockStates().inverse().get(chunkTracker.getJavaBlockState(position)));
+-            final BlockPosition placedPosition = insideBlock ? position : position.getRelative(direction.blockFace());
+             final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
+             final BedrockItem usedItem = inventoryTracker.getInventoryContainer().getSelectedHotbarItem();
+             if (usedItem.blockRuntimeId() != 0) {
+@@ -347,10 +348,66 @@ public final class InteractionPackets {
+ 
+     }
+ 
++    static BedrockInventoryTransaction beginItemUse(final ClientPlayerEntity player,
++            final InventoryRequestTracker requests, final InteractionHand hand, final int hotbarSlot, final BedrockItem item,
++            final String identifier, final Set<String> tags) {
++        if (item.isEmpty()) {
++            return null;
++        }
++        if ("minecraft:shield".equals(identifier)) {
++            player.setShieldBlockingHand(hand);
++            return null;
++        }
++        if (hand == InteractionHand.OFF_HAND) {
++            return null;
++        }
++        player.setShieldBlockingHand(null);
++        if (isContinuousUseItem(identifier, tags)) {
++            player.addAuthInputData(PlayerAuthInputData.StartUsingItem);
++        }
++        final boolean flightRocket = isFlightRocket(identifier, player.isGliding());
++        int legacyRequestId = 0;
++        List<LegacySetItemSlotData> legacySlots = null;
++        List<InventoryActionData> actions = null;
++        final BedrockItem heldItem = item.copy();
++        if (flightRocket) {
++            heldItem.setNetId(null);
++        }
++        if (flightRocket && player.javaGameMode() != GameMode.CREATIVE) {
++            final BedrockItem remaining = heldItem.copy();
++            remaining.setAmount(remaining.amount() - 1);
++            legacyRequestId = requests.nextLegacyRequestId();
++            legacySlots = List.of(new LegacySetItemSlotData(
++                    ContainerEnumName.InventoryContainer, new byte[]{(byte) hotbarSlot}));
++            actions = List.of(new InventoryActionData(
++                    new InventorySource(InventorySourceType.Container_Inventory,
++                            ContainerID.CONTAINER_ID_INVENTORY.getValue(), InventorySourceFlags.No_Flag),
++                    hotbarSlot, heldItem.copy(), remaining.amount() > 0 ? remaining : BedrockItem.empty()));
++        }
++        final BedrockInventoryTransaction transaction = new BedrockInventoryTransaction(
++                legacyRequestId, legacySlots, actions, ComplexInventoryTransaction_Type.ItemUseTransaction,
++                new InventoryTransactionData.UseItemTransactionData(
++                        ItemUseActionType.Use,
++                        ItemUseTriggerType.Unknown,
++                        new BlockPosition(0, 0, 0), 255, hotbarSlot, HandSlot.Mainhand, heldItem,
++                        player.position(), Position3f.ZERO, 0,
++                        ItemUsePredictedResult.Failure,
++                        ItemUseClientCooldownState.Off));
++        if (flightRocket) {
++            player.pendingFlightItemUses().addLast(transaction);
++            return null;
++        }
++        return transaction;
++    }
++
+     static boolean isContinuousUseItem(final String identifier, final Set<String> tags) {
          return identifier != null && (tags.contains("minecraft:is_food") || CONTINUOUS_USE_ITEMS.contains(identifier));
      }
  
@@ -128,6 +290,38 @@ index a27603b3..96a25caf 100644
      static void sendPassengerUpdates(final PacketWrapper source, final EntityTracker entityTracker) {
          for (Entity vehicle : entityTracker.drainPassengerUpdates()) {
              final PacketWrapper passengersPacket = PacketWrapper.create(ClientboundPackets26_3.SET_PASSENGERS,
+@@ -370,31 +427,4 @@ public final class InteractionPackets {
+         }
+     }
+ 
+-    static BedrockInventoryTransaction beginItemUse(final ClientPlayerEntity player,
+-            final InteractionHand hand, final int hotbarSlot, final BedrockItem item,
+-            final String identifier, final Set<String> tags) {
+-        if (item.isEmpty()) {
+-            return null;
+-        }
+-        if ("minecraft:shield".equals(identifier)) {
+-            player.setShieldBlockingHand(hand);
+-            return null;
+-        }
+-        if (hand == InteractionHand.OFF_HAND) {
+-            return null;
+-        }
+-        player.setShieldBlockingHand(null);
+-        if (isContinuousUseItem(identifier, tags)) {
+-            player.addAuthInputData(PlayerAuthInputData.StartUsingItem);
+-        }
+-        return new BedrockInventoryTransaction(
+-                0, null, null, ComplexInventoryTransaction_Type.ItemUseTransaction,
+-                new InventoryTransactionData.UseItemTransactionData(
+-                        ItemUseActionType.Use, ItemUseTriggerType.Unknown,
+-                        new BlockPosition(0, 0, 0), 255, hotbarSlot, HandSlot.Mainhand, item,
+-                        player.position(), Position3f.ZERO, 0,
+-                        ItemUsePredictedResult.Failure, ItemUseClientCooldownState.Off));
+-    }
+-
+-
+ }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/InventoryTransactionRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/InventoryTransactionRewriter.java
 index 5034ca22..72131417 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/InventoryTransactionRewriter.java
@@ -307,12 +501,14 @@ index 6a6ed595..510ff871 100644
              }
          }
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
-index 6eeb0d21..6dcc1934 100644
+index 6eeb0d21..39813809 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
-@@ -16,11 +16,13 @@ import com.viaversion.viaversion.api.minecraft.BlockPosition;
+@@ -15,15 +15,24 @@ import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.minecraft.BlockPosition;
  import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
  import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.PacketType;
  import com.viaversion.viaversion.api.type.Types;
 +import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
  import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
@@ -324,7 +520,33 @@ index 6eeb0d21..6dcc1934 100644
  import net.raphimc.viabedrock.protocol.data.enums.Direction;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerActionType;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputData;
-@@ -235,6 +237,26 @@ class ClientPlayerPacketsTest {
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ComplexInventoryTransaction_Type;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.HandSlot;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemUseActionType;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemUseTriggerType;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemUsePredictedResult;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemUseClientCooldownState;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.TextProcessingEventOrigin;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
+ import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
+@@ -31,12 +40,16 @@ import net.raphimc.viabedrock.protocol.model.BedrockItem;
+ import net.raphimc.viabedrock.protocol.model.Position3f;
+ import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
+ import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
++import net.raphimc.viabedrock.protocol.model.inventory.BedrockInventoryTransaction;
++import net.raphimc.viabedrock.protocol.model.inventory.InventoryTransactionData;
++import net.raphimc.viabedrock.protocol.types.inventory.InventoryTransactionPacketType;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ import org.junit.jupiter.api.Test;
+ 
+ import java.lang.reflect.Proxy;
+ import java.util.UUID;
+ import java.util.List;
++import java.util.ArrayList;
+ 
+ import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertFalse;
+@@ -235,10 +248,87 @@ class ClientPlayerPacketsTest {
          assertFalse(player.authInputData().contains(PlayerAuthInputData.PaddlingLeft));
      }
  
@@ -351,28 +573,243 @@ index 6eeb0d21..6dcc1934 100644
      private static ClientPlayerEntity player() {
          final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
                  new Class<?>[]{UserConnection.class}, (proxy, method, args) -> null);
+         return new ClientPlayerEntity(user, 1, UUID.randomUUID(), new PlayerAbilities(1, (byte) 0, (byte) 0));
+     }
+ 
++    @Test
++    void flightUsesFollowGlideInputAsStandalonePacketsWithoutReplacingMining() {
++        final ClientPlayerEntity player = player();
++        player.addAuthInputData(PlayerAuthInputData.StartGliding);
++        final BedrockInventoryTransaction mining = new BedrockInventoryTransaction(
++                0, null, null, ComplexInventoryTransaction_Type.ItemUseTransaction,
++                new InventoryTransactionData.UseItemTransactionData(
++                        ItemUseActionType.Destroy, ItemUseTriggerType.Player_Input,
++                        new BlockPosition(1, 2, 3), 0, 2, HandSlot.Mainhand,
++                        new BedrockItem(1), Position3f.ZERO, Position3f.ZERO, 0,
++                        ItemUsePredictedResult.Success, ItemUseClientCooldownState.Off));
++        player.setAuthInputItemInteraction(mining);
++        for (HandSlot hand : HandSlot.values()) {
++            player.pendingFlightItemUses().addLast(new BedrockInventoryTransaction(
++                    0, null, null, ComplexInventoryTransaction_Type.ItemUseTransaction,
++                    new InventoryTransactionData.UseItemTransactionData(
++                            ItemUseActionType.Use, ItemUseTriggerType.Player_Input,
++                            new BlockPosition(0, 0, 0), 255, 2, hand,
++                            new BedrockItem(12), Position3f.ZERO, Position3f.ZERO, 0,
++                            ItemUsePredictedResult.Success, ItemUseClientCooldownState.Off)));
++        }
++        final List<SentPacket> emitted = new ArrayList<>();
++        final PacketWrapper input = capturedPacket(ServerboundBedrockPackets.PLAYER_AUTH_INPUT, emitted);
++        ClientPlayerPackets.flushFlightItemUses(input, player,
++                new InventoryTransactionPacketType(() -> null, null));
++
++        assertEquals(List.of(ServerboundBedrockPackets.PLAYER_AUTH_INPUT,
++                        ServerboundBedrockPackets.INVENTORY_TRANSACTION,
++                        ServerboundBedrockPackets.INVENTORY_TRANSACTION),
++                emitted.stream().map(SentPacket::type).toList());
++        assertEquals(List.of(HandSlot.Mainhand, HandSlot.Offhand),
++                emitted.subList(1, 3).stream().map(packet ->
++                        ((InventoryTransactionData.UseItemTransactionData) packet.transaction().transactionData()).handSlot()).toList());
++        assertEquals(mining, player.authInputItemInteraction());
++        assertTrue(player.authInputData().contains(PlayerAuthInputData.StartGliding));
++        assertTrue(player.pendingFlightItemUses().isEmpty());
++        ClientPlayerPackets.flushFlightItemUses(input, player, null);
++        assertEquals(3, emitted.size());
++    }
++
++    private static PacketWrapper capturedPacket(final PacketType type, final List<SentPacket> emitted) {
++        final BedrockInventoryTransaction[] transaction = new BedrockInventoryTransaction[1];
++        return (PacketWrapper) Proxy.newProxyInstance(PacketWrapper.class.getClassLoader(),
++                new Class<?>[]{PacketWrapper.class}, (proxy, method, args) -> {
++                    switch (method.getName()) {
++                        case "create" -> {
++                            return capturedPacket((PacketType) args[0], emitted);
++                        }
++                        case "write" -> transaction[0] = (BedrockInventoryTransaction) args[1];
++                        case "sendToServer" -> emitted.add(new SentPacket(type, transaction[0]));
++                    }
++                    return null;
++                });
++    }
++
++    private record SentPacket(PacketType type, BedrockInventoryTransaction transaction) { }
++
+ }
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/InteractionPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/InteractionPacketsTest.java
-index 0bf1b705..6d22e849 100644
+index 0bf1b705..35abc4b1 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/packet/InteractionPacketsTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/InteractionPacketsTest.java
-@@ -28,4 +28,11 @@ class InteractionPacketsTest {
+@@ -9,11 +9,31 @@
+  */
+ package net.raphimc.viabedrock.protocol.packet;
+ 
++import com.viaversion.viaversion.api.connection.UserConnection;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.HandSlot;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemUseTriggerType;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemUsePredictedResult;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InventorySourceType;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputData;
++import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
++import net.raphimc.viabedrock.protocol.model.inventory.InventoryTransactionData;
++import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
+ import org.junit.jupiter.api.Test;
+ 
++import java.lang.reflect.Proxy;
+ import java.util.Set;
++import java.util.UUID;
+ 
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
++import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertNull;
+ import static org.junit.jupiter.api.Assertions.assertTrue;
+ 
+ class InteractionPacketsTest {
+@@ -28,4 +48,133 @@ class InteractionPacketsTest {
          assertFalse(InteractionPackets.isContinuousUseItem(null, Set.of()));
      }
  
 +    @Test
-+    void flightRocketRoutingRequiresGlidingAndAcceptsEitherHand() {
++    void flightRocketIdentificationRequiresGliding() {
 +        assertTrue(InteractionPackets.isFlightRocket("minecraft:firework_rocket", true));
 +        assertFalse(InteractionPackets.isFlightRocket("minecraft:firework_rocket", false));
 +        assertFalse(InteractionPackets.isFlightRocket("minecraft:firework_star", true));
 +    }
 +
++    @Test
++    void javaOffhandFallbackDoesNotStartConsumptionOrQueueFlightBoost() {
++        final ClientPlayerEntity player = player();
++        player.setGliding(true);
++        final BedrockItem item = new BedrockItem(1);
++        assertNull(InteractionPackets.beginItemUse(player, new InventoryRequestTracker(user()), InteractionHand.OFF_HAND,
++                2, item, "minecraft:firework_rocket", Set.of()));
++        assertTrue(player.pendingFlightItemUses().isEmpty());
++        assertTrue(player.authInputData().isEmpty());
++
++        assertNull(InteractionPackets.beginItemUse(player, new InventoryRequestTracker(user()), InteractionHand.OFF_HAND,
++                2, item, "minecraft:apple", Set.of("minecraft:is_food")));
++        assertTrue(player.authInputData().isEmpty());
++        assertFalse(player.isShieldBlocking());
++    }
++
++    @Test
++    void offhandShieldUseBlocksThroughSneakingWithoutAnInventoryTransaction() {
++        final ClientPlayerEntity player = player();
++        assertNull(InteractionPackets.beginItemUse(player, new InventoryRequestTracker(user()), InteractionHand.OFF_HAND,
++                2, new BedrockItem(1), "minecraft:shield", Set.of()));
++        assertEquals(InteractionHand.OFF_HAND, player.shieldBlockingHand());
++        player.updateBedrockSneakingInput();
++        assertTrue(player.authInputData().contains(PlayerAuthInputData.StartSneaking));
++        assertTrue(player.authInputData().contains(PlayerAuthInputData.Sneaking));
++        assertFalse(player.authInputData().contains(PlayerAuthInputData.StartUsingItem));
++        assertTrue(player.pendingFlightItemUses().isEmpty());
++    }
++
++    @Test
++    void mainhandConsumptionAndFlightBoostKeepTheirNativeRoutes() {
++        final ClientPlayerEntity player = player();
++        final BedrockItem item = new BedrockItem(1);
++        final var consumption = InteractionPackets.beginItemUse(player, new InventoryRequestTracker(user()), InteractionHand.MAIN_HAND,
++                2, item, "minecraft:apple", Set.of("minecraft:is_food"));
++        assertNotNull(consumption);
++        final var use = (InventoryTransactionData.UseItemTransactionData) consumption.transactionData();
++        assertEquals(HandSlot.Mainhand, use.handSlot());
++        assertEquals(2, use.hotbarSlot());
++        assertTrue(player.authInputData().contains(PlayerAuthInputData.StartUsingItem));
++
++        player.authInputData().clear();
++        player.setGliding(true);
++        item.setAmount(3);
++        item.setNetId(27);
++        assertNull(InteractionPackets.beginItemUse(player, new InventoryRequestTracker(user()), InteractionHand.MAIN_HAND,
++                2, item, "minecraft:firework_rocket", Set.of()));
++        assertEquals(1, player.pendingFlightItemUses().size());
++        final var rocket = (InventoryTransactionData.UseItemTransactionData)
++                player.pendingFlightItemUses().getFirst().transactionData();
++        assertEquals(HandSlot.Mainhand, rocket.handSlot());
++        assertEquals(ItemUseTriggerType.Unknown, rocket.triggerType());
++        assertEquals(ItemUsePredictedResult.Failure, rocket.predictedResult());
++        final var actions = player.pendingFlightItemUses().getFirst().actions();
++        assertEquals(1, actions.size());
++        assertEquals(InventorySourceType.Container_Inventory, actions.get(0).source().type());
++        assertEquals(ContainerID.CONTAINER_ID_INVENTORY.getValue(), actions.get(0).source().containerId());
++        assertEquals(2, actions.get(0).slot());
++        assertEquals(3, actions.get(0).fromItem().amount());
++        assertEquals(2, actions.get(0).toItem().amount());
++        assertEquals(3, rocket.itemInHand().amount());
++        assertEquals(3, item.amount());
++        assertEquals(27, item.netId());
++        assertNull(actions.get(0).fromItem().netId());
++        assertNull(actions.get(0).toItem().netId());
++        assertNull(rocket.itemInHand().netId());
++        assertTrue(player.authInputData().isEmpty());
++    }
++
++    @Test
++    void finalFlightRocketPredictsAnEmptySlotWithoutConsumingTheHeldSnapshot() {
++        final ClientPlayerEntity player = player();
++        player.setGliding(true);
++        final BedrockItem item = new BedrockItem(1);
++        assertNull(InteractionPackets.beginItemUse(player, new InventoryRequestTracker(user()), InteractionHand.MAIN_HAND,
++                2, item, "minecraft:firework_rocket", Set.of()));
++        final var action = player.pendingFlightItemUses().getFirst().actions().get(0);
++        assertEquals(1, action.fromItem().amount());
++        assertTrue(action.toItem().isEmpty());
++        assertEquals(1, item.amount());
++    }
++
++    @Test
++    void glideRocketLegacyIdsStaySeparateFromStackRequestsAndOtherSessions() {
++        final ClientPlayerEntity player = player();
++        player.setGliding(true);
++        final InventoryRequestTracker requests = new InventoryRequestTracker(user());
++        final BedrockItem item = new BedrockItem(1);
++        item.setAmount(3);
++        assertEquals(-3, requests.nextRequestId());
++        assertNull(InteractionPackets.beginItemUse(player, requests, InteractionHand.MAIN_HAND,
++                2, item, "minecraft:firework_rocket", Set.of()));
++        final var first = player.pendingFlightItemUses().removeFirst();
++        assertEquals(-4, first.legacyRequestId());
++        assertEquals(1, first.legacySlots().size());
++        assertEquals(ContainerEnumName.InventoryContainer, first.legacySlots().get(0).container());
++        assertArrayEquals(new byte[]{2}, first.legacySlots().get(0).slots());
++        assertEquals(-5, requests.nextRequestId());
++
++        assertNull(InteractionPackets.beginItemUse(player, requests, InteractionHand.OFF_HAND,
++                2, item, "minecraft:firework_rocket", Set.of()));
++        assertTrue(player.pendingFlightItemUses().isEmpty());
++        assertNull(InteractionPackets.beginItemUse(player, requests, InteractionHand.MAIN_HAND,
++                2, item, "minecraft:firework_rocket", Set.of()));
++        assertEquals(-6, player.pendingFlightItemUses().removeFirst().legacyRequestId());
++        assertEquals(-7, requests.nextRequestId());
++        assertEquals(-4, new InventoryRequestTracker(user()).nextLegacyRequestId());
++        assertFalse(requests.hasPending());
++        assertEquals(3, item.amount());
++    }
++
++    private static UserConnection user() {
++        return (UserConnection) Proxy.newProxyInstance(
++                UserConnection.class.getClassLoader(), new Class<?>[]{UserConnection.class},
++                (proxy, method, args) -> null);
++    }
++
++    private static ClientPlayerEntity player() {
++        return new ClientPlayerEntity(user(), 1, UUID.randomUUID(),
++                new PlayerAbilities(1, (byte) 0, (byte) 0));
++    }
++
  }
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/types/inventory/InventoryTransactionPacketTypeTest.java b/src/test/java/net/raphimc/viabedrock/protocol/types/inventory/InventoryTransactionPacketTypeTest.java
 new file mode 100644
-index 00000000..11b087a3
+index 00000000..f6f97e37
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/types/inventory/InventoryTransactionPacketTypeTest.java
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,143 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -390,6 +827,7 @@ index 00000000..11b087a3
 +import io.netty.buffer.Unpooled;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.ComplexInventoryTransaction_Type;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.HandSlot;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemUseActionType;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemUseClientCooldownState;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemUsePredictedResult;
@@ -399,10 +837,12 @@ index 00000000..11b087a3
 +import net.raphimc.viabedrock.protocol.model.inventory.BedrockInventoryTransaction;
 +import net.raphimc.viabedrock.protocol.model.inventory.InventoryActionData;
 +import net.raphimc.viabedrock.protocol.model.inventory.InventoryTransactionData;
++import net.raphimc.viabedrock.protocol.model.inventory.LegacySetItemSlotData;
 +import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 +import org.junit.jupiter.api.Test;
 +
 +import java.util.Arrays;
++import java.util.List;
 +
 +import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 +import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -470,6 +910,35 @@ index 00000000..11b087a3
 +        assertEquals(HandSlot.Offhand, decodedUse.handSlot());
 +        assertEquals(ItemUsePredictedResult.Success, decodedUse.predictedResult());
 +        assertEquals(0, packed.readableBytes());
++    }
++
++    @Test
++    void legacyItemUseEncodesNegativeEvenIdAndPhysicalInventorySlotMetadata() {
++        final BedrockInventoryTransaction transaction = new BedrockInventoryTransaction(
++                -4, List.of(new LegacySetItemSlotData(ContainerEnumName.InventoryContainer, new byte[]{0})),
++                null, ComplexInventoryTransaction_Type.ItemUseTransaction,
++                new InventoryTransactionData.UseItemTransactionData(
++                        ItemUseActionType.Use, ItemUseTriggerType.Unknown,
++                        new BlockPosition(0, 0, 0), 255, 0, HandSlot.Mainhand,
++                        new BedrockItem(12), new Position3f(1F, 2F, 3F), Position3f.ZERO,
++                        0, ItemUsePredictedResult.Failure, ItemUseClientCooldownState.Off));
++        final InventoryTransactionPacketType type = new InventoryTransactionPacketType(
++                () -> ITEM_TYPE, ACTIONS_TYPE);
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            type.write(buffer, transaction);
++            final byte[] header = new byte[8];
++            buffer.getBytes(buffer.readerIndex(), header);
++            assertArrayEquals(new byte[]{7, 1, 1, 29, 1, 0, 2, 0}, header);
++            final BedrockInventoryTransaction decoded = type.read(buffer);
++            assertEquals(-4, decoded.legacyRequestId());
++            assertEquals(1, decoded.legacySlots().size());
++            assertEquals(ContainerEnumName.InventoryContainer, decoded.legacySlots().get(0).container());
++            assertArrayEquals(new byte[]{0}, decoded.legacySlots().get(0).slots());
++            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
++        }
 +    }
 +
 +    @Test

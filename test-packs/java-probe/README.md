@@ -64,11 +64,17 @@ This command builds the plugin and extension. It installs them, the mappings, an
 
 [The fixture manifest](../../integration/geyser.json) pins Paper 26.2 build 129, Geyser 2.11.3 build 1247, and ViaVersion 5.12.0. Downloads require matching SHA-256 checksums. Paperclip resolves the pinned server's runtime dependencies, which also supply the plugin compilation classpath. ViaVersion accepts the Java 26.3 client on the Paper 26.2 server. Geyser exposes Bedrock 1.26.51, matching the current ViaBedrock target.
 
+The suite uses the official Geyser JAR without source changes. The plugin and extension provide test content and assertions. Protocol fixes belong in ViaBedrock.
+
 The extension uses Geyser's [experimental entity API](https://geysermc.org/wiki/geyser/custom-entities/), introduced in API 2.11.0. Custom items use the [v2 mapping format](https://geysermc.org/wiki/geyser/custom-items/). Custom blocks use [Geyser block mappings](https://geysermc.org/wiki/geyser/custom-blocks/). Keep these dependencies pinned when updating the fixture.
 
 ## Reading results
 
 Server assertions prove the result of client input on Paper. Extension logs establish that Geyser recognizes each fixture entity and submits the expected property updates. The stress case requires repeated phase updates for every custom entity. The runner checks the converted entity model and all three fixture textures. Java logs establish resource pack loading. Screenshots support visual review; they do not automatically establish animation or map pixel accuracy.
+
+Boat verification requires forward movement, limited lateral drift, and an uninterrupted ride. Mainhand rocket verification averages horizontal movement over four server ticks before consumption and eight ticks afterward. It requires movement samples on both sides, plus a speed increase. Teleports and world changes reset those samples.
+
+The offhand use cases follow native Bedrock 1.26.51.1 behavior. Captures used protocol 2193 and the pinned official Geyser on October 1, 2026. The native inventory contained two offhand dirt blocks or three offhand rockets. Right-click placed no dirt and consumed no offhand rocket during a valid glide. Mainhand controls placed one dirt block and consumed a rocket with a speed increase. The offhand cases require unchanged item counts, and the rocket case also requires glide and movement samples.
 
 Negative controls change server state after a successful case and require verification to reject the result. Controls restore entity health, reset its phase, strip an item's custom model, undo block actions, remove a stress entity, or refill a chest. An error or timeout does not count as a successful control.
 

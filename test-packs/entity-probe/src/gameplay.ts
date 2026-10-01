@@ -176,9 +176,11 @@ define("offhand-block-place", "blocks", async (player) => {
   const neighbors = [[-1, 1, 2], [1, 1, 2], [0, 0, 2], [0, 2, 2], [0, 1, 1], [0, 1, 3]];
   const placed = neighbors.filter(([x, y, z]) => blockAt(player.dimension, x, y, z).typeId === "minecraft:dirt");
   const offhand = equipment(player).getEquipment(EquipmentSlot.Offhand);
-  return { passed: placed.length === 1 && offhand?.amount === 1,
+  return { passed: placed.length === 0 && offhand?.typeId === "minecraft:dirt" && offhand.amount === 2
+      && !inventory(player).getItem(player.selectedSlotIndex)
+      && blockAt(player.dimension, 0, 1, 2).typeId === "minecraft:stone",
     observed: { placed, offhand: offhand?.typeId, amount: offhand?.amount },
-    expected: { placed: 1, offhand: "minecraft:dirt", amount: 1 } };
+    expected: "Bedrock leaves offhand dirt unused with an empty main hand." };
 });
 
 define("offhand-shield-use", "equipment", async (player) => {
@@ -269,7 +271,7 @@ async function prepareElytraRocket(player, hand) {
   }
   player.addEffect("resistance", 200, { amplifier: 255, showParticles: false });
   const observation = { gliding: false, rocketConsumedWhileGliding: false, speedBeforeUse: 0,
-    maxSpeedAfterUse: 0, maxHorizontalSpeed: 0 };
+    maxSpeedAfterUse: 0, maxHorizontalSpeed: 0, glidingMovementSamples: 0 };
   let previousCount = 3;
   let previousSpeed = 0;
   const monitor = system.runInterval(() => {
@@ -277,6 +279,7 @@ async function prepareElytraRocket(player, hand) {
     observation.gliding ||= player.isGliding;
     const velocity = player.getVelocity();
     const speed = Math.hypot(velocity.x, velocity.z);
+    if (player.isGliding && speed > 0) observation.glidingMovementSamples++;
     observation.maxHorizontalSpeed = Math.max(observation.maxHorizontalSpeed, speed);
     const count = rocketCount(player, hand);
     if (player.isGliding && count < previousCount && !observation.rocketConsumedWhileGliding) {
@@ -299,6 +302,14 @@ function verifyElytraRocket(player, fixture, hand) {
   system.clearRun(fixture.monitor);
   const remaining = rocketCount(player, hand);
   const health = player.getComponent("minecraft:health")?.currentValue;
+  if (hand === "offhand") {
+    return { passed: fixture.observation.gliding && fixture.observation.glidingMovementSamples >= 4
+        && !fixture.observation.rocketConsumedWhileGliding && remaining === 3
+        && countItem(inventory(player), "minecraft:firework_rocket") === 0
+        && !inventory(player).getItem(player.selectedSlotIndex) && health > 0,
+      observed: { ...fixture.observation, remaining, health, location: player.location },
+      expected: "Bedrock glides while all three offhand rockets remain unused." };
+  }
   return { passed: fixture.observation.gliding && fixture.observation.rocketConsumedWhileGliding
       && fixture.observation.maxSpeedAfterUse > fixture.observation.speedBeforeUse + 0.15 && health > 0,
     observed: { ...fixture.observation, remaining, health,

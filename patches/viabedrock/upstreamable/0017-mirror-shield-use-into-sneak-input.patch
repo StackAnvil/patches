@@ -1,15 +1,15 @@
-From b2eb1a8d95ba6bd8b199e4ffc9716778b48a5cee Mon Sep 17 00:00:00 2001
+From ff853dd1d2bec1eefd019cd05991d44d45da3236 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 19:50:34 +0200
 Subject: [PATCH] fix(interaction): mirror shield use into Bedrock sneak input
 
 Bedrock shields block while sneaking, but Java raises a shield with the use key. Track shield use separately from physical crouch and carry its effective sneak state through each auth input frame. Preserve physical crouch for dismount handling, and stop the synthetic state when use ends or the held shield changes.
 ---
- .../api/model/entity/ClientPlayerEntity.java  | 32 +++++++++++++
- .../protocol/packet/ClientPlayerPackets.java  | 21 ++++++---
- .../protocol/packet/InteractionPackets.java   | 17 ++++++-
- .../packet/ClientPlayerPacketsTest.java       | 47 +++++++++++++++++++
- 4 files changed, 109 insertions(+), 8 deletions(-)
+ .../api/model/entity/ClientPlayerEntity.java  | 32 ++++++++++
+ .../protocol/packet/ClientPlayerPackets.java  | 21 +++++--
+ .../protocol/packet/InteractionPackets.java   | 60 +++++++++++++------
+ .../packet/ClientPlayerPacketsTest.java       | 47 +++++++++++++++
+ 4 files changed, 137 insertions(+), 23 deletions(-)
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
 index 59b2e3ac..66f15233 100644
@@ -69,7 +69,7 @@ index 59b2e3ac..66f15233 100644
          return this.sprinting;
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index 3333eafa..0cfccbf3 100644
+index d80ea262..f3a5ef4d 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 @@ -45,6 +45,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ComplexInventoryTransa
@@ -88,7 +88,7 @@ index 3333eafa..0cfccbf3 100644
                      clientPlayer.setPosition(position);
  
                      if (clientPlayer.isInitiallySpawned()) {
-@@ -501,6 +503,7 @@ public final class ClientPlayerPackets {
+@@ -505,6 +507,7 @@ public final class ClientPlayerPackets {
              }
  
              if (!clientPlayer.isInitiallySpawned() || clientPlayer.isDead()) {
@@ -96,7 +96,7 @@ index 3333eafa..0cfccbf3 100644
                  wrapper.cancel();
                  return;
              }
-@@ -527,9 +530,6 @@ public final class ClientPlayerPackets {
+@@ -531,9 +534,6 @@ public final class ClientPlayerPackets {
              if (clientPlayer.inputFlags().contains(InputFlag.JUMP)) {
                  clientPlayer.addAuthInputData(PlayerAuthInputData.JumpDown, PlayerAuthInputData.Jumping, PlayerAuthInputData.WantUp, PlayerAuthInputData.JumpCurrentRaw);
              }
@@ -106,7 +106,7 @@ index 3333eafa..0cfccbf3 100644
              if (clientPlayer.inputFlags().contains(InputFlag.SPRINT)) {
                  clientPlayer.addAuthInputData(PlayerAuthInputData.SprintDown, PlayerAuthInputData.Sprinting);
              }
-@@ -541,13 +541,22 @@ public final class ClientPlayerPackets {
+@@ -545,13 +545,22 @@ public final class ClientPlayerPackets {
              }
              if (clientPlayer.inputFlags().contains(InputFlag.SHIFT) && !prevInputFlags.contains(InputFlag.SHIFT)) {
                  clientPlayer.setSneaking(true);
@@ -131,7 +131,7 @@ index 3333eafa..0cfccbf3 100644
              final Position3f positionDelta = clientPlayer.position().subtract(prevPosition);
              final Position3f velocity;
              if (!clientPlayer.isInitiallySpawned() || clientPlayer.dimensionChangeInfo() != null || clientPlayer.abilities().getBooleanValue(AbilitiesIndex.Flying)) {
-@@ -573,7 +582,7 @@ public final class ClientPlayerPackets {
+@@ -577,7 +586,7 @@ public final class ClientPlayerPackets {
              wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().x()); // pitch
              wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().y()); // yaw
              wrapper.write(BedrockTypes.POSITION_3F, clientPlayer.position()); // position
@@ -141,7 +141,7 @@ index 3333eafa..0cfccbf3 100644
              wrapper.write(BedrockTypes.UNSIGNED_VAR_INT, clientPlayer.authInputData().size()); // input flags count
              for (PlayerAuthInputData inputData : PlayerAuthInputData.values()) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-index d7f92706..fed8520e 100644
+index df808d10..c0ae6024 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 @@ -35,6 +35,7 @@ import net.raphimc.viabedrock.protocol.model.inventory.InventoryActionData;
@@ -173,7 +173,7 @@ index d7f92706..fed8520e 100644
                      )
              );
              final PacketWrapper transactionPacket = PacketWrapper.create(ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper.user());
-@@ -219,7 +225,6 @@ public final class InteractionPackets {
+@@ -210,7 +216,6 @@ public final class InteractionPackets {
      }
  
      public static void register(final BedrockProtocol protocol) {
@@ -181,21 +181,72 @@ index d7f92706..fed8520e 100644
          protocol.registerServerbound(ServerboundPackets26_3.USE_ITEM, ServerboundBedrockPackets.INVENTORY_TRANSACTION, wrapper -> {
              final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
              final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
-@@ -247,6 +252,14 @@ public final class InteractionPackets {
+@@ -228,24 +233,21 @@ public final class InteractionPackets {
                  return;
              }
- 
+             final InteractionHand hand = InteractionHand.values()[javaHand];
+-            if (hand == InteractionHand.OFF_HAND) {
+-                wrapper.cancel();
+-                PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryContainer);
+-                return;
+-            }
+-            final BedrockItem usedItem = inventoryContainer.getSelectedHotbarItem();
+-            if (usedItem.isEmpty()) {
++            final BedrockItem usedItem = hand == InteractionHand.OFF_HAND
++                    ? inventoryTracker.getOffhandContainer().getItem(0)
++                    : inventoryContainer.getSelectedHotbarItem();
 +            final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
-+            final int shieldId = wrapper.user().get(ItemRewriter.class).getItems().getOrDefault("minecraft:shield", -1);
-+            if (usedItem.identifier() == shieldId) {
-+                clientPlayer.setShieldBlockingHand(hand);
-+            } else {
-+                clientPlayer.setShieldBlockingHand(null);
-+            }
++            final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
++            final String itemIdentifier = itemRewriter.getItems().inverse().get(usedItem.identifier());
++            final BedrockInventoryTransaction transaction = beginItemUse(clientPlayer, hand,
++                    inventoryContainer.getSelectedHotbarSlot(), usedItem, itemIdentifier);
++            if (transaction == null) {
+                 wrapper.cancel();
++                if (hand == InteractionHand.OFF_HAND && !"minecraft:shield".equals(itemIdentifier)) {
++                    PacketFactory.sendJavaContainerSetContent(wrapper.user(), inventoryContainer);
++                }
+                 return;
+             }
+-            final BedrockInventoryTransaction transaction = new BedrockInventoryTransaction(
+-                    0, null, null, ComplexInventoryTransaction_Type.ItemUseTransaction,
+-                    new InventoryTransactionData.UseItemTransactionData(
+-                            ItemUseActionType.Use, ItemUseTriggerType.Unknown,
+-                            new BlockPosition(0, 0, 0), 255,
+-                            inventoryContainer.getSelectedHotbarSlot(), HandSlot.Mainhand, usedItem,
+-                            entityTracker.getClientPlayer().position(), Position3f.ZERO, 0,
+-                            ItemUsePredictedResult.Failure, ItemUseClientCooldownState.Off));
+             wrapper.write(inventoryTransactionRewriter.getInventoryTransactionType(), transaction);
+         });
+ 
+@@ -349,4 +351,28 @@ public final class InteractionPackets {
+         }
+     }
+ 
++    static BedrockInventoryTransaction beginItemUse(final ClientPlayerEntity player,
++            final InteractionHand hand, final int hotbarSlot, final BedrockItem item,
++            final String identifier) {
++        if (item.isEmpty()) {
++            return null;
++        }
++        if ("minecraft:shield".equals(identifier)) {
++            player.setShieldBlockingHand(hand);
++            return null;
++        }
++        if (hand == InteractionHand.OFF_HAND) {
++            return null;
++        }
++        player.setShieldBlockingHand(null);
++        return new BedrockInventoryTransaction(
++                0, null, null, ComplexInventoryTransaction_Type.ItemUseTransaction,
++                new InventoryTransactionData.UseItemTransactionData(
++                        ItemUseActionType.Use, ItemUseTriggerType.Unknown,
++                        new BlockPosition(0, 0, 0), 255, hotbarSlot, HandSlot.Mainhand, item,
++                        player.position(), Position3f.ZERO, 0,
++                        ItemUsePredictedResult.Failure, ItemUseClientCooldownState.Off));
++    }
 +
-             final BedrockInventoryTransaction inventoryTransaction = new BedrockInventoryTransaction(
-                     0, // legacy request id
-                     null,
++
+ }
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
 index 2f5d6a6b..19032ac2 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java

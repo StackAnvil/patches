@@ -62,7 +62,9 @@ The [test guide](../../docs/bedrock-test-packs.md) lists the cases and their Jav
 
 Use a different run ID for each attempt. The runner matches the case ID, run ID, and phase. It fails on an error, failed result, stopped process, or timeout. It saves `gameplay-results.json` and Java screenshots under the private integration run directory.
 
-The default gameplay run includes the creative case. It currently fails because the Java creative slot packet is canceled by the bridge. The map case checks that an empty map becomes filled. Review the saved screenshot to check the map image.
+The default gameplay run includes the creative case. The map case checks that an empty map becomes filled. Review the saved screenshot to check the map image.
+
+The offhand placement and rocket cases require native Bedrock 1.26.51.1 behavior. Dirt remains in the offhand without placement. All three offhand rockets remain during a valid glide. The mainhand cases still require placement or a rocket boost. Native client captures through the official Geyser fixture established these expectations on October 1, 2026.
 
 ## Update the catalog
 

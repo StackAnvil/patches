@@ -1,0 +1,102 @@
+From c06551df1016fa318985700d502a24f8d818c64d Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 12:08:02 +0200
+Subject: [PATCH] fix(movement): release prediction wait after server teleport
+
+A chunk boundary correction waits for its fake Java teleport acknowledgement. If a real server teleport supersedes that correction, the old acknowledgement no longer matches the pending ID. Previously the real acknowledgement admitted only one position packet and left the correction wait set forever, freezing subsequent server movement.
+
+Clear the prediction wait when the current authoritative teleport is acknowledged. Preserve stale-ID protection and the HandledTeleport signal. The regression test covers a pending local correction replaced by a server teleport, stale acknowledgements, and the final matching acknowledgement.
+---
+ .../api/model/entity/ClientPlayerEntity.java  |  4 ++
+ .../entity/ClientPlayerTeleportTest.java      | 65 +++++++++++++++++++
+ 2 files changed, 69 insertions(+)
+ create mode 100644 src/test/java/com/enderdash/agent/viabedrock/entity/ClientPlayerTeleportTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
+index 6347d81b..e634276b 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
+@@ -224,6 +224,10 @@ public class ClientPlayerEntity extends PlayerEntity {
+                 this.waitingForPositionSync = false;
+             }
+         } else {
++            if (this.pendingTeleportId == teleportId) {
++                this.pendingTeleportId = 0;
++                this.waitingForPositionSync = false;
++            }
+             this.serverSideTeleportConfirmed = true;
+             if (!this.initiallySpawned) {
+                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received teleport confirm for teleport id " + teleportId + " but player is not spawned yet");
+diff --git a/src/test/java/com/enderdash/agent/viabedrock/entity/ClientPlayerTeleportTest.java b/src/test/java/com/enderdash/agent/viabedrock/entity/ClientPlayerTeleportTest.java
+new file mode 100644
+index 00000000..3ec25a29
+--- /dev/null
++++ b/src/test/java/com/enderdash/agent/viabedrock/entity/ClientPlayerTeleportTest.java
+@@ -0,0 +1,65 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package com.enderdash.agent.viabedrock.entity;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputData;
++import net.raphimc.viabedrock.protocol.data.enums.java.Relative;
++import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Proxy;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class ClientPlayerTeleportTest {
++
++    @Test
++    void authoritativeTeleportAcknowledgementReleasesSupersededPredictionWait() throws ReflectiveOperationException {
++        final ClientPlayerEntity player = player();
++        player.setInitiallySpawned();
++        player.setPosition(new Position3f(3F, 64F, 5F));
++        final var waiting = ClientPlayerEntity.class.getDeclaredField("waitingForPositionSync");
++        waiting.setAccessible(true);
++        // The chunk boundary guard has requested a local correction.
++        waiting.setBoolean(player, true);
++        final PacketWrapper prediction = new PacketWrapperImpl(ClientboundPackets26_3.PLAYER_POSITION, null, null);
++        player.writePlayerPositionPacketToClient(prediction, Relative.ROTATION, true);
++        final int oldCorrection = prediction.get(Types.VAR_INT, 0);
++
++        // An authoritative teleport replaces that correction before its acknowledgement arrives.
++        final PacketWrapper teleport = new PacketWrapperImpl(ClientboundPackets26_3.PLAYER_POSITION, null, null);
++        player.writePlayerPositionPacketToClient(teleport, Relative.NONE, false);
++        final int currentTeleport = teleport.get(Types.VAR_INT, 0);
++        player.confirmTeleport(oldCorrection);
++        assertTrue(waiting.getBoolean(player));
++        player.confirmTeleport(currentTeleport + 1);
++        assertTrue(waiting.getBoolean(player));
++        player.confirmTeleport(currentTeleport);
++
++        assertFalse(waiting.getBoolean(player));
++        assertTrue(player.authInputData().contains(PlayerAuthInputData.HandledTeleport));
++    }
++
++    private static ClientPlayerEntity player() {
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, args) -> null);
++        return new ClientPlayerEntity(user, 1, UUID.randomUUID(), new PlayerAbilities(1, (byte) 0, (byte) 0));
++    }
++
++}
+-- 
+2.55.0
