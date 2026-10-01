@@ -216,6 +216,8 @@ Menu models retain the native root, waist, and body hierarchy. Bone poses also a
 
 The target native loader selects the first declared emote animation source. The add-on preserves that order and accepts additional declarations. An unavailable first source remains an error. Sounds, particles, and named actor events remain unsupported.
 
+Native effect research now verifies sound alias lookup, event boundaries, locator fallback, actor attachment, and render-pass suppression. Playback still needs resource bindings, model locator transforms, licensed audio resources, and effect lifecycle management. The matching vanilla player library has no sound or particle bindings. The two captured owned emotes contain neither effect type, so those fixtures cannot establish audible or particle parity.
+
 The sampler evaluates `start_delay` once before playback. Delays consume frame time before `anim_time_update` advances the clock. Previews stop from playback state. Incoming world emotes retain the packet duration as their deadline, including durations longer than the declared animation length.
 
 Independent execution of the Bedrock 1.26.51.1 animation player establishes two boundary behaviors. Exact delay expiry retains the full frame delta. An overshoot uses only its remaining time. Loops retain the last frame at an exact boundary and wrap after crossing it.
@@ -253,7 +255,7 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 - Resolve free assets for accounts without usable receipt keys. These recipes still depend on the service model. Resolve unavailable remote emote assets.
 - Finish piece-specific color availability and establish additional palette callers. The inspected native picker accepts only loaded skin, facial hair, mouth, eye, and hair pieces with an enabled override flag. All 224 native eligibility cases pass. Metadata-to-runtime flag construction and other UI paths remain unresolved.
 - Add paid purchase and redemption flows. Synchronize classic skin selection with the native account.
-- Implement animation sounds, particles, and named actor events. Emote chat announcements exist, but native platform communication filters remain incomplete.
+- Implement animation sounds, particles, and named actor events. Resolve effect resources and model locators, and preserve native event suppression. Emote chat announcements exist, but native platform communication filters remain incomplete.
 - Complete native item poses, first-person playback, and equipment behavior. Remaining bindings include local charging prediction, post-use trident behavior, item-name mappings, and exact native use durations.
 - Resolve additional geometry animation alias sources, versioned vanilla model overrides, and native parent-name behavior. Modern and library geometry flags now derive aliases through persistence and transport. The legacy vex model still has an unresolved `rightarm` parent.
 

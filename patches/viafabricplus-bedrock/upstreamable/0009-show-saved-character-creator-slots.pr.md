@@ -273,3 +273,19 @@ The inspected picker accepts only loaded pieces whose override byte equals 1. It
 This evidence covers the inspected legacy picker. It does not establish additional palette reachability through another UI implementation. The generated [PersonaColors header](https://github.com/LiteLDev/LeviLamina/blob/main/src/mc/resources/persona/PersonaColors.h) also declares a premium palette. Its declaration does not establish which target controls expose it.
 
 Metadata-to-runtime flag construction and additional palette callers still need research. The unavailable-piece constructor supplies a false flag. Other inspected same-offset writers belong to unrelated objects. No production controls changed, and this research makes no account writes. Executables, probes, fixtures, and exports remain private.
+
+## Native animation effect research
+
+Independent execution of Bedrock 1.26.51.1 `FUN_1401a0f40` verifies 256 sound callback cases. Native instructions select events, resolve aliases, choose positions, attach channels, and pass channel parameters. The harness supplies actor accessors, locator results, sound service allocation, and channel methods. It captures the native requests at these boundaries without audio output.
+
+Sound events use `previous < event <= current`. Missing aliases and unavailable sound services produce no sound request. A fixed-position sound uses the resolved locator position. A missing locator falls back to the actor position. An attached sound binds its channel to the actor identity and authored locator. Native code passes the descriptor's channel parameters after the attachment step. The parameter interpretation and authored defaults still need verification.
+
+Another probe executes `FUN_141e68a20` across 38 clock frames, 16 render-context flag combinations, and suppression followed by re-enabling. Sound dispatch follows bone sampling and precedes Molang timeline scripts. Both receive the current clock and previous event cursor. The clock cases cover initial delays, loop delays, held frames, zero weight, custom clocks, equal timestamps, and loop wrapping.
+
+A suppressed native render context skips sound dispatch and timeline scripts but still advances the event cursor. A later enabled pass does not replay that skipped interval. The probe verifies raw context flags. Their mapping to Java preview and world render contexts remains unresolved.
+
+The matching licensed vanilla player definition declares no sound or particle aliases. The two captured owned emotes contain neither effect type. These assets verify existing playback but cannot establish sound or particle behavior. Generic actor schemas establish effect declarations, not the resource bindings used by every persona emote.
+
+Production sound, particle, and named actor event playback remain incomplete. The next implementation needs effect resource bindings, model locator transforms, audio loading, and effect lifecycle management. The renderer does not yet consume model locators. Native instruction probes do not establish audible results, captions, particle appearance, or multiplayer behavior. Executables, probes, fixtures, and exports remain private.
+
+Sources: [Microsoft animation effects reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/actor_animation.v1.8.0?view=minecraft-bedrock-stable) and [Mojang particle integration reference](https://mojang.github.io/bedrock-samples/Particles.html). The target executable establishes the callback behavior and render-context suppression above.
