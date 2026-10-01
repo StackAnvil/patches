@@ -6,11 +6,11 @@ Owned and freely available persona and emote assets use the current inventory re
 
 ## Built-in persona package
 
-The bundled Xodus-based helper signs into Microsoft Store with the selected Xbox account and obtains a device-bound license. It extracts persona files and base vanilla model and actor archives from the official package. Pin Bedrock 1.26.51.1 / package 1.26.5101.0 to protocol 2193. The pinned header anchors verification of the Merkle tree, metadata, and encrypted pages before decryption.
+The bundled Xodus-based helper signs into Microsoft Store with the selected Xbox account and obtains a device-bound license. It extracts persona files and the stable vanilla resource layers from the official package. Pin Bedrock 1.26.51.1 / package 1.26.5101.0 to protocol 2193. The pinned header anchors verification of the Merkle tree, metadata, and encrypted pages before decryption.
 
 Read resident and ordinary multi-run NTFS streams or the package segment index. Unpack BR archives with shared offsets and empty stubs, then atomically publish a versioned cache with file checksums. Decode native PNG face strips and BGRA TGA tint masks and feed equipped built-in pieces into the asset loader. Wave, Clap, Over There, and Follow Me use their extracted animation sources for preview and world playback.
 
-Local Linux tests acquired the official license and extracted 232 files through the bundled helper. Fresh interactive Store sign-in and Windows and macOS runtime flows still need verification. CI builds the four supported helper variants. The runtime requires no installed game, copied keys, or user-supplied extractor.
+Local Linux tests acquired the official license and all 57 stable vanilla layers through the bundled helper. Fresh interactive Store sign-in and Windows and macOS runtime flows still need verification. CI builds the four supported helper variants. The runtime requires no installed game, copied keys, or user-supplied extractor.
 
 Sources: [Pinned Xodus extraction](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/commands/streaming.rs), [license acquisition](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/license.rs), and [BR archive format](https://github.com/bedrock-crustaceans/brarchive/blob/main/FORMAT.md).
 
@@ -20,7 +20,7 @@ Expand both base vanilla model archives under their original model paths. Index 
 
 Classic imports resolve missing models and parents lazily through the licensed library. Pack definitions retain precedence. Loading runs on a worker; a changed account or closed screen prevents stale results from opening. Self-contained packs require no asset acquisition.
 
-Licensed tests resolve all seven inherited entries from the base skin-model library, including the zombie parent from an entity file. They verify extraction, equal duplicate definitions, model decoding, cache reuse, and schema refresh. Versioned vanilla model overrides and native visual comparisons remain pending. A broader check found an unresolved `rightarm` parent in the native legacy vex model; native parent-name behavior needs research before importing it.
+Licensed tests resolve all seven inherited entries from the base skin-model library, including the zombie parent from an entity file. They verify extraction, equal duplicate definitions, model decoding, cache reuse, and schema refresh. The loader now resolves versioned vanilla model overrides. Native visual comparisons remain pending. A broader check found an unresolved `rightarm` parent in the native legacy vex model; native parent-name behavior needs research before importing it.
 
 ## Classic actor graph
 
@@ -200,7 +200,7 @@ The replayed full stack builds. All 170 fixture-enabled add-on tests pass with n
 
 ## Unresolved classic animation resources
 
-Retain aliases whose declared animation or controller resource is absent. Their tracks contribute no pose and remain incomplete. Other tracks continue playback. Explicit empty aliases still remove tracks from completion checks. Malformed present resources, missing aliases, cycles, and invalid controller state targets remain errors.
+Retain aliases whose declared animation or controller resource is absent. Their tracks contribute no pose and remain incomplete. Other tracks continue playback. Explicit empty aliases still remove tracks from completion checks. Undeclared aliases contribute no track. Malformed present resources, cycles, and invalid controller state targets remain errors.
 
 Independent execution of Bedrock 1.26.51.1 `FUN_141e68a20` and `FUN_141e6d180` verifies 16 missing-resource updates. Cases cover absent handles and handles with absent definitions. Player state, pose, and context remain unchanged. Native completion getters return false. Missing animation players skip their weight expression. Missing controller players evaluate their weight expression before returning.
 
@@ -334,7 +334,7 @@ Reject unsupported format versions, unknown or duplicate components, invalid tag
 
 Compare all 115 licensed definitions through the production loader against independent reference output. Targeted tests also cover truncation at every byte boundary and invalid counts, tags, booleans, versions, strings, and non-finite values. Acquired assets, schema exports, and reference tooling remain private.
 
-Support MCB 1.26.30 after private licensed overlay acquisition identifies five definitions with that format. The same layouts decode all 108 overlay definitions against the independent reference. Comparisons cover 223 definitions across the base and overlay libraries. The overlay comparisons call the decoder directly; production acquisition still selects only the base library. Other compiled versions remain unsupported.
+Support MCB 1.26.30 after private licensed overlay acquisition identifies five definitions with that format. The same layouts decode all 108 overlay definitions against the independent reference. Comparisons cover 223 definitions across the base and overlay libraries. The overlay comparisons call the decoder directly. Production acquisition now selects all stable vanilla layers. Other compiled versions remain unsupported.
 
 Definition decoding does not implement particle simulation or rendering. Animation effect parsing, resource bindings, locators, event dispatch, and effect lifecycle remain incomplete.
 
@@ -351,3 +351,19 @@ The production helper currently traverses only `persona` and `vanilla`. The matc
 A private helper then obtains the official license and extracts 303 overlay metadata files and archives. Unpacking yields 835 library files, including 108 particle definitions and 43 sound tables with 1,848 distinct event names. Its compiled particles include 92 files with format 1.26.10 and five with format 1.26.30. Eleven particle definitions use text JSON.
 
 The newest overlay player definition has 68 animation aliases; the extracted base definition has 52. New aliases include crawling, brush, spyglass, goat horn, shield, and first-person and third-person spear tracks. Three base aliases disappear. None of the extracted player definitions declare sound or particle aliases. The production player graph still needs the overlay stack. This evidence broadens the resource and pose gap beyond effect dispatch. All acquired content remains private.
+
+## Versioned vanilla library
+
+Acquire `vanilla`, `vanilla_base`, and numeric vanilla directories from the pinned official package. The matching build supplies 57 layers. Older names such as `vanilla_1.14` imply patch version zero. Keep their paths and manifests separate. Cache format 5 refreshes base-only caches and validates pack UUIDs and overlay versions. Missing layers or mismatched manifests preserve the old cache.
+
+Resolve models, animations, controllers, and client entities by identifier in pack order. Equal duplicates within a pack share a definition. Conflicting definitions remain errors. Preserve each controller's format version so a higher pack cannot change another controller's first-frame behavior. Merge sound catalog entries across both catalog formats. Resolve sound banks, particle files, and textures by pack order. Namespaced block models no longer prevent library loading.
+
+The matching player definition has 68 aliases and comes from `vanilla_1.21.130`. Its root controller retains references to removed first-person aliases. Skip those undeclared references during compilation, consistent with playback allocation. Declared resources that cannot resolve still contribute incomplete tracks. Compile script arrays as one bounded program. The matching 8,141-character pre-animation script spans conditional blocks across JSON strings. Preserve temporary scope and early returns. Bone expressions retain their smaller limits.
+
+A fresh production-helper acquisition loads all 57 layers and reuses the checksummed cache. Licensed fixtures compile the full player graph and sample 120 frames. Tests cover numeric ordering, overrides across filenames, controller format behavior, both sound catalogs, opaque files, archive roots, split scripts, and rollback. Rust tests and Clippy pass. Item query bindings, newer easing functions, first-person rendering, and effects remain incomplete. These tests do not establish native visible motion parity.
+
+Sources: [Resource overrides](https://learn.microsoft.com/en-us/minecraft/creator/documents/overwritingassets?view=minecraft-bedrock-stable), [client-entity selection](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/entityreference/examples/cliententitydocumentation/cliententitydocumentationintroduction?view=minecraft-bedrock-stable), and [vanilla layer configuration](https://github.com/tryashtar/minecraft-version-history/blob/master/personal_config.yaml).
+
+The replayed full stack builds and the Prism bundle assembles successfully. A rebuilt Java client passes 722 checks with licensed overlays and a synthetic skin texture. The probe verifies layer selection, the player definition, preview geometry, world-model geometry, and repeated-frame handling. It changes no account recipes. Native visible motion comparison remains pending.
+
+The replayed add-on suite passes all 214 fixture-enabled tests with no skips, including fresh acquisition through the bundled helper.

@@ -24,7 +24,7 @@ Custom geometry import checks bone hierarchy, coordinate bounds, texture dimensi
 
 Missing legacy parents resolve from the licensed package's base vanilla model library. Pack definitions take precedence, including across library chains. Imports run in the background and request the package only when the pack lacks a selected model or parent. Self-contained packs need no Store sign-in. The importer checks the account and open screen before showing the result.
 
-Licensed tests resolve all seven inherited entries from the base skin-model library, including parents supplied by entity model files. Equal duplicate definitions share one library entry. Conflicting definitions remain errors. Versioned vanilla overlays and native visual comparisons remain pending. A broader library check found an unresolved `rightarm` parent in the native legacy vex model. The importer rejects this model until native parent-name behavior is established. Classic skin animation aliases and render flags survive import and transport. Local alias playback uses the licensed player graph. Geometry-provided alias precedence remains incomplete.
+Licensed tests resolve all seven inherited entries from the base skin-model library, including parents supplied by entity model files. Equal duplicate definitions share one library entry. Conflicting definitions remain errors. The library now resolves versioned vanilla overlays. Native visual comparisons remain pending. A broader library check found an unresolved `rightarm` parent in the native legacy vex model. The importer rejects this model until native parent-name behavior is established. Classic skin animation aliases and render flags survive import and transport. Local alias playback uses the licensed player graph. Geometry-provided alias precedence remains incomplete.
 
 ## Account-owned classic packs
 
@@ -188,11 +188,11 @@ The add-on bundles an Xodus-based package helper. First use opens Microsoft Stor
 
 The current pin selects Bedrock 1.26.51.1, package version 1.26.5101.0, for ViaBedrock protocol 2193. The package URL identifies the matching official Xbox CDN build. Its pinned header checksum anchors the package hash tree. The helper verifies metadata and encrypted file pages before decryption because this CDN serves the package over HTTP.
 
-The helper obtains a device-bound license from Microsoft and unwraps its content key. It reads the segment index or the NTFS persona directory. The NTFS reader handles resident files and ordinary streams with multiple data runs. It downloads persona files and vanilla libraries for models, animations, controllers, client entities, sounds, and particles. Particle textures and the shared texture archive supply the referenced atlases.
+The helper obtains a device-bound license from Microsoft and unwraps its content key. It reads the segment index or the NTFS persona directory. The NTFS reader handles resident files and ordinary streams with multiple data runs. It downloads persona files and all stable vanilla layers for models, animations, controllers, client entities, sounds, and particles. Particle textures and the shared texture archive supply the referenced atlases.
 
 Java unpacks version 1 BR archives beneath their original piece directories. Shared content offsets are valid. Empty archive entries preserve separately supplied loose files. Path, file count, size, and duplicate checks apply before publishing the cache.
 
-The cache lives under the add-on's `bedrock-assets/persona/<account>/<version>.zip` directory. Each file has a checksum, and the cache records the package identity. Cache format 4 includes the model, actor, and effect libraries. Older caches refresh before use. A failed refresh keeps the previous cache. Store credentials remain in a separate private directory, and the helper reuses its device identity.
+The cache lives under the add-on's `bedrock-assets/persona/<account>/<version>.zip` directory. Each file has a checksum, and the cache records the package identity. Cache format 5 includes the layered model, actor, and effect libraries and their pack manifests. Older caches refresh before use. A failed refresh keeps the previous cache. Store credentials remain in a separate private directory, and the helper reuses its device identity.
 
 The source loader indexes piece metadata, PNG face strips, BGRA TGA tint masks, and geometry by native piece UUID. Equipped built-in pieces enter the same asset loader as owned pieces. Wave, Clap, Over There, and Follow Me use their extracted animation sources for previews and world playback. Built-in emotes retain their piece UUID as the wire identity.
 
@@ -202,11 +202,25 @@ The matching base library contains 4,761 FSB5 sound banks: 4,691 use FADPCM, and
 
 Sound decoding preserves stereo interleaving, sample rates, sample counts, and inclusive loop boundaries. It trims final FADPCM frames to the declared sample count. Input, metadata, and output limits apply before allocation. Private comparisons match all licensed banks and 96 generated banks against the [vgmstream decoder](https://github.com/vgmstream/vgmstream/blob/7dc938fa2f210943b37c7b6511852b516ef432ab/src/coding/fadpcm_decoder.c). These comparisons establish PCM output. Audible playback, sound parameters, captions, and attachment behavior still need implementation and verification.
 
-Particle decoding supports MCB formats 1.26.10 and 1.26.30 and text JSON. Java declarations describe their 70 reachable binary layouts. The reader preserves optional fields, tagged values, component identities, and source order. It rejects unsupported versions, malformed data, and excessive complexity. Private comparisons match 115 base definitions and 108 overlay definitions against the [reference decoder](https://github.com/LPaicen/brarchive-extractor/blob/503a8ce7ad94030241a3590c926ac36f72169c71/src/mcb-decoder.ts). Production decoding needs neither exported schemas nor an external decoder. Production overlay acquisition, particle simulation, and rendering remain incomplete.
+Particle decoding supports MCB formats 1.26.10 and 1.26.30 and text JSON. Java declarations describe their 70 reachable binary layouts. The reader preserves optional fields, tagged values, component identities, and source order. It rejects unsupported versions, malformed data, and excessive complexity. Private comparisons match 115 base definitions and 108 overlay definitions against the [reference decoder](https://github.com/LPaicen/brarchive-extractor/blob/503a8ce7ad94030241a3590c926ac36f72169c71/src/mcb-decoder.ts). Production decoding needs neither exported schemas nor an external decoder. The package helper now acquires the overlays. Particle simulation and rendering remain incomplete.
 
 Local add-on builds require Rust 1.98.1, Protobuf, and the platform's WebView build libraries. Linux sign-in requires WebKitGTK 4.1. Release and full-stack CI assemble helper resources for Linux x64, Windows x64, and both macOS architectures. Native installations serve only as private research fixtures.
 
 Sources: [Xodus package extraction](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/commands/streaming.rs), [Xodus licensing](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/license.rs), and [BR archive format](https://github.com/bedrock-crustaceans/brarchive/blob/main/FORMAT.md).
+
+## Versioned vanilla resources
+
+The official package supplies 57 stable vanilla layers through `vanilla_1.26.51`. The helper selects `vanilla`, `vanilla_base`, and numeric version directories. Older names such as `vanilla_1.14` imply patch version zero. The cache validates pack identities and overlay versions before publication.
+
+The loader applies layers in numeric version order after `vanilla` and `vanilla_base`. Model, animation, controller, and client-entity definitions override earlier definitions by identifier. Each controller retains its own format version. Conflicting identifiers within one pack remain errors. Sound catalogs combine entries across both older and newer catalog formats. Sound banks, particle files, and atlases resolve by pack order.
+
+The matching player definition comes from `vanilla_1.21.130` and declares 68 aliases. The root controller still references removed first-person aliases. Those undeclared references contribute no track. Declared aliases with unavailable resources retain incomplete tracks. The loader compiles script arrays as one bounded Molang program, so blocks can span JSON strings and retain early returns.
+
+A fresh bundled-helper run acquired all 57 layers, compiled the player graph, and reused the checksummed cache. Fixture tests sample the graph for 120 frames. These checks establish acquisition and graph loading. They do not establish first-person, item-pose, or native motion parity.
+
+A rebuilt Java client passes 722 checks with the licensed overlays and a synthetic skin texture. The probe verifies layer selection, the player definition, preview geometry, world-model geometry, and repeated-frame handling. It changes no account recipes. Native visible motion comparison remains pending.
+
+Sources: [Microsoft resource overrides](https://learn.microsoft.com/en-us/minecraft/creator/documents/overwritingassets?view=minecraft-bedrock-stable), [client-entity selection](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/entityreference/examples/cliententitydocumentation/cliententitydocumentationintroduction?view=minecraft-bedrock-stable), and [version-history layer configuration](https://github.com/tryashtar/minecraft-version-history/blob/master/personal_config.yaml).
 
 ## Dressing Room previews
 
@@ -267,9 +281,9 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 - Add paid purchase and redemption flows. Synchronize classic skin selection with the native account.
 - Implement animation sounds, particles, and named actor events. Resolve effect resources and model locators, and preserve native event suppression. Emote chat announcements exist, but native platform communication filters remain incomplete.
 - Complete native item poses, first-person playback, and equipment behavior. Remaining bindings include local charging prediction, post-use trident behavior, item-name mappings, and exact native use durations.
-- Resolve additional geometry animation alias sources, versioned vanilla resource overrides, and native parent-name behavior. The official package includes `vanilla_base` and versioned overlays through `vanilla_1.26.51`. Acquisition currently selects only `persona` and the base `vanilla` library. Modern and library geometry flags now derive aliases through persistence and transport. The legacy vex model still has an unresolved `rightarm` parent.
+- Resolve additional geometry animation alias sources and native parent-name behavior. Modern and library geometry flags derive aliases through persistence and transport. The legacy vex model still has an unresolved `rightarm` parent.
 
-Private licensed acquisition now extracts the overlay metadata for research. Its newest player definition has 68 animation aliases, compared with 52 in the base definition. Added tracks include crawling, spyglass, goat horn, brush, and spear poses. Production still uses the base player graph. These acquired overlays establish another implementation gap; they do not establish playback parity.
+The loader now uses the matching 68-alias player definition. Its added tracks include crawling, spyglass, goat horn, brush, and spear poses. These tracks still need complete query bindings and native motion comparisons. Spear playback also needs the newer Molang easing functions.
 
 ### Verification still needed
 
@@ -279,6 +293,6 @@ Private licensed acquisition now extracts the overlay metadata for research. Its
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. This establishes visual presence, not complete timing or format parity.
 - Verify fresh interactive Store sign-in and helper runtime behavior on Windows and macOS. Linux acquisition, license decryption, extraction, and cache reuse already pass.
 
-The latest replayed add-on builds, and all 204 fixture-enabled tests pass with no skips. The full stack build also passed before the overlay format extension. The latest recorded Java runtime probe passes 1,324 checks. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
+The replayed full stack builds, and all 214 fixture-enabled add-on tests pass with no skips. Earlier Java runtime probes passed 1,324 checks across previously implemented paths. The new overlay probe passes 722 checks for the updated graph and renderer paths. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
 
 Keep login JWTs, receipts, content keys, raw flows, screenshots, player textures, and account data private under `.stackanvil/`.
