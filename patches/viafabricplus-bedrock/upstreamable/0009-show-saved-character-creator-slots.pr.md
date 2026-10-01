@@ -491,3 +491,19 @@ Another 289 native cases cover instant, steady, and manual rates, plus once and 
 These component checks do not execute particle allocation, lifetime scheduling, collision, materials, or world rendering. The private Java calculations remain research code until the production runtime consumes them. Native exports, executable fixtures, and licensed assets remain private.
 
 Sources: [Microsoft dynamic motion reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftparticle_motion_dynamic?view=minecraft-bedrock-stable), [instant emission reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftemitter_rate_instant?view=minecraft-bedrock-stable), and [Mojang particle integration reference](https://mojang.github.io/bedrock-samples/Particles.html). The documentation describes the component model. The matching executable establishes the calculations and limits above.
+
+## Initial particle runtime
+
+Connect timeline and controller particle declarations to actor aliases and the world particle pass. Preserve source order, suppression cursors, repeat frames, and replay. Capture the bone player's own Molang state before later timelines run. Controller particles follow sampled child effects and precede state sounds.
+
+Support instant and steady emission, a single emitter lifetime, point and custom offsets, initial velocity and spin, and dynamic or parametric motion. Support gradient tinting, flipbooks, rectangular billboards, world lighting, and `rotate_xyz` or `lookat_xyz` facing. Other components fail explicitly. Particle definitions and PNG or TGA textures use the effective library's pack order.
+
+The motion and billboard kernels consume the target executable fixtures documented above. Production tests compare 200 motion cases and 492 billboard cases, including angular updates and raw direction thresholds. A changing-rate test preserves the native cached rate until an emission. The fixture's direction threshold is already squared. JSON supplies the threshold before squaring.
+
+Decode resources off the render thread. Bound emitters, particles, pending requests, cached definitions, and image memory. Invalidate asynchronous work across world and account changes. Release completed textures and handle failed asset futures during cleanup.
+
+The native component fixtures do not establish the complete emitter scheduler or visible particle parity. Attachment rotation, local-space transforms, native tint quantization, collision, curves, other shapes and facing modes, and nested effect events remain separate work. The production path needs no native executable or external particle decoder.
+
+Particle atlas decoding uses the bounded PNG reader and the existing true-color TGA decoder. A test compares their decoded RGBA pixels and rejects truncated input. A muted Java runtime probe displays a 4:1 TGA billboard and verifies server aliases, world extraction, failed asset cleanup, and texture release. It also verifies explicit rejection of collision effects. Screenshots and fixture assets remain private. This probe does not establish native visible particle parity.
+
+The replayed 14-patch stack builds and produces the Prism bundle. All 261 fixture-enabled add-on tests pass with no failures or skips. This count covers implemented paths and does not establish complete skin, effect, or Dressing Room parity.

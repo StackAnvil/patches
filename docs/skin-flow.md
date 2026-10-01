@@ -208,7 +208,7 @@ Private tests compare 1,187 native catalog, scalar, selection, category-routing,
 
 Sound files resolve within each pack before falling back to lower packs. This lets a higher OGG file replace a lower FSB bank, as [Microsoft documents](https://learn.microsoft.com/en-us/minecraft/creator/documents/addcustomsounds?view=minecraft-bedrock-stable). The target executable declares FSB, OGG, then WAV extensions. The current decoder supports FSB and OGG. OGG decoding uses Minecraft's JOrbis reader with page, channel, sample-rate, and output limits. The three licensed OGG files and six generated streams match libvorbis within one PCM quantization step across 109,603 scalar samples. These checks establish decoding and channel order. They do not establish FMOD decoding equivalence or audible playback. Vorbis loop comments and WAV decoding remain incomplete.
 
-Particle decoding supports MCB formats 1.26.10 and 1.26.30 and text JSON. Java declarations describe their 70 reachable binary layouts. The reader preserves optional fields, tagged values, component identities, and source order. It rejects unsupported versions, malformed data, and excessive complexity. Private comparisons match 115 base definitions and 108 overlay definitions against the [reference decoder](https://github.com/LPaicen/brarchive-extractor/blob/503a8ce7ad94030241a3590c926ac36f72169c71/src/mcb-decoder.ts). Production decoding needs neither exported schemas nor an external decoder. The package helper now acquires the overlays. Particle simulation and rendering remain incomplete.
+Particle decoding supports MCB formats 1.26.10 and 1.26.30 and text JSON. Java declarations describe their 70 reachable binary layouts. The reader preserves optional fields, tagged values, component identities, and source order. It rejects unsupported versions, malformed data, and excessive complexity. Private comparisons match 115 base definitions and 108 overlay definitions against the [reference decoder](https://github.com/LPaicen/brarchive-extractor/blob/503a8ce7ad94030241a3590c926ac36f72169c71/src/mcb-decoder.ts). Production decoding needs neither exported schemas nor an external decoder. The package helper now acquires the overlays. Particle playback has partial component coverage.
 
 Local add-on builds require Rust 1.98.1, Protobuf, and the platform's WebView build libraries. Linux sign-in requires WebKitGTK 4.1. Release and full-stack CI assemble helper resources for Linux x64, Windows x64, and both macOS architectures. Native installations serve only as private research fixtures.
 
@@ -240,9 +240,9 @@ The add-on downloads emote packs through the current account's entitlement recei
 
 Menu models retain the native root, waist, and body hierarchy. Bone poses also apply to animated clothing surfaces. The sampler supports position, rotation, scale, pre/post keyframes, linear and Catmull-Rom interpolation, and Molang frame queries. Each playback has its own variable state. Expressions have size and execution limits. Entity-relative rotations use the authored hierarchy.
 
-The target native loader selects the first declared emote animation source. The add-on preserves that order and accepts additional declarations. An unavailable first source remains an error. Timeline sounds use the actor's declared sound aliases. Particles and named actor events remain unsupported. Controller entry sounds use the same aliases as timeline sounds.
+The target native loader selects the first declared emote animation source. The add-on preserves that order and accepts additional declarations. An unavailable first source remains an error. Timeline sounds use the actor's declared sound aliases. Particle effects have partial component coverage. Named actor events remain unsupported. Controller entry sounds use the same aliases as timeline sounds.
 
-Native effect research verifies separate particle and sound paths. Earlier notes incorrectly identified the particle callback as a sound callback. World sound requests now resolve aliases and static locators, then create PCM channels in the existing audio engine. Particle simulation and rendering remain incomplete. The extracted player definitions have no sound or particle bindings. The two captured owned emotes contain neither effect type, so those fixtures cannot establish audible or particle parity.
+Native effect research verifies separate particle and sound paths. Earlier notes incorrectly identified the particle callback as a sound callback. World sound requests now resolve aliases and static locators, then create PCM channels in the existing audio engine. Particle playback has partial component coverage. The extracted player definitions have no sound or particle bindings. The two captured owned emotes contain neither effect type, so those fixtures cannot establish audible or particle parity.
 
 The native particle callback resolves aliases, chooses locator or actor positions, and optionally attaches an emitter to the actor. Its initialization descriptor contains a tagged Molang program. Independent execution verifies 256 dispatch cases, 16 initialization cases, and 64 cases through the actual initialization setter. These checks establish particle requests at mocked engine boundaries. They do not establish audio parameters or particle appearance.
 
@@ -312,12 +312,26 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 
 ## Work still needed
 
+### Particle playback
+
+Animation timelines and controller entries now resolve particle aliases through their actor library. Particle requests precede sounds at the same timestamp. Suppressed frames consume their event cursor. Each request retains the source player's Molang variables and queries, including standalone emotes.
+
+The first runtime supports instant and steady emission with a single emitter lifetime. It accepts point and custom offsets, initial speed and spin, dynamic or parametric motion, tint gradients, flipbooks, and rectangular billboards. The two admitted facing modes are `rotate_xyz` and `lookat_xyz`. PNG and TGA textures follow pack precedence. Server libraries retain particle definitions and their referenced textures.
+
+The world renderer creates bounded emitters and images. Attached origins follow static model locators and the current actor position. Unbound origins remain fixed. Account changes and world cleanup invalidate pending work and release textures. Unsupported components report an asset error.
+
+Independent execution of Bedrock 1.26.51.1 supplies 200 motion cases and 492 billboard cases. Production kernels match their float32 results. A changing-rate test also follows the native steady emitter's cached rate until its next emission.
+
+A muted Java client displays a 4:1 billboard from a TGA atlas. Its runtime probe checks server aliases, world extraction, unsupported component rejection, failed asset cleanup, and texture release. This probe does not compare the visible result with native Bedrock.
+
+Collision, local-space transforms, other shapes and facing modes, looping and manual lifetimes, curves, and nested effect events remain incomplete. Native comparisons still need to establish attachment rotation, emitter scheduling, creation order, tint quantization, and visible scale. These component tests do not establish complete particle parity.
+
 ### Missing features
 
 - Resolve free assets for accounts without usable receipt keys. These recipes still depend on the service model. Resolve unavailable remote emote assets.
 - Finish piece-specific color availability and establish additional palette callers. The inspected native picker accepts only loaded skin, facial hair, mouth, eye, and hair pieces with an enabled override flag. All 224 native eligibility cases pass. Metadata-to-runtime flag construction and other UI paths remain unresolved.
 - Add paid purchase and redemption flows. Synchronize classic skin selection with the native account.
-- Finish particles, named actor events, captions, and stream concurrency. Verify dynamic emote bindings, native render suppression, and scaled world locators. Emote chat announcements exist, but native platform communication filters remain incomplete.
+- Finish the remaining particle components, named actor events, captions, and stream concurrency. Verify dynamic emote bindings, native render suppression, and scaled world locators. Emote chat announcements exist, but native platform communication filters remain incomplete.
 - Complete native item poses, first-person playback, and equipment behavior. Remaining bindings include local charging prediction, post-use trident behavior, item-name mappings, and exact native use durations.
 - Resolve additional geometry animation alias sources and native parent-name behavior. Modern and library geometry flags derive aliases through persistence and transport. The legacy vex model still has an unresolved `rightarm` parent.
 
@@ -331,6 +345,6 @@ The loader now uses the matching 68-alias player definition. Its added tracks in
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. This establishes visual presence, not complete timing or format parity.
 - Verify fresh interactive Store sign-in and helper runtime behavior on Windows and macOS. Linux acquisition, license decryption, extraction, and cache reuse already pass.
 
-The replayed full stack builds, and all 249 fixture-enabled add-on tests pass with no failures or skips. The rebuilt client also passes 13,578 native curve comparisons and a conditional-assignment check. Earlier Java runtime probes passed 1,324 checks across previously implemented paths. The new overlay probe passes 722 checks for the updated graph and renderer paths. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
+The replayed full stack builds, and all 261 fixture-enabled add-on tests pass with no failures or skips. The rebuilt client also passes 13,578 native curve comparisons and a conditional-assignment check. Earlier Java runtime probes passed 1,324 checks across previously implemented paths. The new overlay probe passes 722 checks for the updated graph and renderer paths. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
 
 Keep login JWTs, receipts, content keys, raw flows, screenshots, player textures, and account data private under `.stackanvil/`.

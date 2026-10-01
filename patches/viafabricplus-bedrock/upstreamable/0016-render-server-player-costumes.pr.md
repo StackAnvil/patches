@@ -8,3 +8,9 @@ Server player sound aliases now bind to the effective server pack stack. The sha
 Controller particle effects, selection of costume locators, and unavailable native sample references remain incomplete. The muted Java runtime test passes with private synthetic server packs and licensed samples. It verifies catalog overrides across packs, sample fallback, and actual PCM channel playback.
 
 Controller state sounds now use the shared actor alias and PCM path. A muted client test loads the controller through the production server player factory. It verifies actual sound channels, suppressed entry scripts without later playback, state reentry, and duplicate frames. Source gain stays at zero.
+
+## Server particle resources
+
+Resolve particle definitions with the server's sound resources in pack order. Retain referenced PNG and TGA textures from every layer so an upper texture can replace a lower definition's image. Keep unrelated textures outside this effect library. Apply the existing resource size and file limits to definitions and images together.
+
+A targeted test changes the emission count through an identifier override and replaces a lower PNG with an upper TGA. Runtime component admission and emitter playback belong to the Character Creator patch.

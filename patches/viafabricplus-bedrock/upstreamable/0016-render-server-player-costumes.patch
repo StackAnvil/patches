@@ -1,4 +1,4 @@
-From 9e858bb44ed4d4b9f1e27cba8ec50bb7833ea330 Mon Sep 17 00:00:00 2001
+From 3bc89c0a3013b75808b5d2f3d3344bc250238a00 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:39:38 +0200
 Subject: [PATCH] feat(players): render server player controllers and costumes
@@ -33,26 +33,33 @@ files. This keeps sound resources with the immutable graph that selected
 them and avoids an unrelated built-in catalog fallback. Controller entry
 sounds, costume locator selection and missing native sample references
 remain separate coverage gaps.
+
+Broaden the server effect library to particle definitions and their referenced
+PNG/TGA textures. Resolve identifiers and images through server pack order,
+including upper texture overrides for lower definitions. Retain the existing
+file and byte limits across all effect resources and omit unrelated images.
+A targeted test verifies emission-count overrides and PNG-to-TGA replacement.
 ---
  .../appearance/BedrockActorAnimation.java     |  34 +++
  .../bedrock/appearance/BedrockMolang.java     |  19 ++
  .../appearance/BedrockPlayerControllers.java  | 121 +++++++++++
- .../appearance/BedrockResourceLibrary.java    |  22 ++
+ .../appearance/BedrockResourceLibrary.java    |  54 +++++
  .../render/MixinBedrockPlayerActorState.java  |   7 +
  .../render/BedrockPlayerActorState.java       |  16 +-
  .../render/BedrockPlayerCostumeLayer.java     |  32 +++
  .../bedrock/render/BedrockPlayerRenderer.java |   8 +
  .../bedrock/render/BedrockPlayerSkins.java    | 202 +++++++++++++++++-
  .../BedrockPlayerControllersTest.java         |  86 ++++++++
+ .../BedrockResourceLibraryTest.java           |  26 +++
  .../render/BedrockPlayerGeometryTest.java     |  32 +++
- 11 files changed, 574 insertions(+), 5 deletions(-)
+ 12 files changed, 632 insertions(+), 5 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerCostumeLayer.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllersTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerGeometryTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
-index f33b05b..5a273dd 100644
+index a6b417c..6264116 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 @@ -7,6 +7,7 @@ package com.viaversion.viafabricplus.bedrock.appearance;
@@ -98,7 +105,7 @@ index f33b05b..5a273dd 100644
 +                    }
 +                }
 +            }
-+            return player == null ? null : new BedrockActorAnimation(player, Map.of(), animations, controllers, BedrockResourceLibrary.serverSounds(packs));
++            return player == null ? null : new BedrockActorAnimation(player, Map.of(), animations, controllers, BedrockResourceLibrary.serverEffects(packs));
 +        } catch (RuntimeException e) {
 +            throw new IOException("Invalid server player animation graph", e);
 +        }
@@ -107,7 +114,7 @@ index f33b05b..5a273dd 100644
      public interface Query {
          Object evaluate(List<Object> arguments);
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java
-index 6db968c..a4815d8 100644
+index c5baf5b..8b3b802 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java
 @@ -8,6 +8,8 @@ package com.viaversion.viafabricplus.bedrock.appearance;
@@ -119,7 +126,7 @@ index 6db968c..a4815d8 100644
  import team.unnamed.mocha.MochaEngine;
  import team.unnamed.mocha.parser.ast.AccessExpression;
  import team.unnamed.mocha.parser.ast.ArrayAccessExpression;
-@@ -140,6 +142,23 @@ final class BedrockMolang {
+@@ -157,6 +159,23 @@ final class BedrockMolang {
          this.variables.set(name, NumberValue.of(value));
      }
  
@@ -271,32 +278,64 @@ index 0000000..4816f1e
 +    public record Selection(boolean bodyVisible, List<Surface> surfaces) {}
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
-index 99eb7f5..386b275 100644
+index 122214f..3fc2611 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
-@@ -20,6 +20,28 @@ import java.util.regex.Pattern;
+@@ -20,6 +20,60 @@ import java.util.regex.Pattern;
  
  /** Vanilla resources in pack order, with identifier overrides and per-resource format versions. */
  final class BedrockResourceLibrary {
-+    static BedrockResourceLibrary serverSounds(final net.raphimc.viabedrock.protocol.storage.ResourcePackStorage stack)
++    static BedrockResourceLibrary serverEffects(final net.raphimc.viabedrock.protocol.storage.ResourcePackStorage stack)
 +            throws IOException {
 +        final List<Pack> packs = new ArrayList<>();
++        final java.util.Set<String> textures = new java.util.LinkedHashSet<>();
++        final List<net.raphimc.viabedrock.api.resourcepack.ResourcePack> stackPacks = List.copyOf(stack.getPackStackBottomToTop());
++        final List<Map<String, byte[]>> selected = new ArrayList<>();
 +        long total = 0;
 +        int count = 0;
-+        for (final var pack : stack.getPackStackBottomToTop()) {
++        for (final var pack : stackPacks) {
 +            final Map<String, byte[]> files = new LinkedHashMap<>();
-+            for (final String extension : List.of(".json", ".fsb", ".ogg")) {
-+                for (final String path : pack.content().getFilesDeep("sounds/", extension)) {
-+                    BedrockBuiltinAssets.validPath(path);
-+                    final byte[] bytes = pack.content().get(path);
++            final List<String> paths = new ArrayList<>();
++            for (final String extension : List.of(".json", ".fsb", ".ogg"))
++                paths.addAll(pack.content().getFilesDeep("sounds/", extension));
++            paths.addAll(pack.content().getFilesDeep("particles/", ".json"));
++            for (final String path : paths) {
++                BedrockBuiltinAssets.validPath(path);
++                final byte[] bytes = pack.content().get(path);
++                total += bytes.length;
++                if (++count > 8192 || bytes.length > BedrockBuiltinAssets.MAX_FILE_BYTES
++                        || total > BedrockBuiltinAssets.MAX_TOTAL_BYTES)
++                    throw new IOException("Server effect library exceeds resource limits");
++                files.put(path, bytes);
++                if (path.startsWith("particles/")) {
++                    try {
++                        final String texture = BedrockParticleDefinition.read(bytes).getAsJsonObject("particle_effect")
++                                .getAsJsonObject("description").getAsJsonObject("basic_render_parameters").get("texture").getAsString();
++                        BedrockBuiltinAssets.validPath(texture);
++                        if (!texture.startsWith("textures/")) throw new IOException("Invalid server particle texture");
++                        textures.add(texture);
++                    } catch (RuntimeException invalid) { throw new IOException("Invalid server particle definition", invalid); }
++                }
++            }
++            selected.add(files);
++        }
++        for (int index = 0; index < stackPacks.size(); index++) {
++            final var content = stackPacks.get(index).content();
++            final var files = selected.get(index);
++            for (final String texture : textures) {
++                final List<String> paths = texture.endsWith(".png") || texture.endsWith(".tga")
++                        ? List.of(texture) : List.of(texture + ".png", texture + ".tga");
++                for (final String path : paths) {
++                    final byte[] bytes = content.get(path);
++                    if (bytes == null) continue;
 +                    total += bytes.length;
 +                    if (++count > 8192 || bytes.length > BedrockBuiltinAssets.MAX_FILE_BYTES
 +                            || total > BedrockBuiltinAssets.MAX_TOTAL_BYTES)
-+                        throw new IOException("Server sound library exceeds resource limits");
++                        throw new IOException("Server effect library exceeds resource limits");
 +                    files.put(path, bytes);
 +                }
 +            }
-+            packs.add(new Pack(Integer.toString(packs.size()), Map.copyOf(files)));
++            packs.add(new Pack(Integer.toString(index), Map.copyOf(files)));
 +        }
 +        return new BedrockResourceLibrary(packs);
 +    }
@@ -432,7 +471,7 @@ index 3a9f2f2..84f61aa 100644
  
      record Surface(PlayerModel model, Identifier texture) {
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 379dcd7..6471999 100644
+index 1c6bcb4..ed26a5f 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -27,6 +27,7 @@ import com.viaversion.viafabricplus.bedrock.appearance.BedrockClassicAssets;
@@ -644,7 +683,7 @@ index 379dcd7..6471999 100644
          if (appearance == null
                  || appearance.actor == null
                  || !appearance.actor.isDone()
-@@ -288,6 +453,12 @@ public final class BedrockPlayerSkins {
+@@ -294,6 +459,12 @@ public final class BedrockPlayerSkins {
          final Map<String, Object> queries = new HashMap<>();
          queries.put("life_time", state.ageInTicks / 20F);
          queries.put("is_alive", entity.isAlive());
@@ -657,7 +696,7 @@ index 379dcd7..6471999 100644
          queries.put("is_on_ground", entity.onGround());
          queries.put("is_sneaking", state.isCrouching);
          queries.put("is_sleeping", entity.isSleeping());
-@@ -493,6 +664,8 @@ public final class BedrockPlayerSkins {
+@@ -516,6 +687,8 @@ public final class BedrockPlayerSkins {
          APPEARANCES.clear();
          PLAYER_BY_TEXTURE.clear();
          PENDING.discardDisconnected();
@@ -666,7 +705,7 @@ index 379dcd7..6471999 100644
      }
  
      private static void release(final Appearance appearance) {
-@@ -504,6 +677,7 @@ public final class BedrockPlayerSkins {
+@@ -527,6 +700,7 @@ public final class BedrockPlayerSkins {
          for (final AnimatedSurface surface : appearance.surfaces) {
              textureManager.release(surface.texture());
          }
@@ -674,7 +713,7 @@ index 379dcd7..6471999 100644
      }
  
      private static Identifier textureId(final UUID playerUuid, final String kind) {
-@@ -555,11 +729,15 @@ public final class BedrockPlayerSkins {
+@@ -578,11 +752,15 @@ public final class BedrockPlayerSkins {
                  3, geometryName(skin.skinResourcePatch(), "animated_128x128")),
                  skin.geometryData(), skin.skinData(), skin.animations());
          }
@@ -692,7 +731,7 @@ index 379dcd7..6471999 100644
              final List<BedrockGeometryModel> models = BedrockGeometryModel.fromJson(data);
              final BedrockGeometryModel model = models.stream().filter(value -> value.getIdentifier().equals(name)).findFirst()
                  .orElseGet(() -> models.isEmpty() ? null : models.getFirst());
-@@ -763,6 +941,24 @@ public final class BedrockPlayerSkins {
+@@ -786,6 +964,24 @@ public final class BedrockPlayerSkins {
          private Map<String, BedrockBoneAnimation.Transform> previewPose = Map.of();
          private List<PreviewSurface> previewSurfaces;
          private long rendererEpoch;
@@ -809,6 +848,43 @@ index 0000000..3411d1d
 +                new BedrockPlayerControllers.UvAnimation("0", "math.mod(math.floor(q.life_time * 7), v.frames) / v.frames", "1", "1 / v.frames")));
 +    }
 +}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java
+index a3469bc..5cee0e0 100644
+--- a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java
+@@ -25,6 +25,32 @@ final class BedrockResourceLibraryTest {
+         files.put("library/" + pack + "/" + path, json.getBytes(StandardCharsets.UTF_8));
+     }
+ 
++    @Test
++    void resolvesServerParticlesAndTheirTexturesAcrossPackOverrides() throws Exception {
++        final java.util.List<net.raphimc.viabedrock.api.resourcepack.ResourcePack> packs = new java.util.ArrayList<>();
++        for (int index = 0; index < 2; index++) {
++            final var content = new net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent();
++            content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"name\":\"test\",\"uuid\":\""
++                    + java.util.UUID.randomUUID() + "\",\"version\":[1,0,0]}}");
++            final var definition = BedrockParticleEffectTest.burst();
++            final var parameters = definition.getAsJsonObject("particle_effect").getAsJsonObject("description").getAsJsonObject("basic_render_parameters");
++            parameters.addProperty("texture", "textures/particles/shared");
++            definition.getAsJsonObject("particle_effect").getAsJsonObject("components")
++                    .getAsJsonObject("minecraft:emitter_rate_instant").addProperty("num_particles", index + 1);
++            content.putString("particles/" + index + ".json", definition.toString());
++            content.put("textures/particles/shared" + (index == 0 ? ".png" : ".tga"), new byte[] {(byte) index});
++            content.put("textures/unrelated.png", new byte[] {42});
++            packs.add(new net.raphimc.viabedrock.api.resourcepack.ResourcePack(content));
++        }
++        final var library = BedrockResourceLibrary.serverEffects(new net.raphimc.viabedrock.protocol.storage.ResourcePackStorage(packs.reversed()));
++        final var effect = BedrockParticleEffect.read(library.particle("test:burst"));
++        final var emitter = effect.emitter(new BedrockMolang(), new java.util.Random(1));
++        emitter.advance(0, 10, net.minecraft.world.phys.Vec3.ZERO);
++        assertEquals(2, emitter.size());
++        assertArrayEquals(new byte[] {1}, library.particleTexture("textures/particles/shared"));
++        assertNull(library.particleTexture("textures/unrelated"));
++    }
++
+     @Test
+     void ordersNumericLayersAndOverridesIdentifiersAcrossDifferentFiles() throws Exception {
+         final Map<String, byte[]> files = new LinkedHashMap<>();
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerGeometryTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerGeometryTest.java
 new file mode 100644
 index 0000000..3e33373
