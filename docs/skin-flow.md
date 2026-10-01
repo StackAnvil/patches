@@ -316,7 +316,7 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 
 Animation timelines and controller entries now resolve particle aliases through their actor library. Particle requests precede sounds at the same timestamp. Suppressed frames consume their event cursor. Each request retains the source player's Molang variables and queries, including standalone emotes.
 
-The first runtime supports instant and steady emission with a single emitter lifetime. It accepts point and custom offsets, initial speed and spin, dynamic or parametric motion, tint gradients, flipbooks, and rectangular billboards. The two admitted facing modes are `rotate_xyz` and `lookat_xyz`. PNG and TGA textures follow pack precedence. Server libraries retain particle definitions and their referenced textures.
+The particle runtime supports instant and steady emission with a single emitter lifetime. It accepts point, custom, box, sphere, disc, and entity-bounds shapes. It supports initial speed and spin, dynamic or parametric motion, tint gradients, flipbooks, and rectangular billboards. The two admitted facing modes are `rotate_xyz` and `lookat_xyz`. PNG and TGA textures follow pack precedence. Server libraries retain particle definitions and their referenced textures.
 
 The world renderer creates bounded emitters and images. Attached origins follow static model locators and the current actor position. Unbound origins remain fixed. Account changes and world cleanup invalidate pending work and release textures. Unsupported components report an asset error.
 
@@ -328,7 +328,15 @@ Particle collision now follows the target swept collision calculation. It limits
 
 Independent execution of Bedrock 1.26.51.1 supplies 364 cases. Production matches their position, velocity, and terrain query results exactly as float32. The harness supplies terrain boxes and emitter origin getters. World playback queries block collision shapes, including existing custom block overrides. A muted Java runtime probe verifies bouncing against block collision shapes, contact expiration, and resource release. Native world-shape order and visible collision comparisons remain unverified.
 
-Local-space transforms, other shapes and facing modes, looping and manual lifetimes, curves, and nested effect events remain incomplete. Native comparisons still need to establish attachment rotation, emitter scheduling, creation order, tint quantization, and visible scale. These component tests do not establish complete particle parity.
+All six emitter shapes follow the target sampler. Box surfaces choose faces by area. Sphere and disc directions use paired random values. Disc projection and volume radius calculations preserve target float32 order. Rounded custom directions retain their authored magnitude at the shape boundary. Point, custom, box, and entity shapes normalize directions. Point and custom expressions interleave offset and direction per axis.
+
+Independent execution of Bedrock 1.26.51.1 supplies 646 shape cases. Production matches position, direction, and ordered random calls exactly as float32. The harness supplies random values and entity bounds. World playback reads the actor's current bounding box for each emission.
+
+Another 128 native cases verify initial speed exactly as float32. Scalar speed normalizes the shape direction and evaluates its Molang expression separately for each axis. Vector speed overrides direction. These tests do not establish native attachment transforms or visible shape parity.
+
+A muted Java client verifies all four added shapes through server aliases and world extraction. Its probe checks 64 sampled particles, live actor bounds, and texture release. A private screenshot confirms visible world rendering. This establishes Java integration, not native visible parity.
+
+Local-space transforms, other facing modes, looping and manual lifetimes, curves, and nested effect events remain incomplete. Native comparisons still need to establish attachment rotation, emitter scheduling, creation order, tint quantization, and visible scale. These component tests do not establish complete particle parity.
 
 ### Missing features
 
@@ -349,6 +357,6 @@ The loader now uses the matching 68-alias player definition. Its added tracks in
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. This establishes visual presence, not complete timing or format parity.
 - Verify fresh interactive Store sign-in and helper runtime behavior on Windows and macOS. Linux acquisition, license decryption, extraction, and cache reuse already pass.
 
-The replayed full stack builds, and all 264 fixture-enabled add-on tests pass with no failures or skips. The rebuilt client also passes 13,578 native curve comparisons and a conditional-assignment check. Earlier Java runtime probes passed 1,324 checks across previously implemented paths. The new overlay probe passes 722 checks for the updated graph and renderer paths. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
+The replayed full stack builds, and all 269 fixture-enabled add-on tests pass with no failures or skips. The rebuilt client also passes 13,578 native curve comparisons and a conditional-assignment check. Earlier Java runtime probes passed 1,324 checks across previously implemented paths. The new overlay probe passes 722 checks for the updated graph and renderer paths. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
 
 Keep login JWTs, receipts, content keys, raw flows, screenshots, player textures, and account data private under `.stackanvil/`.

@@ -522,3 +522,19 @@ The harness supplies world collision boxes, emitter accessors, and the imported 
 The replayed full stack passes all 264 fixture-enabled add-on tests with no failures or skips, including fresh package acquisition and cache reuse.
 
 A muted Java runtime probe uses the rebuilt bundle and a temporary client-side stone platform. It verifies world terrain collision, rebound velocity, contact expiration, and texture release. This probe establishes Java integration and does not compare native visible effects.
+
+## Complete emitter shapes
+
+Add box, sphere, disc, and entity-bounds shapes through one sampler. Generalize point and custom sampling to preserve their interleaved expression order. Box and entity surfaces select faces by area. Rounded shapes use paired random values, disc projection, and the target volume radius calculation. Preserve rounded custom direction magnitudes at the shape boundary. Initial speed then normalizes directions before applying scalar speed. Its scalar expression evaluates separately for each axis. Vector speed overrides the sampled direction.
+
+Target Bedrock 1.26.51.1 functions `1462a6be0`, `1462ad0e0`, `1462aa600`, `1462ab2c0`, and `1462a81f0` establish these behaviors. Constructors select outward direction by default for volume and entity shapes. Independent native execution supplies 646 cases. Production matches every position, direction, and ordered random call exactly as float32. The harness supplies random and entity-bounds accessors; actual native sampling, normalization, projection, and face selection execute.
+
+Timeline and controller particle requests retain an actor bounds accessor. World extraction passes current bounds to each emission, including unbound emitters with fixed origins. Tests verify changing dimensions between births, expression order, and scalar versus vector speed. Licensed assets, executables, and native fixtures stay private. Local-space transforms and native visible parity remain separate work.
+
+Sources: Microsoft's [box reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftemitter_shape_box?view=minecraft-bedrock-stable), [sphere reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftemitter_shape_sphere?view=minecraft-bedrock-stable), [disc reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftemitter_disc?view=minecraft-bedrock-stable), and [entity-bounds reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftemitter_shape_entity-aabb?view=minecraft-bedrock-stable). The matching executable establishes the target calculations.
+
+The replayed full stack passes all 269 fixture-enabled add-on tests with no failures or skips. This includes fresh standalone package acquisition, license decryption, extraction, and cache reuse.
+
+Native initial-speed function `1461c2690` supplies 128 additional reference cases. Production matches every velocity exactly as float32, including tiny directions and signed zeros. Tests also verify scalar expression side effects across all three axis evaluations.
+
+The full stack build and bundle pass. A muted Java runtime probe verifies all four new shapes through server aliases and world extraction. It checks 64 sampled particles, live actor bounds, and texture release. A private screenshot confirms visible world rendering. Native visible parity remains unverified.
