@@ -260,7 +260,7 @@ Independent execution verifies 364 combinations of carried and active stack vali
 
 The replayed full stack builds, and all 188 fixture-enabled add-on tests pass with no skips. A running Java client passes 1,324 checks, including 364 specialized native cases. Actual spyglass, goat-horn, and brush stacks reach authored animation tracks through the production pose bindings and world model. Mixed-hand cases verify separate active-use and carried-item inputs. Earlier food, trident, and crossbow runtime checks also pass. The probe uses untracked players and makes no account writes or tracked player changes.
 
-The extracted default player graph does not reference these three variables. These checks establish authored track bindings. Complete native item poses remain incomplete. Post-use trident brandishing, local charging prediction, item-name mappings, exact native durations, first-person playback, and native visual comparisons remain pending.
+The extracted base player graph does not reference these three variables. These checks establish authored track bindings. Complete native item poses remain incomplete. Post-use trident brandishing, local charging prediction, item-name mappings, exact native durations, first-person playback, and native visual comparisons remain pending.
 
 Source: the generated [native use-animation enum](https://github.com/LiteLDev/LeviLamina/blob/main/src/mc/deps/shared_types/legacy/item/UseAnimation.h) names Spyglass, GoatHorn, and Brush. Activation and stack-selection evidence comes from independent execution of Bedrock 1.26.51.1.
 
@@ -276,9 +276,13 @@ Metadata-to-runtime flag construction and additional palette callers still need 
 
 ## Native animation effect research
 
-Independent execution of Bedrock 1.26.51.1 `FUN_1401a0f40` verifies 256 sound callback cases. Native instructions select events, resolve aliases, choose positions, attach channels, and pass channel parameters. The harness supplies actor accessors, locator results, sound service allocation, and channel methods. It captures the native requests at these boundaries without audio output.
+Independent execution of Bedrock 1.26.51.1 `FUN_1401a0f40` verifies 256 sound callback cases. Native instructions select events, resolve aliases, choose positions, attach channels, and pass an additional descriptor. The harness supplies actor accessors, locator results, sound service allocation, and channel methods. It captures the native requests at these boundaries without audio output.
 
-Sound events use `previous < event <= current`. Missing aliases and unavailable sound services produce no sound request. A fixed-position sound uses the resolved locator position. A missing locator falls back to the actor position. An attached sound binds its channel to the actor identity and authored locator. Native code passes the descriptor's channel parameters after the attachment step. The parameter interpretation and authored defaults still need verification.
+Sound events use `previous < event <= current`. Missing aliases and unavailable sound services produce no sound request. A fixed-position sound uses the resolved locator position. A missing locator falls back to the actor position. An attached sound binds its channel to the actor identity and authored locator. Native code passes the additional descriptor after the attachment step. The following probes establish its type. Authored defaults still need verification.
+
+Further tracing identifies the descriptor at offset `0x60` as a 16-byte Molang expression variant. The sound instance vtable selects `FUN_1421603e0`. This setter evaluates a complex program with the channel's render context at offset `0xd8`. Constant variants, missing programs, and failed channel preparation do not call the complex evaluator.
+
+Independent execution verifies 16 setter cases and 64 sound callback cases through the actual setter. The harness supplies channel preparation and the complex-expression evaluation boundary. Native instructions select the program and its render context after locator attachment. Earlier byte captures establish descriptor transport only. Four raw float values do not describe its type or volume and pitch controls. Authored sound script parsing, variable bindings, captions, and audible results remain unverified.
 
 Another probe executes `FUN_141e68a20` across 38 clock frames, 16 render-context flag combinations, and suppression followed by re-enabling. Sound dispatch follows bone sampling and precedes Molang timeline scripts. Both receive the current clock and previous event cursor. The clock cases cover initial delays, loop delays, held frames, zero weight, custom clocks, equal timestamps, and loop wrapping.
 
@@ -288,7 +292,7 @@ Independent execution of `FUN_1401c3340` verifies 64 resource availability and l
 
 Inspection of `FUN_1414ba900` confirms the first declared emote source. The loader reads its file and adds the selected animation to the shared actor-animation library. The source loader alone does not resolve effect resources. Sound dispatch also requires the actor sound table above.
 
-The matching licensed vanilla player definition declares no sound or particle aliases. The two captured owned emotes contain neither effect type. These assets verify existing playback but cannot establish sound or particle behavior. Generic actor schemas establish effect declarations, not the resource bindings used by every persona emote.
+The extracted base vanilla player definition declares no sound or particle aliases. The two captured owned emotes contain neither effect type. These assets verify existing playback but cannot establish sound or particle behavior. Generic actor schemas establish effect declarations, not the resource bindings used by every persona emote.
 
 Production sound, particle, and named actor event playback remain incomplete. The next implementation needs effect resource bindings, model locator transforms, audio loading, and effect lifecycle management. The renderer does not yet consume model locators. Native instruction probes do not establish audible results, captions, particle appearance, or multiplayer behavior. Executables, probes, fixtures, and exports remain private.
 
@@ -322,7 +326,7 @@ Sources: [FSB5 layout](https://github.com/vgmstream/vgmstream/blob/7dc938fa2f210
 
 ## Decode compiled particle definitions
 
-Read particle definitions through the licensed asset loader. The matching 1.26.51.1 package contains 114 MCB definitions with format version 1.26.10 and one text definition. The game version and compiled format version differ.
+Read particle definitions through the licensed asset loader. The matching 1.26.51.1 base archive contains 114 MCB definitions with format version 1.26.10 and one text definition. The game version and compiled format version differ.
 
 Declare the 70 reachable binary layouts in Java. Preserve ordered fields, optional presence, tagged variants, hashed component identities, maps, and collection order. Production decoding requires no native installation, exported schema files, or external decoder. Preserve the MIT reference decoder's license notice in the add-on resources.
 
@@ -330,8 +334,20 @@ Reject unsupported format versions, unknown or duplicate components, invalid tag
 
 Compare all 115 licensed definitions through the production loader against independent reference output. Targeted tests also cover truncation at every byte boundary and invalid counts, tags, booleans, versions, strings, and non-finite values. Acquired assets, schema exports, and reference tooling remain private.
 
+Support MCB 1.26.30 after private licensed overlay acquisition identifies five definitions with that format. The same layouts decode all 108 overlay definitions against the independent reference. Comparisons cover 223 definitions across the base and overlay libraries. The overlay comparisons call the decoder directly; production acquisition still selects only the base library. Other compiled versions remain unsupported.
+
 Definition decoding does not implement particle simulation or rendering. Animation effect parsing, resource bindings, locators, event dispatch, and effect lifecycle remain incomplete.
 
-The replayed full stack builds, and all 203 fixture-enabled add-on tests pass with no skips. This includes fresh licensed acquisition and complete sound and particle reference comparisons.
+The full stack build passes with MCB 1.26.10 support. After the overlay format extension, the replayed add-on builds, and all 204 fixture-enabled tests pass with no skips. This includes fresh licensed acquisition and complete base sound and base and overlay particle reference comparisons.
 
 Sources: [MCB reference decoder](https://github.com/LPaicen/brarchive-extractor/blob/503a8ce7ad94030241a3590c926ac36f72169c71/src/mcb-decoder.ts) and [server schema export workflow](https://github.com/SmokeyStack/brarchaeology/blob/main/tools/Dump-BdsSchema.ps1). Matching package bytes establish the compiled format version and reference comparisons.
+
+## Versioned resource acquisition gap
+
+A directory probe against the pinned official client package finds 58 `vanilla_*` entries, including `vanilla_base`. Versioned overlays reach `vanilla_1.26.51`. The probe reads the package index and stops before license acquisition or content extraction. It makes no account changes and requires no installed game.
+
+The production helper currently traverses only `persona` and `vanilla`. The matching base sound archive contains 584 event definitions. These base resources do not establish the final library after versioned overlays apply. Acquisition and resource resolution still need the matching overlay stack, including its precedence and merge behavior. This affects model, animation, sound, and particle coverage. Package indexes, exports, and research helpers remain private.
+
+A private helper then obtains the official license and extracts 303 overlay metadata files and archives. Unpacking yields 835 library files, including 108 particle definitions and 43 sound tables with 1,848 distinct event names. Its compiled particles include 92 files with format 1.26.10 and five with format 1.26.30. Eleven particle definitions use text JSON.
+
+The newest overlay player definition has 68 animation aliases; the extracted base definition has 52. New aliases include crawling, brush, spyglass, goat horn, shield, and first-person and third-person spear tracks. Three base aliases disappear. None of the extracted player definitions declare sound or particle aliases. The production player graph still needs the overlay stack. This evidence broadens the resource and pose gap beyond effect dispatch. All acquired content remains private.
