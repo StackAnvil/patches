@@ -620,3 +620,19 @@ Tests also check modern rotation decoding, legacy behavior, and posed model inte
 Sources: [Microsoft geometry reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/geometry.v1.21.0?view=minecraft-bedrock-stable) and [Blockbench locator import and export](https://github.com/JannisX11/blockbench/blob/master/js/formats/bedrock/bedrock.js). The matching executable establishes transform order and scale suppression.
 
 After integrating current main, all 289 fixture-enabled add-on tests pass with no failures or skips. This includes fresh standalone package acquisition, license decryption, extraction, and cache reuse with the expanded texture projection. The full dependency build and bundle pass after replaying all 15 add-on patches. The locator tests exercise the production posed model and metadata reader. They do not establish native visible parity.
+
+## Piece-specific color controls
+
+Color controls now require the equipped piece's decoded assets and an enabled tint override flag. Skin, hair, facial hair, mouth, and eyes retain their native channel order. Fixed-color pieces offer no editable channels. Unavailable assets keep controls disabled during loading. Account, profile, and piece changes invalidate old results. The save path checks equipped metadata, then checks the account profile again before writing. A slow package download cannot bypass the profile hash check.
+
+Bedrock 1.26.51.1 schema callbacks `148fa0750` and `148fa0960` map `allow_tint_override` to an optional boolean at metadata offset `0x298`. Live factory `1447526e0` uses that field for the piece's runtime flag at `0x410`. An omitted value defaults to enabled. Move constructor `14474a3b0` preserves the flag with the adjacent state bytes.
+
+Independent execution runs the factory assignment, move, and inspected legacy picker branches across 186 cases. These cover native types -1 through 29, loaded and unloaded pieces, and absent, false, or true overrides. The harness supplies decoded optional metadata and the piece-validity accessor. Native instructions choose the default, copy the state, reject unavailable controls, and select channels. The JSON decoder and other UI implementations remain outside these cases.
+
+The Java tests compare the same fixtures and read the licensed starter eye asset. They also reject conflicting metadata and invalid flags. Free pieces without usable receipt keys still lack decoded assets. Color editing still requires a saved four-channel tint group. Creating the first group, additional palette callers, and native visible picker comparisons remain unverified.
+
+Source lead: [LeviLamina's versioned persona metadata definition](https://github.com/LiteLDev/LeviLamina/blob/main/src/mc/deps/shared_types/v1_26_40/actor/PersonaPieceMeta.h). The matching executable establishes the field mapping and omitted-value behavior.
+
+All 293 fixture-enabled tests pass with no failures, errors, or skips. This includes fresh standalone package acquisition, extraction, and cache reuse. The new fixture cases establish metadata and channel decisions; the screen's asynchronous controls still need a native visible comparison.
+
+After moving asset acquisition before the final profile hash check, all 18 targeted color, tint, and recipe tests pass with no skips.
