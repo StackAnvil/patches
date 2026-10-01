@@ -1,0 +1,243 @@
+From d17cb8abc8219514b76ecef0e2fe874f0c79813a Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 00:00:06 +0200
+Subject: [PATCH] feat(resources): resolve licensed native vanilla images
+
+Servers can reference built-in Bedrock images without redistributing them.
+The saved official Bedrock 1.26.51.1 Hive stack uses native bread, bucket
+and potion images; bundled ViaBedrock vanilla packs supply definitions but
+omit these pixels. Register the typed built-in resource provider and obtain
+the matching official package through the selected account's existing
+licensed asset cache.
+
+ViaBedrock invokes acquisition on its resource-pack executor, so Store
+licensing, downloads and indexing never block the Netty event loop. With
+no selected account, return no additional layers and retain the core
+baseline. Keep native overlays bottom-to-top with exact path casing and
+PNG/JPG/TGA variants. Export only images plus synthetic identity manifests
+below the bundled definitions and all server packs; preserve higher-pack
+extension precedence and isolate mutable pack pixels from the asset cache.
+
+Synthetic tests cover no-account acquisition, native layer order, exact
+case, extension replacement, server priority and independent pixel copies.
+Licensed bytes, accounts and captures remain private.
+---
+ .../bedrock/ViaFabricPlusBedrock.java         |  3 +
+ .../appearance/BedrockResourceLibrary.java    | 29 +++++++
+ ...FabricPlusBuiltinResourcePackProvider.java | 43 +++++++++
+ ...icPlusBuiltinResourcePackProviderTest.java | 87 +++++++++++++++++++
+ 4 files changed, 162 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+index 3f458ef..60c4100 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+@@ -26,12 +26,14 @@ import com.viaversion.viafabricplus.api.entrypoint.ViaFabricPlusEntrypoint;
+ import com.viaversion.viafabricplus.bedrock.account.BedrockAccount;
+ import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
+ import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusSkinProvider;
++import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusBuiltinResourcePackProvider;
+ import com.viaversion.viafabricplus.bedrock.protocoltranslator.platform.ViaFabricPlusNettyPipelineProvider;
+ import com.viaversion.viafabricplus.bedrock.protocoltranslator.platform.ViaFabricPlusViaBedrockPlatform;
+ import com.viaversion.viafabricplus.bedrock.settings.BedrockSettings;
+ import com.viaversion.viaversion.api.Via;
+ import net.raphimc.viabedrock.protocol.provider.NettyPipelineProvider;
+ import net.raphimc.viabedrock.protocol.provider.SkinProvider;
++import net.raphimc.viabedrock.protocol.provider.BuiltinResourcePackProvider;
+ import net.raphimc.viabedrock.protocol.provider.EmoteProvider;
+ import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusEmoteProvider;
+ import org.apache.logging.log4j.LogManager;
+@@ -63,6 +65,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+         new ViaFabricPlusViaBedrockPlatform();
+         Via.getManager().getProviders().use(NettyPipelineProvider.class, new ViaFabricPlusNettyPipelineProvider());
+         Via.getManager().getProviders().use(SkinProvider.class, new ViaFabricPlusSkinProvider());
++        Via.getManager().getProviders().use(BuiltinResourcePackProvider.class, new ViaFabricPlusBuiltinResourcePackProvider());
+         Via.getManager().getProviders().use(EmoteProvider.class, new ViaFabricPlusEmoteProvider());
+     }
+ 
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
+index 3fc2611..78de0be 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
+@@ -186,6 +186,35 @@ final class BedrockResourceLibrary {
+         return this.packs.stream().map(Pack::name).toList();
+     }
+ 
++    /** Image-only layers in native order, without replacing the core's vanilla definitions. */
++    List<net.raphimc.viabedrock.api.resourcepack.ResourcePack> imagePacks() {
++        final List<net.raphimc.viabedrock.api.resourcepack.ResourcePack> result = new ArrayList<>();
++        for (final Pack pack : this.packs) {
++            final var content = new net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent();
++            for (final var entry : pack.files.entrySet()) {
++                final String path = entry.getKey();
++                if (path.startsWith("textures/")
++                        && (path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".tga")))
++                    content.put(path, entry.getValue().clone());
++            }
++            if (content.size() == 0) continue;
++            final JsonObject manifest = new JsonObject(), header = new JsonObject();
++            manifest.addProperty("format_version", 2);
++            header.addProperty("name", "Licensed Bedrock images: " + pack.name);
++            header.addProperty("uuid", java.util.UUID.nameUUIDFromBytes(
++                    ("viafabricplus-bedrock/builtin-images/" + pack.name).getBytes(StandardCharsets.UTF_8)).toString());
++            final JsonArray version = new JsonArray();
++            version.add(1);
++            version.add(0);
++            version.add(0);
++            header.add("version", version);
++            manifest.add("header", header);
++            content.putString("manifest.json", manifest.toString());
++            result.add(new net.raphimc.viabedrock.api.resourcepack.ResourcePack(content));
++        }
++        return List.copyOf(result);
++    }
++
+     byte[] file(final String path) throws IOException {
+         BedrockBuiltinAssets.validPath(path);
+         for (int index = this.packs.size() - 1; index >= 0; index--) {
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java
+new file mode 100644
+index 0000000..a2a72d6
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProvider.java
+@@ -0,0 +1,43 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.protocol.provider.BuiltinResourcePackProvider;
++
++import java.util.List;
++import java.util.function.Supplier;
++
++/** Resolves licensed native images on ViaBedrock's resource-pack worker. */
++public final class ViaFabricPlusBuiltinResourcePackProvider extends BuiltinResourcePackProvider {
++    private final Supplier<BedrockAuthManager> account;
++    private final LibraryLoader library;
++
++    public ViaFabricPlusBuiltinResourcePackProvider() {
++        this(() -> ViaFabricPlusBedrock.impl().account().get(),
++                account -> BedrockBuiltinAssets.load(account).library());
++    }
++
++    ViaFabricPlusBuiltinResourcePackProvider(final Supplier<BedrockAuthManager> account, final LibraryLoader library) {
++        this.account = account;
++        this.library = library;
++    }
++
++    @Override
++    public List<ResourcePack> load(final UserConnection user) throws Exception {
++        final BedrockAuthManager selected = this.account.get();
++        if (selected == null) return List.of();
++        return this.library.load(selected).imagePacks();
++    }
++
++    @FunctionalInterface
++    interface LibraryLoader {
++        BedrockResourceLibrary load(BedrockAuthManager account) throws Exception;
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java
+new file mode 100644
+index 0000000..f03be70
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusBuiltinResourcePackProviderTest.java
+@@ -0,0 +1,87 @@
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import net.raphimc.minecraftauth.MinecraftAuth;
++import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
++import net.raphimc.minecraftauth.msa.model.MsaToken;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class ViaFabricPlusBuiltinResourcePackProviderTest {
++    @Test
++    void leavesBaselineUnchangedWithoutAnAccount() throws Exception {
++        final var provider = new ViaFabricPlusBuiltinResourcePackProvider(() -> null, account -> {
++            throw new AssertionError("Missing accounts must not acquire licensed resources");
++        });
++        assertTrue(provider.load(null).isEmpty());
++    }
++
++    @Test
++    void preservesNativeLayersAndExactPathsWithoutExportingDefinitions() throws Exception {
++        final Map<String, byte[]> files = new LinkedHashMap<>();
++        files.put("library/vanilla_1.10/textures/items/shared.tga", new byte[] {10});
++        files.put("library/vanilla/textures/items/shared.png", new byte[] {1});
++        files.put("library/vanilla_1.9/textures/items/shared.png", new byte[] {9});
++        files.put("library/vanilla_base/textures/items/CaseSensitive.jpg", new byte[] {2});
++        files.put("library/vanilla/textures/item_texture.json", new byte[] {'{', '}'});
++        files.put("library/vanilla/entity/player.entity.json", new byte[] {'{', '}'});
++        files.put("library/vanilla_1.11/manifest.json", new byte[] {'{', '}'});
++        final var library = BedrockResourceLibrary.read(files);
++        final var packs = library.imagePacks();
++        assertEquals(4, packs.size());
++        assertArrayEquals(new byte[] {1}, packs.get(0).content().get("textures/items/shared.png"));
++        assertArrayEquals(new byte[] {2}, packs.get(1).content().get("textures/items/CaseSensitive.jpg"));
++        assertNull(packs.get(1).content().get("textures/items/casesensitive.jpg"));
++        assertArrayEquals(new byte[] {9}, packs.get(2).content().get("textures/items/shared.png"));
++        assertArrayEquals(new byte[] {10}, packs.get(3).content().get("textures/items/shared.tga"));
++        for (final ResourcePack pack : packs) {
++            assertFalse(pack.content().contains("textures/item_texture.json"));
++            assertFalse(pack.content().contains("entity/player.entity.json"));
++        }
++        assertEquals(4, packs.stream().map(ResourcePack::key).distinct().count());
++        assertEquals(packs.stream().map(ResourcePack::key).toList(),
++                library.imagePacks().stream().map(ResourcePack::key).toList());
++        packs.getFirst().content().get("textures/items/shared.png")[0] = 99;
++        assertArrayEquals(new byte[] {1}, files.get("library/vanilla/textures/items/shared.png"));
++        assertArrayEquals(new byte[] {1}, library.imagePacks().getFirst().content().get("textures/items/shared.png"));
++    }
++
++    @Test
++    void loadsCapturedAccountAndResolvesHigherNativeExtensionsBelowServerOverrides() throws Exception {
++        final BedrockAuthManager account = BedrockAuthManager.create(MinecraftAuth.createHttpClient(), "1.26.51")
++                .login(new MsaToken(Long.MAX_VALUE, "synthetic", "synthetic"));
++        final var library = BedrockResourceLibrary.read(Map.of(
++                "library/vanilla/textures/items/shared.png", new byte[] {1},
++                "library/vanilla_1.26.51/textures/items/shared.tga", new byte[] {2}));
++        final var provider = new ViaFabricPlusBuiltinResourcePackProvider(() -> account, selected -> {
++            assertSame(account, selected);
++            return library;
++        });
++        final var builtin = provider.load(null);
++        final var stack = new ResourcePackStorage(List.of(), builtin);
++        assertArrayEquals(new byte[] {2}, selectedImage(stack, "textures/items/shared"));
++
++        final var serverContent = new InMemoryContent();
++        serverContent.putString("manifest.json", "{\"format_version\":2,\"header\":{\"name\":\"server\","
++                + "\"uuid\":\"6c9c1d60-6b4c-4ddb-b0be-8531a370f405\",\"version\":[1,0,0]}}");
++        serverContent.put("textures/items/shared.png", new byte[] {3});
++        final var server = new ResourcePack(serverContent);
++        assertArrayEquals(new byte[] {3}, selectedImage(new ResourcePackStorage(List.of(server), builtin),
++                "textures/items/shared"));
++    }
++
++    private static byte[] selectedImage(final ResourcePackStorage stack, final String path) {
++        for (final ResourcePack pack : stack.getPackStackTopToBottom()) {
++            final String fullPath = pack.content().getFullPath(path, "png", "jpg", "tga");
++            if (fullPath != null) return pack.content().get(fullPath);
++        }
++        return null;
++    }
++}
+-- 
+2.55.0

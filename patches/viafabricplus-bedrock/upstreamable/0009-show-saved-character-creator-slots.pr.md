@@ -596,3 +596,13 @@ A muted Java 26.3 world probe verifies the actor adapter and immutable matrix sn
 The same probe compares 49 matrix products against independent execution of native function `140544f00`. Every float32 output matches exactly. These products use supplied matrices. They do not establish native locator construction or visible scale parity.
 
 The world probe uses the existing protocol 2169 server through its Java proxy route. Direct protocol 2193 joins and native visible comparisons remain unverified.
+
+### Complete native texture projection
+
+The saved official Bedrock 1.26.51.1 Hive stack references built-in bread, bucket and potion images. Extend the licensed package projection from appearance and particle images to every native texture image and texture archive. Preserve path case and all versioned overlays. Cache schema 6 rejects the previous projection and requires a native item image library before atomic publication.
+
+The native helper has four passing unit tests. Its two licensed package probes remain private and were not run for this change. Cache tests cover previous schemas and incomplete image refreshes. The matching package must be acquired again before the Java renderer can use the added images.
+
+The complete matching texture projection measures 4,044 raw files and 149,413,613 bytes, expanding to 18,173 logical files and 211,829,122 bytes. Keep separate 256 MiB limits for raw input and logical output. Archive bytes must not be counted twice. Retain the 8,192-file input limit and bound expanded content at 32,768 files, including the cache readback path. The 32 MiB per-file limit remains in place.
+
+Targeted Java validation passes: 20 tests pass with no failures or errors; two private licensed acquisition probes are skipped. Small synthetic archives exercise both byte budgets, shared offsets, cache roundtrip above the raw file limit, and the 32,768-file boundary. Main and test compilation pass. This add-on does not configure a Checkstyle task.

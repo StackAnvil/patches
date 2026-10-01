@@ -1,0 +1,307 @@
+From bde1561bdea6354309b11a3d136deac3a6577816 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 23:58:59 +0200
+Subject: [PATCH] feat(resource-packs): resolve licensed native image fallbacks
+
+Bedrock 1.26.51.1 protocol 2193 accepts Hive item atlas aliases to vanilla images which the server does not resend. The bundled metadata archives intentionally contain no images, leaving these aliases unresolved during Java conversion.
+
+Expose a platform provider for licensed image-only resource layers. Acquire them on the existing pack executor and wait alongside the server download without blocking its Netty event loop. Preserve native overlay precedence below bundled metadata and server packs, include their exact pixels in conversion cache fingerprints, and keep them outside server advertisements and pack identity tracking.
+---
+ .../viabedrock/protocol/BedrockProtocol.java  |  2 +
+ .../protocol/packet/ResourcePackPackets.java  |  2 +-
+ .../provider/BuiltinResourcePackProvider.java | 26 +++++++
+ .../storage/ResourcePackLoadStateTracker.java | 19 ++++-
+ .../protocol/storage/ResourcePackStorage.java | 17 +++++
+ .../http/ConvertedResourcePackCacheTest.java  | 22 ++++++
+ .../resourcepack/ModelResourceAssetsTest.java | 75 +++++++++++++++++++
+ 7 files changed, 159 insertions(+), 4 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/provider/BuiltinResourcePackProvider.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+index 78e16922..cd0831e3 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+@@ -45,6 +45,7 @@ import net.raphimc.viabedrock.protocol.packet.*;
+ import net.raphimc.viabedrock.protocol.provider.BlobCacheProvider;
+ import net.raphimc.viabedrock.protocol.provider.NettyPipelineProvider;
+ import net.raphimc.viabedrock.protocol.provider.ResourcePackProvider;
++import net.raphimc.viabedrock.protocol.provider.BuiltinResourcePackProvider;
+ import net.raphimc.viabedrock.protocol.provider.SkinProvider;
+ import net.raphimc.viabedrock.protocol.provider.EmoteProvider;
+ import net.raphimc.viabedrock.protocol.rewriter.InventoryTransactionRewriter;
+@@ -130,6 +131,7 @@ public class BedrockProtocol
+         providers.require(NettyPipelineProvider.class);
+         providers.register(ResourcePackProvider.class, ViaBedrock.getConfig().getPackCacheMode().createProvider());
+         providers.register(BlobCacheProvider.class, ViaBedrock.getConfig().getBlobCacheMode().createProvider());
++        providers.register(BuiltinResourcePackProvider.class, new BuiltinResourcePackProvider());
+         providers.register(SkinProvider.class, new SkinProvider());
+         providers.register(EmoteProvider.class, new EmoteProvider());
+ 
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
+index 5a54fc63..57976037 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackPackets.java
+@@ -274,7 +274,7 @@ public final class ResourcePackPackets {
+                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing resource pack: " + key);
+             }
+         }
+-        final ResourcePackStorage storage = new ResourcePackStorage(resourcePacks);
++        final ResourcePackStorage storage = new ResourcePackStorage(resourcePacks, loadStateTracker.getBuiltinResourcePacks());
+         user.put(storage);
+ 
+         if (shouldTranslate(user)) {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/provider/BuiltinResourcePackProvider.java b/src/main/java/net/raphimc/viabedrock/protocol/provider/BuiltinResourcePackProvider.java
+new file mode 100644
+index 00000000..542d9d32
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/provider/BuiltinResourcePackProvider.java
+@@ -0,0 +1,26 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.provider;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.platform.providers.Provider;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++
++import java.util.List;
++
++/** Supplies licensed native images missing from the bundled metadata packs. */
++public class BuiltinResourcePackProvider implements Provider {
++
++    /**
++     * Called on the resource pack executor, where acquisition may block.
++     * Return image-only packs (plus manifests) in bottom-to-top order, or an empty list.
++     * The packs supply lower-priority images and is never advertised to the server.
++     */
++    public List<ResourcePack> load(final UserConnection user) throws Exception {
++        return List.of();
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java
+index 47cf78ae..329d1272 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTracker.java
+@@ -28,6 +28,7 @@ import net.raphimc.viabedrock.api.resourcepack.http.BedrockPackDownloader;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.packet.ResourcePackClientResponse;
++import net.raphimc.viabedrock.protocol.provider.BuiltinResourcePackProvider;
+ import net.raphimc.viabedrock.protocol.provider.ResourcePackProvider;
+ 
+ import java.net.URL;
+@@ -49,6 +50,7 @@ public class ResourcePackLoadStateTracker extends StoredObject {
+         return thread;
+     }, null, true);
+     private final CompletableFuture<Void> loadFuture = new CompletableFuture<>();
++    private CompletableFuture<List<ResourcePack>> builtinFuture = CompletableFuture.completedFuture(List.of());
+     private volatile boolean stackReceived;
+ 
+     public ResourcePackLoadStateTracker(final UserConnection user, final ResourcePackLoadStateTracker.Info[] infos) {
+@@ -86,9 +88,16 @@ public class ResourcePackLoadStateTracker extends StoredObject {
+     }
+ 
+     public CompletableFuture<Void> loadRequestedResourcePacks() {
++        this.builtinFuture = CompletableFuture.supplyAsync(() -> {
++            try {
++                return Via.getManager().getProviders().get(BuiltinResourcePackProvider.class).load(this.user());
++            } catch (final Exception e) {
++                throw new CompletionException("Failed to load built-in resource images", e);
++            }
++        }, this.executor);
+         if (this.requests.isEmpty()) {
+             this.loadFuture.complete(null);
+-            return this.loadFuture;
++            return this.loadedFuture();
+         }
+         final List<Callable<Void>> asyncTasks = new ArrayList<>();
+         final List<ResourcePack.Key> downloadList = Collections.synchronizedList(new ArrayList<>());
+@@ -147,7 +156,7 @@ public class ResourcePackLoadStateTracker extends StoredObject {
+             this.loadFuture.completeExceptionally(e);
+             return null;
+         });
+-        return this.loadFuture;
++        return this.loadedFuture();
+     }
+ 
+     public void loadUnrequestedResourcePacks(final ResourcePack.Key[] keys) {
+@@ -168,7 +177,11 @@ public class ResourcePackLoadStateTracker extends StoredObject {
+     }
+ 
+     public CompletableFuture<Void> loadedFuture() {
+-        return this.loadFuture;
++        return CompletableFuture.allOf(this.loadFuture, this.builtinFuture);
++    }
++
++    public List<ResourcePack> getBuiltinResourcePacks() {
++        return this.builtinFuture.join();
+     }
+ 
+     public void markStackReceived() {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
+index bc708a96..66931e7d 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
+@@ -53,6 +53,19 @@ public class ResourcePackStorage implements StorableObject {
+     private final RenderControllerDefinitions renderControllers;
+ 
+     public ResourcePackStorage(final List<ResourcePack> resourcePacksTopToBottom) {
++        this(resourcePacksTopToBottom, List.of());
++    }
++
++    public ResourcePackStorage(final List<ResourcePack> resourcePacksTopToBottom, final List<ResourcePack> builtinImagesBottomToTop) {
++        for (ResourcePack builtinImages : builtinImagesBottomToTop) {
++            for (String path : builtinImages.content().getFilesDeep("", "")) {
++                if (!path.equals("manifest.json") && !(path.startsWith("textures/")
++                        && (path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".tga")))) {
++                    throw new IllegalArgumentException("Built-in image pack contains a non-image resource: " + path);
++                }
++            }
++            this.packStackBottomToTop.add(builtinImages);
++        }
+         final List<ResourcePack> orderedPacks = ResourcePackStack.orderTopToBottom(resourcePacksTopToBottom);
+         this.serverPacks.addAll(orderedPacks);
+         if (BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks() != null) { // null if ran from ResourcePackConverterTest
+@@ -68,6 +81,10 @@ public class ResourcePackStorage implements StorableObject {
+             }
+         }
+ 
++        for (int i = builtinImagesBottomToTop.size() - 1; i >= 0; i--) {
++            this.packStackTopToBottom.add(builtinImagesBottomToTop.get(i));
++        }
++
+         this.texts = new TextDefinitions(this);
+         this.blocks = new BlockDefinitions(this);
+         this.items = new ItemDefinitions(this);
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
+index 7c032274..52eece5d 100644
+--- a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
+@@ -25,6 +25,7 @@ import net.raphimc.viabedrock.platform.ViaBedrockConfig;
+ import org.junit.jupiter.api.Test;
+ import org.junit.jupiter.api.io.TempDir;
+ 
++import java.awt.image.BufferedImage;
+ import java.nio.file.Files;
+ import java.nio.file.Path;
+ import java.util.List;
+@@ -56,6 +57,27 @@ class ConvertedResourcePackCacheTest {
+         assertNotEquals(ConvertedResourcePackCache.fingerprint(List.of(original)), ConvertedResourcePackCache.fingerprint(List.of(updated)));
+     }
+ 
++    @Test
++    void licensedBaselinePixelsParticipateInTheConvertedCacheIdentity() {
++        final UUID id = UUID.randomUUID();
++        final ResourcePack original = imagePack(id, 0xFF123456);
++        final ResourcePack changed = imagePack(id, 0xFFABCDEF);
++        final ResourcePack same = imagePack(id, 0xFF123456);
++        final ResourcePackStorage first = new ResourcePackStorage(List.of(), List.of(original));
++        assertEquals(ConvertedResourcePackCache.fingerprint(first), ConvertedResourcePackCache.fingerprint(new ResourcePackStorage(List.of(), List.of(same))));
++        assertNotEquals(ConvertedResourcePackCache.fingerprint(first), ConvertedResourcePackCache.fingerprint(new ResourcePackStorage(List.of(), List.of(changed))));
++        assertNotEquals(ConvertedResourcePackCache.fingerprint(first), ConvertedResourcePackCache.fingerprint(new ResourcePackStorage(List.of())));
++    }
++
++    private static ResourcePack imagePack(final UUID id, final int pixel) {
++        final InMemoryContent content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":3,\"header\":{\"uuid\":\"" + id + "\",\"version\":\"1.0.0\",\"name\":\"test\"}}");
++        final var image = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
++        image.setRGB(0, 0, pixel);
++        content.putPngImage("textures/items/native.png", image);
++        return new ResourcePack(content);
++    }
++
+     @Test
+     void selectedSubpackChangesCacheIdentity() {
+         final InMemoryContent content = new InMemoryContent();
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
+index e1edc978..e045ade2 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
+@@ -62,6 +62,81 @@ class ModelResourceAssetsTest {
+         }
+     }
+ 
++    @Test
++    void resolvesCaseSensitiveVanillaItemAliasesFromBuiltInImages() {
++        final ResourcePack server = itemAtlas("textures/items/nativeBottle");
++        final ResourcePack builtin = imagePack("textures/items/nativeBottle.png", 0xFF123456);
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(server), List.of(builtin));
++        final Content result = convert(storage, new CustomItemTextureResourceRewriter());
++        final JsonObject model = result.getJson("assets/viabedrock/models/item_textures/example/icon/0.json");
++        final String texture = model.getAsJsonObject("textures").get("layer0").getAsString();
++        final BufferedImage image = result.getImage("assets/viabedrock/textures/" + texture.substring("viabedrock:".length()) + ".png").getImage();
++        assertEquals(0xFF123456, image.getRGB(0, 0));
++        assertTrue(storage.isServerPack(server));
++        assertFalse(storage.isServerPack(builtin));
++        assertEquals(List.of(server, builtin), List.copyOf(storage.getPackStackTopToBottom()));
++    }
++
++    @Test
++    void serverImagesOverrideLicensedBaselineWithoutReplacingAtlasAliases() {
++        final ResourcePack server = itemAtlas("textures/items/nativeBottle");
++        server.content().put("textures/items/nativeBottle.png", imagePack("textures/items/nativeBottle.png", 0xFFABCDEF).content().get("textures/items/nativeBottle.png"));
++        final ResourcePack builtin = imagePack("textures/items/nativeBottle.png", 0xFF123456);
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(server), List.of(builtin));
++        final Content result = convert(storage, new CustomItemTextureResourceRewriter());
++        final JsonObject model = result.getJson("assets/viabedrock/models/item_textures/example/icon/0.json");
++        final String texture = model.getAsJsonObject("textures").get("layer0").getAsString();
++        assertEquals(0xFFABCDEF, result.getImage("assets/viabedrock/textures/" + texture.substring("viabedrock:".length()) + ".png").getImage().getRGB(0, 0));
++    }
++
++    @Test
++    void higherNativeOverlayUsesItsTgaBeforeLowerPngImages() {
++        final ResourcePack server = itemAtlas("textures/items/nativeBottle");
++        final ResourcePack lower = imagePack("textures/items/nativeBottle.png", 0xFF123456);
++        final InMemoryContent overlayContent = new InMemoryContent();
++        overlayContent.put("manifest.json", imagePack("textures/unused.png", 0).content().get("manifest.json"));
++        final byte[] tga = new byte[22];
++        tga[2] = 2;
++        tga[12] = 1;
++        tga[14] = 1;
++        tga[16] = 32;
++        tga[17] = 0x28;
++        tga[18] = (byte) 0xEF;
++        tga[19] = (byte) 0xCD;
++        tga[20] = (byte) 0xAB;
++        tga[21] = (byte) 0xFF;
++        overlayContent.put("textures/items/nativeBottle.tga", tga);
++        final ResourcePack higher = new ResourcePack(overlayContent);
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(server), List.of(lower, higher));
++        final Content result = convert(storage, new CustomItemTextureResourceRewriter());
++        final JsonObject model = result.getJson("assets/viabedrock/models/item_textures/example/icon/0.json");
++        final String texture = model.getAsJsonObject("textures").get("layer0").getAsString();
++        assertEquals(0xFFABCDEF, result.getImage("assets/viabedrock/textures/" + texture.substring("viabedrock:".length()) + ".png").getImage().getRGB(0, 0));
++        assertEquals(List.of(server, higher, lower), List.copyOf(storage.getPackStackTopToBottom()));
++    }
++
++    @Test
++    void rejectsMetadataInTheImageBaseline() {
++        final ResourcePack builtin = itemAtlas("textures/items/nativeBottle");
++        assertThrows(IllegalArgumentException.class, () -> new ResourcePackStorage(List.of(), List.of(builtin)));
++    }
++
++    private static ResourcePack itemAtlas(final String path) {
++        final InMemoryContent content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":3,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":\"1.0.0\",\"name\":\"test\"}}");
++        content.putString("textures/item_texture.json", "{\"texture_data\":{\"example:icon\":{\"textures\":\"" + path + "\"}}}");
++        return new ResourcePack(content);
++    }
++
++    private static ResourcePack imagePack(final String path, final int pixel) {
++        final InMemoryContent content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":3,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":\"1.0.0\",\"name\":\"test\"}}");
++        final BufferedImage image = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
++        image.setRGB(0, 0, pixel);
++        content.putPngImage(path, image);
++        return new ResourcePack(content);
++    }
++
+     private static Content convert(final ResourcePackStorage storage, final ResourcePackRewriter.Rewriter rewriter) {
+         final Content result = new InMemoryContent();
+         rewriter.submitTasks(storage, task -> result.putAll(task.get()));
+-- 
+2.55.0
