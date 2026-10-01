@@ -585,7 +585,7 @@ Independent native execution supplies 192 actor matrix cases, 60 birth cases, 19
 
 World playback samples interpolated actor position and body yaw. Posed bone matrices supply locator rotation and scale; translations convert from pixels. Each attachment owns its matrix snapshot. Geometry tests verify rotated bone axes, inherited scale, scale discard, and world translation.
 
-Authored locator rotation, registry-only actor lookup, native locator construction, GPU billboard orientation, and visible native scale remain unverified. Production still needs native render interpolation comparisons. These checks do not establish complete particle or skin parity. Executables, probes, assets, screenshots, and fixtures remain private.
+Native authored rotation decoding, registry-only actor lookup, world locator construction, GPU billboard orientation, and visible native scale remain unverified. Production still needs native render interpolation comparisons. These checks do not establish complete particle or skin parity. Executables, probes, assets, screenshots, and fixtures remain private.
 
 ### Attachment verification
 
@@ -606,3 +606,17 @@ The native helper has four passing unit tests. Its two licensed package probes r
 The complete matching texture projection measures 4,044 raw files and 149,413,613 bytes, expanding to 18,173 logical files and 211,829,122 bytes. Keep separate 256 MiB limits for raw input and logical output. Archive bytes must not be counted twice. Retain the 8,192-file input limit and bound expanded content at 32,768 files, including the cache readback path. The 32 MiB per-file limit remains in place.
 
 Targeted Java validation passes: 20 tests pass with no failures or errors; two private licensed acquisition probes are skipped. Small synthetic archives exercise both byte budgets, shared offsets, cache roundtrip above the raw file limit, and the 32,768-file boundary. Main and test compilation pass. This add-on does not configure a Checkstyle task.
+
+## Locator rotation and scale suppression
+
+Modern geometry locators now retain authored rotation and compose it after the animated bone transform. Legacy document locators retain their existing offset behavior. Both forms preserve the scaled attachment position when `ignore_inherited_scale` is enabled. The renderer previously removed bone scale before translation, which moved the attachment point incorrectly.
+
+Bedrock 1.26.51.1 locator update `141c362e0` composes translation and locator rotation before calling final matrix setter `142088320`. That setter normalizes the final direction axes when scale suppression is enabled. It preserves the matrix translation. Rotation uses stored radians and a Z-Y-X quaternion composition.
+
+Independent execution supplies 144 cases with axis rotations, combined rotations, reflected and nonuniform scale, shear, and several offsets. Production matches the final matrix within 0.000005. The probe supplies resolved bone matrices, preprocessed locator offsets, stored radians, actor translation, and unit conversion. Actual composition, quaternion math, matrix multiplication, and final scale suppression execute. Imported float sine and cosine are supplied.
+
+Tests also check modern rotation decoding, legacy behavior, and posed model integration. Native geometry parsing, bone hierarchy, actor transforms, and visible comparisons remain outside these fixtures. Licensed assets, executables, and execution fixtures stay private.
+
+Sources: [Microsoft geometry reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/geometry.v1.21.0?view=minecraft-bedrock-stable) and [Blockbench locator import and export](https://github.com/JannisX11/blockbench/blob/master/js/formats/bedrock/bedrock.js). The matching executable establishes transform order and scale suppression.
+
+After integrating current main, all 289 fixture-enabled add-on tests pass with no failures or skips. This includes fresh standalone package acquisition, license decryption, extraction, and cache reuse with the expanded texture projection. The full dependency build and bundle pass after replaying all 15 add-on patches. The locator tests exercise the production posed model and metadata reader. They do not establish native visible parity.
