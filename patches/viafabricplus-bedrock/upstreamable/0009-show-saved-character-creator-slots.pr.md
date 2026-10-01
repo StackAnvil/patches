@@ -296,7 +296,7 @@ The native timeline sound schema in `FUN_141bcfd40` declares an effect name and 
 
 The sound path executes inside `FUN_141e68a20`. It resolves aliases through the table at player offset `0xc0`. It appends 80-byte requests with the resolved sound name and authored locator to an actor component. Nineteen native cases verify missing aliases, missing bindings, unavailable actor context, event boundaries, exact loop boundaries, wrapping, and suppression without catch-up. The harness supplies component lookup and memory-copy boundaries. The sound path follows particle dispatch and precedes timeline scripts.
 
-These checks establish queue contents. They do not establish audio output, locator resolution at playback, sound parameters, captions, or cleanup.
+These queue checks establish queue contents. The consumer and backend checks below establish position requests and some parameters. Audible output, captions, and production playback remain incomplete.
 
 Independent execution of `FUN_1401c3340` verifies 64 resource availability and lifetime cases. The binder acquires the actor resource and animation definition through two weak references. It assigns the particle table through `FUN_141e69a40` and the sound table through `FUN_141e69a50`. The tables come from definition offsets `0x220` and `0x2b8`. The client-entity parser writes sound aliases to the latter table through `FUN_141d637a0`.
 
@@ -379,3 +379,17 @@ Sources: [Resource overrides](https://learn.microsoft.com/en-us/minecraft/creato
 The replayed full stack builds and the Prism bundle assembles successfully. A rebuilt Java client passes 722 checks with licensed overlays and a synthetic skin texture. The probe verifies layer selection, the player definition, preview geometry, world-model geometry, and repeated-frame handling. It changes no account recipes. Native visible motion comparison remains pending.
 
 The replayed add-on suite passes all 214 fixture-enabled tests with no skips, including fresh acquisition through the bundled helper.
+
+## Native sound consumer and backend
+
+Bedrock 1.26.51.1's sound queue consumer `FUN_146686950` calls `SoundEngine::playAttached`. Constructor and destructor references identify the engine vtable. A read-only lookup in the running target client identifies the backend method.
+
+The position callback `FUN_14668ffd0` checks the actor's weak reference, registry, entity generation, component, and removal state. A valid locator supplies its current position. A missing locator uses actor position. An unavailable actor leaves the supplied properties unchanged. Independent execution verifies 256 availability, movement, property preservation, and reference cases. External boundaries supply locator resources and the locator lookup.
+
+The engine method `FUN_1441c2ff0` resolves the catalog event before it invokes the backend. A missing event returns the invalid handle without invoking the position callback. The inspected backend method `FUN_14b3b53a0` initializes properties to zero and invokes the callback once. It passes the resulting position to ordinary playback with volume `2`, pitch `1`, and no server sound handle. It does not retain this callback for later movement.
+
+Independent execution verifies 512 cases through the engine method, backend method, and actual position callback. The harness supplies catalog lookup and captures the final playback request. Native code executes the availability checks, position resolution, defaults, and reference cleanup. These cases do not produce audible output.
+
+The backend's ordinary playback method selects a sample by its integer weight. Zero-weight samples receive no selection interval. An event with no total weight returns the invalid handle. Selected sample volume and pitch multiply the incoming values. A nonpositional override clears the selected sample's positional flag. Another 328 native cases verify selection boundaries, zero weights, multipliers, positional overrides, and handle allocation. The harness supplies the random draw and stops before sample loading.
+
+These results establish requests and parameters for the inspected target backend. They do not establish attenuation, category volume, captions, audible output, or native multiplayer results. Production still needs effect resource bindings, locator transforms, dispatch, audio output, and cleanup. Private executables, memory leads, probes, and licensed assets remain outside the patch.

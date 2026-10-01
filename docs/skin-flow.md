@@ -242,7 +242,13 @@ The native particle callback resolves aliases, chooses locator or actor position
 
 Timeline sound declarations contain an effect name and an optional locator. The native parser adds their timestamp to a 104-byte record. Fourteen constructor cases and 24 ordering cases verify defaults, float conversion, and a stable timestamp sort. The animation player queues resolved sounds after particle dispatch and before timeline scripts.
 
-Nineteen native queue cases verify alias availability, missing actor context, event boundaries, loops, and suppression without later catch-up. The harness supplies component lookup and memory-copy boundaries. Audio output, locator resolution at playback, volume, pitch, captions, and cleanup remain unverified.
+Nineteen native queue cases verify alias availability, missing actor context, event boundaries, loops, and suppression without later catch-up. The harness supplies component lookup and memory-copy boundaries. These cases establish queue contents.
+
+The sound consumer passes a position callback to the sound engine. Native callback execution verifies 256 actor availability, moving locator, position fallback, property preservation, and reference cases. Constructor references and a read-only lookup in the running target client identify the engine and backend methods.
+
+Another 512 native cases execute the engine method, backend method, and actual position callback together. A missing catalog event produces no request. The inspected backend invokes the callback once, then requests ordinary playback with volume `2`, pitch `1`, and no server sound handle. It does not retain the callback for later movement. The harness supplies catalog lookup and captures the playback request without audio output.
+
+Another 328 native cases verify weighted sample selection, zero weights, sample volume and pitch multipliers, positional overrides, and handle allocation. The harness supplies the random draw and stops before sample loading. Attenuation, category volume, captions, audible output, and production effect playback remain incomplete.
 
 Another native probe verifies 64 binding availability and lifetime cases. The binder assigns separate particle and sound tables through two weak resources. Absent or expired resources leave existing bindings unchanged. This verifies native table assignment, not production resource loading or named actor events. The native emote loader adds its first declared source to the shared actor-animation library.
 
