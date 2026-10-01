@@ -425,3 +425,15 @@ The inspected mixer initializer creates effects, music, and text-to-speech group
 Another 80 native cases execute weighted dispatch and the actual category map search up to stream construction. They verify category lookup, case differences, missing groups, fallback, and null group values. The harness supplies the random draw, allocation, and imported memory comparison. The initializer hierarchy is inspected evidence; these cases do not execute its creation or verify volume sliders and audible mixing.
 
 Sources: [Mojang sound schema](https://github.com/Mojang/bedrock-schemas/blob/main/schemas/rp/sounds/index.schema.json), [FMOD mode flags](https://www.fmod.com/docs/2.03/api/core-api-common.html#fmod_mode), and [FMOD sound distance behavior](https://www.fmod.com/docs/2.03/api/core-api-sound.html#sound_set3dminmaxdistance). The target executable establishes the version-specific reader and setup behavior.
+
+### Resolve authored sound samples
+
+Parse the effective vanilla catalog into immutable sound events after versioned overrides. Preserve authored sample order, integer weights, scalar volume and pitch, streaming flags, subtitle keys, raw distances, and the legacy distance flag. Keep category defaults separate from the case-sensitive playback group lookup. An explicit `is3D` value remains the default for later samples. Selected FSB banks resolve through the same versioned library and existing bounded decoder.
+
+Another 238 executable cases verify scalar conversions across null, boolean, integer, fractional, string, array, and object values. Null retains each field's default. Numeric strings, arrays, and objects convert to zero for numeric parameters. Nonempty strings and containers are true for boolean flags, including the string `false`. Java fixture comparisons now cover 1,187 native catalog, scalar, weighted-selection, category-routing, and attenuation cases.
+
+An integration test traverses the matching licensed catalog, selects its positive-weight samples, and resolves available FSB banks. It compares decoded PCM, dimensions, and loop boundaries with the independent reference. Tests also check selection limits and cache rollback after a malformed catalog. Licensed assets, native executables, and oracle fixtures remain private.
+
+This change establishes sound resource selection and requested parameters. It does not implement animation effect dispatch, OGG output, locator transforms, audio channels, captions, or audible mixing. The acquired library contains unresolved sample references, including music assets. Their presence does not establish that the official package lacks those files.
+
+The replayed full stack passes all 237 fixture-enabled add-on tests with no skips, including fresh licensed package acquisition and cache reuse. These checks do not establish audible effect playback.
