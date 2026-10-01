@@ -12,9 +12,10 @@ import { activeDisplay, displayEnv, ensureDisplay, stopDisplay } from "../lab/di
 import { root } from "../model.ts";
 import { artifact, installPrism } from "../prism.ts";
 import { installEntityProbe, waitForProbe } from "./entity-probe.ts";
-import { gameplayCaseIds, installProbeGuiScale, runGameplayCases, type GameplayCaseId } from "./gameplay-probe.ts";
+import { allGameplayCaseIds, gameplayCaseIds, installProbeGuiScale, runGameplayCases, type GameplayCaseId } from "./gameplay-probe.ts";
+import { convertedGeyserTexturesMatch, geyserBedrockVersion, geyserCaseIds, geyserEntityUpdatesMatch, installJavaProbe } from "./geyser.ts";
 import { convertedPackCount, convertedTextureMatches, installResourceProbe } from "./resource-probe.ts";
-import { waitForJoin, type JoinRoute } from "./join.ts";
+import { connectionFailure, waitForJoin, type JoinRoute } from "./join.ts";
 import { installModpack } from "./modpack.ts";
 
 const execute = promisify(execFile);
@@ -109,17 +110,35 @@ async function vanillaServer(): Promise<string> {
   return file;
 }
 
-async function javaServer(dir: string): Promise<{ child: ChildProcess; log: string; port: number }> {
+async function javaServer(dir: string, geyser = false): Promise<{ child: ChildProcess; log: string; port: number; bedrockPort?: number }> {
   const port = await tcpPort();
-  const jar = await vanillaServer();
-  const home = join(dir, "java-server");
+  const bedrockPort = geyser ? await udpPort() : undefined;
+  const home = join(dir, geyser ? "geyser-server" : "java-server");
   await mkdir(home, { recursive: true, mode: 0o700 });
+  const jar = bedrockPort ? await installJavaProbe(home, bedrockPort) : await vanillaServer();
   await writeFile(join(home, "eula.txt"), "eula=true\n");
-  await writeFile(join(home, "server.properties"), `server-port=${port}\nserver-ip=127.0.0.1\nonline-mode=false\nenforce-secure-profile=false\nwhite-list=false\nenforce-whitelist=false\nallow-flight=true\nmax-players=4\nmotd=StackAnvil integration\n`);
-  const log = join(dir, "java-server.log");
+  const properties = [
+    `server-port=${port}`, "server-ip=127.0.0.1", "online-mode=false", "enforce-secure-profile=false",
+    "white-list=false", "enforce-whitelist=false", "allow-flight=true", "max-players=4", "motd=StackAnvil integration",
+  ];
+  if (geyser) properties.push(
+    "level-type=minecraft:flat",
+    `generator-settings=${JSON.stringify({ layers: [
+      { block: "minecraft:bedrock", height: 1 }, { block: "minecraft:dirt", height: 2 },
+      { block: "minecraft:grass_block", height: 1 },
+    ], biome: "minecraft:plains" })}`,
+    "level-seed=8675309", "view-distance=6", "simulation-distance=6",
+  );
+  await writeFile(join(home, "server.properties"), `${properties.join("\n")}\n`);
+  const log = join(dir, geyser ? "geyser-server.log" : "java-server.log");
   const child = service(Bun.which("java") ?? "java", ["-Xmx2G", "-jar", jar, "nogui"], home, log, process.env, true);
   await waitForLog(log, /Done \(/, child, 120_000);
-  return { child, log, port };
+  if (geyser) {
+    await waitForLog(log, /\[StackAnvil Java Probe\] ready/, child);
+    await waitForLog(log, /\[StackAnvil Geyser Probe\] ready/, child);
+    await waitForLog(log, /Started Geyser on.*127\.0\.0\.1/, child);
+  }
+  return { child, log, port, bedrockPort };
 }
 
 async function bedrockServer(dir: string, source: string, name: string, entityProbe = false,
@@ -238,10 +257,10 @@ async function waitForGameProcess(launcher: ChildProcess, log: string, name: str
   throw new Error(`Minecraft did not start within 60s (Prism ${alive(launcher.pid) ? "is running" : "has exited"}). Read ${log}.`);
 }
 
-async function javaJoin(route: "java-java" | "java-bedrock", modpack: boolean, dir: string,
+async function javaJoin(route: "java-java" | "java-bedrock" | "java-geyser", modpack: boolean, dir: string,
   target: { port: number; log: string; child: ChildProcess; proxyLog?: string }, entityProbe?: { child: ChildProcess; log: string },
   runEntityProbe = false, gameplayCases: readonly GameplayCaseId[] = [],
-  resource?: { variant: "a" | "b"; label: string }, probeFailures?: string[]): Promise<string> {
+  resource?: { variant: "a" | "b"; label: string }, probeFailures?: string[], negativeControls = false): Promise<string> {
   const name = modpack ? modpackPrismName : plainPrismName;
   if (await gameProcess(name)) throw new Error(`Prism instance ${name} is already running. Close it before the integration suite changes its mods.`);
   const { instance } = await preparePrism(modpack);
@@ -264,7 +283,7 @@ async function javaJoin(route: "java-java" | "java-bedrock", modpack: boolean, d
   let gamePid: number | undefined;
   try {
     gamePid = await waitForGameProcess(child, log, name);
-    if (route === "java-bedrock") {
+    if (route === "java-bedrock" || route === "java-geyser") {
       await waitForLog(clientLog, /Connecting to 127\.0\.0\.1/, () => alive(gamePid), 120_000);
       await Bun.sleep(3500);
       await capture(["ui", "click", "0.32", "0.69", "--client", "java"]);
@@ -298,7 +317,27 @@ async function javaJoin(route: "java-java" | "java-bedrock", modpack: boolean, d
     if (gameplayCases.length && entityProbe) {
       try {
         await runGameplayCases(gameplayCases, { server: entityProbe.child, serverLog: entityProbe.log,
-          clientAlive: () => alive(gamePid), ui: (args) => capture(args), artifactDir: dir });
+          clientAlive: () => alive(gamePid), ui: (args) => capture(args), artifactDir: dir, negativeControls,
+          connectionError: async () => connectionFailure(route, player,
+            (await textFile(target.log)).slice(serverLogStart),
+            target.proxyLog ? (await textFile(target.proxyLog)).slice(connectionLogStart) : ""),
+          inspectClient: route === "java-geyser" ? async (id, serverLog, event) => {
+            if (geyserCaseIds.includes(id as typeof geyserCaseIds[number])) {
+              if (!/Reloading ResourceManager:.*server\//.test(await textFile(clientLog))) {
+                throw new Error("The Java client did not load the converted Geyser resource pack.");
+              }
+              if (!await convertedGeyserTexturesMatch(join(dir, "viaproxy-geyser"))) {
+                throw new Error("The converted Geyser pack is missing the custom entity model or fixture textures.");
+              }
+              if (id.startsWith("custom-entity") || id === "complex-world") {
+                const deadline = Date.now() + 5000;
+                while (!geyserEntityUpdatesMatch(id, event.observed, await serverLog())) {
+                  if (Date.now() > deadline) throw new Error("Geyser did not submit the expected custom entity property updates.");
+                  await Bun.sleep(100);
+                }
+              }
+            }
+          } : undefined });
       } catch (error) {
         if (!probeFailures) throw error;
         probeFailures.push(String(error));
@@ -423,19 +462,33 @@ async function main(): Promise<void> {
   const resourceProbe = selected.includes("--resource-pack-probe");
   const resourceRun = Date.now().toString(36);
   const gameplayProbe = selected.includes("--gameplay-probe");
+  const geyserProbe = selected.includes("--geyser-probe");
+  const negativeControls = selected.includes("--negative-controls");
   const gameplayInput = selected.includes("--gameplay-cases") ? selected[selected.indexOf("--gameplay-cases") + 1] : undefined;
   if (selected.includes("--gameplay-cases") && (!gameplayInput || gameplayInput.startsWith("--"))) {
     throw new Error("--gameplay-cases needs a comma-separated case list.");
   }
-  const gameplayCases = gameplayInput ? gameplayInput.split(",") as GameplayCaseId[]
-    : gameplayProbe ? gameplayCaseIds : [];
-  if (gameplayCases.some((id) => !gameplayCaseIds.includes(id))) throw new Error(`Unknown gameplay case. Use: ${gameplayCaseIds.join(", ")}.`);
   const routes: JoinRoute[] = selected.includes("--route") ? [selected[selected.indexOf("--route") + 1] as JoinRoute]
     : ["java-java", "java-bedrock", "bedrock-bedrock"];
-  if (routes.some((route) => !["java-java", "java-bedrock", "bedrock-bedrock"].includes(route))) {
-    throw new Error("Use --route java-java, java-bedrock, or bedrock-bedrock.");
+  if (routes.some((route) => !["java-java", "java-bedrock", "bedrock-bedrock", "java-geyser"].includes(route))) {
+    throw new Error("Use --route java-java, java-bedrock, bedrock-bedrock, or java-geyser.");
   }
-  if ((entityProbe || gameplayCases.length || resourceProbe) && !routes.includes("java-bedrock")) throw new Error("Probe cases require the java-bedrock route.");
+  const geyserRoute = routes.includes("java-geyser");
+  const gameplayCases: GameplayCaseId[] = [...new Set([
+    ...(geyserProbe ? geyserCaseIds : []),
+    ...(gameplayInput ? gameplayInput.split(",") as GameplayCaseId[]
+      : gameplayProbe ? gameplayCaseIds.filter((id) => !geyserRoute || id !== "lab-table-then-chest") : []),
+    ...(negativeControls ? ["chest-transfer" as const] : []),
+  ])];
+  if (gameplayCases.some((id) => !allGameplayCaseIds.includes(id))) throw new Error(`Unknown gameplay case. Use: ${allGameplayCaseIds.join(", ")}.`);
+  if ((geyserProbe || negativeControls || gameplayCases.some((id) => geyserCaseIds.includes(id as typeof geyserCaseIds[number]))) && !geyserRoute) {
+    throw new Error("Geyser cases and negative controls require --route java-geyser.");
+  }
+  if (geyserRoute && (entityProbe || resourceProbe || gameplayCases.includes("lab-table-then-chest"))) {
+    throw new Error("Bedrock named-event sweeps, the BDS cache probe, and lab tables are unavailable on the Java backend. Use --geyser-probe for custom content.");
+  }
+  if ((entityProbe || resourceProbe) && !routes.includes("java-bedrock")) throw new Error("Bedrock probes require the java-bedrock route.");
+  if (gameplayCases.length && !routes.includes("java-bedrock") && !geyserRoute) throw new Error("Gameplay cases require java-bedrock or java-geyser.");
   if ((entityProbe || gameplayCases.length || resourceProbe) && modpackOnly) throw new Error("Probe cases require the plain Java client run.");
   if (process.env.STACKANVIL_USE_DESKTOP === "1") throw new Error("Integration tests require a private display and never take desktop focus.");
   if (await activeDisplay()) throw new Error("The StackAnvil private display is already running. Stop the lab or capture session before integration tests.");
@@ -447,6 +500,8 @@ async function main(): Promise<void> {
   try {
     const probeFailures: string[] = [];
     const java = routes.includes("java-java") ? await javaServer(dir) : undefined;
+    const geyser = geyserRoute ? await javaServer(dir, true) : undefined;
+    const geyserProxy = geyser?.bedrockPort ? await viaProxy(dir, geyser.bedrockPort, geyserBedrockVersion, "raknet", "viaproxy-geyser") : undefined;
     const nativeBedrock = routes.includes("bedrock-bedrock") ? await bedrockServer(dir, bdsSource, "bedrock-native-server") : undefined;
     const proxyBedrock = routes.includes("java-bedrock") ? await bedrockServer(dir, proxyBdsSource, "bedrock-proxy-server", entityProbe || gameplayCases.length > 0,
       resourceProbe ? { variant: "a", run: resourceRun } : undefined) : undefined;
@@ -455,6 +510,14 @@ async function main(): Promise<void> {
       if (route === "java-java" && java) {
         if (!modpackOnly) await javaJoin(route, false, dir, java);
         if (!plainOnly) await javaJoin(route, true, dir, java);
+      } else if (route === "java-geyser" && geyser && geyserProxy) {
+        const target = { ...geyserProxy, log: geyser.log, proxyLog: geyserProxy.log };
+        if (!modpackOnly) await javaJoin(route, false, dir, target, geyser, false, gameplayCases, undefined, probeFailures, negativeControls);
+        if (gameplayCases.length) {
+          await javaJoin(route, false, dir, target);
+          console.log("PASS Geyser reconnect: the Java client rejoined the same Paper world.");
+        }
+        if (!plainOnly) await javaJoin(route, true, dir, target);
       } else if (route === "java-bedrock" && proxy && proxyBedrock) {
         let modpackProxy = proxy;
         let modpackBedrock = proxyBedrock;

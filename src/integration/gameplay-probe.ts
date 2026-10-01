@@ -2,6 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { root } from "../model.ts";
+import { geyserCaseIds, geyserNegativeControlIds } from "./geyser.ts";
 
 const prefix = "[ViaBedrock Gameplay Probe] ";
 
@@ -15,8 +16,9 @@ export const gameplayCaseIds = [
   "crafting-manual-sticks", "crafting-book-sticks", "crafting-bulk-sticks",
 ] as const;
 
-export type GameplayCaseId = typeof gameplayCaseIds[number];
-export type GameplayPhase = "prepare" | "start" | "verify";
+export const allGameplayCaseIds = [...gameplayCaseIds, ...geyserCaseIds] as const;
+export type GameplayCaseId = typeof allGameplayCaseIds[number];
+export type GameplayPhase = "prepare" | "start" | "verify" | "invalidate";
 
 export interface GameplayEvent {
   id: string;
@@ -37,7 +39,7 @@ export function gameplayEvents(log: string): GameplayEvent[] {
     try {
       const value = JSON.parse(line.slice(marker + prefix.length)) as GameplayEvent;
       return typeof value.id === "string" && typeof value.run === "string"
-        && (value.phase === "prepare" || value.phase === "start" || value.phase === "verify") ? [value] : [];
+        && ["prepare", "start", "verify", "invalidate"].includes(value.phase) ? [value] : [];
     } catch {
       return [];
     }
@@ -61,15 +63,16 @@ export function minecartDismountHasClearance(observed: unknown): boolean {
 }
 
 export async function waitForGameplayEvent(id: GameplayCaseId, run: string, phase: GameplayPhase,
-  log: () => Promise<string>, alive: () => boolean, timeoutMs = 20_000, pollMs = 250): Promise<GameplayEvent> {
+  log: () => Promise<string>, alive: () => boolean, timeoutMs = 20_000, pollMs = 250,
+  expectedStatus: "pass" | "ready" | "fail" = phase === "verify" ? "pass" : "ready"): Promise<GameplayEvent> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const event = gameplayEvents(await log()).find((entry) => entry.id === id && entry.run === run && entry.phase === phase);
     if (event) {
-      if (event.status === "error" || event.status === "fail") {
+      if (event.status === "error" || (event.status === "fail" && expectedStatus !== "fail")) {
         throw new Error(`${id} ${phase} ${event.status}: ${event.error ?? JSON.stringify({ observed: event.observed, expected: event.expected })}`);
       }
-      if (event.status !== (phase === "verify" ? "pass" : "ready")) {
+      if (event.status !== expectedStatus) {
         throw new Error(`${id} ${phase} returned unexpected status ${event.status}.`);
       }
       return event;
@@ -267,6 +270,7 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
       return;
     case "block-break":
     case "creative-block-break":
+    case "custom-block-break":
       await uiMouse(ui, "left", 1200);
       return;
     case "tnt-explosion":
@@ -278,6 +282,8 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
       await Bun.sleep(2500);
       return;
     case "block-place":
+    case "custom-block-place":
+    case "custom-entity-interact":
     case "offhand-block-place":
     case "equip-helmet":
     case "entity-name":
@@ -285,6 +291,7 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
       await uiMouse(ui, "right");
       return;
     case "chest-transfer":
+    case "custom-item-transfer":
       await chestTransfer(ui);
       return;
     case "chest-rapid-transfer":
@@ -426,6 +433,7 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
       await uiKey(ui, "q");
       return;
     case "entity-attack":
+    case "custom-entity-attack":
       await uiMouse(ui, "left");
       return;
     case "command-time":
@@ -445,6 +453,9 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
     case "dimension-change":
       await Bun.sleep(1500);
       return;
+    case "complex-world":
+      await ui(["ui", "key-hold", "w", "9000", "--client", "java"]);
+      return;
   }
 }
 
@@ -454,8 +465,11 @@ export async function runGameplayCases(ids: readonly GameplayCaseId[], options: 
   clientAlive: () => boolean;
   ui: Ui;
   artifactDir: string;
+  negativeControls?: boolean;
+  connectionError?: () => Promise<string | undefined>;
+  inspectClient?: (id: GameplayCaseId, log: () => Promise<string>, event: GameplayEvent) => Promise<void>;
 }): Promise<void> {
-  const results: { id: GameplayCaseId; status: "pass" | "fail"; observed?: unknown; error?: string; screenshots: string[] }[] = [];
+  const results: { id: GameplayCaseId; status: "pass" | "fail" | "skip"; observed?: unknown; error?: string; screenshots: string[]; negativeControl?: GameplayEvent }[] = [];
   const serverAlive = () => {
     if (!options.server.pid) return false;
     try { process.kill(options.server.pid, 0); return true; } catch { return false; }
@@ -468,6 +482,8 @@ export async function runGameplayCases(ids: readonly GameplayCaseId[], options: 
     const screenshots: string[] = [];
     let stopped = false;
     try {
+      const connectionError = await options.connectionError?.();
+      if (connectionError) throw new Error(connectionError);
       await respawnJavaClient(options.ui);
       options.server.stdin?.write(`scriptevent vbprobe:prepare ${id} ${run}\n`);
       await waitForGameplayEvent(id, run, "prepare", log, alive);
@@ -486,10 +502,22 @@ export async function runGameplayCases(ids: readonly GameplayCaseId[], options: 
       if (id === "minecart-dismount" && !minecartDismountHasClearance(event.observed)) {
         throw new Error(`Minecart dismount left the rail or clipped below its floor: ${JSON.stringify(event.observed)}`);
       }
-      results.push({ id, status: "pass", observed: event.observed, screenshots });
+      await options.inspectClient?.(id, log, event);
+      let negativeControl: GameplayEvent | undefined;
+      if (options.negativeControls && geyserNegativeControlIds.includes(id as typeof geyserNegativeControlIds[number])) {
+        const controlStart = (await readFile(options.serverLog, "utf8")).length;
+        const controlLog = async () => (await readFile(options.serverLog, "utf8")).slice(controlStart);
+        options.server.stdin?.write(`scriptevent vbprobe:invalidate ${id} ${run}\n`);
+        await waitForGameplayEvent(id, run, "invalidate", controlLog, alive);
+        options.server.stdin?.write(`scriptevent vbprobe:verify ${id} ${run}\n`);
+        negativeControl = await waitForGameplayEvent(id, run, "verify", controlLog, alive, 20_000, 250, "fail");
+        console.log(`PASS negative control ${id}: verification rejected the corrupted fixture.`);
+      }
+      results.push({ id, status: "pass", observed: event.observed, screenshots, negativeControl });
       console.log(`PASS gameplay ${id}: ${JSON.stringify(event.observed)}`);
     } catch (error) {
-      const message = String(error);
+      const connectionError = await options.connectionError?.();
+      const message = connectionError ?? String(error);
       if (screenshots.length === 1 && alive()) {
         try {
           screenshots.push(await options.ui(["ui", "screenshot", `gameplay-${id}-${run}-after`, "--client", "java",
@@ -498,13 +526,19 @@ export async function runGameplayCases(ids: readonly GameplayCaseId[], options: 
       }
       results.push({ id, status: "fail", error: message, screenshots });
       console.error(`FAIL gameplay ${id}: ${message}${screenshots.length ? ` Screenshots: ${screenshots.join(", ")}.` : ""}`);
-      stopped = !alive();
+      stopped = !alive() || Boolean(connectionError);
+    }
+    if (stopped) {
+      for (const pending of ids.slice(index + 1)) results.push({ id: pending, status: "skip",
+        error: "The connection or a game process stopped before this case could run.", screenshots: [] });
     }
     await writeFile(join(options.artifactDir, "gameplay-results.json"), `${JSON.stringify(results, null, 2)}\n`);
     if (stopped) break;
   }
   if (results.some((result) => result.status === "fail")) {
-    throw new Error(`${results.filter((result) => result.status === "fail").length}/${ids.length} gameplay cases failed. Read ${join(options.artifactDir, "gameplay-results.json")}.`);
+    const failed = results.filter((result) => result.status === "fail").length;
+    const skipped = results.filter((result) => result.status === "skip").length;
+    throw new Error(`${failed}/${results.length - skipped} attempted gameplay cases failed; ${skipped} skipped. Read ${join(options.artifactDir, "gameplay-results.json")}.`);
   }
 }
 

@@ -1,4 +1,19 @@
-export type JoinRoute = "java-java" | "java-bedrock" | "bedrock-bedrock";
+export type JoinRoute = "java-java" | "java-bedrock" | "bedrock-bedrock" | "java-geyser";
+
+function javaBackend(route: JoinRoute): boolean {
+  return route === "java-java" || route === "java-geyser";
+}
+
+export function connectionFailure(route: JoinRoute, player: string | undefined, server: string, connection = ""): string | undefined {
+  const disconnect = connection.replace(/\x1b\[[0-9;]*m/g, "").split("\n")
+    .find((line) => line.includes("[SERVER DISCONNECT]") || line.includes("[PROXY KICK]"));
+  if (disconnect) return `Proxy closed the ${route} connection: ${disconnect.slice(disconnect.indexOf("["))}`;
+  if (!player) return undefined;
+  const escaped = player.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const plain = server.replace(/\x1b\[[0-9;]*m/g, "");
+  const pattern = javaBackend(route) ? `${escaped} lost connection\\b` : `Player disconnected:\\s*${escaped}\\b`;
+  return new RegExp(pattern).test(plain) ? `${player} disconnected on ${route}.` : undefined;
+}
 
 export interface JoinProbe {
   route: JoinRoute;
@@ -13,8 +28,10 @@ export interface JoinProbe {
 }
 
 export function joinedPlayer(route: JoinRoute, log: string): string | undefined {
-  if (route === "java-java") {
-    return /\b([A-Za-z0-9_]+) joined the game\b/.exec(log)?.[1];
+  log = log.replace(/\x1b\[[0-9;]*m/g, "");
+  if (javaBackend(route)) {
+    return /\]: ([^\r\n]+?) joined the game\b/m.exec(log)?.[1]
+      ?? /^([^\r\n]+?) joined the game\b/m.exec(log)?.[1];
   }
   return /Player Spawned:\s*(.+?)\s+xuid:/.exec(log)?.[1];
 }
@@ -24,16 +41,16 @@ export async function waitForJoin(probe: JoinProbe): Promise<string> {
   let joinedAt: number | undefined;
   let player: string | undefined;
   while (Date.now() - started < probe.timeoutMs) {
-    const [server, client, connection] = await Promise.all([
+    const [serverOutput, client, connection] = await Promise.all([
       probe.serverLog(), probe.clientLog(), probe.connectionLog?.() ?? Promise.resolve(""),
     ]);
+    const server = serverOutput.replace(/\x1b\[[0-9;]*m/g, "");
     if (/\b(?:ReportedException|ClassCastException|Crash report saved to|Exception in thread)\b/.test(client)) {
       throw new Error(`Client crashed on ${probe.route}.`);
     }
     if (!probe.clientAlive()) throw new Error(`Client exited before the ${probe.route} stability check finished.`);
-    const disconnect = connection.replace(/\x1b\[[0-9;]*m/g, "").split("\n")
-      .find((line) => line.includes("[SERVER DISCONNECT]") || line.includes("[PROXY KICK]"));
-    if (disconnect) throw new Error(`Proxy closed the ${probe.route} connection: ${disconnect.slice(disconnect.indexOf("["))}`);
+    const earlyFailure = connectionFailure(probe.route, undefined, server, connection);
+    if (earlyFailure) throw new Error(earlyFailure);
     const current = joinedPlayer(probe.route, server);
     if (current && !joinedAt) {
       joinedAt = Date.now();
@@ -41,12 +58,9 @@ export async function waitForJoin(probe: JoinProbe): Promise<string> {
       await probe.onJoin?.(current);
     }
     if (joinedAt && player) {
-      const escaped = player.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const postJoin = server.slice(server.search(probe.route === "java-java" ? /joined the game/ : /Player Spawned:/));
-      if (new RegExp(probe.route === "java-java"
-        ? `${escaped} lost connection\\b` : `Player disconnected:\\s*${escaped}\\b`).test(postJoin)) {
-        throw new Error(`${player} disconnected before the ${probe.route} stability check finished.`);
-      }
+      const postJoin = server.slice(server.search(javaBackend(probe.route) ? /joined the game/ : /Player Spawned:/));
+      const failure = connectionFailure(probe.route, player, postJoin);
+      if (failure) throw new Error(failure);
       if (Date.now() - joinedAt >= probe.dwellMs) return player;
     }
     await Bun.sleep(probe.pollMs ?? 1000);

@@ -64,3 +64,33 @@ The test writes a unique token into the pack for each run. This prevents a resul
 The pack can change world state and read server state. It cannot manufacture an arbitrary Bedrock packet, read the Java renderer state, or prove map pixel accuracy by itself. The named entity catalog remains a diagnostic sweep. Use `/scriptevent vbprobe:all auto` in a disposable world to run it. The full sweep takes about 30 minutes and can alter terrain.
 
 The game integration suite needs signed-in clients and a private Xvfb display. Hosted CI runs the TypeScript tests and build, but it does not run account-based game joins. Keep screenshots, packet traces, credentials, and raw traffic under the ignored `.stackanvil/` directory.
+
+## Geyser on a Java server
+
+The [Java probe](../test-packs/java-probe/README.md) runs the same gameplay contract on Paper through Geyser:
+
+```text
+Java client → ViaBedrock → Geyser → Paper
+```
+
+Run the portable gameplay cases, custom content cases, and negative controls:
+
+```bash
+bun run test:geyser
+```
+
+This route creates a fresh Paper world and starts Geyser and ViaProxy on local ports. It does not start a Bedrock server. The client uses the existing private display and zero-volume defaults.
+
+Use `--plain-only` to omit the modpack join. If StackAnvil artifacts are already built, add `--reuse-build`. Select specific cases with the integration runner:
+
+```bash
+bun run test:integration -- --route java-geyser --gameplay-cases chest-transfer,custom-entity-interact,complex-world --negative-controls --plain-only
+```
+
+The Java plugin implements `vbprobe:prepare`, `vbprobe:start`, and `vbprobe:verify` under the `scriptevent` command. Both backends report the same JSON format and reuse the Java input driver. The Java backend excludes `lab-table-then-chest`, which requires a Bedrock-only block. Bedrock named-event sweeps and the BDS cache probe also remain specific to the Bedrock backend.
+
+Negative controls corrupt a fixture after successful client input. Verification must report `fail`; a command error, timeout, or unexpected pass fails the control. The runner saves the control result with the gameplay results.
+
+The runner checks server state, Geyser entity updates, converted textures and models, and Java resource pack loading. Screenshots support visual review of models, animation, textures, and passengers. These checks do not prove pixel accuracy or every translated packet.
+
+The runner records a disconnect as a failure and marks the remaining cases as skipped. Geyser custom cases run before the portable gameplay sweep. This preserves their results if a later gameplay action closes the connection. CI compiles the Java plugin and extension, but account-based game joins remain local tests.
