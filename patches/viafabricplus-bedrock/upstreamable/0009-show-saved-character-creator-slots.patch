@@ -1,4 +1,4 @@
-From 1cbf35751f87c6a3b5d4eb01a92950396eb25603 Mon Sep 17 00:00:00 2001
+From 8c8117deea9c9794ec93f66d5ab47e71fab70f0d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -435,6 +435,21 @@ metadata on the render thread, and retain replacement actors when an older
 instance with the same UUID is removed. Independent execution verifies the
 native query callback at FUN_142216b60; local predicted charging, other
 specialized use states, and native visible motion remain separate work.
+
+Native actor update FUN_142069380 supplies separate spyglass, goat-horn,
+and brush states for carried use animations 10, 11, and 12. Resolve these
+from the valid main-hand item and positive remaining ticks, independently
+of the active-use stack. Keep food startup and interval progress on that
+active stack, and calculate trident charge from the carried item duration.
+The target Player main-hand getter reads its selected inventory slot at
+FUN_140203320; these inputs must not follow Java off-hand use selection.
+
+Independent execution verifies 364 combinations of carried and active
+stack validity, target metadata, use animation, and remaining ticks, plus
+different carried and active durations. Bind the named native variables
+for authored classic tracks without synthesizing native item poses. The
+extracted default player graph does not reference these three variables.
+Full native item poses and post-use trident state remain separate work.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   54 +
@@ -462,7 +477,7 @@ specialized use states, and native visible motion remain separate work.
  .../appearance/BedrockEmoteMessages.java      |  124 +
  .../appearance/BedrockEmotePlayback.java      |  439 ++
  .../bedrock/appearance/BedrockEmotes.java     |  101 +
- .../appearance/BedrockItemAnimation.java      |  117 +
+ .../appearance/BedrockItemAnimation.java      |  138 +
  .../bedrock/appearance/BedrockLimbSide.java   |   67 +
  .../appearance/BedrockMarketplaceAssets.java  |  311 +
  .../bedrock/appearance/BedrockMolang.java     |  341 +
@@ -492,7 +507,7 @@ specialized use states, and native visible motion remain separate work.
  .../render/BedrockPlayerActorState.java       |   53 +
  .../render/BedrockPlayerAnimationState.java   |   16 +
  .../bedrock/render/BedrockPlayerModel.java    |   43 +
- .../bedrock/render/BedrockPlayerSkins.java    |  303 +-
+ .../bedrock/render/BedrockPlayerSkins.java    |  315 +-
  .../screen/BedrockCharacterSlotsScreen.java   | 1187 +++
  .../screen/BedrockClassicSkinPackScreen.java  |    2 +-
  .../screen/BedrockDressingRoomScreen.java     |   49 +-
@@ -505,7 +520,7 @@ specialized use states, and native visible motion remain separate work.
  .../persona-package.json                      |    7 +
  .../persona-piece-types.json                  |   67 +
  .../viafabricplus-bedrock.mixins.json         |    4 +
- .../appearance/BedrockActorAnimationTest.java |  522 ++
+ .../appearance/BedrockActorAnimationTest.java |  580 ++
  .../BedrockAppearanceStoreTest.java           |   28 +
  .../appearance/BedrockBoneAnimationTest.java  |  450 ++
  .../appearance/BedrockBuiltinAssetsTest.java  |  367 +
@@ -514,7 +529,7 @@ specialized use states, and native visible motion remain separate work.
  .../BedrockControllerAnimationTest.java       |  386 +
  .../appearance/BedrockEmoteMessagesTest.java  |   94 +
  .../bedrock/appearance/BedrockEmotesTest.java |  141 +
- .../appearance/BedrockItemAnimationTest.java  |  196 +
+ .../appearance/BedrockItemAnimationTest.java  |  297 +
  .../appearance/BedrockLimbSelectionTest.java  |  182 +
  .../appearance/BedrockLimbSideTest.java       |   89 +
  .../appearance/BedrockOwnedSkinPacksTest.java |  181 +
@@ -530,7 +545,7 @@ specialized use states, and native visible motion remain separate work.
  .../render/BedrockAnimatedModelTest.java      |   55 +
  .../render/BedrockPlayerActorStateTest.java   |  124 +
  .../render/BedrockPlayerModelTest.java        |  100 +
- 94 files changed, 26130 insertions(+), 86 deletions(-)
+ 94 files changed, 26322 insertions(+), 86 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -13953,10 +13968,10 @@ index 0000000..b6f4717
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemAnimation.java
 new file mode 100644
-index 0000000..c7c90f1
+index 0000000..1dbd9fc
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemAnimation.java
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,138 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -13980,14 +13995,23 @@ index 0000000..c7c90f1
 +        public static final Item EMPTY = new Item("", 0, false);
 +    }
 +
++    public enum Action {
++        OTHER,
++        TRIDENT,
++        SPYGLASS,
++        GOAT_HORN,
++        BRUSH
++    }
++
 +    /** The native player keeps the active use stack separate from its equipped hands. */
-+    public record Use(Item item, int remainingTicks, boolean trident) {
++    public record Use(Item activeItem, Item mainHand, int remainingTicks, Action mainHandAction) {
 +        public Map<String, Float> variables() {
-+            final boolean active = !this.item.name().isEmpty();
-+            final int elapsed = this.item.maxUseTicks() - this.remainingTicks;
-+            final int startupTicks = this.item.maxUseTicks() - 24;
++            final boolean active = !this.activeItem.name().isEmpty();
++            final int elapsed = this.activeItem.maxUseTicks() - this.remainingTicks;
++            final int startupTicks = this.activeItem.maxUseTicks() - 24;
 +            final int intervalTicks = elapsed - startupTicks;
-+            final boolean brandishing = active && this.trident && this.remainingTicks > 0;
++            final boolean specialized = !this.mainHand.name().isEmpty() && this.remainingTicks > 0;
++            final boolean brandishing = specialized && this.mainHandAction == Action.TRIDENT;
 +            return Map.of(
 +                    "use_item_startup_progress",
 +                            !active
@@ -13998,7 +14022,19 @@ index 0000000..c7c90f1
 +                    "use_item_interval_progress",
 +                            active && intervalTicks > 0 ? (intervalTicks & 3) * 0.25F : 0F,
 +                    "is_brandishing_spear", brandishing ? 1F : 0F,
-+                    "charge_amount", brandishing ? Math.clamp(elapsed / 10F, 0, 1) : 0F);
++                    "charge_amount",
++                            brandishing
++                                    ? Math.clamp(
++                                            (this.mainHand.maxUseTicks() - this.remainingTicks)
++                                                    / 10F,
++                                            0,
++                                            1)
++                                    : 0F,
++                    "is_holding_spyglass",
++                            specialized && this.mainHandAction == Action.SPYGLASS ? 1F : 0F,
++                    "is_tooting_goat_horn",
++                            specialized && this.mainHandAction == Action.GOAT_HORN ? 1F : 0F,
++                    "is_using_brush", specialized && this.mainHandAction == Action.BRUSH ? 1F : 0F);
 +        }
 +    }
 +
@@ -18550,7 +18586,7 @@ index 0000000..2224643
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 78bb51f..9054b81 100644
+index 78bb51f..75f99cf 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -19,35 +19,52 @@
@@ -18702,7 +18738,7 @@ index 78bb51f..9054b81 100644
              return null;
          }
          if (appearance.renderer == null || appearance.rendererEpoch != rendererEpoch) {
-@@ -167,13 +222,137 @@ public final class BedrockPlayerSkins {
+@@ -167,13 +222,149 @@ public final class BedrockPlayerSkins {
                  BedrockGeometry.playerModel(surface.geometry().model(), appearance.slim, surface.geometry().meshes()),
                  surface.texture())).toList();
              appearance.renderer = new BedrockPlayerRenderer(rendererContext,
@@ -18802,11 +18838,13 @@ index 78bb51f..9054b81 100644
 +                                });
 +        final Map<String, Float> variables = new HashMap<>();
 +        final ItemStack useItem = entity.getUseItem();
++        final ItemStack carriedItem = entity.getMainHandItem();
 +        variables.putAll(
 +                new BedrockItemAnimation.Use(
 +                        item(useItem, entity),
++                        item(carriedItem, entity),
 +                        entity.getUseItemRemainingTicks(),
-+                        useItem.getUseAnimation() == ItemUseAnimation.TRIDENT)
++                        action(carriedItem.getUseAnimation()))
 +                        .variables());
 +        variables.put("attack_time", state.swingAnimation);
 +        variables.put("player_x_rotation", state.xRot);
@@ -18830,6 +18868,16 @@ index 78bb51f..9054b81 100644
 +                new BedrockActorAnimation.Frame(queries, variables));
 +    }
 +
++    private static BedrockItemAnimation.Action action(final ItemUseAnimation animation) {
++        return switch (animation) {
++            case TRIDENT -> BedrockItemAnimation.Action.TRIDENT;
++            case SPYGLASS -> BedrockItemAnimation.Action.SPYGLASS;
++            case TOOT_HORN -> BedrockItemAnimation.Action.GOAT_HORN;
++            case BRUSH -> BedrockItemAnimation.Action.BRUSH;
++            default -> BedrockItemAnimation.Action.OTHER;
++        };
++    }
++
 +    private static BedrockItemAnimation.Item item(final ItemStack stack, final Avatar entity) {
 +        if (stack == null || stack.isEmpty()) return BedrockItemAnimation.Item.EMPTY;
 +        return new BedrockItemAnimation.Item(
@@ -18841,7 +18889,7 @@ index 78bb51f..9054b81 100644
      public static AvatarRenderer<?> renderer(final PlayerSkin skin, final float ageInTicks) {
          if (skin == null || skin.body() == null) {
              return null;
-@@ -193,10 +372,42 @@ public final class BedrockPlayerSkins {
+@@ -193,10 +384,42 @@ public final class BedrockPlayerSkins {
      public static Model.Simple previewModel(final Identifier texture) {
          final UUID id = PLAYER_BY_TEXTURE.get(texture);
          final Appearance appearance = id == null ? null : APPEARANCES.get(id);
@@ -18887,7 +18935,7 @@ index 78bb51f..9054b81 100644
      }
  
      /** Supplies the additional animated surfaces in the same pose as a menu's primary skin. */
-@@ -206,14 +417,19 @@ public final class BedrockPlayerSkins {
+@@ -206,14 +429,19 @@ public final class BedrockPlayerSkins {
          if (appearance == null || appearance.surfaces.isEmpty()) return List.of();
          if (appearance.previewSurfaces == null)
              appearance.previewSurfaces = appearance.surfaces.stream().map(surface -> new PreviewSurface(
@@ -18909,7 +18957,7 @@ index 78bb51f..9054b81 100644
  
      public static void rendererContext(final EntityRendererProvider.Context context) {
          rendererContext = context;
-@@ -238,7 +454,8 @@ public final class BedrockPlayerSkins {
+@@ -238,7 +466,8 @@ public final class BedrockPlayerSkins {
      }
  
      private static Identifier textureId(final UUID playerUuid, final String kind) {
@@ -18919,7 +18967,7 @@ index 78bb51f..9054b81 100644
      }
  
      private static boolean supportedImage(final BufferedImage image) {
-@@ -264,7 +481,10 @@ public final class BedrockPlayerSkins {
+@@ -264,7 +493,10 @@ public final class BedrockPlayerSkins {
  
      static String geometryName(final String resourcePatch, final String binding) {
          try {
@@ -18931,7 +18979,7 @@ index 78bb51f..9054b81 100644
              final var name = geometry.get(binding);
              return name != null && name.isJsonPrimitive() && name.getAsJsonPrimitive().isString()
                  ? name.getAsString() : "";
-@@ -322,7 +542,8 @@ public final class BedrockPlayerSkins {
+@@ -322,7 +554,8 @@ public final class BedrockPlayerSkins {
              final Map<Integer, JsonObject> animatedModels = new HashMap<>();
              for (final var entry : models) {
                  final JsonObject model = entry.getAsJsonObject();
@@ -18941,7 +18989,7 @@ index 78bb51f..9054b81 100644
                  if (name.equals(identifier)) {
                      if (body != null) {
                          return null;
-@@ -361,7 +582,8 @@ public final class BedrockPlayerSkins {
+@@ -361,7 +594,8 @@ public final class BedrockPlayerSkins {
                  final JsonObject model = animatedModels.get(type);
                  final var animation = animationByType.get(type);
                  if (model == null) {
@@ -18951,7 +18999,7 @@ index 78bb51f..9054b81 100644
                          return null;
                      }
                      continue;
-@@ -376,7 +598,8 @@ public final class BedrockPlayerSkins {
+@@ -376,7 +610,8 @@ public final class BedrockPlayerSkins {
                  BedrockGeometry.playerModel(parsed, false, meshes);
                  surfaces.add(new Surface(parsed, Map.copyOf(meshes), animation));
              }
@@ -18961,7 +19009,7 @@ index 78bb51f..9054b81 100644
                  if (!coverage.getOrDefault(part, false)) {
                      return null;
                  }
-@@ -424,12 +647,21 @@ public final class BedrockPlayerSkins {
+@@ -424,12 +659,21 @@ public final class BedrockPlayerSkins {
                      }
                  }
              }
@@ -18986,7 +19034,7 @@ index 78bb51f..9054b81 100644
              }
          }
          return meshes;
-@@ -467,13 +699,18 @@ public final class BedrockPlayerSkins {
+@@ -467,13 +711,18 @@ public final class BedrockPlayerSkins {
          private final PlayerSkin skin;
          private final long started = System.nanoTime();
          private final Geometry geometry;
@@ -21790,10 +21838,10 @@ index 5f77f05..e0340ea 100644
      "features.movement.MixinEntity",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimationTest.java
 new file mode 100644
-index 0000000..02d6d15
+index 0000000..91b31ce
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimationTest.java
-@@ -0,0 +1,522 @@
+@@ -0,0 +1,580 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -22105,6 +22153,54 @@ index 0000000..02d6d15
 +    }
 +
 +    @Test
++    void suppliesSpecializedUseStatesToAuthoredAnimationTracksAndClearsThemAfterUse()
++            throws Exception {
++        final var actor =
++                BedrockActorAnimation.read(
++                                json(
++                                        "{\"animations\":{\"use\":\"animation.use\"},\"scripts\":{\"animate\":[\"use\"]}}"),
++                                Map.of(),
++                                json(
++                                        """
++                                        {"animation.use":{"loop":true,"bones":{"arm":{"rotation":[
++                                          "variable.is_holding_spyglass * 20",
++                                          "variable.is_tooting_goat_horn * 40",
++                                          "variable.is_using_brush * 60"]}}}}
++                                        """),
++                                new JsonObject(),
++                                "1.10.0")
++                        .playback();
++        final var item = new BedrockItemAnimation.Item("fixture", 32, false);
++        float time = 0;
++        for (final var action : BedrockItemAnimation.Action.values()) {
++            final var variables = new BedrockItemAnimation.Use(item, item, 32, action).variables();
++            final var rotation =
++                    actor.sample(time, new BedrockActorAnimation.Frame(Map.of(), variables))
++                            .get("arm")
++                            .rotation();
++            assertEquals(
++                    new BedrockBoneAnimation.Vector(
++                            action == BedrockItemAnimation.Action.SPYGLASS ? 20F : 0F,
++                            action == BedrockItemAnimation.Action.GOAT_HORN ? 40F : 0F,
++                            action == BedrockItemAnimation.Action.BRUSH ? 60F : 0F),
++                    rotation);
++            time += 0.1F;
++        }
++        final var stopped =
++                new BedrockItemAnimation.Use(
++                                BedrockItemAnimation.Item.EMPTY,
++                                BedrockItemAnimation.Item.EMPTY,
++                                0,
++                                BedrockItemAnimation.Action.BRUSH)
++                        .variables();
++        assertEquals(
++                new BedrockBoneAnimation.Vector(0, 0, 0),
++                actor.sample(time, new BedrockActorAnimation.Frame(Map.of(), stopped))
++                        .get("arm")
++                        .rotation());
++    }
++
++    @Test
 +    @EnabledIfEnvironmentVariable(named = "STACKANVIL_OFFICIAL_PERSONA", matches = ".+")
 +    void drivesLicensedChargingPoseIndependentlyOfItemUse() throws Exception {
 +        final var files =
@@ -22154,7 +22250,13 @@ index 0000000..02d6d15
 +                queries.put("is_alive", true);
 +                final Map<String, Float> variables =
 +                        new java.util.HashMap<>(
-+                                new BedrockItemAnimation.Use(item, remaining, item == trident)
++                                new BedrockItemAnimation.Use(
++                                                item,
++                                                item,
++                                                remaining,
++                                                item == trident
++                                                        ? BedrockItemAnimation.Action.TRIDENT
++                                                        : BedrockItemAnimation.Action.OTHER)
 +                                        .variables());
 +                variables.put("gliding_speed_value", 1F);
 +                variables.put("is_holding_right", 1F);
@@ -22187,7 +22289,11 @@ index 0000000..02d6d15
 +            queries.put("is_alive", true);
 +            final Map<String, Float> variables =
 +                    new java.util.HashMap<>(
-+                            new BedrockItemAnimation.Use(BedrockItemAnimation.Item.EMPTY, 0, false)
++                            new BedrockItemAnimation.Use(
++                                            BedrockItemAnimation.Item.EMPTY,
++                                            BedrockItemAnimation.Item.EMPTY,
++                                            0,
++                                            BedrockItemAnimation.Action.OTHER)
 +                                    .variables());
 +            variables.put("gliding_speed_value", 1F);
 +            variables.put("is_holding_right", 1F);
@@ -24500,10 +24606,10 @@ index 0000000..3757e28
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemAnimationTest.java
 new file mode 100644
-index 0000000..869a04e
+index 0000000..e9e56b7
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemAnimationTest.java
-@@ -0,0 +1,196 @@
+@@ -0,0 +1,297 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -24550,25 +24656,119 @@ index 0000000..869a04e
 +    @Test
 +    void separatesStartupCyclesTridentChargeAndStoppedUse() {
 +        final var food = new BedrockItemAnimation.Item("apple", 32, false);
-+        final var startup = new BedrockItemAnimation.Use(food, 28, false).variables();
++        final var startup =
++                new BedrockItemAnimation.Use(food, food, 28, BedrockItemAnimation.Action.OTHER)
++                        .variables();
 +        assertEquals(0.5F, startup.get("use_item_startup_progress"));
 +        assertEquals(0F, startup.get("use_item_interval_progress"));
-+        final var cycle = new BedrockItemAnimation.Use(food, 21, false).variables();
++        final var cycle =
++                new BedrockItemAnimation.Use(food, food, 21, BedrockItemAnimation.Action.OTHER)
++                        .variables();
 +        assertEquals(1F, cycle.get("use_item_startup_progress"));
 +        assertEquals(0.75F, cycle.get("use_item_interval_progress"));
 +        assertEquals(0F, cycle.get("charge_amount"));
 +        final var trident = new BedrockItemAnimation.Item("trident", 72000, false);
-+        final var charge = new BedrockItemAnimation.Use(trident, 71995, true).variables();
++        final var charge =
++                new BedrockItemAnimation.Use(
++                                trident, trident, 71995, BedrockItemAnimation.Action.TRIDENT)
++                        .variables();
 +        assertEquals(1F, charge.get("is_brandishing_spear"));
 +        assertEquals(0.5F, charge.get("charge_amount"));
 +        assertEquals(
 +                0F,
-+                new BedrockItemAnimation.Use(trident, 0, true)
++                new BedrockItemAnimation.Use(
++                                trident, trident, 0, BedrockItemAnimation.Action.TRIDENT)
 +                        .variables()
 +                        .get("is_brandishing_spear"));
 +        assertTrue(
-+                new BedrockItemAnimation.Use(BedrockItemAnimation.Item.EMPTY, 0, true)
++                new BedrockItemAnimation.Use(
++                                BedrockItemAnimation.Item.EMPTY,
++                                BedrockItemAnimation.Item.EMPTY,
++                                0,
++                                BedrockItemAnimation.Action.TRIDENT)
 +                        .variables().values().stream().allMatch(value -> value == 0));
++    }
++
++    @Test
++    void clearsSpecializedUseStatesAtCompletionAndWhenTheCarriedStackIsAbsent() {
++        final var item = new BedrockItemAnimation.Item("fixture", 32, false);
++        final var states =
++                Map.of(
++                        BedrockItemAnimation.Action.SPYGLASS, "is_holding_spyglass",
++                        BedrockItemAnimation.Action.GOAT_HORN, "is_tooting_goat_horn",
++                        BedrockItemAnimation.Action.BRUSH, "is_using_brush");
++        for (final var action : BedrockItemAnimation.Action.values()) {
++            for (final int remaining : new int[] {-1, 0, 1, 32}) {
++                for (final var active : List.of(item, BedrockItemAnimation.Item.EMPTY)) {
++                    final var variables =
++                            new BedrockItemAnimation.Use(active, active, remaining, action)
++                                    .variables();
++                    for (final var state : states.entrySet())
++                        assertEquals(
++                                active == item && remaining > 0 && action == state.getKey()
++                                        ? 1F
++                                        : 0F,
++                                variables.get(state.getValue()));
++                }
++            }
++        }
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_ITEM_ACTIONS", matches = ".+")
++    void matchesNativeSpecializedUseStatesWithIndependentCarriedAndActiveStacks() throws Exception {
++        final Path fixture =
++                Path.of(
++                        System.getenv("STACKANVIL_ITEM_ACTIONS"),
++                        "native-specialized-actions.json");
++        for (final var raw : JsonParser.parseString(Files.readString(fixture)).getAsJsonArray()) {
++            final var row = raw.getAsJsonObject();
++            final var active =
++                    row.get("active").getAsBoolean()
++                            ? new BedrockItemAnimation.Item("fixture", 32, false)
++                            : BedrockItemAnimation.Item.EMPTY;
++            final var main =
++                    row.get("main").getAsBoolean()
++                            ? new BedrockItemAnimation.Item(
++                                    "fixture", row.get("main_max").getAsInt(), false)
++                            : BedrockItemAnimation.Item.EMPTY;
++            final var action =
++                    switch (row.get("action").getAsInt()) {
++                        case 6 -> BedrockItemAnimation.Action.TRIDENT;
++                        case 10 -> BedrockItemAnimation.Action.SPYGLASS;
++                        case 11 -> BedrockItemAnimation.Action.GOAT_HORN;
++                        case 12 -> BedrockItemAnimation.Action.BRUSH;
++                        default -> BedrockItemAnimation.Action.OTHER;
++                    };
++            final var variables =
++                    new BedrockItemAnimation.Use(
++                                    active, main, row.get("remaining").getAsInt(), action)
++                            .variables();
++            assertEquals(
++                    row.get("spyglass").getAsFloat(),
++                    variables.get("is_holding_spyglass"),
++                    row.toString());
++            assertEquals(
++                    row.get("horn").getAsFloat(),
++                    variables.get("is_tooting_goat_horn"),
++                    row.toString());
++            assertEquals(
++                    row.get("brush").getAsFloat(), variables.get("is_using_brush"), row.toString());
++            assertEquals(
++                    row.get("spear").getAsFloat(),
++                    variables.get("is_brandishing_spear"),
++                    row.toString());
++            assertEquals(
++                    row.get("charge").getAsFloat(), variables.get("charge_amount"), row.toString());
++            assertEquals(
++                    row.get("startup").getAsFloat(),
++                    variables.get("use_item_startup_progress"),
++                    row.toString());
++            assertEquals(
++                    row.get("interval").getAsFloat(),
++                    variables.get("use_item_interval_progress"),
++                    row.toString());
++        }
 +    }
 +
 +    @Test
@@ -24585,7 +24785,11 @@ index 0000000..869a04e
 +                                    "food", row.get("max").getAsInt(), false)
 +                            : BedrockItemAnimation.Item.EMPTY;
 +            final var variables =
-+                    new BedrockItemAnimation.Use(active, row.get("remaining").getAsInt(), false)
++                    new BedrockItemAnimation.Use(
++                                    active,
++                                    active,
++                                    row.get("remaining").getAsInt(),
++                                    BedrockItemAnimation.Action.OTHER)
 +                            .variables();
 +            assertEquals(
 +                    row.get("startup").getAsFloat(),
@@ -24607,8 +24811,11 @@ index 0000000..869a04e
 +            final var variables =
 +                    new BedrockItemAnimation.Use(
 +                                    active,
++                                    active,
 +                                    row.get("remaining").getAsInt(),
-+                                    row.get("action").getAsInt() == 6)
++                                    row.get("action").getAsInt() == 6
++                                            ? BedrockItemAnimation.Action.TRIDENT
++                                            : BedrockItemAnimation.Action.OTHER)
 +                            .variables();
 +            assertEquals(
 +                    row.get("spear").getAsFloat(),
