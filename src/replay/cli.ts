@@ -2,7 +2,7 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { closeSync, existsSync, openSync } from "node:fs";
 import { chmod, cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, join, resolve, delimiter } from "node:path";
+import { basename, dirname, join, resolve, delimiter } from "node:path";
 import { createServer } from "node:net";
 import { createSocket } from "node:dgram";
 import { promisify } from "node:util";
@@ -122,6 +122,15 @@ async function launchJava(directory: string, bind: number, client: "addon" | "pr
   await writeFile(settingsFile, JSON.stringify(settings), { mode: 0o600 });
   await rm(join(config, "bedrock.json"), { force: true });
   if (account) await writeFile(join(config, "bedrock.json"), await readFile(account), { mode: 0o600 });
+  if (client === "addon") {
+    const assets = join(privateRoot, "client-assets");
+    const existing = account ? join(dirname(account), "bedrock-assets") : undefined;
+    if (!existsSync(assets) && existing && existsSync(existing)) await cp(existing, assets, { recursive: true });
+    await mkdir(assets, { recursive: true, mode: 0o700 });
+    await chmod(assets, 0o700);
+    await rm(join(config, "bedrock-assets"), { recursive: true, force: true });
+    await symlink(assets, join(config, "bedrock-assets"), "dir");
+  }
   await writeFile(join(config, "viabedrock.yml"), "blob-cache: disabled\npack-cache: disabled\ntranslate-resource-packs: true\n", { mode: 0o600 });
   const mods = join(game, "mods");
   await mkdir(mods, { mode: 0o700 });
@@ -135,6 +144,7 @@ async function launchJava(directory: string, bind: number, client: "addon" | "pr
   }
   const launcherLog = join(directory, "launcher.log");
   service("flatpak", ["run", "--nosocket=wayland", "--socket=x11", `--filesystem=${join(root, ".stackanvil/lab")}:ro`, `--filesystem=${directory}`,
+    ...(client === "addon" ? [`--filesystem=${join(privateRoot, "client-assets")}`] : []),
     `--env=DISPLAY=${isolated.DISPLAY}`, `--env=XAUTHORITY=${isolated.XAUTHORITY}`, "--env=WAYLAND_DISPLAY=", "--env=QT_QPA_PLATFORM=xcb",
     "--env=SDL_VIDEODRIVER=x11", "--env=SDL_VIDEO_DRIVER=x11", "--env=SDL_VIDEO_FORCE_EGL=1", "--env=PULSE_SINK=stackanvil_silent",
     "org.prismlauncher.PrismLauncher", "--dir", prism, "--launch", name, "--server", `127.0.0.1:${bind}`], root, launcherLog, isolated);
@@ -318,7 +328,11 @@ async function main(): Promise<void> {
     } else if (mode !== "replay") {
       throw new Error("Direct addon recording currently accepts local replay fixtures only. Use --client proxy for public recording.");
     }
-    const game = client === "native" ? await launchNative(directory, bind, option("--native-home")) : await launchJava(directory, bind, client, recorder); gamePid = game.pid;
+    const assetAccount = client === "addon" ? option("--account") : undefined;
+    const game = client === "native"
+      ? await launchNative(directory, bind, option("--native-home"))
+      : await launchJava(directory, bind, client, recorder, assetAccount ? resolve(assetAccount) : undefined);
+    gamePid = game.pid;
     console.log(`Private ${mode} session: ${directory}`);
     const until = Date.now() + seconds * 1000;
     let accepted = false;
