@@ -78,6 +78,8 @@ Catalog pieces no longer require a recipe copied from another slot. Native equip
 | Free catalog piece | Pack UUID plus `/f` |
 | Owned catalog piece | Pack UUID |
 | Owned left or right limb | Pack UUID plus `/l` or `/r` |
+| Free left or right limb | Pack UUID plus `/fl` or `/fr` |
+| Built-in left or right limb | Piece UUID plus `/dl` or `/dr` |
 | Built-in emote | Piece UUID plus `/de` |
 | Other emote | Pack UUID plus `/e` |
 | Classic cape | Pack UUID plus its skin index |
@@ -88,7 +90,11 @@ The Emotes category edits four wheel positions. An empty position uses `{"id":"/
 
 The Capes category equips, replaces, or removes free and owned capes. Persona capes use their catalog pack UUID. The account model service includes the selected cape in its assembled model. Classic imported capes remain separate skin fields.
 
-The Size screen provides four native heights and two arm widths. Arm edits change `arm` and preserve `cs_arm`. Height edits replace the recognized pair of height entries. The wardrobe provides Both, Left, and Right controls for owned arms and legs. Native arm captures saved separate `/l` and `/r` entries even when both sides used the same piece. An edit keeps the opposite limb, its colors, and the emote wheel. Packet handles use the corresponding left or right limb type. The leg flow uses the same recipe structure and has targeted tests; it still needs a native write capture. Side controls stay disabled for unresolved free limb recipes. At small GUI sizes, Minecraft's category selector replaces the full category list, and limb and emote controls remain above the footer.
+The Size screen provides four native heights and two arm widths. Arm edits change `arm` and preserve `cs_arm`. Height edits replace the recognized pair of height entries. The wardrobe provides Both, Left, and Right controls for owned and free arms and legs. Native arm captures saved separate `/l` and `/r` entries even when both sides used the same piece. An edit keeps the opposite limb, its colors, and the emote wheel. Packet handles use the corresponding left or right limb type. At small GUI sizes, Minecraft's category selector replaces the full category list, and limb and emote controls remain above the footer.
+
+Independent execution of the Bedrock 1.26.51.1 recipe encoder establishes free `/fl` and `/fr` flags and built-in `/dl` and `/dr` flags. Side changes preserve `/f` or `/d` when both limbs use the piece. Tests compare all 18 native combinations of source, limb, and side. Mixed owned and free replacements retain separate colors, packet types, and animated geometry bindings. Unknown flags remain errors. A fresh native leg write capture remains pending.
+
+The replayed full stack builds, and all 158 fixture-enabled add-on tests pass with no skips. A running Java client passes 40 checks for free arm and leg controls, recipe splitting, colors, wheel positions, and packet types. The probe uses local recipes and makes no account writes. Native multiplayer comparisons remain pending.
 
 The color editor uses swatches captured from Bedrock 1.26.51. Skin tone edits change `skcol`. Hair, facial hair, and iris edits change channel zero in `col`. Eyebrow edits change channel one. Sclera and mouth edits change channel two. Mouths use their own 29-color palette; facial hair uses the hair palette. Every edit preserves the remaining channels. Independent execution of the target client verifies the swatches and channel order. Premium piece palettes and channel controls remain incomplete.
 
@@ -223,7 +229,7 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 - Resolve free assets for accounts without usable receipt keys. These recipes still depend on the service model. Verify native cape motion. Compare more overlapping clothing combinations against native results.
 - Compare more face sizes, tint channels, and equipped combinations against native results.
 - Compare corrected blink and strip timing with native multiplayer video. Implement emote effects, named actor events, chat announcements, and unavailable remote assets. Compare entity-relative rotations against native playback.
-- Add premium piece palettes and channels, verify native leg edits, and resolve free limb side recipes. Add paid purchase/redemption flows and account classic-pack downloads.
+- Establish premium piece color controls and channels, and verify native leg edits. Add paid purchase/redemption flows and account classic-pack downloads.
 - Verify versioned vanilla model overrides and native parent-name behavior. Complete classic item-action bindings, geometry-provided alias precedence, and first-person playback. Compare inherited skins and equipment flags with native rendering, including first-person views.
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. A white quad above the player moved independently with the sky clouds; it was not an extra face surface.
 
