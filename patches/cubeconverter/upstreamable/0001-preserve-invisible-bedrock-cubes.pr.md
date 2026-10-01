@@ -2,4 +2,6 @@ Bedrock cubes with no UV faces are invisible. Java 26.3 requires at least one fa
 
 Source bones and cubes remain available to the native renderer. Exported group children reference the remaining elements. UV normalization uses copies, so repeated export preserves cached geometry.
 
-Validation: three generated geometry tests pass on Java 17. They cover mixed and wholly invisible models, valid texture bindings, source preservation and repeatable export. Private CubeCraft turret, watermelon and gravestone models contain affected cubes. No server assets are included.
+Locator-only geometry has no cube bounds. Keep its fitting scale at 1 so inverse scale metadata stays finite. The official Bedrock 1.26.51.1 Hive capture includes this geometry and reaches playable spawn.
+
+Validation: six generated geometry tests pass on Java 17. They cover mixed and wholly invisible models, valid texture bindings, source preservation and repeatable export. They also cover empty bone lists, locator-only hierarchy preservation, finite metadata, and unchanged fitting for populated geometry. Private CubeCraft turret, watermelon and gravestone models contain affected cubes. No server assets are included.

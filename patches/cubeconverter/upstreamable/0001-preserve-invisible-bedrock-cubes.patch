@@ -1,4 +1,4 @@
-From c9a46fcdafd72d5f3a068e292296278861c6e45f Mon Sep 17 00:00:00 2001
+From 81cc9e2b19669f4b13267dce9f4c5c3ab9ad2ec2 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 15:54:14 +0200
 Subject: [PATCH] fix(models): preserve cubes without visible faces
@@ -15,11 +15,25 @@ repeated export does not mutate cached model geometry.
 Recorded CubeCraft turret, watermelon and gravestone models contain these
 cubes. Synthetic tests cover mixed and wholly invisible geometry, valid
 visible texture references, preserved source cubes and repeatable export.
+
+An official Bedrock 1.26.51.1 capture of The Hive (protocol 2193) also
+contains locator-only geometry with no cubes. Such a model accumulates no
+bounds: fitting the initial extrema produces zero, and the reciprocal
+becomes Infinity in conversion metadata. Use unit scale when no cube
+contributes bounds while retaining cloned bones and source locator JSON.
+
+Synthetic tests cover finite metadata serialization for empty geometry,
+locator-only bone hierarchy and source preservation, every rotation mode,
+and unchanged fitting for populated oversized geometry. All six focused
+CubeConverter tests pass on Java 17.
 ---
- build.gradle                                  |  7 ++
- .../model/impl/java/JavaItemModel.java        | 23 ++----
- .../model/impl/java/JavaItemModelTest.java    | 80 +++++++++++++++++++
- 3 files changed, 95 insertions(+), 15 deletions(-)
+ build.gradle                                  |   7 ++
+ .../converter/converter/FormatConverter.java  |   6 +-
+ .../model/impl/java/JavaItemModel.java        |  23 ++--
+ .../converter/FormatConverterTest.java        | 103 ++++++++++++++++++
+ .../model/impl/java/JavaItemModelTest.java    |  80 ++++++++++++++
+ 5 files changed, 202 insertions(+), 17 deletions(-)
+ create mode 100644 src/test/java/org/cube/converter/converter/FormatConverterTest.java
  create mode 100644 src/test/java/org/cube/converter/model/impl/java/JavaItemModelTest.java
 
 diff --git a/build.gradle b/build.gradle
@@ -40,6 +54,40 @@ index ab26d86..0bc3ee5 100644
  }
  
  group = 'org.oryxel.cube'
+diff --git a/src/main/java/org/cube/converter/converter/FormatConverter.java b/src/main/java/org/cube/converter/converter/FormatConverter.java
+index 52376c7..4e008b1 100644
+--- a/src/main/java/org/cube/converter/converter/FormatConverter.java
++++ b/src/main/java/org/cube/converter/converter/FormatConverter.java
+@@ -74,6 +74,7 @@ public class FormatConverter {
+ 
+     public static JavaItemModel geometryToItemModel(final Map<Direction, String> textureMap, final BedrockGeometryModel geometry, final RotationType type) {
+         final Position3V min = new Position3V(Float.MAX_VALUE, Float.MAX_VALUE, Float.MAX_VALUE), max = new Position3V(0, 0, 0);
++        boolean hasBounds = false;
+ 
+         final List<Parent> parents = new ArrayList<>();
+         for (final Parent old : geometry.getParents()) {
+@@ -104,12 +105,13 @@ public class FormatConverter {
+                 }
+ 
+                 calculateMinMax(cube, min, max);
++                hasBounds = true;
+             }
+ 
+             parents.add(parent);
+         }
+ 
+-        final float scale = calculateMinSize(min, max);
++        final float scale = hasBounds ? calculateMinSize(min, max) : 1;
+         final JavaItemModel model = new JavaItemModel(textureMap, geometry.getTextureSize());
+         model.getParents().addAll(parents);
+ 
+@@ -178,4 +180,4 @@ public class FormatConverter {
+             rotation.setZ(axis != 2 ? 0 : rotation.getZ());
+         }
+     }
+-}
+\ No newline at end of file
++}
 diff --git a/src/main/java/org/cube/converter/model/impl/java/JavaItemModel.java b/src/main/java/org/cube/converter/model/impl/java/JavaItemModel.java
 index 2c45ce3..8dfb658 100644
 --- a/src/main/java/org/cube/converter/model/impl/java/JavaItemModel.java
@@ -110,6 +158,115 @@ index 2c45ce3..8dfb658 100644
      }
 -}
 \ No newline at end of file
++}
+diff --git a/src/test/java/org/cube/converter/converter/FormatConverterTest.java b/src/test/java/org/cube/converter/converter/FormatConverterTest.java
+new file mode 100644
+index 0000000..3257dca
+--- /dev/null
++++ b/src/test/java/org/cube/converter/converter/FormatConverterTest.java
+@@ -0,0 +1,103 @@
++package org.cube.converter.converter;
++
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import org.cube.converter.converter.enums.RotationType;
++import org.cube.converter.model.impl.java.JavaItemModel;
++import org.cube.converter.parser.bedrock.geometry.BedrockGeometryParser;
++import org.cube.converter.util.GsonUtil;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class FormatConverterTest {
++
++    @Test
++    void exportsGeometryWithoutBonesAtUnitScaleForEveryRotationMode() {
++        final var geometry = BedrockGeometryParser.parse(geometryJson("[]")).get(0);
++        for (final RotationType rotation : RotationType.values()) {
++            final var model = geometry.toJavaItemModel("example:item/actor", rotation);
++            final JsonObject json = finiteExport(model);
++            assertEquals(1, model.getScale());
++            assertTrue(json.getAsJsonArray("elements").isEmpty());
++            assertTrue(json.getAsJsonArray("groups").isEmpty());
++        }
++        assertTrue(geometry.getParents().isEmpty());
++    }
++
++    @Test
++    void preservesLocatorOnlyBonesAndSourceGeometryAtUnitScale() {
++        final JsonObject source = geometryJson("""
++            [{"name":"root","pivot":[2,3,4],"rotation":[5,10,15],
++              "locators":{"attachment":[1,2,3]}},
++             {"name":"attachment","parent":"root","pivot":[-2,8,1],"rotation":[0,20,0],
++              "cubes":[],"locators":{"trail":{"offset":[0,1,0],"rotation":[0,45,0]}}}]
++            """);
++        final JsonObject original = source.deepCopy();
++        final var geometry = BedrockGeometryParser.parse(source).get(0);
++        final var model = geometry.toJavaItemModel("example:item/actor", RotationType.POST_1_21_11);
++        final JsonObject json = finiteExport(model);
++        assertEquals(1, model.getScale());
++        assertTrue(json.getAsJsonArray("elements").isEmpty());
++        assertEquals(2, json.getAsJsonArray("groups").size());
++        assertEquals(2, model.getParents().size());
++        for (int index = 0; index < geometry.getParents().size(); index++) {
++            final var before = geometry.getParents().get(index);
++            final var after = model.getParents().get(index);
++            assertNotSame(before, after);
++            assertEquals(before.getName(), after.getName());
++            assertEquals(before.getParent(), after.getParent());
++            assertArrayEquals(before.getPivot().toArray(), after.getPivot().toArray());
++            assertArrayEquals(before.getRotation().toArray(), after.getRotation().toArray());
++            assertTrue(before.getCubes().isEmpty());
++            assertTrue(after.getCubes().isEmpty());
++            assertTrue(json.getAsJsonArray("groups").get(index).getAsJsonObject().getAsJsonArray("children").isEmpty());
++        }
++        assertArrayEquals(new float[]{2, 3, 4}, geometry.getParents().get(0).getPivot().toArray());
++        assertArrayEquals(new float[]{5, 10, 15}, geometry.getParents().get(0).getRotation().toArray());
++        assertEquals("root", geometry.getParents().get(1).getParent());
++        assertEquals(original, source);
++        assertEquals(json, model.compile());
++    }
++
++    @Test
++    void preservesPopulatedGeometryFittingAndSourceCoordinates() {
++        final var geometry = BedrockGeometryParser.parse(geometryJson("""
++            [{"name":"root","pivot":[0,0,0],"cubes":[
++                {"origin":[-64,0,0],"size":[64,64,64],"uv":[0,0]}]}]
++            """)).get(0);
++        final var source = geometry.getParents().get(0).getCubes().get(0);
++        final var model = geometry.toJavaItemModel("example:item/actor", RotationType.POST_1_21_11);
++        final JsonObject json = finiteExport(model);
++        assertEquals(4, model.getScale());
++        assertEquals(1, json.getAsJsonArray("elements").size());
++        final var converted = model.getParents().get(0).getCubes().get(0);
++        assertNotSame(source, converted);
++        assertArrayEquals(new float[]{16, 16, 16}, converted.getSize().toArray());
++        assertArrayEquals(new float[]{-16, 0, 0}, converted.getPosition().toArray());
++        assertArrayEquals(new float[]{64, 64, 64}, source.getSize().toArray());
++        assertArrayEquals(new float[]{-64, 0, 0}, source.getPosition().toArray());
++        assertEquals(6, json.getAsJsonArray("elements").get(0).getAsJsonObject().getAsJsonObject("faces").size());
++    }
++
++    private static JsonObject finiteExport(final JavaItemModel model) {
++        assertTrue(Float.isFinite(model.getScale()));
++        assertTrue(model.getScale() > 0);
++        final JsonObject export = new JsonObject();
++        export.addProperty("scale", model.getScale());
++        export.add("model", model.compile());
++        final var gson = GsonUtil.getGson();
++        final JsonObject decoded = gson.fromJson(gson.toJson(export), JsonObject.class);
++        assertEquals(export, decoded);
++        assertEquals(model.getScale(), decoded.get("scale").getAsFloat());
++        return decoded.getAsJsonObject("model");
++    }
++
++    private static JsonObject geometryJson(final String bones) {
++        return GsonUtil.getGson().fromJson("""
++            {"format_version":"1.12.0","minecraft:geometry":[{
++                "description":{"identifier":"geometry.example","texture_width":64,"texture_height":64},
++                "bones":%s
++            }]}
++            """.formatted(bones), JsonObject.class);
++    }
 +}
 diff --git a/src/test/java/org/cube/converter/model/impl/java/JavaItemModelTest.java b/src/test/java/org/cube/converter/model/impl/java/JavaItemModelTest.java
 new file mode 100644
