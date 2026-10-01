@@ -164,7 +164,9 @@ A running Java client displayed the HelliArm character with its body, face, and 
 
 The add-on downloads emote packs through the current account's entitlement receipt. It reads the named animation source and uses the pack UUID as the wire identity. Native captures show that the metadata piece UUID differs. Receipts and content keys remain in memory. Preview uses the active account character and does not change its saved recipe.
 
-Menu models retain the native root, waist, and body hierarchy. Bone poses also apply to animated clothing surfaces. The sampler supports position, rotation, scale, pre/post keyframes, linear and Catmull-Rom interpolation, and Molang frame queries. Each playback has its own variable state. Expressions have size and execution limits. Entity-relative rotations use the authored hierarchy. Effects, timelines, delays, and multiple animation sources remain unsupported.
+Menu models retain the native root, waist, and body hierarchy. Bone poses also apply to animated clothing surfaces. The sampler supports position, rotation, scale, pre/post keyframes, linear and Catmull-Rom interpolation, and Molang frame queries. Each playback has its own variable state. Expressions have size and execution limits. Entity-relative rotations use the authored hierarchy.
+
+The target native loader selects the first declared emote animation source. The add-on preserves that order and accepts additional declarations. An unavailable first source remains an error. Effects, timelines, and delays remain unsupported.
 
 Private Bedrock 1.26.51 Battle Cry and Kadoosh assets resolve to 6.5 and 4.75 seconds. Asset tests sample every frame at 60 Hz. A Java GUI recording verifies Battle Cry movement, attached clothing, readable controls at the default GUI scale, and pose reset after completion. The recording uses private native assets and a local appearance fixture. It does not verify a live Java account download.
 
@@ -184,7 +186,7 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 
 - Resolve free assets for accounts without usable receipt keys and implement animated shared body textures. Verify native cape motion. These recipes still depend on the service model. Compare more overlapping clothing combinations against native results.
 - Compare more face sizes, tint channels, and equipped combinations against native results.
-- Compare corrected blink and strip timing with native multiplayer video. Implement emote effects, timelines, delays, multiple sources, chat announcements, and unavailable remote assets. Compare entity-relative rotations against native playback.
+- Compare corrected blink and strip timing with native multiplayer video. Implement emote effects, timelines, delays, chat announcements, and unavailable remote assets. Compare entity-relative rotations against native playback.
 - Add other piece palettes, verify native leg edits, and resolve free limb side recipes. Add paid purchase/redemption flows and account classic-pack downloads.
 - Verify versioned vanilla model overrides and native parent-name behavior. Complete classic controller blending, completion queries, item-action bindings, geometry-provided alias precedence, and first-person playback. Compare inherited skins and equipment flags with native rendering, including first-person views.
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. A white quad above the player moved independently with the sky clouds; it was not an extra face surface.

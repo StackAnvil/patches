@@ -1,4 +1,4 @@
-From fca534d0769091d54178f360e8ff4e4639aa2822 Mon Sep 17 00:00:00 2001
+From d7331f983e386b89ad9af5052e74ebda34cca4f8 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -226,6 +226,16 @@ Independent target-game compositor execution matches all 2,048 face pixels,
 including translucent hair. The service's static face differs at twelve
 translucent edge pixels; retain game composition rather than changing tint
 math to match that service discrepancy. Account recipes were restored.
+
+Bedrock 1.26.51.1 accepts multiple emote animation-source declarations but
+selects the first entry. Its loader checks for a nonempty 64-byte source
+vector, resolves the first name, and loads only that entry's file. The
+piece validator does not restrict the source count. Accept these lists
+and preserve their order instead of rejecting the entire emote. Missing
+first sources remain errors; later declarations do not supply a fallback.
+This behavior comes from focused inspection of the matching native loader
+and validator. Tests cover source ordering, sampled poses, missing files,
+and empty lists. All native binaries and exports remain private.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   54 +
@@ -290,7 +300,7 @@ math to match that service discrepancy. Account recipes were restored.
  .../appearance/BedrockBoneAnimationTest.java  |  124 +
  .../appearance/BedrockBuiltinAssetsTest.java  |  367 +
  .../BedrockCharacterProfilesTest.java         |  461 ++
- .../bedrock/appearance/BedrockEmotesTest.java |   80 +
+ .../bedrock/appearance/BedrockEmotesTest.java |  141 +
  .../appearance/BedrockLimbSelectionTest.java  |  173 +
  .../BedrockPersonaAssemblerTest.java          |  233 +
  .../appearance/BedrockPersonaAssetsTest.java  |  357 +
@@ -302,7 +312,7 @@ math to match that service discrepancy. Account recipes were restored.
  .../appearance/BedrockPersonaTintTest.java    |   87 +
  .../render/BedrockAnimatedModelTest.java      |   55 +
  .../render/BedrockPlayerModelTest.java        |  100 +
- 75 files changed, 22086 insertions(+), 59 deletions(-)
+ 75 files changed, 22147 insertions(+), 59 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -12877,7 +12887,7 @@ index 0000000..4edb06d
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotes.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotes.java
 new file mode 100644
-index 0000000..ad7dc39
+index 0000000..ab15a6e
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotes.java
 @@ -0,0 +1,99 @@
@@ -12914,8 +12924,7 @@ index 0000000..ad7dc39
 +                        final var packs =
 +                                BedrockPersonaAssets.load(
 +                                        account,
-+                                        List.of(
-+                                                BedrockPersonaAssets.Reference.from(item)));
++                                        List.of(BedrockPersonaAssets.Reference.from(item)));
 +                        final var pack = packs.get(item.packId());
 +                        if (pack == null)
 +                            throw new IOException("This emote has no asset entitlement");
@@ -12954,8 +12963,9 @@ index 0000000..ad7dc39
 +                if (!"persona_emote".equals(metadata.get("piece_type").getAsString())) continue;
 +                if (result != null) throw new IOException("The emote pack has ambiguous metadata");
 +                final var sources = metadata.getAsJsonArray("animation_sources");
-+                if (sources == null || sources.size() != 1)
-+                    throw new IOException("The emote needs multiple animation sources");
++                if (sources == null || sources.isEmpty())
++                    throw new IOException("The emote has no animation sources");
++                // Bedrock 1.26.51.1 selects the first declared source for an emote.
 +                final var source = sources.get(0).getAsJsonObject();
 +                final String path = source.get("animationFile").getAsString();
 +                final byte[] bytes = pack.files().get(path);
@@ -21031,10 +21041,10 @@ index 0000000..589993a
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotesTest.java
 new file mode 100644
-index 0000000..b559b28
+index 0000000..8dbf0d4
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotesTest.java
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,141 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -21080,6 +21090,67 @@ index 0000000..b559b28
 +                90,
 +                emote.animation().playback().sample(1, Map.of()).get("rightArm").rotation().x());
 +        files.remove("wave.animation.json");
++        assertThrows(IOException.class, () -> BedrockEmotes.read(pack));
++    }
++
++    @Test
++    void selectsTheFirstSourceWithoutFallingBackToLaterDeclarations() throws Exception {
++        final var metadata =
++                com.google.gson.JsonParser.parseString(
++                                """
++                                {"piece_type":"persona_emote","animation_sources":[
++                                  {"name":"animation.first","animationFile":"first.animation.json"},
++                                  {"name":"animation.second","animationFile":"second.animation.json"}]}
++                                """)
++                        .getAsJsonObject();
++        final var files = new HashMap<String, byte[]>();
++        files.put(
++                "first.animation.json",
++                """
++                {"animations":{"animation.first":{"animation_length":2,
++                  "bones":{"rightarm":{"rotation":[30,0,0]}}}}}
++                """
++                        .getBytes(StandardCharsets.UTF_8));
++        files.put(
++                "second.animation.json",
++                """
++                {"animations":{"animation.second":{"animation_length":5,
++                  "bones":{"rightarm":{"rotation":[80,0,0]}}}}}
++                """
++                        .getBytes(StandardCharsets.UTF_8));
++        files.put("emote.meta.json", metadata.toString().getBytes(StandardCharsets.UTF_8));
++        final var pack = new BedrockPersonaAssets.Pack(UUID.randomUUID().toString(), files);
++        final var first = BedrockEmotes.read(pack);
++        assertEquals(2, first.animation().length());
++        assertEquals(
++                30,
++                first.animation().playback().sample(1, Map.of()).get("rightarm").rotation().x());
++
++        final var sources = metadata.getAsJsonArray("animation_sources");
++        sources.add(sources.remove(0));
++        files.put("emote.meta.json", metadata.toString().getBytes(StandardCharsets.UTF_8));
++        final var second = BedrockEmotes.read(pack);
++        assertEquals(5, second.animation().length());
++        assertEquals(
++                80,
++                second.animation().playback().sample(1, Map.of()).get("rightarm").rotation().x());
++
++        files.remove("first.animation.json");
++        assertEquals(5, BedrockEmotes.read(pack).animation().length());
++        files.remove("second.animation.json");
++        assertThrows(IOException.class, () -> BedrockEmotes.read(pack));
++        sources.add(sources.remove(0));
++        files.put("emote.meta.json", metadata.toString().getBytes(StandardCharsets.UTF_8));
++        files.put(
++                "second.animation.json",
++                """
++                {"animations":{"animation.second":{"bones":{}}}}
++                """
++                        .getBytes(StandardCharsets.UTF_8));
++        assertThrows(IOException.class, () -> BedrockEmotes.read(pack));
++        sources.remove(0);
++        sources.remove(0);
++        files.put("emote.meta.json", metadata.toString().getBytes(StandardCharsets.UTF_8));
 +        assertThrows(IOException.class, () -> BedrockEmotes.read(pack));
 +    }
 +
