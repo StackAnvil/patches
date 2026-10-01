@@ -474,3 +474,20 @@ Independent execution of the target controller update verifies 106 queue and scr
 A muted Java client test loads a controller through the production server player factory. It verifies alias resolution to actual PCM channels, suppression of entry scripts without later playback, reentry, and duplicate frames. Source gain stays at zero. All 249 fixture-enabled add-on tests pass with no failures or skips. The dependency build and bundle pass.
 
 Particles, complete native render-context gate bindings, audible mixing, captions, and dynamic emote resource assignment remain incomplete. Native exports, licensed assets, executable fixtures, and runtime probes remain private.
+
+
+### Establish particle runtime calculations
+
+Independent execution of Bedrock 1.26.51.1 now covers dynamic motion, billboard properties, and emitter component configuration. These checks extend the earlier particle dispatch probes. Production still rejects animation particle effects before playback.
+
+The dynamic motion function, `1461c9ce0`, passes 200 cases with constant component fields. It converts nanoseconds to float seconds. Linear drag uses an exponential velocity update. Drag magnitudes at or below float epsilon use acceleration directly. Position uses the updated velocity. Rotation uses a separate acceleration and drag update. An exponential result at or above the largest finite float clears linear velocity.
+
+The billboard update, `1462b1d70`, passes 492 cases. Sizes clamp to zero. Flipbooks use the imported `roundf`, so frames change at the half-frame boundary. Lifetime stretching computes its rate from the particle lifetime and frame count. Non-looping frames clamp to the last frame; looping frames use `fmodf`. Authored UV steps can be negative. Custom directions retain their magnitude. Derived directions retain the previous direction at or below the squared speed threshold. The definition reader squares the authored threshold.
+
+Private Java implementations match all 6,022 finite scalar results from the motion and billboard cases exactly after float conversion. The native harness supplies the imported `expf`, `roundf`, and `fmodf` results. Billboard variable lookup supplies particle age and lifetime. These boundaries leave native math-library differences and complete Molang integration unverified.
+
+Another 289 native cases cover instant, steady, and manual rates, plus once and looping lifetime configuration. These calls execute the target emitter's actual getter and setter methods. Instant requests stop after the emitted counter becomes nonzero and cap at 1,000. Manual capacity caps at 2,000. Steady emission keeps a float time remainder, uses `floorf` for the batch count, and applies a changed rate after the next batch emits. The probe also checks capacity initialization and conversion of active and sleep times to nanoseconds.
+
+These component checks do not execute particle allocation, lifetime scheduling, collision, materials, or world rendering. The private Java calculations remain research code until the production runtime consumes them. Native exports, executable fixtures, and licensed assets remain private.
+
+Sources: [Microsoft dynamic motion reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftparticle_motion_dynamic?view=minecraft-bedrock-stable), [instant emission reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftemitter_rate_instant?view=minecraft-bedrock-stable), and [Mojang particle integration reference](https://mojang.github.io/bedrock-samples/Particles.html). The documentation describes the component model. The matching executable establishes the calculations and limits above.

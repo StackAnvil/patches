@@ -246,6 +246,10 @@ Native effect research verifies separate particle and sound paths. Earlier notes
 
 The native particle callback resolves aliases, chooses locator or actor positions, and optionally attaches an emitter to the actor. Its initialization descriptor contains a tagged Molang program. Independent execution verifies 256 dispatch cases, 16 initialization cases, and 64 cases through the actual initialization setter. These checks establish particle requests at mocked engine boundaries. They do not establish audio parameters or particle appearance.
 
+New particle runtime probes cover 200 dynamic motion cases, 492 billboard cases, and 289 emitter component cases from the target build. Linear velocity uses exponential drag. Flipbooks use `roundf` and change at half-frame boundaries. Private Java calculations match all 6,022 finite motion and billboard values exactly.
+
+The probes supply math-library calls and particle age variables. Emitter cases execute the actual native getter and setter methods. Allocation, collision, lifetime scheduling, and world rendering remain incomplete. The [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md#establish-particle-runtime-calculations) describe the evidence and test boundaries.
+
 Timeline sound declarations contain an effect name and an optional locator. The native parser adds their timestamp to a 104-byte record. Fourteen constructor cases and 24 ordering cases verify defaults, float conversion, and a stable timestamp sort. The animation player queues resolved sounds after particle dispatch and before timeline scripts.
 
 Nineteen native queue cases verify alias availability, missing actor context, event boundaries, loops, and suppression without later catch-up. The harness supplies component lookup and memory-copy boundaries. These cases establish queue contents.
