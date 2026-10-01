@@ -276,19 +276,31 @@ Metadata-to-runtime flag construction and additional palette callers still need 
 
 ## Native animation effect research
 
-Independent execution of Bedrock 1.26.51.1 `FUN_1401a0f40` verifies 256 sound callback cases. Native instructions select events, resolve aliases, choose positions, attach channels, and pass an additional descriptor. The harness supplies actor accessors, locator results, sound service allocation, and channel methods. It captures the native requests at these boundaries without audio output.
+Earlier notes incorrectly identified `FUN_1401a0f40` as a sound callback. The target schema, record sizes, emitter methods, and actual sound queue establish separate particle and sound paths.
 
-Sound events use `previous < event <= current`. Missing aliases and unavailable sound services produce no sound request. A fixed-position sound uses the resolved locator position. A missing locator falls back to the actor position. An attached sound binds its channel to the actor identity and authored locator. Native code passes the additional descriptor after the attachment step. The following probes establish its type. Authored defaults still need verification.
+Independent execution of Bedrock 1.26.51.1 `FUN_1401a0f40` verifies 256 particle callback cases. Native instructions select events, resolve aliases, choose positions, attach emitters, and pass an initialization descriptor. The harness supplies actor accessors, locator results, particle engine allocation, and emitter methods. It captures the native requests at these boundaries without particle simulation.
 
-Further tracing identifies the descriptor at offset `0x60` as a 16-byte Molang expression variant. The sound instance vtable selects `FUN_1421603e0`. This setter evaluates a complex program with the channel's render context at offset `0xd8`. Constant variants, missing programs, and failed channel preparation do not call the complex evaluator.
+Particle events use `previous < event <= current`. Missing aliases and unavailable particle engines produce no emitter request. An unbound emitter uses the resolved locator position. A missing locator falls back to the actor position.
 
-Independent execution verifies 16 setter cases and 64 sound callback cases through the actual setter. The harness supplies channel preparation and the complex-expression evaluation boundary. Native instructions select the program and its render context after locator attachment. Earlier byte captures establish descriptor transport only. Four raw float values do not describe its type or volume and pitch controls. Authored sound script parsing, variable bindings, captions, and audible results remain unverified.
+A bound emitter retains the actor identity and authored locator. Native code passes the initialization descriptor after attachment. Authored particle defaults still need verification.
 
-Another probe executes `FUN_141e68a20` across 38 clock frames, 16 render-context flag combinations, and suppression followed by re-enabling. Sound dispatch follows bone sampling and precedes Molang timeline scripts. Both receive the current clock and previous event cursor. The clock cases cover initial delays, loop delays, held frames, zero weight, custom clocks, equal timestamps, and loop wrapping.
+The descriptor at offset `0x60` contains a 16-byte Molang expression variant. The emitter vtable selects `FUN_1421603e0`, its initialization setter. This setter evaluates a complex program with the emitter's render context at offset `0xd8`. Constant variants, missing programs, and failed emitter preparation do not call the complex evaluator.
 
-A suppressed native render context skips sound dispatch and timeline scripts but still advances the event cursor. A later enabled pass does not replay that skipped interval. The probe verifies raw context flags. Their mapping to Java preview and world render contexts remains unresolved.
+Independent execution verifies 16 initialization cases and 64 particle callback cases through the actual setter. The harness supplies emitter preparation and the complex-expression evaluation boundary. Native instructions select the program and its render context after locator attachment. Earlier raw byte captures establish descriptor transport only. These particle probes do not establish sound volume, pitch, captions, or audible output.
 
-Independent execution of `FUN_1401c3340` verifies 64 resource availability and lifetime cases. The binder acquires the actor resource and animation definition through two weak references. It assigns the sound table through `FUN_141e69a40` and the named actor event table through `FUN_141e69a50`. Absent or expired resources leave existing bindings unchanged. Both resource reference counts return to their initial values. This probe verifies native table assignment, not JSON alias parsing, particle bindings, or licensed resource acquisition.
+Another probe executes `FUN_141e68a20` across 38 clock frames, 16 render-context flag combinations, and suppression followed by re-enabling. Particle dispatch follows bone sampling and precedes sound queuing and Molang timeline scripts. It receives the current clock and previous event cursor. The clock cases cover initial delays, loop delays, held frames, zero weight, custom clocks, equal timestamps, and loop wrapping.
+
+A suppressed native render context skips particle dispatch, sound queuing, and timeline scripts but still advances the event cursor. A later enabled pass does not replay that skipped interval. The probes verify raw context flags. Their mapping to Java preview and world render contexts remains unresolved.
+
+The native timeline sound schema in `FUN_141bcfd40` declares an effect name and an optional locator. Its object and array callbacks, `FUN_141c008f0` and `FUN_141c009b0`, append 104-byte records. Each record contains two 48-byte hashed strings and a float timestamp. Fourteen native constructor cases verify empty strings, float conversion, and both declaration forms. Twenty-four native executions of `FUN_141e88370` verify stable ordering, including equal timestamps.
+
+The sound path executes inside `FUN_141e68a20`. It resolves aliases through the table at player offset `0xc0`. It appends 80-byte requests with the resolved sound name and authored locator to an actor component. Nineteen native cases verify missing aliases, missing bindings, unavailable actor context, event boundaries, exact loop boundaries, wrapping, and suppression without catch-up. The harness supplies component lookup and memory-copy boundaries. The sound path follows particle dispatch and precedes timeline scripts.
+
+These checks establish queue contents. They do not establish audio output, locator resolution at playback, sound parameters, captions, or cleanup.
+
+Independent execution of `FUN_1401c3340` verifies 64 resource availability and lifetime cases. The binder acquires the actor resource and animation definition through two weak references. It assigns the particle table through `FUN_141e69a40` and the sound table through `FUN_141e69a50`. The tables come from definition offsets `0x220` and `0x2b8`. The client-entity parser writes sound aliases to the latter table through `FUN_141d637a0`.
+
+Absent or expired resources leave existing bindings unchanged. Both resource reference counts return to their initial values. This probe verifies native table assignment, not named actor events or production resource loading.
 
 Inspection of `FUN_1414ba900` confirms the first declared emote source. The loader reads its file and adds the selected animation to the shared actor-animation library. The source loader alone does not resolve effect resources. Sound dispatch also requires the actor sound table above.
 
@@ -296,7 +308,7 @@ The extracted base vanilla player definition declares no sound or particle alias
 
 Production sound, particle, and named actor event playback remain incomplete. The next implementation needs effect resource bindings, model locator transforms, audio loading, and effect lifecycle management. The renderer does not yet consume model locators. Native instruction probes do not establish audible results, captions, particle appearance, or multiplayer behavior. Executables, probes, fixtures, and exports remain private.
 
-Sources: [Microsoft animation effects reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/actor_animation.v1.8.0?view=minecraft-bedrock-stable) and [Mojang particle integration reference](https://mojang.github.io/bedrock-samples/Particles.html). The target executable establishes the callback behavior and render-context suppression above.
+Sources: [Microsoft animation effects reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/actor_animation.v1.8.0?view=minecraft-bedrock-stable), [Mojang particle integration reference](https://mojang.github.io/bedrock-samples/Particles.html), [sound event declaration](https://github.com/LiteLDev/LeviLamina/blob/32fcaa02baa38371b705358801c7d185c284233e/src/mc/world/actor/animation/ActorSoundEffectEvent.h), and [particle emitter methods](https://github.com/LiteLDev/LeviLamina/blob/32fcaa02baa38371b705358801c7d185c284233e/src-client/mc/client/particlesystem/particle/ParticleEmitterActual.h). Generated declarations supplied leads. The target executable and independent execution establish the behavior and record layouts above.
 
 ## Licensed animation effect libraries
 
