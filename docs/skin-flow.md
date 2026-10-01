@@ -248,11 +248,23 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 
 ## Work still needed
 
-- Resolve free assets for accounts without usable receipt keys. These recipes still depend on the service model. Verify native cape motion. Compare more overlapping clothing combinations against native results.
-- Compare more face sizes, tint channels, and equipped combinations against native results.
-- Compare corrected blink and strip timing with native multiplayer video. Implement emote effects, named actor events, chat announcements, and unavailable remote assets. Compare entity-relative rotations against native playback.
-- Establish premium piece color controls and channels, and verify native leg edits. Add paid purchase/redemption flows and remote classic selection synchronization.
-- Verify versioned vanilla model overrides and native parent-name behavior. Complete classic item-action bindings, geometry-provided alias precedence, and first-person playback. Compare inherited skins and equipment flags with native rendering, including first-person views.
-- Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. A white quad above the player moved independently with the sky clouds; it was not an extra face surface.
+### Missing features
+
+- Resolve free assets for accounts without usable receipt keys. These recipes still depend on the service model. Resolve unavailable remote emote assets.
+- Finish piece-specific color availability and establish additional palette callers. The inspected native picker accepts only loaded skin, facial hair, mouth, eye, and hair pieces with an enabled override flag. All 224 native eligibility cases pass. Metadata-to-runtime flag construction and other UI paths remain unresolved.
+- Add paid purchase and redemption flows. Synchronize classic skin selection with the native account.
+- Implement animation sounds, particles, and named actor events. Emote chat announcements exist, but native platform communication filters remain incomplete.
+- Complete native item poses, first-person playback, and equipment behavior. Remaining bindings include local charging prediction, post-use trident behavior, item-name mappings, and exact native use durations.
+- Resolve additional geometry animation alias sources, versioned vanilla model overrides, and native parent-name behavior. Modern and library geometry flags now derive aliases through persistence and transport. The legacy vex model still has an unresolved `rightarm` parent.
+
+### Verification still needed
+
+- Compare more face sizes, tint channels, overlapping outfits, and cape motion against the native client.
+- Compare blink timing, strip timing, emote motion, mixed rotation spaces, and nontrivial scale composition against native playback.
+- Capture fresh native leg edits and compare their account writes. Free limb side controls already exist.
+- Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. This establishes visual presence, not complete timing or format parity.
+- Verify fresh interactive Store sign-in and helper runtime behavior on Windows and macOS. Linux acquisition, license decryption, extraction, and cache reuse already pass.
+
+The latest full stack build passes all 191 fixture-enabled add-on tests with no skips. The latest recorded Java runtime probe passes 1,324 checks. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
 
 Keep login JWTs, receipts, content keys, raw flows, screenshots, player textures, and account data private under `.stackanvil/`.

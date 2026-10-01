@@ -36,16 +36,28 @@ A private running-client probe passed 208 checks across standard and custom mode
 
 The account asset patch supplies the licensed base vanilla model library through the model-source interface. Pack definitions retain precedence across library chains. Tests cover external parents, modern library models, absent selections, cross-library cycles, and persistence. The account asset patch compiles the licensed player graph for classic alias playback. Versioned vanilla overrides, native parent-name behavior, item-action bindings, first-person playback, and native visual comparisons remain pending.
 
-## Legacy geometry animation flags
+## Geometry animation flags
 
-Convert the nine legacy geometry animation flags into classic aliases before storage and transport. Apply geometry-derived aliases after explicit skin aliases. False flags retain existing bindings. Unrelated aliases, empty bindings, and explicit render flags retain their values. Modern geometry does not use this legacy conversion.
+Convert the nine geometry animation flags into classic aliases before storage and transport. Apply geometry-derived aliases after explicit skin aliases. False flags retain existing bindings. Unrelated aliases, empty bindings, and explicit render flags retain their values.
 
 Bedrock 1.26.51.1 converts arm posture flags in order: arms down, arms out front, Statue of Liberty, then single arm. Stationary legs override single legs. Upside-down legs override both. Head bob, riding arms, holding, sneaking, base pose, and look-at-target aliases also follow native conversion.
 
-Independent execution of `FUN_141433350` verifies all 512 flag combinations. Execution of the alias merge block in `FUN_141444960` verifies another 512 combinations. These cases include conflicting skin aliases and empty or non-string internal metadata. The runtime reads the selected raw legacy definition. Native inheritance edge cases remain pending.
+Independent execution of `FUN_141433350` verifies all 512 legacy conversion combinations. Execution of the alias merge block in `FUN_141444960` verifies another 512 combinations. These cases include conflicting skin aliases and empty or non-string internal metadata. Native inheritance edge cases remain pending.
 
 The native inverted-crouch flag emits `animation.player.move.sneaking.inverted`. That resource is absent from the matching licensed package. Preserve the native alias. The actor graph follows native missing-resource behavior instead of rejecting the pack or substituting an animation.
 
 Tests cover geometry selection, precedence, persistence, and skin claims. Executable files, execution fixtures, probes, and licensed assets remain private.
 
 The replayed full stack builds, and all 174 fixture-enabled add-on tests pass with no skips. A running Java client passes 1,059 checks. These cover the 1,024 native flag and merge cases, pack import, persistence, skin claims, and all nine licensed legacy graphs. The imported zombie-arm alias reaches both preview and world model geometry. The probe changes no account profiles. Native visible motion comparison remains pending.
+
+## Modern and library geometry animation flags
+
+Read animation flags from the resolved model. Modern pack models and library-provided models now retain their flags through the same import path. Standard models without custom geometry retain their explicit skin aliases.
+
+Derive aliases during direct imports and saved appearance loads. Older saved models retain their geometry flags even when their stored options omit the aliases. These models now receive the derived aliases without another pack import. The skin identity and unrelated options retain their values.
+
+Independent execution of Bedrock 1.26.51.1 verifies 512 flag-reader and alias-precedence combinations. The harness starts after model construction in `FUN_141c13a30` and supplies decoded JSON accessors and allocated storage. Native instructions read the flags. The runtime writer `FUN_14144f000` constructs the aliases. The inspected merge block then applies metadata precedence. This evidence covers the flag and alias paths, not complete native rendering.
+
+Integration tests cover modern pack and library imports, conflicting aliases, unrelated models, direct imports, older saved options, and transport. The licensed player graph consumes all nine flag cases through the resolved-model API. Native visual, first-person, and inheritance edge comparisons remain pending. Executable files, fixtures, and probes remain private.
+
+The replayed full stack builds. All 191 fixture-enabled add-on tests pass with no skips. This change makes no account writes.
