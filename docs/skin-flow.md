@@ -84,7 +84,7 @@ The color editor uses swatches captured from Bedrock 1.26.51. Skin tone edits ch
 
 ## Account character assembly
 
-The active character has an authenticated avatar at `GET /api/v1.0/profile/image/avatar`. The add-on assembles its body locally when all equipped assets and bindings are available. Recipes with unresolved free packs, capes, or animated shared body textures still use the GLTF model from `/api/v1.0/profile/image/ModelBinary`.
+The active character has an authenticated avatar at `GET /api/v1.0/profile/image/avatar`. The add-on assembles its body locally when all equipped assets and bindings are available. Recipes with unresolved free packs or animated shared body textures still use the GLTF model from `/api/v1.0/profile/image/ModelBinary`.
 
 **Use in worlds** saves the locally assembled character, or converts the service model into a Bedrock atlas and geometry. It saves the appearance per account and sends it at login or through a live skin update. Slot selection and edits refresh an active character already selected for use in worlds.
 
@@ -107,6 +107,10 @@ Tint blending uses four weighted mask channels and the native HSL, LCh, and lumi
 Local body assembly selects the equipped skeleton and body sources for the character's height and arm width. Empty `arm_size` fields select shared sources. The skeleton supplies pose bones and item locators. Equipped geometry sources replace their declared body or clothing zones while retaining those pose bones. Static piece surfaces share an atlas with a duplicated one-pixel border. Polygon layers on the same bone retain separate vertex, normal, and UV indices.
 
 Shared skin and clothing textures use native piece order and the same tint compositor as faces. Compressed BGRA clothing maps encode red and green offsets around 128. A layer clears the mapped underlying texel when its source has no coverage there. The compositor then blends the layer's visible texel. A private Steve/HelliArm capture matches all 16,384 body pixels and body mesh UVs. Extracted assets assemble all nine starters across four heights and two arm widths. Other overlapping outfits and texture resolutions still need native comparison.
+
+Persona cape packs supply their texture through the same entitlement download and tint pipeline. Local assembly binds the texture to `geometry.cape` from the licensed vanilla library. It translates the cape surface to the equipped body pivot and retains the height skeleton. Explicit face UVs preserve the native bottom-face orientation and support larger textures without resampling.
+
+An authenticated Copper Cape comparison matches rendered rest vertices, normals, and UVs at all four heights. Tests preserve every cape texel through atlas assembly, save/load, and the skin codec. Mirrored mappings and larger texture resolutions have targeted tests. The account recipes were restored after research. These checks establish static bindings. A running Java client passes nine checks for local assembly, preview attachment, and the world renderer. The rear preview shows the entitled cape. This run uses private licensed fixtures. Native cape motion and multiplayer comparison remain pending.
 
 For animated owned geometry, assembly selects the character's body and arm variants. It replaces matching static preview surfaces and packs looping texture frames into a separate animation atlas. Save/load, login claims, and live packets retain those frames. Independent limb recipes filter animated bones by their limb ancestry and retain separate tint colors and atlas tiles. The opposite side keeps its static geometry. Unresolved free assets continue to use the service's static model. Built-in UUIDs resolve from the official package even when a catalog selection uses `/f` rather than `/d`.
 
@@ -160,7 +164,7 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 
 ## Work still needed
 
-- Resolve remaining free assets, cape bindings, and animated shared body textures. These recipes still depend on the service model. Compare more overlapping clothing combinations against native results.
+- Resolve remaining free assets and animated shared body textures. Verify native cape motion. These recipes still depend on the service model. Compare more overlapping clothing combinations against native results.
 - Compare more face sizes, tint channels, and equipped combinations against native results.
 - Verify native blinking and strip timing. Implement emote effects, timelines, delays, multiple sources, chat announcements, and unavailable remote assets. Compare entity-relative rotations against native playback.
 - Add other piece palettes, verify native leg edits, and resolve free limb side recipes. Add paid purchase/redemption flows and account classic-pack downloads.
