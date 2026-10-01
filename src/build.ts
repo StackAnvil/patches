@@ -47,93 +47,87 @@ async function publishLocal(artifact: string, pom: string, coordinate: Coordinat
   await writeFile(join(directory, `${stem}.pom`), pom);
 }
 
-function buildOne(id: string, built: Map<string, Coordinates>) {
-  return Effect.gen(function* () {
-    const target = yield* Effect.promise(() => getTarget(id));
-    const dir = yield* sync(id);
-    const jdk = yield* Effect.promise(() => javaHome(target.java));
-    const viaFabricPlusVersion = id === "viafabricplus-bedrock" ? built.get("viafabricplus")?.version : undefined;
-    if (id === "viafabricplus-bedrock" && !viaFabricPlusVersion) {
-      return yield* Effect.fail(new Error("The Bedrock add-on needs a pinned ViaFabricPlus artifact"));
+const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string, Coordinates>) {
+  const target = yield* Effect.promise(() => getTarget(id));
+  const dir = yield* sync(id);
+  const jdk = yield* Effect.promise(() => javaHome(target.java));
+  const viaFabricPlusVersion = id === "viafabricplus-bedrock" ? built.get("viafabricplus")?.version : undefined;
+  if (id === "viafabricplus-bedrock" && !viaFabricPlusVersion) {
+    return yield* Effect.fail(new Error("The Bedrock add-on needs a pinned ViaFabricPlus artifact"));
+  }
+  yield* command("bash", ["./gradlew", "--no-daemon", `-PstackanvilMavenRepo=${localRepo}`,
+    ...(viaFabricPlusVersion ? [`-PstackanvilViaFabricPlusVersion=${viaFabricPlusVersion}`] : []), "clean", target.buildTask,
+    `generatePomFileFor${target.publication}Publication`], dir,
+    { ...process.env, JAVA_HOME: jdk, PATH: `${join(jdk, "bin")}:${process.env.PATH ?? ""}` });
+  const artifacts = yield* Effect.promise(() => listArtifacts(dir));
+  if (artifacts.length !== 1) return yield* Effect.fail(new Error(`Expected one distributable JAR for ${id}, found ${artifacts.length}`));
+  const artifact = artifacts[0]!;
+  const name = basename(artifact);
+  if (!name.endsWith("-StackAnvil.jar")) {
+    return yield* Effect.fail(new Error(`Branding patch did not suffix ${name} with -StackAnvil.jar`));
+  }
+  const publications = yield* Effect.promise(() => readdir(join(dir, "build", "publications"), { withFileTypes: true }));
+  const pomCandidates = publications.filter((entry) => entry.isDirectory())
+    .map((entry) => join(dir, "build", "publications", entry.name, "pom-default.xml"));
+  const pom = yield* Effect.promise(async () => {
+    for (const path of pomCandidates) {
+      const text = await Bun.file(path).text();
+      if (text) return text;
     }
-    yield* command("bash", ["./gradlew", "--no-daemon", `-PstackanvilMavenRepo=${localRepo}`,
-      ...(viaFabricPlusVersion ? [`-PstackanvilViaFabricPlusVersion=${viaFabricPlusVersion}`] : []), "clean", target.buildTask,
-      `generatePomFileFor${target.publication}Publication`], dir,
-      { ...process.env, JAVA_HOME: jdk, PATH: `${join(jdk, "bin")}:${process.env.PATH ?? ""}` });
-    const artifacts = yield* Effect.promise(() => listArtifacts(dir));
-    if (artifacts.length !== 1) return yield* Effect.fail(new Error(`Expected one distributable JAR for ${id}, found ${artifacts.length}`));
-    const artifact = artifacts[0]!;
-    const name = basename(artifact);
-    if (!name.endsWith("-StackAnvil.jar")) {
-      return yield* Effect.fail(new Error(`Branding patch did not suffix ${name} with -StackAnvil.jar`));
-    }
-    const publications = yield* Effect.promise(() => readdir(join(dir, "build", "publications"), { withFileTypes: true }));
-    const pomCandidates = publications.filter((entry) => entry.isDirectory())
-      .map((entry) => join(dir, "build", "publications", entry.name, "pom-default.xml"));
-    const pom = yield* Effect.promise(async () => {
-      for (const path of pomCandidates) {
-        const text = await Bun.file(path).text();
-        if (text) return text;
-      }
-      throw new Error(`No generated Maven POM found for ${id}`);
-    });
-    const coordinate = coordinates(pom);
-    const output = join(root, "dist", id);
-    yield* Effect.promise(() => rm(output, { recursive: true, force: true }));
-    yield* Effect.promise(() => mkdir(output, { recursive: true }));
-    yield* Effect.promise(() => copyFile(artifact, join(output, name)));
-    yield* Effect.promise(() => writeFile(join(output, "pom.xml"), pom));
-    yield* Effect.promise(() => publishLocal(artifact, pom, coordinate));
-    const bytes = yield* Effect.promise(() => Bun.file(artifact).arrayBuffer());
-    const manifest = {
-      target: id, upstream: target.upstream, baseSha: target.baseSha,
-      coordinates: `${coordinate.group}:${coordinate.artifact}:${coordinate.version}`,
-      dependencies: [...target.dependsOn, ...(id === "viafabricplus-bedrock" ? ["viafabricplus"] : [])]
-        .map((dependency) => ({ target: dependency, coordinates: built.get(dependency) })),
-      artifacts: [{ file: name, sha256: createHash("sha256").update(Buffer.from(bytes)).digest("hex") }],
-      auxiliaryArtifacts: [],
-    };
-    yield* Effect.promise(() => writeFile(join(output, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`));
-    built.set(id, coordinate);
-    return output;
+    throw new Error(`No generated Maven POM found for ${id}`);
   });
-}
+  const coordinate = coordinates(pom);
+  const output = join(root, "dist", id);
+  yield* Effect.promise(() => rm(output, { recursive: true, force: true }));
+  yield* Effect.promise(() => mkdir(output, { recursive: true }));
+  yield* Effect.promise(() => copyFile(artifact, join(output, name)));
+  yield* Effect.promise(() => writeFile(join(output, "pom.xml"), pom));
+  yield* Effect.promise(() => publishLocal(artifact, pom, coordinate));
+  const bytes = yield* Effect.promise(() => Bun.file(artifact).arrayBuffer());
+  const manifest = {
+    target: id, upstream: target.upstream, baseSha: target.baseSha,
+    coordinates: `${coordinate.group}:${coordinate.artifact}:${coordinate.version}`,
+    dependencies: [...target.dependsOn, ...(id === "viafabricplus-bedrock" ? ["viafabricplus"] : [])]
+      .map((dependency) => ({ target: dependency, coordinates: built.get(dependency) })),
+    artifacts: [{ file: name, sha256: createHash("sha256").update(Buffer.from(bytes)).digest("hex") }],
+    auxiliaryArtifacts: [],
+  };
+  yield* Effect.promise(() => writeFile(join(output, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`));
+  built.set(id, coordinate);
+  return output;
+});
 
-export function build(id: string) {
-  return Effect.gen(function* () {
-    const order = id === "viafabricplus" ? [] : buildOrder(yield* Effect.promise(() => getTargets()), id);
-    yield* Effect.promise(() => rm(localRepo, { recursive: true, force: true }));
-    const built = new Map<string, Coordinates>();
-    const includeViaFabricPlus = id === "viafabricplus" || order.includes("viafabricplus-bedrock");
-    if (includeViaFabricPlus) {
-      console.log("Fetching pinned ViaFabricPlus Jenkins build");
-      const { pin } = yield* Effect.promise(() => prepareViaFabricPlus());
-      built.set("viafabricplus", { group: "com.viaversion", artifact: "viafabricplus", version: pin.version });
-    }
-    for (const [index, target] of order.entries()) {
-      console.log(`Building ${target} (${index + 1}/${order.length})`);
-      yield* buildOne(target, built);
-    }
-    return [...(includeViaFabricPlus ? ["viafabricplus"] : []), ...order]
-      .map((target) => join(root, "dist", target)).join("\n");
-  });
-}
+export const build = Effect.fn("build")(function* (id: string) {
+  const order = id === "viafabricplus" ? [] : buildOrder(yield* Effect.promise(() => getTargets()), id);
+  yield* Effect.promise(() => rm(localRepo, { recursive: true, force: true }));
+  const built = new Map<string, Coordinates>();
+  const includeViaFabricPlus = id === "viafabricplus" || order.includes("viafabricplus-bedrock");
+  if (includeViaFabricPlus) {
+    console.log("Fetching pinned ViaFabricPlus Jenkins build");
+    const { pin } = yield* Effect.promise(() => prepareViaFabricPlus());
+    built.set("viafabricplus", { group: "com.viaversion", artifact: "viafabricplus", version: pin.version });
+  }
+  for (const [index, target] of order.entries()) {
+    console.log(`Building ${target} (${index + 1}/${order.length})`);
+    yield* buildOne(target, built);
+  }
+  return [...(includeViaFabricPlus ? ["viafabricplus"] : []), ...order]
+    .map((target) => join(root, "dist", target)).join("\n");
+});
 
-export function buildPr(id: string, patchFile?: string) {
-  return Effect.gen(function* () {
-    const target = yield* Effect.promise(() => getTarget(id));
-    const dir = yield* sync(id, "pr", patchFile);
-    yield* command("bash", ["./gradlew", "--no-daemon", "clean", target.buildTask], dir);
-    const artifacts = yield* Effect.promise(() => listArtifacts(dir));
-    if (!artifacts.length) return yield* Effect.fail(new Error(`No PR JAR artifacts found for ${id}`));
-    const output = patchFile
-      ? join(root, "dist", "pr", id, patchFile.replace(/\.patch$/, ""))
-      : join(root, "dist", "pr", id);
-    yield* Effect.promise(() => rm(output, { recursive: true, force: true }));
-    yield* Effect.promise(() => mkdir(output, { recursive: true }));
-    for (const artifact of artifacts) yield* Effect.promise(() => copyFile(artifact, join(output, basename(artifact))));
-    const commit = yield* command("git", ["rev-parse", "HEAD"], dir);
-    yield* Effect.promise(() => writeFile(join(output, "manifest.json"), `${JSON.stringify({ target: id, upstream: target.upstream, baseSha: target.baseSha, featureCommit: commit }, null, 2)}\n`));
-    return output;
-  });
-}
+export const buildPr = Effect.fn("buildPr")(function* (id: string, patchFile?: string) {
+  const target = yield* Effect.promise(() => getTarget(id));
+  const dir = yield* sync(id, "pr", patchFile);
+  yield* command("bash", ["./gradlew", "--no-daemon", "clean", target.buildTask], dir);
+  const artifacts = yield* Effect.promise(() => listArtifacts(dir));
+  if (!artifacts.length) return yield* Effect.fail(new Error(`No PR JAR artifacts found for ${id}`));
+  const output = patchFile
+    ? join(root, "dist", "pr", id, patchFile.replace(/\.patch$/, ""))
+    : join(root, "dist", "pr", id);
+  yield* Effect.promise(() => rm(output, { recursive: true, force: true }));
+  yield* Effect.promise(() => mkdir(output, { recursive: true }));
+  for (const artifact of artifacts) yield* Effect.promise(() => copyFile(artifact, join(output, basename(artifact))));
+  const commit = yield* command("git", ["rev-parse", "HEAD"], dir);
+  yield* Effect.promise(() => writeFile(join(output, "manifest.json"), `${JSON.stringify({ target: id, upstream: target.upstream, baseSha: target.baseSha, featureCommit: commit }, null, 2)}\n`));
+  return output;
+});

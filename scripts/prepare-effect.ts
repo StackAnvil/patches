@@ -7,7 +7,7 @@ const repository = join(repos, "effect");
 
 if (!existsSync(join(repository, ".git"))) {
   await mkdir(repos, { recursive: true });
-  const clone = Bun.spawn(["git", "clone", "https://github.com/Effect-TS/effect-smol", repository], {
+  const clone = Bun.spawn(["git", "clone", "https://github.com/Effect-TS/effect", repository], {
     stdio: ["inherit", "inherit", "inherit"],
   });
   process.exitCode = await clone.exited;
