@@ -84,7 +84,7 @@ The color editor uses swatches captured from Bedrock 1.26.51. Skin tone edits ch
 
 ## Account character assembly
 
-The active character has an authenticated avatar at `GET /api/v1.0/profile/image/avatar`. The add-on assembles its body locally when all equipped assets and bindings are available. Recipes with unresolved free packs or animated shared body textures still use the GLTF model from `/api/v1.0/profile/image/ModelBinary`.
+The active character has an authenticated avatar at `GET /api/v1.0/profile/image/avatar`. The add-on assembles its body locally when all equipped assets and bindings are available. Recipes with unavailable receipt keys or animated shared body textures still use the GLTF model from `/api/v1.0/profile/image/ModelBinary`.
 
 **Use in worlds** saves the locally assembled character, or converts the service model into a Bedrock atlas and geometry. It saves the appearance per account and sends it at login or through a live skin update. Slot selection and edits refresh an active character already selected for use in worlds.
 
@@ -96,7 +96,13 @@ Piece claims use native names such as `persona_hair`. Packet fields use ViaBedro
 
 For owned assets, the add-on requests `GET /api/v1.0/player/inventory?includeReceipt=true` with the current Minecraft authorization. It decodes content keys only from that account's receipt. It resolves product downloads through PlayFab `Catalog/GetPublishedItem` and uses the native `libhttpclient/1.0.0.0` CDN user agent.
 
-The runtime downloads owned assets from the official Xbox and PlayFab content hosts. It obtains receipt keys and decrypts owned packs in memory. Built-in assets use the separate Microsoft Store package flow below.
+The runtime downloads owned and freely available assets from the official Xbox and PlayFab content hosts. It decrypts packs in memory with account receipt keys. Built-in assets use the separate Microsoft Store package flow below.
+
+A free pack can share a receipt key with another pack. The loader tries each unique account key when no matching pack entitlement exists. This requires a free catalog selection without a redemption requirement. The published product must also match the requested UUID, zero price, persona content type, and pack UUID. Paid or redemption-required pieces require their own entitlement. Accounts with no receipt content keys still need a supported key source.
+
+Private tests decrypt and assemble unowned Asymmetric Button Up clothing and A-Line hair. Their body image matches all 16,384 model-service pixels. Independent execution of the target game compositor matches all 2,048 face pixels, including translucent hair edges. The service static face differs at twelve edge pixels. The compositor test preserves game behavior; that service discrepancy remains documented. Fixtures use `STACKANVIL_FREE_PERSONA_ASSETS` and `STACKANVIL_OFFICIAL_PERSONA`. Assets, account receipts, and execution harnesses stay private.
+
+A running Java client downloaded both free packs through the production account loader. It assembled them with private licensed starter fixtures and displayed the outfit locally. The body and face pixel comparisons passed in that client. World renderer creation also passed. This test changed no account recipes; a native multiplayer outfit comparison remains pending.
 
 The asset reader checks archive limits, manifest UUID, and encrypted content ID. It decodes the AES CFB8 index and indexed files in memory. Native archives can contain two `contents.json` entries; the final entry supplies the encrypted index. Directory entries in the index do not require file data.
 
@@ -112,7 +118,7 @@ Persona cape packs supply their texture through the same entitlement download an
 
 An authenticated Copper Cape comparison matches rendered rest vertices, normals, and UVs at all four heights. Tests preserve every cape texel through atlas assembly, save/load, and the skin codec. Mirrored mappings and larger texture resolutions have targeted tests. The account recipes were restored after research. These checks establish static bindings. A running Java client passes nine checks for local assembly, preview attachment, and the world renderer. The rear preview shows the entitled cape. This run uses private licensed fixtures. Native cape motion and multiplayer comparison remain pending.
 
-For animated owned geometry, assembly selects the character's body and arm variants. It replaces matching static preview surfaces and packs looping texture frames into a separate animation atlas. Save/load, login claims, and live packets retain those frames. Independent limb recipes filter animated bones by their limb ancestry and retain separate tint colors and atlas tiles. The opposite side keeps its static geometry. Unresolved free assets continue to use the service's static model. Built-in UUIDs resolve from the official package even when a catalog selection uses `/f` rather than `/d`.
+For animated owned geometry, assembly selects the character's body and arm variants. It replaces matching static preview surfaces and packs looping texture frames into a separate animation atlas. Save/load, login claims, and live packets retain those frames. Independent limb recipes filter animated bones by their limb ancestry and retain separate tint colors and atlas tiles. The opposite side keeps its static geometry. Free assets with unavailable receipt keys continue to use the service's static model. Built-in UUIDs resolve from the official package even when a catalog selection uses `/f` rather than `/d`.
 
 A private HelliArm capture contains ten animated arm cubes, a 16-frame 32×512 strip, and a separate blinking face. Targeted checks decode the entitled arm pack, assemble its variants, preserve every frame through save/load, and render the native face and arm bindings together. These checks use local private fixtures through `STACKANVIL_PERSONA_ASSETS` and `STACKANVIL_PERSONA_CAPTURE`; the repository contains no captured assets or receipts.
 
@@ -164,7 +170,7 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 
 ## Work still needed
 
-- Resolve remaining free assets and animated shared body textures. Verify native cape motion. These recipes still depend on the service model. Compare more overlapping clothing combinations against native results.
+- Resolve free assets for accounts without usable receipt keys and implement animated shared body textures. Verify native cape motion. These recipes still depend on the service model. Compare more overlapping clothing combinations against native results.
 - Compare more face sizes, tint channels, and equipped combinations against native results.
 - Verify native blinking and strip timing. Implement emote effects, timelines, delays, multiple sources, chat announcements, and unavailable remote assets. Compare entity-relative rotations against native playback.
 - Add other piece palettes, verify native leg edits, and resolve free limb side recipes. Add paid purchase/redemption flows and account classic-pack downloads.
