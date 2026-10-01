@@ -70,6 +70,8 @@ Rendering checks compare installed skin dimensions and pixel hashes against pack
 
 These assertions cover asset installation and model resolution. They cannot prove every animation frame, shader effect, or camera view matches the official client. Inspect the saved screenshot and add a focused regression for those behaviors.
 
+Private `camera-audit.jsonl` observations include frame time, world clocks, player light levels, gamma, and the effective skylight brightness factor. They also cover scenes that omit the local-player skin. Match world time and camera position when comparing lighting. A running world clock continues into night after the recorded scene ends.
+
 Use `--client proxy --transport-only` to check the separate Java → ViaProxy route. The proxy route does not exercise the add-on's native appearance renderer. `--transport-only` preserves rendering failures in the report while allowing a transport check to finish.
 
 ## Validation scope
@@ -81,6 +83,8 @@ Private regression recordings cover CubeCraft, Hive, the public Geyser test serv
 Minehut reaches its age-selection form. This does not verify admission beyond that form. An official-client Hive recording reaches playable lobby spawn and includes all 24 advertised resource packs, 49 supplied geometry skin updates, and 36 registered custom actor types. Hive omits the local-player skin. Local replay passes complete-payload transport checks and the skin and model rendering checks. All 49 geometry skins retain their recorded pixels. Actual remote-player and custom actor draws are verified. The 36 registered custom actor types resolve, and all 11 referenced vanilla item images load from the private licensed cache.
 
 Custom block mapping and model checks cover the captured definitions. They do not prove every state or animation matches the official client. Legacy plain texture-array variation selection, nonuniform scaling of rotated cubes, and double-sided alpha-test back faces remain limitations. Custom blocks using carriers without fluid support also lose a second water layer. The Hive recording includes wet and dry `hive:cat_tail` plants, so a future fluid fix must preserve water by position.
+
+Custom light filters use the runtime network components. The Hive recording exposed 12,098 placements whose transparent or partial filters previously became fully opaque. This input error is fixed. Lighting still uses Java brightness and sunset curves. The propagation engine uses scalar opacity and does not test directional faces of partial blocks, which can allow light leaks.
 
 ## Limits
 

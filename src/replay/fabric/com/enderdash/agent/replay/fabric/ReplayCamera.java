@@ -4,7 +4,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 
-/** Selects a real third-person local-avatar scene only in an isolated offline replay. */
+/** Observes isolated replays and selects supplied local-avatar scenes for third-person checks. */
 public final class ReplayCamera {
     private static boolean checked;
     private static UUID identity;
@@ -24,8 +24,7 @@ public final class ReplayCamera {
             }
             Object player = minecraft.getClass().getField("player").get(minecraft);
             if (player != null) localEntityId = ((Number) player.getClass().getMethod("getId").invoke(player)).intValue();
-            if (identity == null) return;
-            boolean matches = player != null && identity.equals(player.getClass().getMethod("getUUID").invoke(player));
+            boolean matches = identity != null && player != null && identity.equals(player.getClass().getMethod("getUUID").invoke(player));
             ReplaySceneDiagnostics.sample(minecraft, player, directory, matches);
             if (!matches) return;
             Object options = minecraft.getClass().getField("options").get(minecraft);

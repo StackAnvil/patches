@@ -22,6 +22,7 @@ final class ReplaySceneDiagnostics {
         previous = now;
         try {
             Map<String, Object> state = new LinkedHashMap<>();
+            state.put("capturedAtUtc", java.time.Instant.now().toString());
             state.put("elapsedSeconds", (now - started) / 1_000_000_000D);
             state.put("identityMatches", identityMatches);
             state.put("playerPresent", player != null);
@@ -29,6 +30,7 @@ final class ReplaySceneDiagnostics {
             state.put("screen", screen == null ? null : screen.getClass().getName());
             Object options = minecraft.getClass().getField("options").get(minecraft);
             state.put("cameraType", call(options, "getCameraType").toString());
+            state.put("gamma", call(call(options, "gamma"), "get"));
             Object renderer = minecraft.getClass().getField("gameRenderer").get(minecraft);
             Object camera = call(renderer, "mainCamera");
             state.put("cameraInitialized", call(camera, "isInitialized"));
@@ -44,11 +46,25 @@ final class ReplaySceneDiagnostics {
                 state.put("rotation", List.of(call(player, "getYRot"), call(player, "getXRot")));
                 Object world = minecraft.getClass().getField("level").get(minecraft);
                 if (world != null) {
+                    state.put("overworldClockTime", call(world, "getOverworldClockTime"));
+                    state.put("defaultClockTime", call(world, "getDefaultClockTime"));
+                    state.put("skyDarken", call(world, "getSkyDarken"));
+                    state.put("rainLevel", world.getClass().getMethod("getRainLevel", float.class).invoke(world, 0F));
                     int x = (int) Math.floor(((Number) call(player, "getX")).doubleValue()) >> 4;
                     int z = (int) Math.floor(((Number) call(player, "getZ")).doubleValue()) >> 4;
                     state.put("playerChunkLoaded", world.getClass().getMethod("hasChunk", int.class, int.class).invoke(world, x, z));
                     Object position = call(player, "blockPosition");
                     Class<?> blockPosition = Class.forName("net.minecraft.core.BlockPos");
+                    Class<?> lightLayer = Class.forName("net.minecraft.world.level.LightLayer");
+                    for (String layer : List.of("SKY", "BLOCK")) {
+                        Object value = lightLayer.getField(layer).get(null);
+                        state.put(layer.toLowerCase(java.util.Locale.ROOT) + "LightAtPlayer",
+                                world.getClass().getMethod("getBrightness", lightLayer, blockPosition).invoke(world, value, position));
+                    }
+                    Object probe = call(camera, "attributeProbe");
+                    Class<?> attribute = Class.forName("net.minecraft.world.attribute.EnvironmentAttribute");
+                    Object skyFactor = Class.forName("net.minecraft.world.attribute.EnvironmentAttributes").getField("SKY_LIGHT_FACTOR").get(null);
+                    state.put("skyLightFactor", probe.getClass().getMethod("getValue", attribute, float.class).invoke(probe, skyFactor, 0F));
                     Object foot = world.getClass().getMethod("getBlockState", blockPosition).invoke(world, position);
                     Object below = world.getClass().getMethod("getBlockState", blockPosition).invoke(world, call(position, "below"));
                     state.put("footIsAir", call(foot, "isAir"));
