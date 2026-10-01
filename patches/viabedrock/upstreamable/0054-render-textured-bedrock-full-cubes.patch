@@ -1,4 +1,4 @@
-From 57e78270cfe5a56739bd4f259b64f8d3f11fb7d0 Mon Sep 17 00:00:00 2001
+From abc0168824d30dc0262417229afe475ae8d11ff2 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:38:26 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -47,6 +47,16 @@ when applying static block transforms. Invisible cubes emit no Java element
 and must not shift later visible cubes into another bone. Regression
 coverage combines invisible parent and child cubes with distinct rotated
 bones, preserved face UVs, and immutable source geometry.
+
+Decode custom light filtering from the serialized StartGame component
+minecraft:block_light_filter.lightLevel. The official Bedrock 1.26.51.1
+Hive capture (protocol 2193) sends a byte value of zero for cat tails,
+willow leaves and transparent lamps; reading the creator JSON component
+name made those blocks incorrectly default to fully opaque. Runtime
+components come directly from network NBT, so retain the wire emission
+field minecraft:light_emission.emission without speculative JSON aliases.
+Network-NBT and permutation tests preserve transparent, partial, opaque,
+emitting and omitted-component behavior.
 ---
  .../api/model/CustomBlockVisual.java          |  26 ++
  .../definition/BlockDefinitions.java          |  17 +-
@@ -66,11 +76,11 @@ bones, preserved face UVs, and immutable source geometry.
  .../storage/CustomBlockPackStorage.java       | 103 +++++
  .../protocol/storage/ResourcePackStorage.java |  34 ++
  .../rewriter/CustomBlockBoneGeometryTest.java | 177 ++++++++
- .../CustomBlockModelSelectionTest.java        | 251 +++++++++++
+ .../CustomBlockModelSelectionTest.java        | 310 +++++++++++++
  .../CustomBlockStateDefinitionsTest.java      | 218 +++++++++
  .../protocol/storage/ChunkTrackerTest.java    |  23 +
  .../storage/CustomBlockPackStorageTest.java   | 168 +++++++
- 22 files changed, 2089 insertions(+), 21 deletions(-)
+ 22 files changed, 2148 insertions(+), 21 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockVisual.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/CustomBlockDefinition.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
@@ -671,7 +681,7 @@ index 07a19fa9..9b746b0c 100644
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
 new file mode 100644
-index 00000000..4336d839
+index 00000000..02d23e7e
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
 @@ -0,0 +1,417 @@
@@ -802,8 +812,8 @@ index 00000000..4336d839
 +        return new CustomBlockVisual(state, javaState, textureBindings.values().iterator().next(), JsonUtil.sort(model, Comparator.naturalOrder()).toString(), renderMethod,
 +                boxes(components.getCompoundTag("minecraft:collision_box"), false, transformation),
 +                boxes(components.getCompoundTag("minecraft:selection_box"), true, transformation), occluding,
-+                light(components, "minecraft:light_emission", "emission", light(components, "minecraft:block_light_emission", "value", 0)),
-+                light(components, "minecraft:light_dampening", "value", 15), textureBindings, textureMethods);
++                light(components, "minecraft:light_emission", "emission", 0),
++                light(components, "minecraft:block_light_filter", "lightLevel", 15), textureBindings, textureMethods);
 +    }
 +
 +    private static int light(final CompoundTag components, final String component, final String key, final int fallback) {
@@ -1932,10 +1942,10 @@ index 00000000..a347e5aa
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
 new file mode 100644
-index 00000000..f0790553
+index 00000000..b95539e2
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
-@@ -0,0 +1,251 @@
+@@ -0,0 +1,310 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1945,6 +1955,7 @@ index 00000000..f0790553
 +
 +import com.viaversion.nbt.tag.CompoundTag;
 +import com.viaversion.nbt.tag.ListTag;
++import io.netty.buffer.Unpooled;
 +import net.raphimc.viabedrock.api.model.CustomBlockVisual;
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 +import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
@@ -1952,6 +1963,7 @@ index 00000000..f0790553
 +import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockModel;
 +import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockResourceRewriter;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 +import com.viaversion.viaversion.libs.gson.JsonParser;
 +import com.viaversion.viaversion.libs.gson.JsonObject;
 +import org.junit.jupiter.api.Test;
@@ -1963,6 +1975,63 @@ index 00000000..f0790553
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class CustomBlockModelSelectionTest {
++
++    @Test
++    void preservesNetworkLightFilteringAndEmission() throws Exception {
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB))));
++        for (final int filter : new int[]{0, 2, 15}) {
++            for (final int emission : new int[]{0, 12, 15}) {
++                final CompoundTag components = components("minecraft:geometry.full_block", "ruby", "opaque");
++                final CompoundTag filtering = new CompoundTag();
++                filtering.putByte("lightLevel", (byte) filter);
++                components.put("minecraft:block_light_filter", filtering);
++                final CompoundTag emitting = new CompoundTag();
++                emitting.putByte("emission", (byte) emission);
++                components.put("minecraft:light_emission", emitting);
++                final var buffer = Unpooled.buffer();
++                try {
++                    BedrockTypes.NETWORK_TAG.write(buffer, components);
++                    final CompoundTag decoded = (CompoundTag) BedrockTypes.NETWORK_TAG.read(buffer);
++                    final CustomBlockVisual visual = CustomBlockModel.compile(storage, "test:block", 1, decoded);
++                    assertNotNull(visual);
++                    assertEquals(filter, visual.lightDampening());
++                    assertEquals(emission, visual.lightEmission());
++                } finally {
++                    buffer.release();
++                }
++            }
++        }
++    }
++
++    @Test
++    void resolvesLightPermutationsAndDefaultsWithoutMutatingBaseComponents() throws Exception {
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB))));
++        final CompoundTag base = components("minecraft:geometry.full_block", "ruby", "opaque");
++        final CustomBlockVisual defaultVisual = CustomBlockModel.compile(storage, "test:block", 1, base);
++        assertEquals(15, defaultVisual.lightDampening());
++        assertEquals(0, defaultVisual.lightEmission());
++        final CompoundTag overlay = new CompoundTag();
++        final CompoundTag filtering = new CompoundTag();
++        filtering.putByte("lightLevel", (byte) 0);
++        overlay.put("minecraft:block_light_filter", filtering);
++        final CompoundTag emitting = new CompoundTag();
++        emitting.putByte("emission", (byte) 12);
++        overlay.put("minecraft:light_emission", emitting);
++        final CompoundTag definition = new CompoundTag();
++        definition.put("components", base);
++        final ListTag<CompoundTag> permutations = new ListTag<>(CompoundTag.class);
++        permutations.add(permutation("q.block_state('lit') == true", overlay));
++        definition.put("permutations", permutations);
++        final CompoundTag states = new CompoundTag();
++        states.putByte("lit", (byte) 1);
++        final CustomBlockVisual lit = CustomBlockModel.compile(storage, "test:block[lit=true]", 2, CustomBlockDefinition.resolve(definition, states));
++        assertEquals(0, lit.lightDampening());
++        assertEquals(12, lit.lightEmission());
++        states.putByte("lit", (byte) 0);
++        final CustomBlockVisual unlit = CustomBlockModel.compile(storage, "test:block[lit=false]", 3, CustomBlockDefinition.resolve(definition, states));
++        assertEquals(defaultVisual.lightDampening(), unlit.lightDampening());
++        assertEquals(defaultVisual.lightEmission(), unlit.lightEmission());
++    }
 +
 +    @Test
 +    void classifiesActualPixelsAndRespectsPackPrecedence() {
