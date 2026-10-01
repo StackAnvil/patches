@@ -1,4 +1,4 @@
-From 1cfcf5cef2b1e05229583a0c7ef134cde3ba6f14 Mon Sep 17 00:00:00 2001
+From d6d82d3ba9e4ae3019f677ca94034418335bb338 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -255,6 +255,17 @@ execution and cover delayed activation, expiry, loop boundaries, custom
 clocks, blend suspension, repeated passes, held poses, and restart.
 Timeline execution, sounds, particles, and controller completion queries
 remain separate work. Private binaries and harnesses remain outside Git.
+
+Execute Molang timeline scripts after each bone sample with the track's
+current clock and effective frame delta. Bedrock 1.26.51.1 normalizes
+entries with a stable timestamp sort, tests previous < event <= current,
+and resets the event cursor when the clock wraps past a loop boundary.
+It does not replay the outgoing tail or skipped whole cycles. Timeline
+writes remain actor-local and reach later tracks in the same update.
+Named actor events, sounds, and particles still report unsupported data.
+Independent execution of the licensed target's timeline normalizer and
+animation player verifies ordering, delays, loop boundaries, held frames,
+custom clocks, and bone-before-event sampling with synthetic inputs.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   54 +
@@ -272,7 +283,7 @@ remain separate work. Private binaries and harnesses remain outside Git.
  .../bedrock/ViaFabricPlusBedrock.java         |    3 +
  .../appearance/BedrockActorAnimation.java     |  421 ++
  .../appearance/BedrockAppearanceStore.java    |  110 +-
- .../appearance/BedrockBoneAnimation.java      |  393 +
+ .../appearance/BedrockBoneAnimation.java      |  440 ++
  .../bedrock/appearance/BedrockBrArchive.java  |   73 +
  .../appearance/BedrockBuiltinAssets.java      |  392 +
  .../appearance/BedrockCharacterProfiles.java  | 1213 +++
@@ -314,9 +325,9 @@ remain separate work. Private binaries and harnesses remain outside Git.
  .../persona-package.json                      |    7 +
  .../persona-piece-types.json                  |   67 +
  .../viafabricplus-bedrock.mixins.json         |    3 +
- .../appearance/BedrockActorAnimationTest.java |  205 +
+ .../appearance/BedrockActorAnimationTest.java |  236 +
  .../BedrockAppearanceStoreTest.java           |   28 +
- .../appearance/BedrockBoneAnimationTest.java  |  258 +
+ .../appearance/BedrockBoneAnimationTest.java  |  450 ++
  .../appearance/BedrockBuiltinAssetsTest.java  |  367 +
  .../BedrockCharacterProfilesTest.java         |  461 ++
  .../bedrock/appearance/BedrockEmotesTest.java |  141 +
@@ -331,7 +342,7 @@ remain separate work. Private binaries and harnesses remain outside Git.
  .../appearance/BedrockPersonaTintTest.java    |   87 +
  .../render/BedrockAnimatedModelTest.java      |   55 +
  .../render/BedrockPlayerModelTest.java        |  100 +
- 75 files changed, 22329 insertions(+), 59 deletions(-)
+ 75 files changed, 22599 insertions(+), 59 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -10390,10 +10401,10 @@ index d54e7f7..5eebd99 100644
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimation.java
 new file mode 100644
-index 0000000..e10a74e
+index 0000000..9cafa5c
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimation.java
-@@ -0,0 +1,393 @@
+@@ -0,0 +1,440 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -10422,6 +10433,7 @@ index 0000000..e10a74e
 +    private final BedrockMolang.Program timeUpdate;
 +    private final BedrockMolang.Program startDelay;
 +    private final BedrockMolang.Program loopDelay;
++    private final List<TimelineEntry> timeline;
 +
 +    private BedrockBoneAnimation(
 +            final float length,
@@ -10432,7 +10444,8 @@ index 0000000..e10a74e
 +            final BedrockMolang.Program blendWeight,
 +            final BedrockMolang.Program timeUpdate,
 +            final BedrockMolang.Program startDelay,
-+            final BedrockMolang.Program loopDelay) {
++            final BedrockMolang.Program loopDelay,
++            final List<TimelineEntry> timeline) {
 +        this.length = length;
 +        this.loop = loop;
 +        this.holdLastFrame = holdLastFrame;
@@ -10442,6 +10455,7 @@ index 0000000..e10a74e
 +        this.timeUpdate = timeUpdate;
 +        this.startDelay = startDelay;
 +        this.loopDelay = loopDelay;
++        this.timeline = timeline;
 +    }
 +
 +    public float length() {
@@ -10465,24 +10479,24 @@ index 0000000..e10a74e
 +
 +    public static BedrockBoneAnimation parse(final JsonObject animation) throws IOException {
 +        try {
-+            for (final String field :
-+                    List.of(
-+                            "sound_effects",
-+                            "particle_effects",
-+                            "timeline")) {
++            for (final String field : List.of("sound_effects", "particle_effects")) {
 +                if (animation.has(field))
-+                    throw new IOException("This animation needs effect or timeline playback");
++                    throw new IOException("This animation needs sound or particle playback");
 +            }
 +            final JsonObject definitions = animation.has("bones")
 +                    ? animation.getAsJsonObject("bones") : new JsonObject();
 +            if (definitions.size() > 256)
 +                throw new IOException("Invalid animation bone count");
 +            final Map<String, Bone> bones = new LinkedHashMap<>();
-+            float end = 0;
++            final List<TimelineEntry> timeline = TimelineEntry.parse(animation.get("timeline"));
++            float end = timeline.isEmpty() ? 0 : timeline.getLast().time;
 +            for (final var entry : definitions.entrySet()) {
 +                final JsonObject definition = entry.getValue().getAsJsonObject();
 +                final JsonObject relative = definition.getAsJsonObject("relative_to");
-+                if (relative != null && (relative.size() != 1 || !relative.has("rotation") || !"entity".equals(relative.get("rotation").getAsString())))
++                if (relative != null
++                        && (relative.size() != 1
++                                || !relative.has("rotation")
++                                || !"entity".equals(relative.get("rotation").getAsString())))
 +                    throw new IOException("Invalid animation rotation space");
 +                final Channel position = Channel.parse(definition.get("position"), ZERO);
 +                final Channel rotation = Channel.parse(definition.get("rotation"), ZERO);
@@ -10515,9 +10529,44 @@ index 0000000..e10a74e
 +                            ? BedrockMolang.Program.parse(animation.get("anim_time_update"), 0)
 +                            : null,
 +                    BedrockMolang.Program.parse(animation.get("start_delay"), 0),
-+                    BedrockMolang.Program.parse(animation.get("loop_delay"), 0));
++                    BedrockMolang.Program.parse(animation.get("loop_delay"), 0),
++                    timeline);
 +        } catch (RuntimeException e) {
 +            throw new IOException("Invalid Bedrock bone animation", e);
++        }
++    }
++
++    private record TimelineEntry(float time, BedrockMolang.Program script) {
++        private static List<TimelineEntry> parse(final JsonElement json) throws IOException {
++            if (json == null) return List.of();
++            if (!json.isJsonObject() || json.getAsJsonObject().size() > 4096)
++                throw new IOException("Invalid animation timeline");
++            final List<TimelineEntry> entries = new ArrayList<>();
++            for (final var entry : json.getAsJsonObject().entrySet()) {
++                final float time = Float.parseFloat(entry.getKey());
++                if (!Float.isFinite(time) || time < 0 || time > 600)
++                    throw new IOException("Invalid animation event time");
++                final JsonElement value = entry.getValue();
++                if (value.isJsonArray()) {
++                    for (final JsonElement script : value.getAsJsonArray())
++                        add(entries, time, script);
++                } else add(entries, time, value);
++            }
++            // The target normalizes entries with a stable sort, including equal numeric keys.
++            entries.sort(Comparator.comparingDouble(TimelineEntry::time));
++            return List.copyOf(entries);
++        }
++
++        private static void add(
++                final List<TimelineEntry> entries, final float time, final JsonElement script)
++                throws IOException {
++            if (entries.size() >= 4096)
++                throw new IOException("Too many animation timeline scripts");
++            if (script.isJsonObject())
++                throw new IOException("This animation needs named actor event playback");
++            if (!script.isJsonPrimitive() || !script.getAsJsonPrimitive().isString())
++                throw new IOException("Invalid animation timeline script");
++            entries.add(new TimelineEntry(time, BedrockMolang.Program.parse(script, 0)));
 +        }
 +    }
 +
@@ -10552,6 +10601,7 @@ index 0000000..e10a74e
 +        private final BedrockMolang molang;
 +        private float previousElapsed = Float.NaN;
 +        private float clock;
++        private float previousEventTime = -1;
 +        private float delay = Float.NaN;
 +        private boolean completed;
 +        private Map<String, Transform> pose = Map.of();
@@ -10576,6 +10626,7 @@ index 0000000..e10a74e
 +            if (time < this.previousElapsed) {
 +                this.previousElapsed = Float.NaN;
 +                this.clock = 0;
++                this.previousEventTime = -1;
 +                this.delay = Float.NaN;
 +                this.completed = false;
 +            }
@@ -10604,7 +10655,10 @@ index 0000000..e10a74e
 +            else if (loop && this.completed) {
 +                // The native completion flag persists, so this runs on every later active update.
 +                this.delay = Math.max(0, this.molang.evaluate(loopDelay, 0));
-+                if (this.clock > length) this.clock %= length;
++                if (this.clock > length) {
++                    this.previousEventTime = -1;
++                    this.clock %= length;
++                }
 +            }
 +            if (this.stopped()) return this.pose;
 +            this.molang.queries(queries, this.clock, time, delta);
@@ -10624,6 +10678,10 @@ index 0000000..e10a74e
 +                                                    .sample(this.clock, this.molang)
 +                                                    .blend(ONE, weight), bone.entityRelativeRotation)));
 +            this.pose = Map.copyOf(result);
++            for (final TimelineEntry entry : timeline)
++                if (this.previousEventTime < entry.time && entry.time <= this.clock)
++                    this.molang.evaluate(entry.script, 0);
++            this.previousEventTime = this.clock;
 +            return this.pose;
 +        }
 +    }
@@ -19888,10 +19946,10 @@ index 5f77f05..45aeea0 100644
      "features.movement.MixinEntity",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimationTest.java
 new file mode 100644
-index 0000000..6c054da
+index 0000000..a7421ce
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimationTest.java
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,236 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -19980,6 +20038,37 @@ index 0000000..6c054da
 +                        .get("arm")
 +                        .rotation()
 +                        .x());
++    }
++
++    @Test
++    void sharesTimelineWritesWithLaterTracksAndControllerTransitions() throws IOException {
++        final var graph =
++                BedrockActorAnimation.read(
++                        json(
++                                """
++                                {"animations":{"writer":"animation.writer","root":"controller.animation.root",
++                                   "before":"animation.before","after":"animation.after"},
++                                 "scripts":{"animate":["writer","root"]}}
++                                """),
++                        Map.of(),
++                        json(
++                                """
++                                {"animation.writer":{"animation_length":2,"timeline":{"0.5":"v.ready=1;"}},
++                                 "animation.before":{"loop":true,"bones":{"head":{"position":["v.ready??0",0,0]}}},
++                                 "animation.after":{"loop":true,"bones":{"head":{"position":[2,0,0]}}}}
++                                """),
++                        json(
++                                """
++                                {"controller.animation.root":{"states":{
++                                   "default":{"animations":["before"],"transitions":[{"ready":"v.ready"}]},
++                                   "ready":{"animations":["after"]}}}}
++                                """));
++        final var actor = graph.playback();
++        final var frame = new BedrockActorAnimation.Frame(Map.of(), Map.of());
++        assertEquals(0, actor.sample(0, frame).get("head").position().x());
++        assertEquals(2, actor.sample(0.5F, frame).get("head").position().x());
++        assertEquals(2, actor.sample(1, frame).get("head").position().x());
++        assertEquals(0, graph.playback().sample(0, frame).get("head").position().x());
 +    }
 +
 +    @Test
@@ -20138,14 +20227,16 @@ index b8fbd8a..68c6474 100644
              _ -> new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB));
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimationTest.java
 new file mode 100644
-index 0000000..2ad493c
+index 0000000..1d9e8cf
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimationTest.java
-@@ -0,0 +1,258 @@
+@@ -0,0 +1,450 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
++import com.google.gson.JsonArray;
++import com.google.gson.JsonObject;
 +import com.google.gson.JsonParser;
 +
 +import org.junit.jupiter.api.Test;
@@ -20233,10 +20324,12 @@ index 0000000..2ad493c
 +
 +    @Test
 +    void waitsForTheInitialDelayAndRetainsOnlyAnOvershootingFramesRemainder() throws Exception {
-+        final var definition = animation("""
-+                {"animation_length":2,"start_delay":"v.starts=(v.starts??0)+1;return 0.75;",
-+                 "bones":{"head":{"position":["q.anim_time","v.starts","q.delta_time"]}}}
-+                """);
++        final var definition =
++                animation(
++                        """
++                        {"animation_length":2,"start_delay":"v.starts=(v.starts??0)+1;return 0.75;",
++                         "bones":{"head":{"position":["q.anim_time","v.starts","q.delta_time"]}}}
++                        """);
 +        final var player = definition.playback();
 +        assertTrue(player.sample(0, Map.of()).isEmpty());
 +        assertTrue(player.sample(0.5F, Map.of()).isEmpty());
@@ -20250,11 +20343,14 @@ index 0000000..2ad493c
 +
 +    @Test
 +    void preservesNativeExactDelayAndLoopBoundariesAndPersistentCompletion() throws Exception {
-+        final var player = animation("""
-+                {"loop":true,"animation_length":1,"start_delay":0.5,
-+                 "loop_delay":"v.loops=(v.loops??0)+1;return 0.5;",
-+                 "bones":{"head":{"position":["q.anim_time","v.loops??0","q.delta_time"]}}}
-+                """).playback();
++        final var player =
++                animation(
++                                """
++                                {"loop":true,"animation_length":1,"start_delay":0.5,
++                                 "loop_delay":"v.loops=(v.loops??0)+1;return 0.5;",
++                                 "bones":{"head":{"position":["q.anim_time","v.loops??0","q.delta_time"]}}}
++                                """)
++                        .playback();
 +        assertTrue(player.sample(0, Map.of()).isEmpty());
 +        assertEquals(new BedrockBoneAnimation.Vector(0.5F, 0, 0.5F),
 +                player.sample(0.5F, Map.of()).get("head").position());
@@ -20273,10 +20369,13 @@ index 0000000..2ad493c
 +
 +    @Test
 +    void usesTheWrappedClockForMolangAndDoesNotAdvanceRepeatedRenderPasses() throws Exception {
-+        final var player = animation("""
-+                {"loop":true,"animation_length":1,"anim_time_update":"q.anim_time+q.delta_time*2",
-+                 "bones":{"head":{"position":["q.anim_time","v.frames=(v.frames??0)+1;return v.frames;",0]}}}
-+                """).playback();
++        final var player =
++                animation(
++                                """
++                                {"loop":true,"animation_length":1,"anim_time_update":"q.anim_time+q.delta_time*2",
++                                 "bones":{"head":{"position":["q.anim_time","v.frames=(v.frames??0)+1;return v.frames;",0]}}}
++                                """)
++                        .playback();
 +        assertEquals(0.5F, player.sample(0.25F, Map.of()).get("head").position().x());
 +        final var boundary = player.sample(0.5F, Map.of());
 +        assertEquals(1, boundary.get("head").position().x());
@@ -20288,10 +20387,13 @@ index 0000000..2ad493c
 +
 +    @Test
 +    void freezesTheClockAndDelayWhileTheTrackHasNoBlendWeight() throws Exception {
-+        final var player = animation("""
-+                {"animation_length":2,"blend_weight":"q.enabled","start_delay":0.25,
-+                 "bones":{"head":{"position":["q.anim_time",0,0]}}}
-+                """).playback();
++        final var player =
++                animation(
++                                """
++                                {"animation_length":2,"blend_weight":"q.enabled","start_delay":0.25,
++                                 "bones":{"head":{"position":["q.anim_time",0,0]}}}
++                                """)
++                        .playback();
 +        assertTrue(player.sample(1, Map.of()).isEmpty());
 +        assertTrue(player.sample(1.125F, Map.of("enabled", 1)).isEmpty());
 +        assertTrue(player.sample(2, Map.of()).isEmpty());
@@ -20301,10 +20403,13 @@ index 0000000..2ad493c
 +
 +    @Test
 +    void stopsAfterTheFinalFrameButKeepsHeldTracksAndReevaluatesDelaysOnRestart() throws Exception {
-+        final var player = animation("""
-+                {"animation_length":1,"start_delay":"v.starts=(v.starts??0)+1;return 0.25;",
-+                 "bones":{"head":{"position":["q.anim_time","v.starts",0]}}}
-+                """).playback();
++        final var player =
++                animation(
++                                """
++                                {"animation_length":1,"start_delay":"v.starts=(v.starts??0)+1;return 0.25;",
++                                 "bones":{"head":{"position":["q.anim_time","v.starts",0]}}}
++                                """)
++                        .playback();
 +        assertEquals(1, player.sample(1.25F, Map.of()).get("head").position().x());
 +        assertTrue(player.completed());
 +        assertFalse(player.stopped());
@@ -20314,10 +20419,13 @@ index 0000000..2ad493c
 +        assertFalse(player.completed());
 +        assertFalse(player.stopped());
 +        assertEquals(2, player.sample(0.5F, Map.of()).get("head").position().y());
-+        final var held = animation("""
-+                {"loop":"hold_on_last_frame","animation_length":1,
-+                 "bones":{"head":{"position":["q.anim_time",0,0]}}}
-+                """).playback();
++        final var held =
++                animation(
++                                """
++                                {"loop":"hold_on_last_frame","animation_length":1,
++                                 "bones":{"head":{"position":["q.anim_time",0,0]}}}
++                                """)
++                        .playback();
 +        assertEquals(1, held.sample(2, Map.of()).get("head").position().x());
 +        assertTrue(held.completed());
 +        assertFalse(held.stopped());
@@ -20332,9 +20440,12 @@ index 0000000..2ad493c
 +        for (final var element : cases) {
 +            final var data = element.getAsJsonObject();
 +            final var config = data.getAsJsonObject("config");
-+            final var source = JsonParser.parseString("""
-+                    {"animation_length":1,"bones":{"head":{"position":["q.anim_time","v.starts","v.loops??0"]}}}
-+                    """).getAsJsonObject();
++            final var source =
++                    JsonParser.parseString(
++                                    """
++                                    {"animation_length":1,"bones":{"head":{"position":["q.anim_time","v.starts","v.loops??0"]}}}
++                                    """)
++                            .getAsJsonObject();
 +            source.addProperty("start_delay", "v.starts=(v.starts??0)+1;return "
 +                    + (config.has("start") ? config.get("start").getAsFloat() : 0) + ";");
 +            source.addProperty("loop_delay", "v.loops=(v.loops??0)+1;return "
@@ -20380,6 +20491,176 @@ index 0000000..2ad493c
 +                            new BedrockBoneAnimation.Vector(1024, 0, 0),
 +                            definition.playback().sample(0, Map.of()).get("head").position());
 +                });
++    }
++
++    @Test
++    void sortsTimelineScriptsStablyAndRunsThemAfterBonesInTheCurrentFrameContext()
++            throws Exception {
++        final var molang = new BedrockMolang();
++        final var definition =
++                animation(
++                        """
++                        {"timeline":{"0.75":"v.order=v.order*10+4;",
++                           "0":["v.order=1;return 0;","v.order=v.order*10+2;"],
++                           "0.0":"v.order=v.order*10+3;",
++                           "2":"v.event_time=q.anim_time;v.event_delta=q.delta_time;"},
++                         "bones":{"head":{"position":["v.order??0","v.event_time??0","v.event_delta??0"]}}}
++                        """);
++        assertEquals(2, definition.length());
++        final var player = definition.playback(molang);
++        assertEquals(
++                new BedrockBoneAnimation.Vector(0, 0, 0),
++                player.sample(0, Map.of()).get("head").position());
++        assertEquals(123, player.sample(0.5F, Map.of()).get("head").position().x());
++        assertEquals(123, player.sample(0.75F, Map.of()).get("head").position().x());
++        assertEquals(1234, player.sample(2, Map.of()).get("head").position().x());
++        assertEquals(
++                2,
++                molang.evaluate(
++                        BedrockMolang.Program.parse(JsonParser.parseString("\"v.event_time\""), 0),
++                        0));
++        assertEquals(
++                1.25F,
++                molang.evaluate(
++                        BedrockMolang.Program.parse(JsonParser.parseString("\"v.event_delta\""), 0),
++                        0));
++    }
++
++    @Test
++    void resetsTheTimelineCursorOnReplayAndRunsEventOnlyAnimations() throws Exception {
++        final var molang = new BedrockMolang();
++        final var player =
++                animation(
++                                """
++                                {"timeline":{"0":"v.starts=(v.starts??0)+1;",
++                                   "1":"v.ends=(v.ends??0)+1;"}}
++                                """)
++                        .playback(molang);
++        final var starts = BedrockMolang.Program.parse(JsonParser.parseString("\"v.starts\""), 0);
++        final var ends = BedrockMolang.Program.parse(JsonParser.parseString("\"v.ends??0\""), 0);
++        assertTrue(player.sample(0, Map.of()).isEmpty());
++        assertEquals(1, molang.evaluate(starts, 0));
++        player.sample(0, Map.of());
++        assertEquals(1, molang.evaluate(starts, 0));
++        player.sample(1, Map.of());
++        assertEquals(1, molang.evaluate(ends, 0));
++        player.sample(2, Map.of());
++        assertTrue(player.stopped());
++        player.sample(0, Map.of());
++        assertFalse(player.completed());
++        assertEquals(2, molang.evaluate(starts, 0));
++        assertEquals(1, molang.evaluate(ends, 0));
++    }
++
++    @Test
++    void rejectsInvalidAndOversizedTimelinesBeforePlayback() {
++        for (final String timeline :
++                new String[] {
++                    "[]", "{\"NaN\":\"v.a=1;\"}", "{\"-1\":\"v.a=1;\"}",
++                    "{\"601\":\"v.a=1;\"}", "{\"0\":null}", "{\"0\":[1]}",
++                    "{\"0\":{\"event\":\"attack\"}}", "{\"0\":\"v.a=);\"}"
++                })
++            assertThrows(IOException.class, () -> animation("{\"timeline\":" + timeline + "}"));
++        final var source = new JsonObject();
++        final var timeline = new JsonObject();
++        final var scripts = new JsonArray();
++        for (int i = 0; i < 4097; i++) scripts.add("v.a=1;");
++        timeline.add("0", scripts);
++        source.add("timeline", timeline);
++        assertThrows(IOException.class, () -> BedrockBoneAnimation.parse(source));
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_ANIMATION_TIMELINE_RESULT", matches = ".+")
++    void matchesIndependentTargetGameTimelineNormalizationAndPlayback() throws Exception {
++        final var cases =
++                JsonParser.parseString(
++                                Files.readString(
++                                        Path.of(
++                                                System.getenv(
++                                                        "STACKANVIL_ANIMATION_TIMELINE_RESULT"))))
++                        .getAsJsonArray();
++        for (final var element : cases) {
++            final var data = element.getAsJsonObject();
++            final var config = data.getAsJsonObject("config");
++            final var source =
++                    JsonParser.parseString(
++                                    """
++                                    {"animation_length":1,"bones":{"head":{"position":["v.events??0","q.anim_time",0]}}}
++                                    """)
++                            .getAsJsonObject();
++            for (final String field : new String[] {"start_delay", "loop_delay"}) {
++                final String key = field.equals("start_delay") ? "start" : field;
++                source.addProperty(field, config.has(key) ? config.get(key).getAsFloat() : 0);
++            }
++            source.addProperty(
++                    "blend_weight", config.has("weight") ? config.get("weight").getAsFloat() : 1);
++            source.addProperty(
++                    "anim_time_update",
++                    "q.override ? q.clock : q.anim_time+q.delta_time*"
++                            + (config.has("speed") ? config.get("speed").getAsFloat() : 1));
++            final int mode = config.has("loop") ? config.get("loop").getAsInt() : 0;
++            if (mode == 2) source.addProperty("loop", "hold_on_last_frame");
++            else source.addProperty("loop", mode == 1);
++            final var timeline = new JsonObject();
++            final var entries = data.getAsJsonArray("entries");
++            for (int i = 0; i < entries.size(); i++) {
++                final String key = Float.toString(entries.get(i).getAsFloat());
++                if (!timeline.has(key)) timeline.add(key, new JsonArray());
++                timeline.getAsJsonArray(key)
++                        .add(
++                                "v.events=math.mod((v.events??0)*10+"
++                                        + (i + 1)
++                                        + ",30000);v.event_time=q.anim_time;v.event_delta=q.delta_time;");
++            }
++            source.add("timeline", timeline);
++            final var molang = new BedrockMolang();
++            final var player = BedrockBoneAnimation.parse(source).playback(molang);
++            final var count =
++                    BedrockMolang.Program.parse(JsonParser.parseString("\"v.events??0\""), 0);
++            final var eventTime =
++                    BedrockMolang.Program.parse(JsonParser.parseString("\"v.event_time??0\""), 0);
++            final var eventDelta =
++                    BedrockMolang.Program.parse(JsonParser.parseString("\"v.event_delta??0\""), 0);
++            float elapsed = 0, previous = Float.NaN;
++            for (final var frame : data.getAsJsonArray("steps")) {
++                final var expected = frame.getAsJsonObject();
++                elapsed += expected.get("delta").getAsFloat();
++                final var override = expected.get("clock_override");
++                final var pose =
++                        player.sample(
++                                elapsed,
++                                override.isJsonNull()
++                                        ? Map.of()
++                                        : Map.of("override", 1F, "clock", override.getAsFloat()));
++                assertEquals(expected.get("value").getAsInt(), molang.evaluate(count, 0));
++                assertEquals(expected.get("completed").getAsInt() == 1, player.completed());
++                assertEquals(expected.get("sampled").getAsBoolean(), !pose.isEmpty());
++                // Repeated Java render passes retain their already sampled pose.
++                if (!pose.isEmpty() && elapsed != previous) {
++                    assertEquals(
++                            expected.get("pose_events").getAsInt(),
++                            pose.get("head").position().x());
++                    assertEquals(
++                            expected.get("clock").getAsFloat(),
++                            pose.get("head").position().y(),
++                            0.000001F);
++                }
++                final var events = expected.getAsJsonArray("events");
++                if (!events.isEmpty()) {
++                    final var last = events.get(events.size() - 1).getAsJsonObject();
++                    assertEquals(
++                            last.get("clock").getAsFloat(),
++                            molang.evaluate(eventTime, 0),
++                            0.000001F);
++                    assertEquals(
++                            last.get("delta").getAsFloat(),
++                            molang.evaluate(eventDelta, 0),
++                            0.000001F);
++                }
++                previous = elapsed;
++            }
++        }
 +    }
 +
 +    @Test
