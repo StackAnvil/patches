@@ -56,7 +56,7 @@ bun run server-replay replay .stackanvil/replay/<recording> --seconds 150
 bun run server-replay selftest
 ```
 
-Allow enough time for Java startup, pack conversion, and the full recorded scene. A replay preserves the original scene timing after pack negotiation.
+Allow enough time for Java startup, pack conversion, and the full recorded scene. A replay follows the recorded timing after pack negotiation. Subchunk replies wait for matching requests from the local client, which can load packs more slowly than the captured client. The scene clock pauses during that wait; a missing request fails after 15 seconds. Packet bytes and order stay unchanged.
 
 The replay server binds only to loopback. It creates a fresh offline handshake and serves packs through a loopback HTTP endpoint. It preserves the captured entity IDs, skins, world data, and packet order. Server transfers and recorded disconnects do not run.
 
@@ -64,11 +64,19 @@ Replay connects the Fabric add-on directly to the local Bedrock replay server. T
 
 Transport checks require playable spawn, a Java pack reload, and delivery of the complete scene. A SHA-256 comparison checks scene payloads against the recording. Pack negotiation, session status, and latency probes are excluded because replay creates them again.
 
-Rendering checks compare installed skin dimensions and pixel hashes against packet-derived expectations. They also check supplied skin geometry, native player renderer selection, and custom actor model evaluation. A replay uses the captured local player identity for its loopback session and renders that avatar in third person. The audit requires an actual native renderer frame, without rewriting the recorded scene packets. Model parsing failures, unresolved block mappings, missing textures, and client disconnects fail the replay. Actors absent from the post-spawn server registry are reported separately and follow the protocol's existing unknown-type handling. Registered actors still require valid models and textures. Private `render-audit.json` and `verification.json` files explain the result.
+Rendering checks compare installed skin dimensions and pixel hashes against packet-derived expectations. They also check supplied skin geometry, native player renderer selection, and custom actor model evaluation. Scenes with custom actors also require native model resolution and an actual custom actor draw submission. These checks do not require every off-camera actor to appear in a frame. A replay uses the captured local player identity for its loopback session and renders that avatar in third person. The audit requires an actual native renderer frame, without rewriting the recorded scene packets. Model parsing failures, unresolved block mappings, missing textures, client crashes, and unexpected exits fail the replay. Actors absent from the post-spawn server registry are reported separately and follow the protocol's existing unknown-type handling. Registered actors still require valid models and textures. Private `render-audit.json` and `verification.json` files explain the result.
 
 These assertions cover asset installation and model resolution. They cannot prove every animation frame, shader effect, or camera view matches the official client. Inspect the saved screenshot and add a focused regression for those behaviors.
 
 Use `--client proxy --transport-only` to check the separate Java → ViaProxy route. The proxy route does not exercise the add-on's native appearance renderer. `--transport-only` preserves rendering failures in the report while allowing a transport check to finish.
+
+## Validation scope
+
+Private regression recordings cover CubeCraft, the public Geyser test server, and Minehut. CubeCraft exercises 240 skin updates, 37 advertised custom actor types, and actual native actor and player submissions. The Geyser scene exercises supplied player geometry and custom block packs.
+
+Minehut reaches its age-selection form. This does not verify admission beyond that form. Hive still needs an official-client recording; relay handshake tests do not prove a successful Hive join.
+
+Custom block mapping and model checks cover the captured definitions. They do not prove every state or animation matches the official client. Legacy plain texture-array variation selection, nonuniform scaling of rotated cubes, and double-sided alpha-test back faces remain limitations.
 
 ## Limits
 

@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { closeSync, existsSync, openSync } from "node:fs";
-import { chmod, cp, mkdir, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, resolve, delimiter } from "node:path";
 import { createServer } from "node:net";
@@ -51,10 +51,11 @@ async function ready(child: ChildProcess, file: string, pattern: RegExp): Promis
   }
   throw new Error(`Service startup timed out. Read ${file}.`);
 }
-async function buildPlugin(jar: string): Promise<{ classes: string; plugin: string }> {
-  const build = join(privateRoot, "build");
+async function buildPlugin(jar: string): Promise<{ classes: string; plugin: string; build: string }> {
+  await mkdir(privateRoot, { recursive: true, mode: 0o700 });
+  await chmod(privateRoot, 0o700);
+  const build = await mkdtemp(join(privateRoot, "build-"));
   const classes = join(build, "classes");
-  await rm(classes, { recursive: true, force: true });
   await mkdir(classes, { recursive: true, mode: 0o700 });
   const source = join(root, "src/replay/java/com/enderdash/agent/replay");
   const files = (await readdir(source)).filter((name) => name.endsWith(".java")).map((name) => join(source, name));
@@ -63,19 +64,19 @@ async function buildPlugin(jar: string): Promise<{ classes: string; plugin: stri
   const plugin = join(build, "recorder.jar");
   await execute("jar", ["--create", "--file", plugin, "-C", classes, "."]);
   await writeFile(join(build, "log4j2.xml"), '<Configuration status="ERROR"><Appenders><Console name="console"><PatternLayout pattern="%level %logger: %msg%n"/></Console></Appenders><Loggers><Root level="warn"><AppenderRef ref="console"/></Root></Loggers></Configuration>\n', { mode: 0o600 });
-  return { classes, plugin };
+  return { classes, plugin, build };
 }
 async function ui(args: string[], directory: string, client = "java"): Promise<void> {
   await execute("bun", [join(root, "src/capture/cli.ts"), "ui", ...args, "--client", client, "--output-dir", directory], { cwd: root });
+  if (args[0] === "screenshot") await chmod(join(directory, `${args[1]}.png`), 0o600);
 }
-async function buildFabricRecorder(jar: string): Promise<string> {
+async function buildFabricRecorder(jar: string, build: string): Promise<string> {
   const libraries = join(prismData, "libraries/net/fabricmc/sponge-mixin");
   const versions = (await readdir(libraries)).toSorted().toReversed();
   const version = versions[0];
   if (!version) throw new Error("Prepare the Fabric integration instance first.");
   const mixin = join(libraries, version, `sponge-mixin-${version}.jar`);
-  const classes = join(privateRoot, "build/fabric-classes");
-  await rm(classes, { recursive: true, force: true });
+  const classes = join(build, "fabric-classes");
   await mkdir(classes, { recursive: true, mode: 0o700 });
   const source = join(root, "src/replay/fabric/com/enderdash/agent/replay/fabric");
   const files = [...new Bun.Glob("**/*.java").scanSync(source)].map((file) => join(source, file));
@@ -85,8 +86,8 @@ async function buildFabricRecorder(jar: string): Promise<string> {
     name: "StackAnvil private replay recorder", environment: "client", mixins: ["stackanvil-recorder.mixins.json"],
     depends: { "viafabricplus-bedrock": "*" } }), { mode: 0o600 });
   await writeFile(join(classes, "stackanvil-recorder.mixins.json"), JSON.stringify({ required: true,
-    package: "com.enderdash.agent.replay.fabric.mixin", compatibilityLevel: "JAVA_25", client: ["MixinPacketCodec", "MixinPlayerSkins", "MixinRenderStore", "MixinCustomEntity", "MixinReplayCamera", "MixinPlayerFrame"] }), { mode: 0o600 });
-  const output = join(privateRoot, "build/fabric-recorder.jar");
+    package: "com.enderdash.agent.replay.fabric.mixin", compatibilityLevel: "JAVA_25", client: ["MixinPacketCodec", "MixinPlayerSkins", "MixinRenderStore", "MixinCustomEntity", "MixinCustomActorFrame", "MixinReplayCamera", "MixinPlayerFrame"] }), { mode: 0o600 });
+  const output = join(build, "fabric-recorder.jar");
   await execute("jar", ["--create", "--file", output, "-C", classes, "."]);
   return output;
 }
@@ -252,8 +253,8 @@ async function main(): Promise<void> {
   const jar = await artifact("viaproxy");
   await mkdir(privateRoot, { recursive: true, mode: 0o700 });
   await chmod(privateRoot, 0o700);
-  const { classes, plugin } = await buildPlugin(jar);
-  const recorder = client === "addon" ? await buildFabricRecorder(jar) : "";
+  const { classes, plugin, build } = await buildPlugin(jar);
+  const recorder = client === "addon" ? await buildFabricRecorder(jar, build) : "";
   const directory = join(privateRoot, `${new Date().toISOString().replaceAll(":", "-")}-${mode}-${mode === "record" ? input : "scene"}`);
   await mkdir(directory, { mode: 0o700 });
   const proxyHome = join(directory, "proxy");
@@ -273,6 +274,7 @@ async function main(): Promise<void> {
   let gamePid: number | undefined;
   let replayPort: number | undefined;
   let stopped = false;
+  let unexpectedClientExit = false;
   const abort = () => { stopped = true; };
   process.on("SIGINT", abort); process.on("SIGTERM", abort);
   try {
@@ -280,13 +282,13 @@ async function main(): Promise<void> {
       const recording = resolve(input);
       await inspectJournal(join(recording, "packets.sbr"));
       if (client === "addon") {
-        const { stdout } = await execute("java", [`-Dlog4j2.configurationFile=${join(privateRoot, "build/log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`, "com.enderdash.agent.replay.SceneFeatures", join(recording, "packets.sbr")]);
+        const { stdout } = await execute("java", [`-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`, "com.enderdash.agent.replay.SceneFeatures", join(recording, "packets.sbr")]);
         const features = JSON.parse(stdout) as SceneFeatures;
-        if (features.geometrySkinUpdates) await execute("java", [`-Dlog4j2.configurationFile=${join(privateRoot, "build/log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`, "com.enderdash.agent.replay.SceneFeatures", "--self-identity", join(recording, "packets.sbr"), join(directory, "replay-self-uuid.txt")]);
+        if (features.geometrySkinUpdates) await execute("java", [`-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`, "com.enderdash.agent.replay.SceneFeatures", "--self-identity", join(recording, "packets.sbr"), join(directory, "replay-self-uuid.txt")]);
       }
       const udp = await port(true);
       const log = join(directory, "replay.log");
-      const child = service("java", [`-Dlog4j2.configurationFile=${join(privateRoot, "build/log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`, "com.enderdash.agent.replay.ReplayServer", recording, String(udp)], directory, log);
+      const child = service("java", [`-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`, "com.enderdash.agent.replay.ReplayServer", recording, String(udp)], directory, log);
       await ready(child, log, /StackAnvil replay ready/);
       target = `127.0.0.1:${udp}`;
       replayPort = udp;
@@ -301,7 +303,7 @@ async function main(): Promise<void> {
     } else if (client === "native") {
       const separator = target!.lastIndexOf(":");
       const account = input === "local" ? "offline" : resolve(option("--account") ?? process.env.STACKANVIL_BEDROCK_ACCOUNT ?? accountDefault);
-      child = service("java", [`-Dlog4j2.configurationFile=${join(privateRoot, "build/log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`,
+      child = service("java", [`-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`,
         "com.enderdash.agent.replay.NativeCaptureProxy", directory, String(bind), target!.slice(0, separator), target!.slice(separator + 1), account], directory, proxyLog);
       await ready(child, proxyLog, /StackAnvil native capture ready/);
     } else if (mode !== "replay") {
@@ -315,7 +317,7 @@ async function main(): Promise<void> {
     let lastPackClick = 0;
     while (!stopped && Date.now() < until && alive(gamePid) && (!child || alive(child.pid))) {
       const log = await logText(game.log);
-      if (/Mixin transformation .* failed|Client disconnected with reason: Network Protocol Error|handlerAdded\(\) has thrown/.test(log)) break;
+      if (/Mixin transformation .* failed|Client disconnected with reason: Network Protocol Error|handlerAdded\(\) has thrown|(?:Unreported|Reported) exception thrown!|A fatal error has been detected by the Java Runtime Environment/.test(log)) break;
       accepted ||= /Reloading ResourceManager:.*server\//.test(log);
       if (/All resource packs have been loaded/.test(client === "addon" ? log : await logText(proxyLog))) packReadyAt ??= Date.now();
       if (client !== "native" && !accepted && packReadyAt && Date.now() - packReadyAt > 3500 && Date.now() - lastPackClick > 2500) {
@@ -323,8 +325,13 @@ async function main(): Promise<void> {
       }
       await Bun.sleep(500);
     }
-    await ui(["screenshot", "scene"], directory, client === "native" ? "bedrock" : "java");
     await writeFile(join(directory, "client.log"), await logText(game.log), { mode: 0o600 });
+    try {
+      await ui(["screenshot", "scene"], directory, client === "native" ? "bedrock" : "java");
+    } catch {
+      await writeFile(join(directory, "screenshot-error.txt"), "The private client window was unavailable for a screenshot. Read client.log.\n", { mode: 0o600 });
+    }
+    unexpectedClientExit = !alive(gamePid);
   } finally {
     await stopAll(gamePid);
     if (ownedDisplay) await stopDisplay();
@@ -336,6 +343,7 @@ async function main(): Promise<void> {
   await writeFile(join(directory, "manifest.json"), `${JSON.stringify({ schema: 1, mode, client, server: mode === "record" ? input : undefined, capturedAt: new Date().toISOString(), summary }, null, 2)}\n`, { mode: 0o600 });
   console.log(JSON.stringify(summary, null, 2));
   console.log(`Saved private ${mode} artifacts: ${directory}`);
+  if (mode === "replay" && (unexpectedClientExit || stopped)) throw new Error("The replay client exited or the run was cancelled before normal cleanup. Read its private client log.");
   if (!summary.reachedStartGame || !summary.reachedSpawn) throw new Error("The session did not reach a playable scene. Read its private logs and screenshot.");
   if (mode === "replay" && !/StackAnvil replay scene complete/.test(await logText(join(directory, "replay.log")))) throw new Error("The replay stopped before the complete scene was sent.");
   if (mode === "replay") {
@@ -343,7 +351,7 @@ async function main(): Promise<void> {
     if (original.sceneSha256 !== summary.sceneSha256) throw new Error("The replay changed or omitted scene packet payloads.");
     const clientLog = await logText(join(directory, "client.log"));
     if (!/Reloading ResourceManager:.*server\//.test(clientLog)) throw new Error("Java did not load the replay resource pack.");
-    const { stdout } = await execute("java", [`-Dlog4j2.configurationFile=${join(privateRoot, "build/log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`, "com.enderdash.agent.replay.SceneFeatures", join(resolve(input), "packets.sbr")]);
+    const { stdout } = await execute("java", [`-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`, "com.enderdash.agent.replay.SceneFeatures", join(resolve(input), "packets.sbr")]);
     const expected = JSON.parse(stdout) as SceneFeatures;
     const auditFile = join(directory, "render-audit.json");
     const audit = existsSync(auditFile) ? JSON.parse(await readFile(auditFile, "utf8")) as RenderAudit : undefined;

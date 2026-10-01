@@ -1,22 +1,25 @@
-From ee1cc5d8306d9bcd5ff0e40428a592320d2b1413 Mon Sep 17 00:00:00 2001
+From c9a46fcdafd72d5f3a068e292296278861c6e45f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 15:54:14 +0200
 Subject: [PATCH] fix(models): preserve cubes without visible faces
 
-Bedrock geometry can contain cubes with an empty UV face map. Keep these
-cubes invisible in Java instead of inventing a down face with an undefined
-texture reference. That reference resolves to the missing texture atlas and
-prevents otherwise valid custom item models from baking when their real
-faces use the item atlas.
+Bedrock geometry can contain cubes with an empty UV face map. Omit these
+cubes from Java model elements instead of inventing an unresolved texture
+face or exporting an invalid element with no faces. Java 26.3 requires at
+least one face per element; a wholly invisible model can have no elements.
 
-Recorded CubeCraft turret and watermelon models include these cubes.
-Synthetic model tests check that invisible geometry has no invented faces
-and that visible face texture bindings remain valid.
+Keep source bones and cubes available to the native renderer. Reindex
+exported group children after filtering, and normalize copied UV arrays so
+repeated export does not mutate cached model geometry.
+
+Recorded CubeCraft turret, watermelon and gravestone models contain these
+cubes. Synthetic tests cover mixed and wholly invisible geometry, valid
+visible texture references, preserved source cubes and repeatable export.
 ---
- build.gradle                                  |  7 +++
- .../model/impl/java/JavaItemModel.java        | 13 +---
- .../model/impl/java/JavaItemModelTest.java    | 59 +++++++++++++++++++
- 3 files changed, 67 insertions(+), 12 deletions(-)
+ build.gradle                                  |  7 ++
+ .../model/impl/java/JavaItemModel.java        | 23 ++----
+ .../model/impl/java/JavaItemModelTest.java    | 80 +++++++++++++++++++
+ 3 files changed, 95 insertions(+), 15 deletions(-)
  create mode 100644 src/test/java/org/cube/converter/model/impl/java/JavaItemModelTest.java
 
 diff --git a/build.gradle b/build.gradle
@@ -38,7 +41,7 @@ index ab26d86..0bc3ee5 100644
  
  group = 'org.oryxel.cube'
 diff --git a/src/main/java/org/cube/converter/model/impl/java/JavaItemModel.java b/src/main/java/org/cube/converter/model/impl/java/JavaItemModel.java
-index 2c45ce3..5bf5fd6 100644
+index 2c45ce3..8dfb658 100644
 --- a/src/main/java/org/cube/converter/model/impl/java/JavaItemModel.java
 +++ b/src/main/java/org/cube/converter/model/impl/java/JavaItemModel.java
 @@ -15,7 +15,6 @@ import org.cube.converter.util.math.MathUtil;
@@ -49,7 +52,42 @@ index 2c45ce3..5bf5fd6 100644
  import java.util.Map;
  
  @Getter
-@@ -149,16 +148,6 @@ public final class JavaItemModel extends GeneralModel {
+@@ -70,11 +69,14 @@ public final class JavaItemModel extends GeneralModel {
+ 
+             // Children.
+             final JsonArray children = new JsonArray();
+-            group.getCubes().forEach((k, v) -> children.add(k));
+             parent.add("children", children);
+ 
+             for (Map.Entry<Integer, Cube> entry : group.getCubes().entrySet()) {
+                 final Cube cube = entry.getValue();
++                final JsonObject faces = compileUV(this.textureSize.getX(), this.textureSize.getY(), cube);
++                if (faces.isEmpty()) {
++                    continue;
++                }
+ 
+                 final JsonObject element = new JsonObject();
+                 // TODO: name, well it is that important? I don't care enough.
+@@ -88,7 +90,8 @@ public final class JavaItemModel extends GeneralModel {
+                 } else {
+                     element.add("rotation", compileRotation(cube));
+                 }
+-                element.add("faces", compileUV(this.textureSize.getX(), this.textureSize.getY(), cube));
++                element.add("faces", faces);
++                children.add(elements.size());
+                 elements.add(element);
+             }
+ 
+@@ -127,7 +130,7 @@ public final class JavaItemModel extends GeneralModel {
+     private JsonObject compileUV(final float textureWidth, final float textureHeight, final Cube element) {
+         JsonObject faces = new JsonObject();
+ 
+-        for (Map.Entry<Direction, Float[]> entry : element.getUvMap().toJavaPerfaceUV(textureWidth, textureHeight).getUvMap().entrySet()) {
++        for (Map.Entry<Direction, Float[]> entry : element.getUvMap().clone().toJavaPerfaceUV(textureWidth, textureHeight).getUvMap().entrySet()) {
+             if (entry.getValue() == null) {
+                 continue;
+             }
+@@ -149,16 +152,6 @@ public final class JavaItemModel extends GeneralModel {
              faces.add(entry.getKey().name().toLowerCase(), faceDirection);
          }
  
@@ -66,7 +104,7 @@ index 2c45ce3..5bf5fd6 100644
          return faces;
      }
  
-@@ -166,4 +155,4 @@ public final class JavaItemModel extends GeneralModel {
+@@ -166,4 +159,4 @@ public final class JavaItemModel extends GeneralModel {
          // TODO: implement this.
          return null;
      }
@@ -75,15 +113,16 @@ index 2c45ce3..5bf5fd6 100644
 +}
 diff --git a/src/test/java/org/cube/converter/model/impl/java/JavaItemModelTest.java b/src/test/java/org/cube/converter/model/impl/java/JavaItemModelTest.java
 new file mode 100644
-index 0000000..e281404
+index 0000000..7085b52
 --- /dev/null
 +++ b/src/test/java/org/cube/converter/model/impl/java/JavaItemModelTest.java
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,80 @@
 +package org.cube.converter.model.impl.java;
 +
 +import com.viaversion.viaversion.libs.gson.JsonObject;
 +import org.cube.converter.converter.enums.RotationType;
 +import org.cube.converter.parser.bedrock.geometry.BedrockGeometryParser;
++import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
 +import org.junit.jupiter.api.Test;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -91,18 +130,19 @@ index 0000000..e281404
 +class JavaItemModelTest {
 +
 +    @Test
-+    void preservesUntexturedCubesWithoutInventingAnUnresolvedFace() {
-+        final JsonObject model = convert("""
++    void omitsUntexturedJavaElementsAndPreservesSourceCubes() {
++        final var geometry = geometry("""
 +            {"origin":[0,0,0],"size":[2,2,2],"uv":{}},
 +            {"origin":[2,0,0],"size":[2,2,2],"uv":{"north":{"uv":[0,0],"uv_size":[2,2]}}}
 +            """);
++        final var javaModel = geometry.toJavaItemModel("example:item/actor", RotationType.POST_1_21_11);
++        final JsonObject model = javaModel.compile();
 +        final var elements = model.getAsJsonArray("elements");
-+        assertEquals(2, elements.size());
-+        int invisible = 0;
++        assertEquals(1, elements.size());
 +        int renderedFaces = 0;
 +        for (var element : elements) {
 +            final JsonObject faces = element.getAsJsonObject().getAsJsonObject("faces");
-+            if (faces.isEmpty()) invisible++;
++            assertFalse(faces.isEmpty());
 +            for (var face : faces.entrySet()) {
 +                renderedFaces++;
 +                final String texture = face.getValue().getAsJsonObject().get("texture").getAsString();
@@ -110,8 +150,23 @@ index 0000000..e281404
 +                assertTrue(model.getAsJsonObject("textures").has(texture.substring(1)));
 +            }
 +        }
-+        assertEquals(1, invisible);
 +        assertEquals(1, renderedFaces);
++        assertEquals(0, model.getAsJsonArray("groups").get(0).getAsJsonObject().getAsJsonArray("children").get(0).getAsInt());
++        assertEquals(2, geometry.getParents().get(0).getCubes().size());
++        assertEquals(2, javaModel.getParents().get(0).getCubes().size());
++        assertTrue(geometry.getParents().get(0).getCubes().get(0).getUvMap().getUvMap().isEmpty());
++        assertEquals(model, javaModel.compile());
++    }
++
++    @Test
++    void exportsWhollyInvisibleGeometryWithNoJavaElements() {
++        final var geometry = geometry("""
++            {"origin":[0,0,0],"size":[2,2,2],"uv":{}}
++            """);
++        final JsonObject model = geometry.toJavaItemModel("example:item/actor", RotationType.POST_1_21_11).compile();
++        assertTrue(model.getAsJsonArray("elements").isEmpty());
++        assertTrue(model.getAsJsonArray("groups").get(0).getAsJsonObject().getAsJsonArray("children").isEmpty());
++        assertEquals(1, geometry.getParents().get(0).getCubes().size());
 +    }
 +
 +    @Test
@@ -128,16 +183,19 @@ index 0000000..e281404
 +    }
 +
 +    private static JsonObject convert(final String cubes) {
++        return geometry(cubes).toJavaItemModel("example:item/actor", RotationType.POST_1_21_11).compile();
++    }
++
++    private static BedrockGeometryModel geometry(final String cubes) {
 +        final String json = """
 +            {"format_version":"1.12.0","minecraft:geometry":[{
-+                "description":{"identifier":"geometry.example","texture_width":16,"texture_height":16},
++                "description":{"identifier":"geometry.example","texture_width":32,"texture_height":32},
 +                "bones":[{"name":"root","pivot":[0,0,0],"cubes":[%s]}]
 +            }]}
 +            """.formatted(cubes);
-+        return BedrockGeometryParser.parse(json).get(0).toJavaItemModel("example:item/actor", RotationType.POST_1_21_11).compile();
++        return BedrockGeometryParser.parse(json).get(0);
 +    }
 +
 +}
 -- 
 2.55.0
-

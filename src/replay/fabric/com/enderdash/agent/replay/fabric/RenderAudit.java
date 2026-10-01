@@ -14,6 +14,7 @@ public final class RenderAudit {
     private static long lastSave;
     private static int installedSkins, installedGeometrySkins, rejectedSkins, playerSelections, modelUpdates, emptyModels;
     private static int playerFrames;
+    private static int nativeActorFrames, nativeActorModels;
     private static boolean thirdPerson;
     private static final Set<String> skins = new TreeSet<>(), models = new TreeSet<>(), actors = new TreeSet<>();
 
@@ -33,6 +34,13 @@ public final class RenderAudit {
 
     public static synchronized void thirdPersonScene() { thirdPerson = true; save(); }
     public static synchronized void playerFrame() { playerFrames++; if (playerFrames == 1) save(); }
+
+    public static synchronized void nativeActorModels(int resolved) {
+        nativeActorModels += resolved;
+        if (resolved > 0) save();
+    }
+
+    public static synchronized void nativeActorFrame() { nativeActorFrames++; if (nativeActorFrames == 1) save(); }
 
     public static synchronized void playerRenderer() { playerSelections++; if (playerSelections == 1) save(); }
 
@@ -59,9 +67,11 @@ public final class RenderAudit {
             Map<String, Object> stats = new LinkedHashMap<>();
             stats.put("installedSkins", installedSkins); stats.put("installedGeometrySkins", installedGeometrySkins); stats.put("rejectedSkins", rejectedSkins);
             stats.put("nativePlayerRenderFrames", playerFrames); stats.put("thirdPersonScene", thirdPerson);
+            stats.put("nativeCustomActorRenderFrames", nativeActorFrames);
+            stats.put("nativeCustomActorResolvedModels", nativeActorModels);
             stats.put("nativePlayerRendererSelections", playerSelections); stats.put("modelUpdates", modelUpdates);
             stats.put("emptyModelUpdates", emptyModels); stats.put("skinTextures", skins);
-            stats.put("actorIdentifiers", actors); stats.put("resolvedModels", models);
+            stats.put("actorIdentifiers", actors); stats.put("evaluatedModels", models);
             Path temporary = directory.resolve("render-audit.json.tmp");
             Files.writeString(temporary, new Gson().toJson(stats));
             Files.setPosixFilePermissions(temporary, PosixFilePermissions.fromString("rw-------"));

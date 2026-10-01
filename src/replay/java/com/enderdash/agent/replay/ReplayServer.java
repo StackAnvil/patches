@@ -65,6 +65,7 @@ public final class ReplayServer {
                                 private int phase;
                                 private ScheduledFuture<?> playback;
                                 private ScheduledFuture<?> heartbeat;
+                                private ScenePlayback timeline;
                                 @Override protected void channelRead0(ChannelHandlerContext ctx, ByteBuf input) {
                                     int id = Types.VAR_INT.readPrimitive(input);
                                     if (phase == 0 && id == 193) {
@@ -80,6 +81,8 @@ public final class ReplayServer {
                                         phase = 2;
                                         ctx.writeAndFlush(Unpooled.buffer().writeByte(2).writeInt(0));
                                         ctx.writeAndFlush(Unpooled.wrappedBuffer(localInfo));
+                                    } else if (phase == 4 && id == 175) {
+                                        timeline.request(input);
                                     } else if (id == 8 && input.isReadable()) {
                                         BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(input);
                                         String response = BedrockTypes.STRING.read(input);
@@ -88,16 +91,12 @@ public final class ReplayServer {
                                             ctx.writeAndFlush(Unpooled.wrappedBuffer(localStack));
                                         } else if (phase == 3 && response.equals("resourcepackstackfinished")) {
                                             phase = 4;
-                                            long origin = scene.getFirst().nanos();
-                                            long started = System.nanoTime();
-                                            int[] cursor = {0};
+                                            timeline = new ScenePlayback(scene, System.nanoTime());
                                             playback = ctx.executor().scheduleAtFixedRate(() -> {
                                                 try {
-                                                    while (cursor[0] < scene.size() && scene.get(cursor[0]).nanos() - origin <= System.nanoTime() - started) {
-                                                        ctx.write(Unpooled.wrappedBuffer(scene.get(cursor[0]++).payload()));
-                                                    }
+                                                    boolean complete = timeline.advance(System.nanoTime(), payload -> ctx.write(Unpooled.wrappedBuffer(payload)));
                                                     ctx.flush();
-                                                    if (cursor[0] == scene.size()) {
+                                                    if (complete) {
                                                         playback.cancel(false);
                                                         System.out.println("StackAnvil replay scene complete");
                                                         heartbeat = ctx.executor().scheduleAtFixedRate(() -> {
@@ -107,7 +106,10 @@ public final class ReplayServer {
                                                             ctx.writeAndFlush(ping);
                                                         }, 1, 5, TimeUnit.SECONDS);
                                                     }
-                                                } catch (Throwable error) { ctx.fireExceptionCaught(error); ctx.close(); }
+                                                } catch (Throwable error) {
+                                                    if (error instanceof ScenePlayback.RequestTimeout) System.err.println("Replay scene timed out waiting for matching local subchunk requests");
+                                                    ctx.fireExceptionCaught(error); ctx.close();
+                                                }
                                             }, 10, 10, TimeUnit.MILLISECONDS);
                                         }
                                     }

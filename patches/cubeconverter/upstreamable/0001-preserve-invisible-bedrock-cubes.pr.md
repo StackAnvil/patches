@@ -1,3 +1,5 @@
-Bedrock cubes with no UV faces are intentionally invisible. An invented face referred to an undefined texture key, which mixed the missing block atlas with valid item textures and prevented Java models from baking.
+Bedrock cubes with no UV faces are invisible. Java 26.3 requires at least one face per model element, so the exporter omits these elements. A wholly invisible model has an empty elements array. This also avoids invented faces with unresolved texture references.
 
-Validation: two generated geometry tests pass on Java 17. Private CubeCraft recordings contain both affected turret and watermelon models; offline conversion removes their unresolved texture references while preserving every real face. No server assets are included.
+Source bones and cubes remain available to the native renderer. Exported group children reference the remaining elements. UV normalization uses copies, so repeated export preserves cached geometry.
+
+Validation: three generated geometry tests pass on Java 17. They cover mixed and wholly invisible models, valid texture bindings, source preservation and repeatable export. Private CubeCraft turret, watermelon and gravestone models contain affected cubes. No server assets are included.

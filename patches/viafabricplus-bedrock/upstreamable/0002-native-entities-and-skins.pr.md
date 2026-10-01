@@ -1,5 +1,5 @@
 Install supplied player skin geometry even when its identifier uses the standard humanoid alias. Queue skin updates for their exact source connection while Java is still configuring, then install them in arrival order when the play listener becomes available. Disconnected sources cannot leak updates into another connection.
 
-Native actor rendering reports active missing geometry and textures. Inactive server variants do not produce rendering failures.
+Native actor rendering reports active missing geometry and textures. Inactive server variants do not produce rendering failures. Visibility uses the distance between the actor and the camera. Minecraft 26.3 supplies absolute camera coordinates, so the previous check hid nearby custom actors in lobbies far from the world origin.
 
-Validation: queue identity, order and closed-connection regressions pass; the full addon suite has no failures. Recorded Geyser and CubeCraft scenes exercise the extended configuration phase created by custom block packs.
+Validation: queue identity, order and closed-connection regressions pass; the full addon suite has no failures. Recorded Geyser and CubeCraft scenes exercise the extended configuration phase created by custom block packs. The private CubeCraft replay checks all 240 skin updates and 37 advertised actor types, then requires native model resolution and actual player and custom actor submissions. Its terrain and packet payloads remain unchanged. No server assets are included.

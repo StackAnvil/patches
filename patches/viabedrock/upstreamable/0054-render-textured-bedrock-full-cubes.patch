@@ -1,4 +1,4 @@
-From c7b9e182e828fd39d1191e3df42d8b3dfc8b61e6 Mon Sep 17 00:00:00 2001
+From 57e78270cfe5a56739bd4f259b64f8d3f11fb7d0 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:38:26 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -41,6 +41,12 @@ Native client adapters suppress carrier redstone particles and tint.
 
 Exhaustive semantic tests cover all 1,296 wire states, exact custom/vanilla
 partitions, compact selector conditions and ordinary note fallback.
+
+Retain bone membership from the converter's remapped emitted group indices
+when applying static block transforms. Invisible cubes emit no Java element
+and must not shift later visible cubes into another bone. Regression
+coverage combines invisible parent and child cubes with distinct rotated
+bones, preserved face UVs, and immutable source geometry.
 ---
  .../api/model/CustomBlockVisual.java          |  26 ++
  .../definition/BlockDefinitions.java          |  17 +-
@@ -53,18 +59,18 @@ partitions, compact selector conditions and ordinary note fallback.
  .../protocol/packet/ResourcePackPackets.java  |  44 +-
  .../protocol/rewriter/BlockStateRewriter.java |  60 ++-
  .../rewriter/ResourcePackRewriter.java        |   2 +
- .../resourcepack/CustomBlockModel.java        | 416 ++++++++++++++++++
+ .../resourcepack/CustomBlockModel.java        | 417 ++++++++++++++++++
  .../CustomBlockResourceRewriter.java          | 202 +++++++++
  .../CustomBlockStateDefinitions.java          | 153 +++++++
  .../protocol/storage/ChunkTracker.java        |  33 +-
  .../storage/CustomBlockPackStorage.java       | 103 +++++
  .../protocol/storage/ResourcePackStorage.java |  34 ++
- .../rewriter/CustomBlockBoneGeometryTest.java | 142 ++++++
+ .../rewriter/CustomBlockBoneGeometryTest.java | 177 ++++++++
  .../CustomBlockModelSelectionTest.java        | 251 +++++++++++
  .../CustomBlockStateDefinitionsTest.java      | 218 +++++++++
  .../protocol/storage/ChunkTrackerTest.java    |  23 +
  .../storage/CustomBlockPackStorageTest.java   | 168 +++++++
- 22 files changed, 2053 insertions(+), 21 deletions(-)
+ 22 files changed, 2089 insertions(+), 21 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockVisual.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/CustomBlockDefinition.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
@@ -326,7 +332,7 @@ index ba8c2db5..56c12e58 100644
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-index 08a0d35c..83e65e7a 100644
+index 9dae7790..1aa82f66 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 @@ -87,7 +87,7 @@ public class ConvertedResourcePackCache {
@@ -665,10 +671,10 @@ index 07a19fa9..9b746b0c 100644
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
 new file mode 100644
-index 00000000..167a9730
+index 00000000..4336d839
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
-@@ -0,0 +1,416 @@
+@@ -0,0 +1,417 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -820,14 +826,15 @@ index 00000000..167a9730
 +        }
 +        final JavaItemModel converted = geometry.toJavaItemModel(textures, RotationType.POST_1_21_11);
 +        final JsonObject model = converted.compile();
++        final JsonArray groups = model.getAsJsonArray("groups");
 +        undoItemFit(model, converted.getScale());
 +        final JsonArray elements = model.getAsJsonArray("elements");
-+        int offset = 0;
++        int groupIndex = 0;
 +        for (Parent parent : converted.getParents()) {
 +            final JsonObject part = new JsonObject();
 +            final JsonArray cubes = new JsonArray();
-+            for (int i = 0; i < parent.getCubes().size(); i++) {
-+                cubes.add(elements.get(offset++));
++            for (JsonElement index : groups.get(groupIndex++).getAsJsonObject().getAsJsonArray("children")) {
++                cubes.add(elements.get(index.getAsInt()));
 +            }
 +            part.add("elements", cubes);
 +            final var visited = new HashSet<String>();
@@ -1742,10 +1749,10 @@ index d3dc4315..bc708a96 100644
      }
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockBoneGeometryTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockBoneGeometryTest.java
 new file mode 100644
-index 00000000..d9b7b5a5
+index 00000000..a347e5aa
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockBoneGeometryTest.java
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,177 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1831,6 +1838,41 @@ index 00000000..d9b7b5a5
 +        final double yaw = Math.toRadians(-112.5);
 +        assertArrayEquals(new double[]{Math.cos(yaw), 0, -Math.sin(yaw)}, rotated(rotation, 1, 0, 0), 1E-8);
 +        assertArrayEquals(new double[]{Math.sin(yaw), 0, Math.cos(yaw)}, rotated(rotation, 0, 0, 1), 1E-8);
++    }
++
++    @Test
++    void appliesEachBoneToItsEmittedCubesAfterInvisibleCubesAreRemoved() {
++        final ResourcePackStorage storage = storage("""
++                {"name":"root","pivot":[0,0,0],"rotation":[0,90,0],
++                 "cubes":[{"origin":[0,0,0],"size":[2,2,2],"uv":{}}]},
++                {"name":"child","parent":"root","pivot":[0,0,0],"rotation":[90,0,0],
++                 "cubes":[{"origin":[0,0,0],"size":[2,4,6],"pivot":[1,2,3],"rotation":[0,0,90],
++                           "uv":{"north":{"uv":[0,0],"uv_size":[2,4]}}},
++                          {"origin":[0,0,0],"size":[1,1,1],"uv":{}}]},
++                {"name":"separate","pivot":[0,0,0],"rotation":[0,0,90],
++                 "cubes":[{"origin":[-4,0,-4],"size":[8,8,8],"uv":[0,0]}]}
++                """);
++        final JsonObject model = compile(storage);
++        final var elements = model.getAsJsonArray("elements");
++        assertEquals(2, elements.size());
++        final JsonObject child = elements.get(0).getAsJsonObject();
++        assertVector(child, "from", 9, 1, 4);
++        assertVector(child, "to", 11, 5, 10);
++        assertVector(child.getAsJsonObject("rotation"), "origin", 10, 3, 7);
++        assertArrayEquals(new double[]{0, 0, -1}, rotated(child.getAsJsonObject("rotation"), 0, 1, 0), 1E-8);
++        assertEquals(1, child.getAsJsonObject("faces").size());
++        assertEquals(0.5, child.getAsJsonObject("faces").getAsJsonObject("north").getAsJsonArray("uv").get(2).getAsDouble());
++        final JsonObject separate = elements.get(1).getAsJsonObject();
++        assertVector(separate, "from", 0, -4, 4);
++        assertVector(separate, "to", 8, 4, 12);
++        assertEquals(90, separate.getAsJsonObject("rotation").get("z").getAsDouble(), 1E-8);
++        assertEquals(6, separate.getAsJsonObject("faces").size());
++        assertEquals(model, compile(storage));
++        final var source = storage.getModels().blockModels().get("geometry.test").getParents();
++        assertEquals(1, source.get(0).getCubes().size());
++        assertEquals(2, source.get(1).getCubes().size());
++        assertTrue(source.get(0).getCubes().get(0).getUvMap().getUvMap().isEmpty());
++        assertEquals(0, source.get(1).getCubes().get(0).getPosition().getX());
 +    }
 +
 +    @Test
