@@ -292,4 +292,16 @@ The matching licensed vanilla player definition declares no sound or particle al
 
 Production sound, particle, and named actor event playback remain incomplete. The next implementation needs effect resource bindings, model locator transforms, audio loading, and effect lifecycle management. The renderer does not yet consume model locators. Native instruction probes do not establish audible results, captions, particle appearance, or multiplayer behavior. Executables, probes, fixtures, and exports remain private.
 
+## Licensed animation effect libraries
+
+Extend the package helper's existing licensed acquisition to vanilla sounds, particles, and their texture atlases. The matching Bedrock 1.26.51.1 package stores sound definitions and particles in BR archives, with loose FSB5 sound banks. The root texture archive supplies the flame atlas. The particle texture archive supplies particle and campfire-smoke atlases. Shared directory selection keeps NTFS traversal and segment-index filtering consistent.
+
+Cache format 4 retains all acquired resources and their checksums. Model-only and actor-only caches refresh before use. An incomplete library or failed refresh leaves the previous cache intact and removes staging files. Tests cover both older formats, binary byte preservation, missing effect resources, checksum reuse, and rollback.
+
+The bundled production helper obtains the official license in a fresh Java test. The cache contains sound definitions, FSB banks, particle definitions, and all three referenced atlases. It resolves inherited models and built-in emotes after cache readback, then reuses the saved cache without another acquisition. The replayed full stack builds, and all 193 fixture-enabled add-on tests pass with no skips. Three native helper unit tests also pass; two live acquisition tests require private fixtures.
+
+Private inspection identifies 4,691 FADPCM and 70 PCM16 banks. The particle archive contains 114 MCB definitions and one text definition. A private reference-decoder run restores all 114 MCB definitions using 72 schemas and references exported by the matching official server. Production stores the original binary data and still needs its own decoding and effect runtime. The reference decoder, server, exported schemas, downloaded assets, and credentials remain private. Production requires no installed game or external extractor.
+
+Sources: [MCB reference decoder](https://github.com/LPaicen/brarchive-extractor) and [server schema export workflow](https://github.com/SmokeyStack/brarchaeology/blob/main/tools/Dump-BdsSchema.ps1). These references guide format research; the live licensed package supplies the target-version data.
+
 Sources: [Microsoft animation effects reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/actor_animation.v1.8.0?view=minecraft-bedrock-stable) and [Mojang particle integration reference](https://mojang.github.io/bedrock-samples/Particles.html). The target executable establishes the callback behavior and render-context suppression above.

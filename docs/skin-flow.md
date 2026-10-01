@@ -188,15 +188,17 @@ The add-on bundles an Xodus-based package helper. First use opens Microsoft Stor
 
 The current pin selects Bedrock 1.26.51.1, package version 1.26.5101.0, for ViaBedrock protocol 2193. The package URL identifies the matching official Xbox CDN build. Its pinned header checksum anchors the package hash tree. The helper verifies metadata and encrypted file pages before decryption because this CDN serves the package over HTTP.
 
-The helper obtains a device-bound license from Microsoft and unwraps its content key. It reads the segment index or the NTFS persona directory. The NTFS reader handles resident files and ordinary streams with multiple data runs. It downloads persona files and base vanilla archives for models, animations, controllers, and client entities.
+The helper obtains a device-bound license from Microsoft and unwraps its content key. It reads the segment index or the NTFS persona directory. The NTFS reader handles resident files and ordinary streams with multiple data runs. It downloads persona files and vanilla libraries for models, animations, controllers, client entities, sounds, and particles. Particle textures and the shared texture archive supply the referenced atlases.
 
 Java unpacks version 1 BR archives beneath their original piece directories. Shared content offsets are valid. Empty archive entries preserve separately supplied loose files. Path, file count, size, and duplicate checks apply before publishing the cache.
 
-The cache lives under the add-on's `bedrock-assets/persona/<account>/<version>.zip` directory. Each file has a checksum, and the cache records the package identity. Cache format 3 includes the model and actor libraries. Older persona-only and model-only caches refresh before use. A failed refresh keeps the previous cache. Store credentials remain in a separate private directory, and the helper reuses its device identity.
+The cache lives under the add-on's `bedrock-assets/persona/<account>/<version>.zip` directory. Each file has a checksum, and the cache records the package identity. Cache format 4 includes the model, actor, and effect libraries. Older caches refresh before use. A failed refresh keeps the previous cache. Store credentials remain in a separate private directory, and the helper reuses its device identity.
 
 The source loader indexes piece metadata, PNG face strips, BGRA TGA tint masks, and geometry by native piece UUID. Equipped built-in pieces enter the same asset loader as owned pieces. Wave, Clap, Over There, and Follow Me use their extracted animation sources for previews and world playback. Built-in emotes retain their piece UUID as the wire identity.
 
-A live test obtained the official license and extracted 232 files, including the base vanilla model and actor archives. Java tests used the bundled helper, unpacked the archives, sampled all four emotes, decoded face masks, and reused the versioned cache. No downloaded content or credentials enter the repository. Fresh interactive Store sign-in and the Windows and macOS helper builds still need runtime verification.
+A live Java test used the bundled helper to obtain the official license and acquire the expanded libraries. It unpacked the archives and reused the versioned cache. Earlier fixture tests sample all four emotes and decode face masks. No downloaded content or credentials enter the repository. Fresh interactive Store sign-in and the Windows and macOS helper builds still need runtime verification.
+
+The matching package contains 4,761 FSB5 sound banks: 4,691 use FADPCM, and 70 use PCM16. Its particle archive contains 114 compiled MCB definitions and one text definition. Cache storage preserves these bytes. Production still needs audio and MCB decoding before effect playback can use them.
 
 Local add-on builds require Rust 1.98.1, Protobuf, and the platform's WebView build libraries. Linux sign-in requires WebKitGTK 4.1. Release and full-stack CI assemble helper resources for Linux x64, Windows x64, and both macOS architectures. Native installations serve only as private research fixtures.
 
@@ -216,7 +218,7 @@ Menu models retain the native root, waist, and body hierarchy. Bone poses also a
 
 The target native loader selects the first declared emote animation source. The add-on preserves that order and accepts additional declarations. An unavailable first source remains an error. Sounds, particles, and named actor events remain unsupported.
 
-Native effect research now verifies sound alias lookup, event boundaries, locator fallback, actor attachment, and render-pass suppression. Playback still needs resource bindings, model locator transforms, licensed audio resources, and effect lifecycle management. The matching vanilla player library has no sound or particle bindings. The two captured owned emotes contain neither effect type, so those fixtures cannot establish audible or particle parity.
+Native effect research now verifies sound alias lookup, event boundaries, locator fallback, actor attachment, and render-pass suppression. Playback still needs resource bindings, model locator transforms, audio decoding, particle decoding, and effect lifecycle management. The matching vanilla player library has no sound or particle bindings. The two captured owned emotes contain neither effect type, so those fixtures cannot establish audible or particle parity.
 
 Another native probe verifies 64 binding availability and lifetime cases. The binder assigns separate sound and named actor event tables through two weak resources. Absent or expired resources leave existing bindings unchanged. This verifies native table assignment, not production resource loading or particle bindings. The native emote loader adds its first declared source to the shared actor-animation library.
 
@@ -269,6 +271,6 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. This establishes visual presence, not complete timing or format parity.
 - Verify fresh interactive Store sign-in and helper runtime behavior on Windows and macOS. Linux acquisition, license decryption, extraction, and cache reuse already pass.
 
-The latest full stack build passes all 191 fixture-enabled add-on tests with no skips. The latest recorded Java runtime probe passes 1,324 checks. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
+The latest full stack build passes all 193 fixture-enabled add-on tests with no skips. The latest recorded Java runtime probe passes 1,324 checks. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
 
 Keep login JWTs, receipts, content keys, raw flows, screenshots, player textures, and account data private under `.stackanvil/`.

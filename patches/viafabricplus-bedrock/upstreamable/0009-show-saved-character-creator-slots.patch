@@ -1,4 +1,4 @@
-From 173d40370b9a7365ca74b36f79dc8e781bd242ac Mon Sep 17 00:00:00 2001
+From d5fd57b06efc3be29f2642ebc154e874099d80f1 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -450,6 +450,14 @@ different carried and active durations. Bind the named native variables
 for authored classic tracks without synthesizing native item poses. The
 extracted default player graph does not reference these three variables.
 Full native item poses and post-use trident state remain separate work.
+
+Acquire the matching vanilla sound banks, particle definitions, and atlases
+through the existing licensed package helper. Bedrock 1.26.51.1 supplies
+4,761 FSB5 banks and 115 particle definitions. Keep compiled MCB and audio
+bytes intact for the effect decoder. Cache format 4 refreshes older actor-only
+caches and rejects incomplete effect libraries before atomic publication.
+Failed acquisition preserves the previous cache. No installed game or
+external extractor is required. Sound and particle playback remain pending.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   54 +
@@ -457,10 +465,10 @@ Full native item poses and post-use trident state remain separate work.
  native/persona-assets/Cargo.toml              |   27 +
  native/persona-assets/LICENSE                 |  674 ++
  native/persona-assets/NOTICE                  |   34 +
- native/persona-assets/src/index.rs            |  251 +
+ native/persona-assets/src/index.rs            |  242 +
  native/persona-assets/src/license.rs          |   96 +
  native/persona-assets/src/login.rs            |  179 +
- native/persona-assets/src/main.rs             |  380 +
+ native/persona-assets/src/main.rs             |  442 ++
  native/persona-assets/src/remote.rs           |  315 +
  native/persona-assets/src/store.rs            |   92 +
  native/persona-assets/src/webview.rs          |  399 +
@@ -469,7 +477,7 @@ Full native item poses and post-use trident state remain separate work.
  .../appearance/BedrockAppearanceStore.java    |  110 +-
  .../appearance/BedrockBoneAnimation.java      |  488 ++
  .../bedrock/appearance/BedrockBrArchive.java  |   73 +
- .../appearance/BedrockBuiltinAssets.java      |  392 +
+ .../appearance/BedrockBuiltinAssets.java      |  405 +
  .../appearance/BedrockCharacterProfiles.java  | 1272 ++++
  .../appearance/BedrockClassicAssets.java      |   84 +
  .../appearance/BedrockClassicModel.java       |    1 +
@@ -523,7 +531,7 @@ Full native item poses and post-use trident state remain separate work.
  .../appearance/BedrockActorAnimationTest.java |  586 ++
  .../BedrockAppearanceStoreTest.java           |   28 +
  .../appearance/BedrockBoneAnimationTest.java  |  450 ++
- .../appearance/BedrockBuiltinAssetsTest.java  |  367 +
+ .../appearance/BedrockBuiltinAssetsTest.java  |  412 +
  .../BedrockCharacterColorsTest.java           |  202 +
  .../BedrockCharacterProfilesTest.java         |  461 ++
  .../BedrockControllerAnimationTest.java       |  386 +
@@ -545,7 +553,7 @@ Full native item poses and post-use trident state remain separate work.
  .../render/BedrockAnimatedModelTest.java      |   55 +
  .../render/BedrockPlayerActorStateTest.java   |  124 +
  .../render/BedrockPlayerModelTest.java        |  100 +
- 94 files changed, 26328 insertions(+), 86 deletions(-)
+ 94 files changed, 26439 insertions(+), 86 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -8200,10 +8208,10 @@ index 0000000..ff5caf3
 +
 diff --git a/native/persona-assets/src/index.rs b/native/persona-assets/src/index.rs
 new file mode 100644
-index 0000000..ac8a528
+index 0000000..a9da0ce
 --- /dev/null
 +++ b/native/persona-assets/src/index.rs
-@@ -0,0 +1,251 @@
+@@ -0,0 +1,242 @@
 +// SPDX-License-Identifier: GPL-3.0-or-later
 +use crate::{Result, remote::Remote};
 +use msixvc::{
@@ -8354,16 +8362,7 @@ index 0000000..ac8a528
 +        if file.is_directory() {
 +            if path.starts_with("data/resource_packs/vanilla/") {
 +                let relative = path.strip_prefix("data/resource_packs/vanilla/").unwrap();
-+                if !(relative == "__brarchive"
-+                    || ["models", "animations", "animation_controllers", "entity"]
-+                        .iter()
-+                        .any(|directory| {
-+                            relative == *directory
-+                                || relative.starts_with(&format!("{directory}/"))
-+                                || relative == format!("__brarchive/{directory}")
-+                                || relative.starts_with(&format!("__brarchive/{directory}/"))
-+                        }))
-+                {
++                if !crate::library_directory(relative) {
 +                    continue;
 +                }
 +            }
@@ -8744,10 +8743,10 @@ index 0000000..55acfd9
 +}
 diff --git a/native/persona-assets/src/main.rs b/native/persona-assets/src/main.rs
 new file mode 100644
-index 0000000..429e7e0
+index 0000000..2e526c3
 --- /dev/null
 +++ b/native/persona-assets/src/main.rs
-@@ -0,0 +1,380 @@
+@@ -0,0 +1,442 @@
 +// SPDX-License-Identifier: GPL-3.0-or-later
 +mod index;
 +mod license;
@@ -8969,6 +8968,44 @@ index 0000000..429e7e0
 +    Ok(selected.len())
 +}
 +
++const LIBRARY_DIRECTORIES: [&str; 6] = [
++    "models",
++    "animations",
++    "animation_controllers",
++    "entity",
++    "sounds",
++    "particles",
++];
++
++fn library_directory(relative: &str) -> bool {
++    let relative = relative.strip_prefix("__brarchive/").unwrap_or(relative);
++    relative == "__brarchive"
++        || relative == "textures"
++        || relative == "textures/particle"
++        || relative.starts_with("textures/particle/")
++        || LIBRARY_DIRECTORIES.iter().any(|directory| {
++            relative == *directory || relative.starts_with(&format!("{directory}/"))
++        })
++}
++
++fn library_asset(relative: &str) -> bool {
++    if let Some(archive) = relative.strip_prefix("__brarchive/") {
++        return archive
++            .strip_suffix(".brarchive")
++            .is_some_and(|directory| directory != "__brarchive" && library_directory(directory));
++    }
++    relative.ends_with(".json")
++        && LIBRARY_DIRECTORIES
++            .iter()
++            .any(|directory| relative.starts_with(&format!("{directory}/")))
++        || relative.starts_with("sounds/")
++            && (relative.ends_with(".fsb") || relative.ends_with(".ogg"))
++        || (relative.starts_with("textures/particle/")
++            || relative == "textures/flame_atlas.png"
++            || relative == "textures/flame_atlas.tga")
++            && (relative.ends_with(".png") || relative.ends_with(".tga"))
++}
++
 +fn asset_path(path: &str) -> Result<Option<String>> {
 +    let path = path.replace('\\', "/");
 +    let (relative, prefix) =
@@ -8990,24 +9027,7 @@ index 0000000..429e7e0
 +    {
 +        return Err("Invalid persona path".into());
 +    }
-+    if !prefix.is_empty()
-+        && !(relative.ends_with(".json")
-+            && [
-+                "models/",
-+                "animations/",
-+                "animation_controllers/",
-+                "entity/",
-+            ]
-+            .iter()
-+            .any(|directory| relative.starts_with(directory))
-+            || ["models", "animations", "animation_controllers", "entity"]
-+                .iter()
-+                .any(|directory| {
-+                    relative == format!("__brarchive/{directory}.brarchive")
-+                        || relative.starts_with(&format!("__brarchive/{directory}/"))
-+                            && relative.ends_with(".brarchive")
-+                }))
-+    {
++    if !prefix.is_empty() && !library_asset(relative) {
 +        return Ok(None);
 +    }
 +    Ok(Some(format!("{prefix}{relative}")))
@@ -9089,7 +9109,7 @@ index 0000000..429e7e0
 +        eprintln!("Acquired {count} official persona files");
 +    }
 +    #[test]
-+    fn selects_persona_and_actor_library_files() {
++    fn selects_persona_actor_and_effect_library_files() {
 +        assert_eq!(
 +            asset_path("data\\resource_packs\\persona\\pieces\\wave.brarchive").unwrap(),
 +            Some("pieces/wave.brarchive".into())
@@ -9105,6 +9125,17 @@ index 0000000..429e7e0
 +            "__brarchive/animations.brarchive",
 +            "__brarchive/animation_controllers.brarchive",
 +            "__brarchive/entity.brarchive",
++            "sounds/sound_definitions.json",
++            "sounds/emote/clap.fsb",
++            "sounds/emote/clap.ogg",
++            "particles/basic_bubble.json",
++            "__brarchive/sounds.brarchive",
++            "__brarchive/particles.brarchive",
++            "textures/particle/particles.png",
++            "textures/particle/campfire_smoke.tga",
++            "textures/flame_atlas.png",
++            "__brarchive/textures/particle.brarchive",
++            "__brarchive/textures.brarchive",
 +        ] {
 +            assert_eq!(
 +                asset_path(&format!("data/resource_packs/vanilla/{relative}")).unwrap(),
@@ -9113,7 +9144,12 @@ index 0000000..429e7e0
 +        }
 +        for relative in [
 +            "textures/steve.png",
-+            "__brarchive/textures.brarchive",
++            "__brarchive/textures/entity.brarchive",
++            "sounds/clap.exe",
++            "models/clap.fsb",
++            "particles/clap.ogg",
++            "textures/particle/particles.json",
++            "textures/flame_atlas.png.exe",
 +            "models/../outside.json",
 +        ] {
 +            let result = asset_path(&format!("data/resource_packs/vanilla/{relative}"));
@@ -9126,6 +9162,31 @@ index 0000000..429e7e0
 +                .is_none()
 +        );
 +        assert!(asset_path("data/resource_packs/persona/../secret").is_err());
++    }
++
++    #[test]
++    fn traverses_selected_library_directories_and_their_archive_parents() {
++        for relative in [
++            "__brarchive",
++            "sounds",
++            "sounds/emote",
++            "particles",
++            "__brarchive/sounds",
++            "__brarchive/textures",
++            "textures",
++            "textures/particle",
++            "__brarchive/textures/particle",
++        ] {
++            assert!(library_directory(relative), "{relative}");
++        }
++        for relative in [
++            "textures/entity",
++            "__brarchive/textures/entity",
++            "soundscapes",
++            "ui",
++        ] {
++            assert!(!library_directory(relative), "{relative}");
++        }
 +    }
 +}
 diff --git a/native/persona-assets/src/remote.rs b/native/persona-assets/src/remote.rs
@@ -11355,10 +11416,10 @@ index 0000000..61a8010
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssets.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssets.java
 new file mode 100644
-index 0000000..8a675ae
+index 0000000..2820b4b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssets.java
-@@ -0,0 +1,392 @@
+@@ -0,0 +1,405 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -11396,6 +11457,7 @@ index 0000000..8a675ae
 +final class BedrockBuiltinAssets {
 +    static final int MAX_FILE_BYTES = 32 * 1024 * 1024;
 +    static final int MAX_TOTAL_BYTES = 256 * 1024 * 1024;
++    private static final int CACHE_FORMAT = 4;
 +    private static final String PACK_ID = "2099de18-429a-465a-a49b-fc4710a17bb3";
 +    private static final Map<String, Contents> LOADED = new LinkedHashMap<>();
 +
@@ -11452,9 +11514,7 @@ index 0000000..8a675ae
 +            Files.createDirectory(raw);
 +            acquisition.download(raw);
 +            final Map<String, byte[]> files = unpack(raw);
-+            if (!files.containsKey("library/vanilla/models/mobs.json"))
-+                throw new IOException("The package is missing the built-in model library");
-+            requireActorLibrary(files);
++            requireLibrary(files);
 +            final Contents contents = index(version, files);
 +            writeCache(zip, version, identity, files);
 +            // Re-read the saved representation before publishing it.
@@ -11630,7 +11690,7 @@ index 0000000..8a675ae
 +            final Map<String, byte[]> files)
 +            throws Exception {
 +        final JsonObject metadata = new JsonObject(), hashes = new JsonObject();
-+        metadata.addProperty("format", 3);
++        metadata.addProperty("format", CACHE_FORMAT);
 +        metadata.addProperty("version", version);
 +        metadata.addProperty("package", identity);
 +        try (var zip = new ZipOutputStream(Files.newOutputStream(target))) {
@@ -11666,7 +11726,7 @@ index 0000000..8a675ae
 +        }
 +        try {
 +            final JsonObject metadata = json(files.remove(".asset-cache.json"));
-+            if (metadata.get("format").getAsInt() != 3
++            if (metadata.get("format").getAsInt() != CACHE_FORMAT
 +                    || !version.equals(metadata.get("version").getAsString())
 +                    || !identity.equals(metadata.get("package").getAsString()))
 +                throw new IOException("The persona cache belongs to a different package");
@@ -11678,19 +11738,33 @@ index 0000000..8a675ae
 +                        || !hash(entry.getValue()).equals(hashes.get(entry.getKey()).getAsString()))
 +                    throw new IOException("Persona cache checksum mismatch");
 +            }
-+            if (!files.containsKey("library/vanilla/models/mobs.json"))
-+                throw new IOException("The cache is missing the built-in model library");
-+            requireActorLibrary(files);
++            requireLibrary(files);
 +            return index(version, files);
 +        } catch (RuntimeException e) {
 +            throw new IOException("Invalid persona cache metadata", e);
 +        }
 +    }
 +
-+    private static void requireActorLibrary(final Map<String, byte[]> files) throws IOException {
-+        for (final String path : List.of("entity/player.entity.json", "animations/player.animation.json",
-+            "animation_controllers/player.animation_controllers.json"))
-+            if (!files.containsKey("library/vanilla/" + path)) throw new IOException("The cache is missing the player animation library");
++    private static void requireLibrary(final Map<String, byte[]> files) throws IOException {
++        for (final String path : List.of(
++                "models/mobs.json", "entity/player.entity.json", "animations/player.animation.json",
++                "animation_controllers/player.animation_controllers.json",
++                "sounds/sound_definitions.json")) {
++            final byte[] bytes = files.get("library/vanilla/" + path);
++            if (bytes == null || bytes.length == 0)
++                throw new IOException("The cache is missing a required player resource: " + path);
++        }
++        if (!hasResource(files, "sounds/", ".fsb", ".ogg")
++                || !hasResource(files, "particles/", ".json")
++                || !hasResource(files, "textures/particle/", ".png", ".tga"))
++            throw new IOException("The cache is missing the animation effect library");
++    }
++
++    private static boolean hasResource(
++            final Map<String, byte[]> files, final String directory, final String... extensions) {
++        return files.entrySet().stream().anyMatch(entry ->
++                entry.getValue().length > 0 && entry.getKey().startsWith("library/vanilla/" + directory)
++                        && java.util.Arrays.stream(extensions).anyMatch(entry.getKey()::endsWith));
 +    }
 +
 +    static void validPath(final String name) throws IOException {
@@ -22925,10 +22999,10 @@ index 0000000..1d9e8cf
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssetsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssetsTest.java
 new file mode 100644
-index 0000000..8b2d829
+index 0000000..a6d1852
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssetsTest.java
-@@ -0,0 +1,367 @@
+@@ -0,0 +1,412 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -22936,6 +23010,8 @@ index 0000000..8b2d829
 +import org.junit.jupiter.api.Test;
 +import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 +import org.junit.jupiter.api.io.TempDir;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
 +
 +import java.io.IOException;
 +import java.nio.ByteBuffer;
@@ -23068,8 +23144,9 @@ index 0000000..8b2d829
 +        assertThrows(IOException.class, () -> BedrockPersonaSources.tga(bytes.array()));
 +    }
 +
-+    @Test
-+    void refreshesTheModelOnlyCacheBeforeResolvingActorResources() throws Exception {
++    @ParameterizedTest
++    @ValueSource(ints = {2, 3})
++    void refreshesOlderCachesBeforeResolvingEffectResources(final int format) throws Exception {
 +        final Path cache = directory.resolve("cache/version.zip");
 +        final AtomicInteger downloads = new AtomicInteger();
 +        final BedrockBuiltinAssets.Acquisition acquire =
@@ -23088,7 +23165,7 @@ index 0000000..8b2d829
 +                            com.google.gson.JsonParser.parseString(
 +                                            new String(bytes, StandardCharsets.UTF_8))
 +                                    .getAsJsonObject();
-+                    metadata.addProperty("format", 2);
++                    metadata.addProperty("format", format);
 +                    bytes = metadata.toString().getBytes(StandardCharsets.UTF_8);
 +                }
 +                output.putNextEntry(new java.util.zip.ZipEntry(entry.getName()));
@@ -23101,6 +23178,31 @@ index 0000000..8b2d829
 +                BedrockBuiltinAssets.cached(cache, "version", "package", acquire)
 +                        .model("geometry.humanoid"));
 +        assertEquals(2, downloads.get());
++    }
++
++    @Test
++    void preservesOpaqueEffectResourcesAndRejectsIncompleteRefreshes() throws Exception {
++        final Path cache = directory.resolve("cache/effects.zip");
++        final var first = BedrockBuiltinAssets.cached(cache, "version", "package-a",
++                BedrockBuiltinAssetsTest::fixture);
++        final var second = BedrockBuiltinAssets.cached(cache, "version", "package-a",
++                staging -> fail("A complete cache must not download again"));
++        final byte[] saved = Files.readAllBytes(cache);
++        for (final String path : java.util.List.of(
++                "sounds/sound_definitions.json", "sounds/emote/clap.fsb",
++                "particles/basic_bubble.json", "textures/particle/particles.png")) {
++            final String key = "library/vanilla/" + path;
++            assertArrayEquals(first.files().get(key), second.files().get(key));
++            assertThrows(IOException.class, () -> BedrockBuiltinAssets.cached(
++                    cache, "version", "package-b", staging -> {
++                        fixture(staging);
++                        Files.delete(staging.resolve(key));
++                    }));
++            assertArrayEquals(saved, Files.readAllBytes(cache));
++        }
++        try (var files = Files.list(cache.getParent())) {
++            assertEquals(1, files.count());
++        }
 +    }
 +
 +    @Test
@@ -23206,6 +23308,15 @@ index 0000000..8b2d829
 +        assertEquals(1, downloads.get());
 +        assertTrue(first.pieces().size() > 30);
 +        assertEquals(first.pieces().keySet(), second.pieces().keySet());
++        assertNotNull(second.files().get("library/vanilla/sounds/sound_definitions.json"));
++        assertTrue(second.files().keySet().stream().anyMatch(path ->
++                path.startsWith("library/vanilla/sounds/") && path.endsWith(".fsb")));
++        assertTrue(second.files().keySet().stream().anyMatch(path ->
++                path.startsWith("library/vanilla/particles/") && path.endsWith(".json")));
++        for (final String texture : java.util.List.of(
++                "textures/particle/particles.png", "textures/particle/campfire_smoke.png",
++                "textures/flame_atlas.png"))
++            assertNotNull(second.files().get("library/vanilla/" + texture), texture);
 +        final var model =
 +                BedrockClassicModel.read(
 +                        "{\"geometry.child:geometry.humanoid\":{\"bones\":[]}}",
@@ -23256,6 +23367,14 @@ index 0000000..8b2d829
 +            final Path path = root.resolve("library/vanilla/" + file);
 +            Files.createDirectories(path.getParent());
 +            Files.writeString(path, "{}");
++        }
++        // Cache storage keeps compiled definitions and sound banks opaque.
++        for (final String file : java.util.List.of(
++                "sounds/sound_definitions.json", "sounds/emote/clap.fsb",
++                "particles/basic_bubble.json", "textures/particle/particles.png")) {
++            final Path path = root.resolve("library/vanilla/" + file);
++            Files.createDirectories(path.getParent());
++            Files.write(path, new byte[] {0, 1, (byte) 255, 2});
 +        }
 +        Files.writeString(
 +                root.resolve("manifest.json"),
