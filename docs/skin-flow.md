@@ -218,6 +218,8 @@ The target native loader selects the first declared emote animation source. The 
 
 Native effect research now verifies sound alias lookup, event boundaries, locator fallback, actor attachment, and render-pass suppression. Playback still needs resource bindings, model locator transforms, licensed audio resources, and effect lifecycle management. The matching vanilla player library has no sound or particle bindings. The two captured owned emotes contain neither effect type, so those fixtures cannot establish audible or particle parity.
 
+Another native probe verifies 64 binding availability and lifetime cases. The binder assigns separate sound and named actor event tables through two weak resources. Absent or expired resources leave existing bindings unchanged. This verifies native table assignment, not production resource loading or particle bindings. The native emote loader adds its first declared source to the shared actor-animation library.
+
 The sampler evaluates `start_delay` once before playback. Delays consume frame time before `anim_time_update` advances the clock. Previews stop from playback state. Incoming world emotes retain the packet duration as their deadline, including durations longer than the declared animation length.
 
 Independent execution of the Bedrock 1.26.51.1 animation player establishes two boundary behaviors. Exact delay expiry retains the full frame delta. An overshoot uses only its remaining time. Loops retain the last frame at an exact boundary and wrap after crossing it.

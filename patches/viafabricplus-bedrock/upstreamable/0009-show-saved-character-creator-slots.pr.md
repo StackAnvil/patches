@@ -284,6 +284,10 @@ Another probe executes `FUN_141e68a20` across 38 clock frames, 16 render-context
 
 A suppressed native render context skips sound dispatch and timeline scripts but still advances the event cursor. A later enabled pass does not replay that skipped interval. The probe verifies raw context flags. Their mapping to Java preview and world render contexts remains unresolved.
 
+Independent execution of `FUN_1401c3340` verifies 64 resource availability and lifetime cases. The binder acquires the actor resource and animation definition through two weak references. It assigns the sound table through `FUN_141e69a40` and the named actor event table through `FUN_141e69a50`. Absent or expired resources leave existing bindings unchanged. Both resource reference counts return to their initial values. This probe verifies native table assignment, not JSON alias parsing, particle bindings, or licensed resource acquisition.
+
+Inspection of `FUN_1414ba900` confirms the first declared emote source. The loader reads its file and adds the selected animation to the shared actor-animation library. The source loader alone does not resolve effect resources. Sound dispatch also requires the actor sound table above.
+
 The matching licensed vanilla player definition declares no sound or particle aliases. The two captured owned emotes contain neither effect type. These assets verify existing playback but cannot establish sound or particle behavior. Generic actor schemas establish effect declarations, not the resource bindings used by every persona emote.
 
 Production sound, particle, and named actor event playback remain incomplete. The next implementation needs effect resource bindings, model locator transforms, audio loading, and effect lifecycle management. The renderer does not yet consume model locators. Native instruction probes do not establish audible results, captions, particle appearance, or multiplayer behavior. Executables, probes, fixtures, and exports remain private.
