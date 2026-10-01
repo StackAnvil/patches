@@ -5,8 +5,10 @@ import com.viaversion.viaversion.api.minecraft.BlockPosition;
 import com.viaversion.nbt.tag.CompoundTag;
 import com.viaversion.nbt.tag.ListTag;
 import io.netty.buffer.*;
+import net.raphimc.viabedrock.protocol.model.SkinData;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
+import java.awt.image.BufferedImage;
 import java.nio.file.*;
 import java.util.*;
 
@@ -58,6 +60,7 @@ public final class ReplaySelfTest {
                 catch (java.io.IOException expected) { }
             } finally { info.release(); if (local != null) local.release(); }
             registryFeatures();
+            playerAppearanceFeatures();
             requestPacing();
             System.out.println("PASS replay journal integrity, secret exclusion, offline resource negotiation, actor registry expectations, and request-aware scene pacing");
         } finally {
@@ -144,7 +147,7 @@ public final class ReplaySelfTest {
     private static void registryFeatures() throws Exception {
         List<PacketJournal.Entry> scene = new ArrayList<>();
         scene.add(registry("probe:before_start"));
-        scene.add(new PacketJournal.Entry(true, 1, new byte[]{11, 14}));
+        scene.add(startGame(7));
         scene.add(registry("probe:declared"));
         for (String identifier : List.of("probe:declared", "probe:unregistered", "probe:before_start")) {
             ByteBuf input = Unpooled.buffer();
@@ -159,6 +162,90 @@ public final class ReplaySelfTest {
         Map<String, Object> features = SceneFeatures.features(scene);
         require(features.get("customActorIdentifiers").equals(Set.of("probe:declared")));
         require(features.get("unregisteredActorIdentifiers").equals(Set.of("probe:unregistered", "probe:before_start")));
+    }
+
+    private static void playerAppearanceFeatures() throws Exception {
+        UUID local = UUID.randomUUID(), remote = UUID.randomUUID();
+        List<PacketJournal.Entry> absent = List.of(startGame(999), playerList(remote, 1000, true), playerSkin(remote, true));
+        require(SceneFeatures.selfIdentity(absent).isEmpty());
+        appearanceCounts(absent, 2, 2, 0);
+        appearanceCounts(List.of(startGame(999)), 0, 0, 0);
+        // A skin update alone does not establish that its UUID belongs to the local player.
+        appearanceCounts(List.of(startGame(999), playerSkin(local, true)), 1, 1, 0);
+
+        List<PacketJournal.Entry> present = new ArrayList<>(List.of(startGame(999), playerSkin(local, true),
+                playerList(remote, 1000, true), playerList(local, 999, true), playerList(local, 999, true),
+                playerSkin(local, false), playerRemoval(local)));
+        // Count every update, including one preceding the identity entry. Repeated adds
+        // for the same UUID and later removal do not make that identity ambiguous.
+        require(SceneFeatures.selfIdentity(present).orElseThrow().equals(local));
+        appearanceCounts(present, 5, 4, 3);
+        PacketJournal.Entry unrelated = playerList(UUID.randomUUID(), 999, true);
+        present.add(new PacketJournal.Entry(false, 0, unrelated.payload()));
+        appearanceCounts(present, 5, 4, 3);
+
+        List<PacketJournal.Entry> classicLocal = List.of(startGame(999), playerList(local, 999, false), playerList(remote, 1000, true));
+        require(SceneFeatures.selfIdentity(classicLocal).orElseThrow().equals(local));
+        appearanceCounts(classicLocal, 2, 1, 0);
+
+        present.add(unrelated);
+        try { SceneFeatures.selfIdentity(present); throw new AssertionError("Accepted ambiguous local player identities"); }
+        catch (IllegalArgumentException expected) { }
+        try { SceneFeatures.features(present); throw new AssertionError("Derived appearance counts from ambiguous local identities"); }
+        catch (IllegalArgumentException expected) { }
+    }
+
+    private static void appearanceCounts(List<PacketJournal.Entry> scene, int skins, int geometry, int localGeometry) throws Exception {
+        Map<String, Object> features = SceneFeatures.features(scene);
+        require(features.get("skinUpdates").equals(skins));
+        require(features.get("geometrySkinUpdates").equals(geometry));
+        require(features.get("localGeometrySkinUpdates").equals(localGeometry));
+    }
+
+    private static PacketJournal.Entry startGame(long uniqueId) {
+        ByteBuf packet = Unpooled.buffer();
+        try {
+            Types.VAR_INT.writePrimitive(packet, 11);
+            BedrockTypes.VAR_LONG.writePrimitive(packet, uniqueId);
+            BedrockTypes.UNSIGNED_VAR_LONG.writePrimitive(packet, uniqueId);
+            return new PacketJournal.Entry(true, 0, ReplayPackets.bytes(packet));
+        } finally { packet.release(); }
+    }
+
+    private static PacketJournal.Entry playerList(UUID uuid, long uniqueId, boolean geometry) {
+        ByteBuf packet = Unpooled.buffer();
+        try {
+            Types.VAR_INT.writePrimitive(packet, 63); BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(packet, 1);
+            BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(packet, 1); packet.writeByte(0); BedrockTypes.UUID.write(packet, uuid);
+            BedrockTypes.VAR_LONG.writePrimitive(packet, uniqueId);
+            for (int field = 0; field < 3; field++) BedrockTypes.STRING.write(packet, "");
+            packet.writeIntLE(0); BedrockTypes.SKIN.write(packet, appearance(geometry)); packet.writeZero(7);
+            return new PacketJournal.Entry(true, 0, ReplayPackets.bytes(packet));
+        } finally { packet.release(); }
+    }
+
+    private static PacketJournal.Entry playerRemoval(UUID uuid) {
+        ByteBuf packet = Unpooled.buffer();
+        try {
+            Types.VAR_INT.writePrimitive(packet, 63); BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(packet, 1);
+            BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(packet, 2); packet.writeByte(0); BedrockTypes.UUID.write(packet, uuid);
+            return new PacketJournal.Entry(true, 0, ReplayPackets.bytes(packet));
+        } finally { packet.release(); }
+    }
+
+    private static PacketJournal.Entry playerSkin(UUID uuid, boolean geometry) {
+        ByteBuf packet = Unpooled.buffer();
+        try {
+            Types.VAR_INT.writePrimitive(packet, 93); BedrockTypes.UUID.write(packet, uuid); BedrockTypes.SKIN.write(packet, appearance(geometry));
+            BedrockTypes.STRING.write(packet, ""); BedrockTypes.STRING.write(packet, "");
+            return new PacketJournal.Entry(true, 0, ReplayPackets.bytes(packet));
+        } finally { packet.release(); }
+    }
+
+    private static SkinData appearance(boolean geometry) {
+        return new SkinData("fixture", "", "", new BufferedImage(2, 2, BufferedImage.TYPE_INT_ARGB), List.of(), null,
+                geometry ? "{\"minecraft:geometry\":[]}" : "", "1.26.51", "", false, false, false, false,
+                "", "fixture", "Wide", "#FFFFFFFF", List.of(), List.of(), false, "", "");
     }
 
     private static PacketJournal.Entry registry(String identifier) {

@@ -293,7 +293,7 @@ async function main(): Promise<void> {
       if (client === "addon") {
         const { stdout } = await execute("java", [`-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`, "com.enderdash.agent.replay.SceneFeatures", join(recording, "packets.sbr")]);
         const features = JSON.parse(stdout) as SceneFeatures;
-        if (features.geometrySkinUpdates) await execute("java", [`-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`, "com.enderdash.agent.replay.SceneFeatures", "--self-identity", join(recording, "packets.sbr"), join(directory, "replay-self-uuid.txt")]);
+        if (features.localGeometrySkinUpdates) await execute("java", [`-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`, "com.enderdash.agent.replay.SceneFeatures", "--self-identity", join(recording, "packets.sbr"), join(directory, "replay-self-uuid.txt")]);
       }
       const udp = await port(true);
       const log = join(directory, "replay.log");
@@ -327,7 +327,7 @@ async function main(): Promise<void> {
     while (!stopped && Date.now() < until && alive(gamePid) && (!child || alive(child.pid))) {
       const log = await logText(game.log);
       if (client === "native" && /Native connection failed:|Native capture failed:|StackAnvil native capture connection closed/.test(await logText(proxyLog))) break;
-      if (/Mixin transformation .* failed|Client disconnected with reason: Network Protocol Error|handlerAdded\(\) has thrown|(?:Unreported|Reported) exception thrown!|A fatal error has been detected by the Java Runtime Environment/.test(log)) break;
+      if (/Mixin transformation .* failed|Client disconnected with reason:|handlerAdded\(\) has thrown|(?:Unreported|Reported) exception thrown!|A fatal error has been detected by the Java Runtime Environment/.test(log)) break;
       accepted ||= /Reloading ResourceManager:.*server\//.test(log);
       if (/All resource packs have been loaded/.test(client === "addon" ? log : await logText(proxyLog))) packReadyAt ??= Date.now();
       if (client !== "native" && !accepted && packReadyAt && Date.now() - packReadyAt > 3500 && Date.now() - lastPackClick > 2500) {

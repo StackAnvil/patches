@@ -22,12 +22,12 @@ public final class ReplayCamera {
                 if (Files.exists(marker)) identity = UUID.fromString(Files.readString(marker).trim());
                 checked = true;
             }
-            if (identity == null) return;
             Object player = minecraft.getClass().getField("player").get(minecraft);
+            if (player != null) localEntityId = ((Number) player.getClass().getMethod("getId").invoke(player)).intValue();
+            if (identity == null) return;
             boolean matches = player != null && identity.equals(player.getClass().getMethod("getUUID").invoke(player));
             ReplaySceneDiagnostics.sample(minecraft, player, directory, matches);
             if (!matches) return;
-            localEntityId = ((Number) player.getClass().getMethod("getId").invoke(player)).intValue();
             Object options = minecraft.getClass().getField("options").get(minecraft);
             Class<?> camera = Class.forName("net.minecraft.client.CameraType");
             Object front = camera.getField("THIRD_PERSON_FRONT").get(null);
@@ -43,11 +43,13 @@ public final class ReplayCamera {
     }
 
     public static void submitted(Object renderer, Object state) {
-        if (!ready || !renderer.getClass().getName().equals("com.viaversion.viafabricplus.bedrock.render.BedrockPlayerRenderer")) return;
+        if (localEntityId == Integer.MIN_VALUE || !renderer.getClass().getName().equals("com.viaversion.viafabricplus.bedrock.render.BedrockPlayerRenderer")) return;
         try {
-            if (state.getClass().getField("id").getInt(state) == localEntityId) RenderAudit.playerFrame();
+            if (state.getClass().getField("id").getInt(state) == localEntityId) {
+                if (ready) RenderAudit.playerFrame();
+            } else RenderAudit.otherPlayerFrame();
         } catch (ReflectiveOperationException error) {
-            throw new IllegalStateException("Could not audit the replay's local avatar submission", error);
+            throw new IllegalStateException("Could not audit the replay's native player submission", error);
         }
     }
 }

@@ -13,7 +13,7 @@ import java.util.*;
 public final class RenderAudit {
     private static long lastSave;
     private static int installedSkins, installedGeometrySkins, rejectedSkins, playerSelections, modelUpdates, emptyModels;
-    private static int playerFrames;
+    private static int playerFrames, otherPlayerFrames;
     private static int nativeActorFrames, nativeActorModels;
     private static boolean thirdPerson;
     private static final Set<String> skins = new TreeSet<>(), models = new TreeSet<>(), actors = new TreeSet<>();
@@ -34,6 +34,8 @@ public final class RenderAudit {
 
     public static synchronized void thirdPersonScene() { thirdPerson = true; save(); }
     public static synchronized void playerFrame() { playerFrames++; if (playerFrames == 1) save(); }
+
+    public static synchronized void otherPlayerFrame() { otherPlayerFrames++; if (otherPlayerFrames == 1) save(); }
 
     public static synchronized void nativeActorModels(int resolved) {
         nativeActorModels += resolved;
@@ -66,7 +68,7 @@ public final class RenderAudit {
             Path file = directory.resolve("render-audit.json");
             Map<String, Object> stats = new LinkedHashMap<>();
             stats.put("installedSkins", installedSkins); stats.put("installedGeometrySkins", installedGeometrySkins); stats.put("rejectedSkins", rejectedSkins);
-            stats.put("nativePlayerRenderFrames", playerFrames); stats.put("thirdPersonScene", thirdPerson);
+            stats.put("nativePlayerRenderFrames", playerFrames); stats.put("nativeOtherPlayerRenderFrames", otherPlayerFrames); stats.put("thirdPersonScene", thirdPerson);
             stats.put("nativeCustomActorRenderFrames", nativeActorFrames);
             stats.put("nativeCustomActorResolvedModels", nativeActorModels);
             stats.put("nativePlayerRendererSelections", playerSelections); stats.put("modelUpdates", modelUpdates);

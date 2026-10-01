@@ -19,9 +19,10 @@ import java.util.*;
 public final class SceneFeatures {
     public static void main(String[] args) throws Exception {
         if (args.length == 3 && args[0].equals("--self-identity")) {
-            UUID identity = selfIdentity(PacketJournal.read(Path.of(args[1]), ProtocolConstants.BEDROCK_PROTOCOL_VERSION));
+            Optional<UUID> identity = selfIdentity(PacketJournal.read(Path.of(args[1]), ProtocolConstants.BEDROCK_PROTOCOL_VERSION));
+            if (identity.isEmpty()) return;
             Path output = Path.of(args[2]);
-            Files.writeString(output, identity.toString(), java.nio.file.StandardOpenOption.CREATE_NEW);
+            Files.writeString(output, identity.get().toString(), java.nio.file.StandardOpenOption.CREATE_NEW);
             Files.setPosixFilePermissions(output, PosixFilePermissions.fromString("rw-------"));
             return;
         }
@@ -30,7 +31,8 @@ public final class SceneFeatures {
 
     static Map<String, Object> features(List<PacketJournal.Entry> entries) throws Exception {
         Set<String> textures = new TreeSet<>(), actors = new TreeSet<>(), registered = new HashSet<>();
-        int skins = 0, geometrySkins = 0;
+        Optional<UUID> local = selfIdentity(entries);
+        int skins = 0, geometrySkins = 0, localGeometrySkins = 0;
         boolean started = false, hasRegistry = false;
         for (PacketJournal.Entry entry : entries) {
             if (!entry.clientbound()) continue;
@@ -52,17 +54,22 @@ public final class SceneFeatures {
                     String identifier = Key.namespaced(BedrockTypes.STRING.read(input));
                     if (!identifier.startsWith("minecraft:")) actors.add(identifier);
                 } else if (id == 93) {
-                    BedrockTypes.UUID.read(input); geometrySkins += skin(textures, BedrockTypes.SKIN.read(input)); skins++;
+                    UUID uuid = BedrockTypes.UUID.read(input);
+                    int geometry = skin(textures, BedrockTypes.SKIN.read(input));
+                    geometrySkins += geometry; skins++;
+                    if (local.filter(uuid::equals).isPresent()) localGeometrySkins += geometry;
                 } else {
                     int count = BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(input);
                     if (count > 4096) throw new IllegalArgumentException("Unbounded player list");
                     for (int i = 0; i < count; i++) {
                         int action = BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(input);
-                        input.readUnsignedByte(); BedrockTypes.UUID.read(input);
+                        input.readUnsignedByte(); UUID uuid = BedrockTypes.UUID.read(input);
                         if (action != 1) continue;
                         BedrockTypes.VAR_LONG.readPrimitive(input);
                         for (int field = 0; field < 3; field++) BedrockTypes.STRING.read(input);
-                        input.readIntLE(); geometrySkins += skin(textures, BedrockTypes.SKIN.read(input)); skins++;
+                        input.readIntLE(); int geometry = skin(textures, BedrockTypes.SKIN.read(input));
+                        geometrySkins += geometry; skins++;
+                        if (local.filter(uuid::equals).isPresent()) localGeometrySkins += geometry;
                         input.skipBytes(7); // teacher, host, subclient, ARGB color
                     }
                 }
@@ -71,11 +78,11 @@ public final class SceneFeatures {
         Set<String> unregistered = new TreeSet<>();
         if (hasRegistry) for (String actor : actors) if (!registered.contains(actor)) unregistered.add(actor);
         actors.removeAll(unregistered);
-        return Map.of("skinUpdates", skins, "geometrySkinUpdates", geometrySkins, "skinTextures", textures,
+        return Map.of("skinUpdates", skins, "geometrySkinUpdates", geometrySkins, "localGeometrySkinUpdates", localGeometrySkins, "skinTextures", textures,
                 "customActorIdentifiers", actors, "unregisteredActorIdentifiers", unregistered);
     }
 
-    static UUID selfIdentity(List<PacketJournal.Entry> entries) {
+    static Optional<UUID> selfIdentity(List<PacketJournal.Entry> entries) {
         PacketJournal.Entry start = entries.stream().filter(entry -> entry.clientbound() && entry.id() == 11).findFirst().orElseThrow();
         long self;
         ByteBuf first = Unpooled.wrappedBuffer(start.payload());
@@ -101,8 +108,8 @@ public final class SceneFeatures {
                 }
             } finally { input.release(); }
         }
-        if (matches.size() != 1) throw new IllegalArgumentException("The recording does not identify one local player for scene rendering");
-        return matches.iterator().next();
+        if (matches.size() > 1) throw new IllegalArgumentException("The recording identifies multiple local players for scene rendering");
+        return matches.stream().findFirst();
     }
 
     private static int skin(Set<String> textures, SkinData skin) throws Exception {

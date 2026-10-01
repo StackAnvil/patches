@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { verifyRendering, type RenderAudit, type SceneFeatures } from "../src/replay/verification.ts";
 
-const expected: SceneFeatures = { skinUpdates: 3, geometrySkinUpdates: 3, skinTextures: ["64x64:abc", "128x128:def"], customActorIdentifiers: ["probe:dragon"] };
-const actual: RenderAudit = { installedSkins: 3, installedGeometrySkins: 3, rejectedSkins: 0, nativePlayerRendererSelections: 2, nativePlayerRenderFrames: 4, thirdPersonScene: true, skinTextures: [...expected.skinTextures], actorIdentifiers: ["probe:dragon"], evaluatedModels: ["geometry.dragon:dragon"], nativeCustomActorResolvedModels: 2, nativeCustomActorRenderFrames: 3 };
+const expected: SceneFeatures = { skinUpdates: 3, geometrySkinUpdates: 3, localGeometrySkinUpdates: 1, skinTextures: ["64x64:abc", "128x128:def"], customActorIdentifiers: ["probe:dragon"] };
+const actual: RenderAudit = { installedSkins: 3, installedGeometrySkins: 3, rejectedSkins: 0, nativePlayerRendererSelections: 2, nativePlayerRenderFrames: 4, nativeOtherPlayerRenderFrames: 5, thirdPersonScene: true, skinTextures: [...expected.skinTextures], actorIdentifiers: ["probe:dragon"], evaluatedModels: ["geometry.dragon:dragon"], nativeCustomActorResolvedModels: 2, nativeCustomActorRenderFrames: 3 };
 test("validates native installation independently of transport and ignores duplicate identical skins", () => {
   expect(verifyRendering(expected, actual, "", true)).toEqual([]);
   expect(verifyRendering(expected, { ...actual, skinTextures: ["64x64:abc", "128x128:changed"] }, "", true)).toHaveLength(1);
@@ -46,4 +46,14 @@ test("fails a crashed replay even if appearance updates completed", () => {
   for (const crash of ["Unreported exception thrown!", "Reported exception thrown!", "A fatal error has been detected by the Java Runtime Environment", "handlerAdded() has thrown"]) {
     expect(verifyRendering(expected, actual, crash, true)).toHaveLength(1);
   }
+});
+
+
+test("requires remote native submissions when the recording omits local-player geometry", () => {
+  const remoteOnly = { ...expected, localGeometrySkinUpdates: 0 };
+  const remoteDraw = { ...actual, nativePlayerRenderFrames: 0, thirdPersonScene: false };
+  expect(verifyRendering(remoteOnly, remoteDraw, "", true)).toEqual([]);
+  expect(verifyRendering(remoteOnly, { ...remoteDraw, nativeOtherPlayerRenderFrames: 0 }, "", true)).toHaveLength(1);
+  expect(verifyRendering(expected, remoteDraw, "", true)).toHaveLength(1);
+  expect(verifyRendering(expected, { ...actual, nativeOtherPlayerRenderFrames: 0 }, "", true)).toHaveLength(1);
 });

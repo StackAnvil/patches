@@ -1,6 +1,7 @@
 export interface SceneFeatures {
   skinUpdates: number;
   geometrySkinUpdates: number;
+  localGeometrySkinUpdates: number;
   skinTextures: string[];
   customActorIdentifiers: string[];
   unregisteredActorIdentifiers?: string[];
@@ -12,6 +13,7 @@ export interface RenderAudit {
   rejectedSkins: number;
   nativePlayerRendererSelections: number;
   nativePlayerRenderFrames: number;
+  nativeOtherPlayerRenderFrames: number;
   thirdPersonScene: boolean;
   actorIdentifiers: string[];
   evaluatedModels: string[];
@@ -31,7 +33,8 @@ export function verifyRendering(expected: SceneFeatures, actual: RenderAudit | u
     const installed = new Set(actual.skinTextures);
     if (expected.skinTextures.some((texture) => !installed.has(texture)) || installed.size !== expected.skinTextures.length) failures.push("Installed skin dimensions or pixels differ from the recording.");
     if (hasOtherPlayers && !actual.nativePlayerRendererSelections) failures.push("The client did not select the native player renderer.");
-    if (expected.geometrySkinUpdates && (!actual.thirdPersonScene || !actual.nativePlayerRenderFrames)) failures.push("The client did not render the recorded local avatar in the third-person scene.");
+    if (expected.localGeometrySkinUpdates && (!actual.thirdPersonScene || !actual.nativePlayerRenderFrames)) failures.push("The client did not render the recorded local avatar in the third-person scene.");
+    if (hasOtherPlayers && expected.geometrySkinUpdates > expected.localGeometrySkinUpdates && !actual.nativeOtherPlayerRenderFrames) failures.push("The client did not submit recorded remote-player geometry to the native renderer.");
     const actors = new Set(actual.actorIdentifiers);
     if (actual.actorIdentifiers.some((identifier) => unregistered.has(identifier))) failures.push("An unregistered actor unexpectedly reached custom model evaluation.");
     if (expected.customActorIdentifiers.some((identifier) => !actors.has(identifier))) failures.push("Some recorded custom actors never reached native model evaluation.");
