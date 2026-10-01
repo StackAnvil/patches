@@ -455,9 +455,22 @@ Static model locators follow the final sampled bone pose. Missing locators use a
 
 Decode selected FSB and OGG samples off the render thread. Bound pending decodes and active PCM. Use Minecraft's shared audio device, listener, source pools, and category sliders. Preserve authored pitch, source-relative playback, and distance requests. Release static buffers after channels, and invalidate pending requests on reload or disconnect.
 
-Streaming uses the stream pool after full PCM decoding. Gain above one requires `AL_SOFT_gain_clamp_ex`. Native audible mixing, captions, stream concurrency, controller entry effects, particles, dynamic emote resource assignment, and exact render suppression conditions remain incomplete.
+Streaming uses the stream pool after full PCM decoding. Gain above one requires `AL_SOFT_gain_clamp_ex`. Native audible mixing, captions, stream concurrency, particles, dynamic emote resource assignment, and exact render suppression conditions remain incomplete.
 
 All 246 fixture-enabled add-on tests pass with no failures or skips. The dependency build and bundle pass. Licensed content, executables, native exports, and runtime probes remain private.
 
 
 A muted Java runtime test verifies static and streamed PCM channels, licensed FSB and OGG playback, server pack catalog overrides, and snapshot positions. It also verifies authored pitch and attenuation, pause exceptions, natural completion, restart after stopping all sounds, and cancellation of pending decodes. Source gain remains zero throughout. These checks do not establish native audible mixing or locator placement against a native scene.
+
+
+### Play controller state sounds
+
+Accept state `sound_effects` arrays and resolve their aliases through the actor's effective sound library. [Microsoft's controller example](https://learn.microsoft.com/en-us/minecraft/creator/documents/animationsandcontrollers?view=minecraft-bedrock-stable) establishes this resource shape. The target Bedrock 1.26.51.1 controller queues these sounds after child animation updates.
+
+The controller effect gate also suppresses entry and exit scripts. State transitions still consume their entry, so later frames do not replay suppressed effects. Self transitions reset child players without repeating state effects. Initial-state handling retains the format boundary at 1.18.10. Source arrays retain their declared order.
+
+Independent execution of the target controller update verifies 106 queue and script callback cases. They cover initial transitions, source order, suppression, unavailable bindings and actors, zero weights, reentry, self transitions, and crossfades. Child update and script evaluation functions are supplied boundaries. The checks inspect actual native sound queue writes. Java tests compare every queue and script callback count with these fixtures.
+
+A muted Java client test loads a controller through the production server player factory. It verifies alias resolution to actual PCM channels, suppression of entry scripts without later playback, reentry, and duplicate frames. Source gain stays at zero. All 249 fixture-enabled add-on tests pass with no failures or skips. The dependency build and bundle pass.
+
+Particles, complete native render-context gate bindings, audible mixing, captions, and dynamic emote resource assignment remain incomplete. Native exports, licensed assets, executable fixtures, and runtime probes remain private.

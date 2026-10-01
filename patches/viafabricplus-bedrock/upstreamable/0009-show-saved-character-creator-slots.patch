@@ -1,4 +1,4 @@
-From 50090c475a10284bc773829194ff82669b3fc4fc Mon Sep 17 00:00:00 2001
+From c45c71fc413d3d469e23c3cfcdf7db8dc8548129 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -661,6 +661,22 @@ Parse static model locators and sample their bone transforms from the final
 pose. Apply the renderer's coordinate basis and fall back to actor position
 for absent locators. Tests cover inherited transforms and scale suppression;
 these transforms still need an independent native visual comparison.
+
+Accept controller state sound arrays and bind their aliases through the same
+actor library as timeline sounds. Run entry and exit scripts only when the
+controller's effect gate allows them, while state transitions still consume
+the entry. Queue state sounds after sampled children; self transitions reset
+players without replaying state effects. Preserve both initial-state format
+behaviors and authored source order.
+
+Independent execution of the Bedrock 1.26.51.1 controller update verifies
+106 queue and script-callback cases. These include weak binding absence,
+actor availability, suppression without catchup, zero-weight controllers,
+reentry, self transitions, source order, initial transitions and crossfades.
+Child updates and script evaluation are supplied boundaries; actual native
+sound queue writes are inspected. Microsoft's controller tutorial confirms
+the state array and actor alias shape. Particles and native render-context
+gate bindings remain separate work.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   54 +
@@ -676,8 +692,8 @@ these transforms still need an independent native visual comparison.
  native/persona-assets/src/store.rs            |   92 +
  native/persona-assets/src/webview.rs          |  399 +
  .../bedrock/ViaFabricPlusBedrock.java         |    3 +
- .../appearance/BedrockActorAnimation.java     |  595 ++
- .../appearance/BedrockAnimationSound.java     |   54 +
+ .../appearance/BedrockActorAnimation.java     |  613 ++
+ .../appearance/BedrockAnimationSound.java     |   67 +
  .../appearance/BedrockAppearanceStore.java    |  110 +-
  .../appearance/BedrockBoneAnimation.java      |  513 ++
  .../bedrock/appearance/BedrockBrArchive.java  |   73 +
@@ -758,6 +774,7 @@ these transforms still need an independent native visual comparison.
  .../BedrockCharacterColorsTest.java           |  202 +
  .../BedrockCharacterProfilesTest.java         |  461 ++
  .../BedrockControllerAnimationTest.java       |  386 +
+ .../BedrockControllerSoundTest.java           |  150 +
  .../appearance/BedrockEmoteMessagesTest.java  |   94 +
  .../bedrock/appearance/BedrockEmotesTest.java |  141 +
  .../appearance/BedrockItemAnimationTest.java  |  297 +
@@ -783,7 +800,7 @@ these transforms still need an independent native visual comparison.
  .../render/BedrockModelLocatorsTest.java      |   47 +
  .../render/BedrockPlayerActorStateTest.java   |  124 +
  .../render/BedrockPlayerModelTest.java        |  100 +
- 121 files changed, 30473 insertions(+), 90 deletions(-)
+ 122 files changed, 30654 insertions(+), 90 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -864,6 +881,7 @@ these transforms still need an independent native visual comparison.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterColorsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfilesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockControllerAnimationTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockControllerSoundTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteMessagesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockItemAnimationTest.java
@@ -10384,10 +10402,10 @@ index 92f1b49..3f458ef 100644
      public static ViaFabricPlusBedrock impl() {
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 new file mode 100644
-index 0000000..bd976fc
+index 0000000..f33b05b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
-@@ -0,0 +1,595 @@
+@@ -0,0 +1,613 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -10716,12 +10734,14 @@ index 0000000..bd976fc
 +                }
 +                if (this.controller == null) return;
 +                final var saved = molang.saveVariables(this.controller.variables);
++                StatePlayback entered = null;
 +                try {
 +                    final boolean first = this.current == null;
 +                    if (first) this.current = this.state(this.controller.initial);
 +                    if (first && this.controller.deferredEntry) {
 +                        this.current.reset();
-+                        run(this.current.definition.entry);
++                        if (eventsEnabled) run(this.current.definition.entry);
++                        entered = this.current;
 +                    } else {
 +                        queryState = this.current;
 +                        this.current.time += delta;
@@ -10733,42 +10753,57 @@ index 0000000..bd976fc
 +                            this.current.reset();
 +                            this.outgoing = previous.definition.blend.isEmpty() ? null : previous;
 +                            this.blendTime = 0;
-+                            if (!first && previous != this.current) run(previous.definition.exit);
-+                            if (first || previous != this.current)
-+                                run(this.current.definition.entry);
++                            if (!first && previous != this.current && eventsEnabled)
++                                run(previous.definition.exit);
++                            if (first || previous != this.current) {
++                                if (eventsEnabled) run(this.current.definition.entry);
++                                entered = this.current;
++                            }
 +                            transitioned = true;
 +                            break;
 +                        }
-+                        if (first && !transitioned) run(this.current.definition.entry);
++                        if (first && !transitioned) {
++                            if (eventsEnabled) run(this.current.definition.entry);
++                            entered = this.current;
++                        }
 +                    }
-+                    if (this.outgoing == null) {
-+                        this.current.apply(time, weight, queries, pose);
-+                        return;
-+                    }
-+                    this.outgoing.time += delta;
-+                    this.blendTime += delta;
-+                    final float oldWeight = curve(this.outgoing.definition.blend, this.blendTime);
-+                    if (oldWeight < Math.ulp(1F)) {
-+                        final StatePlayback previous = this.outgoing;
-+                        this.outgoing = null;
-+                        this.blendTime = 0;
-+                        this.current.apply(time, weight, queries, pose);
-+                        previous.time = 0;
-+                    } else if (this.outgoing.definition.shortestPath) {
-+                        final Map<String, BedrockBoneAnimation.Transform>
-+                                before = new LinkedHashMap<>(),
-+                                after = new LinkedHashMap<>();
-+                        this.outgoing.apply(time, 1, queries, before);
-+                        this.current.apply(time, 1, queries, after);
-+                        BedrockBoneAnimation.blendStates(pose, before, after, 1 - oldWeight);
-+                    } else {
-+                        // The target controller uses curve weights directly during a crossfade.
-+                        this.outgoing.apply(time, oldWeight, queries, pose);
-+                        this.current.apply(time, 1 - oldWeight, queries, pose);
-+                    }
++                    this.applyStates(time, weight, queries, pose);
++                    // The native controller queues entry sounds after its sampled children.
++                    if (entered != null && eventsEnabled)
++                        entered.definition.sounds.forEach(Playback.this::sound);
 +                } finally {
 +                    queryState = null;
 +                    molang.restoreVariables(saved);
++                }
++            }
++
++            private void applyStates(
++                    final float time, final float weight, final Map<String, ?> queries,
++                    final Map<String, BedrockBoneAnimation.Transform> pose) {
++                if (this.outgoing == null) {
++                    this.current.apply(time, weight, queries, pose);
++                    return;
++                }
++                this.outgoing.time += delta;
++                this.blendTime += delta;
++                final float oldWeight = curve(this.outgoing.definition.blend, this.blendTime);
++                if (oldWeight < Math.ulp(1F)) {
++                    final StatePlayback previous = this.outgoing;
++                    this.outgoing = null;
++                    this.blendTime = 0;
++                    this.current.apply(time, weight, queries, pose);
++                    previous.time = 0;
++                } else if (this.outgoing.definition.shortestPath) {
++                    final Map<String, BedrockBoneAnimation.Transform>
++                            before = new LinkedHashMap<>(),
++                            after = new LinkedHashMap<>();
++                    this.outgoing.apply(time, 1, queries, before);
++                    this.current.apply(time, 1, queries, after);
++                    BedrockBoneAnimation.blendStates(pose, before, after, 1 - oldWeight);
++                } else {
++                    // The target controller uses curve weights directly during a crossfade.
++                    this.outgoing.apply(time, oldWeight, queries, pose);
++                    this.current.apply(time, 1 - oldWeight, queries, pose);
 +                }
 +            }
 +        }
@@ -10843,6 +10878,7 @@ index 0000000..bd976fc
 +            List<Transition> transitions,
 +            List<BedrockMolang.Program> entry,
 +            List<BedrockMolang.Program> exit,
++            List<BedrockAnimationSound> sounds,
 +            Map<String, Variable> variables,
 +            List<Point> blend,
 +            boolean shortestPath) {}
@@ -10862,9 +10898,8 @@ index 0000000..bd976fc
 +                throw new IOException("Invalid actor controller state count");
 +            for (final var entry : source.entrySet()) {
 +                final JsonObject state = entry.getValue().getAsJsonObject();
-+                for (final String unsupported : List.of("particle_effects", "sound_effects"))
-+                    if (state.has(unsupported))
-+                        throw new IOException("This actor controller needs effect playback");
++                if (state.has("particle_effects"))
++                    throw new IOException("This actor controller needs particle playback");
 +                final List<Transition> transitions = new ArrayList<>();
 +                if (state.has("transitions"))
 +                    for (final JsonElement transition : state.getAsJsonArray("transitions")) {
@@ -10910,6 +10945,7 @@ index 0000000..bd976fc
 +                                List.copyOf(transitions),
 +                                programs(state.get("on_entry")),
 +                                programs(state.get("on_exit")),
++                                BedrockAnimationSound.entries(state.get("sound_effects")),
 +                                java.util.Collections.unmodifiableMap(variables),
 +                                blend(state.get("blend_transition")),
 +                                state.has("blend_via_shortest_path")
@@ -10985,10 +11021,10 @@ index 0000000..bd976fc
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationSound.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationSound.java
 new file mode 100644
-index 0000000..1b2271a
+index 0000000..5283369
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationSound.java
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,67 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -11004,7 +11040,7 @@ index 0000000..1b2271a
 +import java.util.Comparator;
 +import java.util.List;
 +
-+/** Timestamped alias and locator declarations, normalized in stable source order. */
++/** Alias and locator declarations in timeline or controller entry order. */
 +public record BedrockAnimationSound(float time, String effect, String locator) {
 +    static List<BedrockAnimationSound> read(final JsonElement declared) throws IOException {
 +        if (declared == null) return List.of();
@@ -11025,6 +11061,19 @@ index 0000000..1b2271a
 +            throw new IOException("Invalid animation sound declaration", invalid);
 +        }
 +        entries.sort(Comparator.comparingDouble(BedrockAnimationSound::time));
++        return List.copyOf(entries);
++    }
++
++    static List<BedrockAnimationSound> entries(final JsonElement declared) throws IOException {
++        if (declared == null) return List.of();
++        if (!declared.isJsonArray() || declared.getAsJsonArray().size() > 4096)
++            throw new IOException("Invalid controller sound list");
++        final List<BedrockAnimationSound> entries = new ArrayList<>();
++        try {
++            for (final JsonElement value : declared.getAsJsonArray()) add(entries, 0, value);
++        } catch (RuntimeException invalid) {
++            throw new IOException("Invalid controller sound declaration", invalid);
++        }
 +        return List.copyOf(entries);
 +    }
 +
@@ -27740,6 +27789,162 @@ index 0000000..da11d28
 +                new BedrockBoneAnimation.Vector(rotation[0], rotation[1], rotation[2]),
 +                new BedrockBoneAnimation.Vector(scale[0], scale[1], scale[2]),
 +                false);
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockControllerSoundTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockControllerSoundTest.java
+new file mode 100644
+index 0000000..fec4182
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockControllerSoundTest.java
+@@ -0,0 +1,150 @@
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++import java.io.IOException;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++
++final class BedrockControllerSoundTest {
++    @Test
++    void queuesControllerEntriesAfterTheirChildTimelines() throws Exception {
++        final var playback = graph(new JsonObject(), true).playback();
++        final List<BedrockActorAnimation.SoundCue> sounds = new ArrayList<>();
++        playback.sample(0, frame(false, 1), true, sounds::add);
++        assertEquals(List.of("child", "hand0"), sounds.stream().map(BedrockActorAnimation.SoundCue::locator).toList());
++        sounds.clear();
++        playback.sample(.25F, frame(true, 1), true, sounds::add);
++        assertEquals(List.of("child", "hand1"), sounds.stream().map(BedrockActorAnimation.SoundCue::locator).toList());
++        playback.sample(.25F, frame(true, 1), true, sounds::add);
++        assertEquals(2, sounds.size());
++    }
++
++    @Test
++    void consumesSuppressedEntriesAndTheirScriptsWithoutCatchup() throws Exception {
++        final var playback = graph(new JsonObject(), false).playback();
++        final List<BedrockActorAnimation.SoundCue> sounds = new ArrayList<>();
++        var pose = playback.sample(0, frame(false, 1), false, sounds::add);
++        assertEquals(new BedrockBoneAnimation.Vector(0, 0, 0), pose.get("head").position());
++        pose = playback.sample(.25F, frame(false, 1), true, sounds::add);
++        assertTrue(sounds.isEmpty());
++        assertEquals(new BedrockBoneAnimation.Vector(0, 0, 0), pose.get("head").position());
++        pose = playback.sample(.5F, frame(true, 1), true, sounds::add);
++        assertEquals(new BedrockBoneAnimation.Vector(0, 1, 1), pose.get("head").position());
++        assertEquals(1, sounds.size());
++        sounds.clear();
++        playback.sample(0, frame(false, 1), true, sounds::add);
++        assertEquals(1, sounds.size());
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_SOUND_EVENTS", matches = ".+")
++    void matchesNativeStateSoundQueuesAndScriptGates() throws Exception {
++        final Path root = Path.of(System.getenv("STACKANVIL_SOUND_EVENTS"));
++        final var cases = json(Files.readString(root.resolve("native-controller-sound-result.json"))).getAsJsonArray("cases");
++        for (final var element : cases) {
++            final JsonObject config = element.getAsJsonObject();
++            final var playback = graph(config, false).playback();
++            final int[] scriptCalls = new int[4];
++            float elapsed = 0;
++            for (final var value : config.getAsJsonArray("frames")) {
++                final JsonObject nativeFrame = value.getAsJsonObject();
++                elapsed += nativeFrame.get("delta").getAsFloat();
++                final float weight = nativeFrame.get("weight").getAsFloat();
++                final boolean enabled = nativeFrame.get("events_enabled").getAsBoolean()
++                        && nativeFrame.get("actor").getAsBoolean();
++                final List<BedrockActorAnimation.SoundCue> sounds = new ArrayList<>();
++                final var pose = playback.sample(elapsed, frame(nativeFrame.get("switch").getAsBoolean(), weight), enabled, sounds::add);
++                final var expected = nativeFrame.getAsJsonArray("sounds");
++                assertEquals(expected.size(), sounds.size(), config.toString());
++                for (int index = 0; index < sounds.size(); index++) {
++                    final var sound = expected.get(index).getAsJsonObject();
++                    assertEquals(sound.get("sound").getAsString(), sounds.get(index).event());
++                    assertEquals(sound.get("locator").getAsString(), sounds.get(index).locator());
++                }
++                nativeFrame.getAsJsonArray("script_calls").forEach(marker -> scriptCalls[marker.getAsInt()]++);
++                if (weight > 0) {
++                    assertEquals(scriptCalls[0] * weight, pose.get("head").position().x(), .00001F);
++                    assertEquals(scriptCalls[1] * weight, pose.get("head").position().y(), .00001F);
++                    assertEquals(scriptCalls[2] * weight, pose.get("head").position().z(), .00001F);
++                    assertEquals(scriptCalls[3] * weight, pose.get("waist").position().x(), .00001F);
++                } else assertTrue(pose.isEmpty());
++            }
++        }
++    }
++
++    private static BedrockActorAnimation.Frame frame(final boolean transition, final float weight) {
++        return new BedrockActorAnimation.Frame(Map.of("switch", transition, "weight", weight), Map.of());
++    }
++
++    private static BedrockActorAnimation graph(final JsonObject config, final boolean timeline) throws IOException {
++        final JsonObject entity = json("""
++                {"animations":{"root":"controller.animation.test","a":"animation.a","b":"animation.b"},
++                 "scripts":{"animate":[{"root":"q.weight"}]}}
++                """);
++        if ((!config.has("alias") || config.get("alias").getAsBoolean())
++                && (!config.has("binding") || config.get("binding").getAsBoolean()))
++            entity.add("sound_effects", json("{\"clang\":\"emote.clang\"}"));
++        final JsonObject body = json("""
++                {"animation_length":5,"bones":{
++                 "head":{"position":["v.entry0??0","v.exit0??0","v.entry1??0"]},
++                 "waist":{"position":["v.exit1??0",0,0]}}}
++                """);
++        if (timeline) body.add("sound_effects", json("{\"0\":{\"effect\":\"clang\",\"locator\":\"child\"}}"));
++        final JsonObject animations = new JsonObject();
++        animations.add("animation.a", body);
++        animations.add("animation.b", body.deepCopy());
++        final JsonObject states = new JsonObject();
++        for (int index = 0; index < 2; index++) {
++            final JsonObject state = new JsonObject();
++            final JsonArray tracks = new JsonArray();
++            tracks.add(index == 0 ? "a" : "b");
++            state.add("animations", tracks);
++            final JsonArray entry = new JsonArray(), exit = new JsonArray();
++            entry.add("v.entry" + index + "=(v.entry" + index + "??0)+1;");
++            exit.add("v.exit" + index + "=(v.exit" + index + "??0)+1;");
++            state.add("on_entry", entry);
++            state.add("on_exit", exit);
++            if (index == 0 || config.has("reverse")) {
++                final String target = index == 1 || config.has("self_transition")
++                        && config.get("self_transition").getAsBoolean() ? "default" : "done";
++                final JsonObject transition = new JsonObject();
++                transition.addProperty(target, "q.switch");
++                final JsonArray transitions = new JsonArray();
++                transitions.add(transition);
++                state.add("transitions", transitions);
++            }
++            if (index == 0 && config.has("blend") && config.get("blend").getAsBoolean())
++                state.addProperty("blend_transition", 1);
++            final JsonArray sounds = new JsonArray();
++            final int count = index == 0 && config.has("source_order") ? config.get("source_order").getAsInt() : 1;
++            for (int sound = 0; sound < count; sound++) {
++                final JsonObject effect = new JsonObject();
++                effect.addProperty("effect", "clang");
++                effect.addProperty("locator", "hand" + (config.has("source_order") && index == 0 ? sound : index));
++                sounds.add(effect);
++            }
++            state.add("sound_effects", sounds);
++            states.add(index == 0 ? "default" : "done", state);
++        }
++        final JsonObject controller = new JsonObject();
++        controller.add("states", states);
++        final JsonObject controllers = new JsonObject();
++        controllers.add("controller.animation.test", controller);
++        return BedrockActorAnimation.read(entity, Map.of(), animations, controllers,
++                config.has("legacy") && config.get("legacy").getAsBoolean() ? "1.10.0" : "1.18.10");
++    }
++
++    private static JsonObject json(final String text) {
++        return JsonParser.parseString(text).getAsJsonObject();
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteMessagesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmoteMessagesTest.java
