@@ -128,9 +128,17 @@ Persona cape packs supply their texture through the same entitlement download an
 
 An authenticated Copper Cape comparison matches rendered rest vertices, normals, and UVs at all four heights. Tests preserve every cape texel through atlas assembly, save/load, and the skin codec. Mirrored mappings and larger texture resolutions have targeted tests. The account recipes were restored after research. These checks establish static bindings. A running Java client passes nine checks for local assembly, preview attachment, and the world renderer. The rear preview shows the entitled cape. This run uses private licensed fixtures. Native cape motion and multiplayer comparison remain pending.
 
-For animated owned geometry, assembly selects the character's body and arm variants. It replaces matching static preview surfaces and packs looping texture frames into a separate animation atlas. Save/load, login claims, and live packets retain those frames. Independent limb recipes filter animated bones by their limb ancestry and retain separate tint colors and atlas tiles. The opposite side keeps its static geometry. Free assets with unavailable receipt keys continue to use the service's static model. Built-in UUIDs resolve from the official package even when a catalog selection uses `/f` rather than `/d`.
+For animated geometry, assembly selects the character's body and arm variants. It replaces matching static preview surfaces and packs looping texture frames into a separate animation atlas. Save/load, login claims, and live packets retain those frames. Independent limb recipes filter animated bones by their limb ancestry and retain separate tint colors and atlas tiles. The opposite side keeps its static geometry. Free assets with unavailable receipt keys continue to use the service's static model. Built-in UUIDs resolve from the official package even when a catalog selection uses `/f` rather than `/d`.
 
 A private HelliArm capture contains ten animated arm cubes, a 16-frame 32×512 strip, and a separate blinking face. Targeted checks decode the entitled arm pack, assemble its variants, preserve every frame through save/load, and render the native face and arm bindings together. These checks use local private fixtures through `STACKANVIL_PERSONA_ASSETS` and `STACKANVIL_PERSONA_CAPTURE`; the repository contains no captured assets or receipts.
+
+Shared body textures also assemble locally. Static skin and clothing layers repeat beneath animated layers in native piece order. Tint masks follow each source frame. Clothing maps repeat vertically, and their offsets can clear texels across a frame boundary. Static geometry and capes retain their separate atlas.
+
+Animated collections use separate 32-pixel and 128-pixel groups. Each source has square frames and a power-of-two frame count. Columns share the longest strip in their group. Shorter strips repeat to fill that length. Body layers and geometry collections share the 128-pixel group when both use it. Polygon UVs retain separate width and height scales in rectangular atlases.
+
+Independent Bedrock 1.26.51.1 execution establishes source validation, column dimensions, and strip repetition. Native compositor output matches all 32,768 pixels of a synthetic two-frame body fixture. The fixture includes changing tint masks, translucent pixels, and a clothing-map offset across the frame boundary. These checks establish the tested composition rules. Native equipped-outfit and multiplayer comparisons remain pending.
+
+The replayed full stack builds, and all 144 fixture-enabled add-on tests pass with no skips. A running Java client passes 58 checks for local assembly, texture groups, preview uploads, world uploads, frame phases, and release. The runtime probe combines licensed starter assets with synthetic animated clothing and geometry. It changes no account recipes. These checks do not establish native visible outfit parity.
 
 ## Texture animation timing
 
@@ -210,7 +218,7 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 
 ## Work still needed
 
-- Resolve free assets for accounts without usable receipt keys and implement animated shared body textures. Verify native cape motion. These recipes still depend on the service model. Compare more overlapping clothing combinations against native results.
+- Resolve free assets for accounts without usable receipt keys. These recipes still depend on the service model. Verify native cape motion. Compare more overlapping clothing combinations against native results.
 - Compare more face sizes, tint channels, and equipped combinations against native results.
 - Compare corrected blink and strip timing with native multiplayer video. Implement emote effects, named actor events, chat announcements, and unavailable remote assets. Compare entity-relative rotations against native playback.
 - Add other piece palettes, verify native leg edits, and resolve free limb side recipes. Add paid purchase/redemption flows and account classic-pack downloads.

@@ -1,4 +1,4 @@
-From 10b1dc82f9fc555101ed832fa55c5f3a0696eeae Mon Sep 17 00:00:00 2001
+From 3bedecf8dc7ea068648c92e9c22419feadf16506 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -290,6 +290,21 @@ completion, query binding cleanup, zero weights, and repeated frames.
 Research executables, licensed assets, and probe outputs remain private.
 Native visual motion, mixed rotation spaces, and constant-only animation
 length defaults remain unverified.
+
+Assemble animated shared body textures from equipped assets instead of
+requiring the static model service. Independent Bedrock 1.26.51.1
+execution verifies native 32/128 texture groups, square source frames,
+power-of-two lengths, horizontal columns, and shorter-strip repetition.
+Replace the previous LCM atlas with the target compositor's grouping.
+
+Compose static and animated clothing layers in native piece order with
+frame-specific tint masks. Preserve clothing-map offsets across frame
+boundaries. Independent compositor output matches all 32,768 pixels of a
+synthetic two-frame body, including tint changes and translucent pixels.
+Keep static attachments and capes separate; merge body and geometry
+strips into the corresponding animated group. Rectangular polygon UVs
+use each atlas dimension independently. Private native probes and assets
+remain outside the patch. Native equipped-outfit comparisons are pending.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   54 +
@@ -317,13 +332,14 @@ length defaults remain unverified.
  .../bedrock/appearance/BedrockLimbSide.java   |   52 +
  .../bedrock/appearance/BedrockMolang.java     |  341 +
  .../appearance/BedrockPackageHelper.java      |  121 +
+ .../BedrockPersonaAnimationAtlas.java         |   96 +
  .../appearance/BedrockPersonaAnimations.java  |  128 +
- .../appearance/BedrockPersonaAssembler.java   |  207 +
+ .../appearance/BedrockPersonaAssembler.java   |  190 +
  .../appearance/BedrockPersonaAssets.java      |  392 +
- .../appearance/BedrockPersonaBody.java        |  345 +
+ .../appearance/BedrockPersonaBody.java        |  388 +
  .../appearance/BedrockPersonaCape.java        |  234 +
  .../appearance/BedrockPersonaFace.java        |  154 +
- .../appearance/BedrockPersonaGeometry.java    |  190 +
+ .../appearance/BedrockPersonaGeometry.java    |  202 +
  .../appearance/BedrockPersonaModel.java       |  442 ++
  .../appearance/BedrockPersonaProfile.java     |  184 +
  .../appearance/BedrockPersonaSources.java     |  253 +
@@ -357,9 +373,10 @@ length defaults remain unverified.
  .../BedrockControllerAnimationTest.java       |  386 +
  .../bedrock/appearance/BedrockEmotesTest.java |  141 +
  .../appearance/BedrockLimbSelectionTest.java  |  173 +
- .../BedrockPersonaAssemblerTest.java          |  233 +
+ .../BedrockPersonaAnimationAtlasTest.java     |  109 +
+ .../BedrockPersonaAssemblerTest.java          |  234 +
  .../appearance/BedrockPersonaAssetsTest.java  |  357 +
- .../appearance/BedrockPersonaBodyTest.java    |  386 +
+ .../appearance/BedrockPersonaBodyTest.java    |  592 ++
  .../appearance/BedrockPersonaCapeTest.java    |  340 +
  .../appearance/BedrockPersonaFaceTest.java    |  277 +
  .../appearance/BedrockPersonaModelTest.java   |   91 +
@@ -367,7 +384,7 @@ length defaults remain unverified.
  .../appearance/BedrockPersonaTintTest.java    |   87 +
  .../render/BedrockAnimatedModelTest.java      |   55 +
  .../render/BedrockPlayerModelTest.java        |  100 +
- 76 files changed, 23178 insertions(+), 59 deletions(-)
+ 78 files changed, 23628 insertions(+), 59 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -390,6 +407,7 @@ length defaults remain unverified.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLimbSide.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPackageHelper.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimationAtlas.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimations.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssembler.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssets.java
@@ -421,6 +439,7 @@ length defaults remain unverified.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockControllerAnimationTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLimbSelectionTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimationAtlasTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssemblerTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssetsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaBodyTest.java
@@ -13859,6 +13878,108 @@ index 0000000..b8ffba8
 +        }
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimationAtlas.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimationAtlas.java
+new file mode 100644
+index 0000000..6e767c6
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimationAtlas.java
+@@ -0,0 +1,96 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import java.awt.AlphaComposite;
++import java.awt.Graphics2D;
++import java.awt.image.BufferedImage;
++import java.io.IOException;
++import java.util.LinkedHashMap;
++import java.util.Map;
++
++/** Packs native animated texture collections into horizontal columns of repeating strips. */
++final class BedrockPersonaAnimationAtlas {
++    private final int height;
++    private final Map<String, Tile> tiles = new LinkedHashMap<>();
++    private int width;
++    private int frames = 1;
++
++    BedrockPersonaAnimationAtlas(final int height) {
++        this.height = height;
++    }
++
++    static void validate(final BufferedImage image, final int frames, final int size)
++            throws IOException {
++        if (frames < 1
++                || frames > 256
++                || (frames & (frames - 1)) != 0
++                || image.getWidth() != size
++                || image.getHeight() != size * frames)
++            throw new IOException(
++                    "A persona animation needs square native frames and a power-of-two length");
++    }
++
++    Tile add(final String id, final BufferedImage image, final int frames) throws IOException {
++        final Tile existing = this.tiles.get(id);
++        if (existing != null) return existing;
++        if (image.getHeight() != this.height * frames
++                || frames < 1
++                || frames > 256
++                || (frames & (frames - 1)) != 0)
++            throw new IOException("A persona animation has incompatible frames");
++        final int width = this.width + image.getWidth(), count = Math.max(this.frames, frames);
++        if (width > 1024 || (long) width * this.height * count > 4 * 1024 * 1024)
++            throw new IOException("The equipped animations exceed the texture atlas");
++        final Tile tile = new Tile(image, this.width, frames, this.height);
++        this.tiles.put(id, tile);
++        this.width = width;
++        this.frames = count;
++        return tile;
++    }
++
++    int width() {
++        return this.width;
++    }
++
++    int height() {
++        return this.height;
++    }
++
++    int frames() {
++        return this.frames;
++    }
++
++    BufferedImage image() {
++        final BufferedImage image =
++                new BufferedImage(
++                        this.width, this.height * this.frames, BufferedImage.TYPE_INT_ARGB);
++        final Graphics2D graphics = image.createGraphics();
++        try {
++            graphics.setComposite(AlphaComposite.Src);
++            for (final var tile : this.tiles.values())
++                for (int frame = 0; frame < this.frames; frame++) {
++                    final int offset = frame % tile.frames() * this.height;
++                    graphics.drawImage(
++                            tile.image(),
++                            tile.x(),
++                            frame * this.height,
++                            tile.x() + tile.image().getWidth(),
++                            (frame + 1) * this.height,
++                            0,
++                            offset,
++                            tile.image().getWidth(),
++                            offset + this.height,
++                            null);
++                }
++        } finally {
++            graphics.dispose();
++        }
++        return image;
++    }
++
++    record Tile(BufferedImage image, int x, int frames, int height) {}
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimations.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimations.java
 new file mode 100644
 index 0000000..5582677
@@ -13995,10 +14116,10 @@ index 0000000..5582677
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssembler.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssembler.java
 new file mode 100644
-index 0000000..2d0af2d
+index 0000000..00a1462
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssembler.java
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,190 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -14012,19 +14133,14 @@ index 0000000..2d0af2d
 +
 +import net.raphimc.viabedrock.protocol.model.SkinData.AnimationData;
 +
-+import java.awt.AlphaComposite;
-+import java.awt.Graphics2D;
-+import java.awt.image.BufferedImage;
 +import java.io.IOException;
 +import java.util.ArrayList;
 +import java.util.LinkedHashMap;
 +import java.util.List;
 +import java.util.Map;
 +
-+/** Replaces static preview surfaces with equipped animated geometry and texture strips. */
++/** Binds locally composed body layers and equipped geometry to native animated texture groups. */
 +final class BedrockPersonaAssembler {
-+    private static final int FRAME_SIZE = 128;
-+
 +    private BedrockPersonaAssembler() {}
 +
 +    static BedrockPersonaModel.Converted assemble(
@@ -14034,9 +14150,41 @@ index 0000000..2d0af2d
 +            throws IOException {
 +        if (packs.isEmpty()) return preview;
 +        final var composed = BedrockPersonaFace.assemble(preview, slot, packs);
++        final JsonObject geometry = JsonParser.parseString(composed.geometry()).getAsJsonObject();
++        final JsonArray models = geometry.getAsJsonArray("minecraft:geometry");
++        final JsonObject patch = JsonParser.parseString(composed.resourcePatch()).getAsJsonObject();
++        final JsonObject bindings = patch.getAsJsonObject("geometry");
++        final Map<Integer, BedrockPersonaAnimationAtlas> atlases = new LinkedHashMap<>();
 +        final List<Surface> surfaces = new ArrayList<>();
-+        final Map<String, Tile> tiles = new LinkedHashMap<>();
-+        int x = 0, y = 0, rowHeight = 0, frames = 1;
++        final List<AnimationData> animations = new ArrayList<>();
++        for (final var animation : composed.animations()) {
++            if (animation.type() == 1) {
++                animations.add(animation);
++                continue;
++            }
++            final int type = animation.type(), size = type == 3 ? 128 : 32;
++            final String binding = binding(type), identifier = bindings.get(binding).getAsString();
++            JsonObject model = null;
++            for (int index = models.size() - 1; index >= 0; index--) {
++                final JsonObject candidate = models.get(index).getAsJsonObject();
++                if (candidate
++                        .getAsJsonObject("description")
++                        .get("identifier")
++                        .getAsString()
++                        .equals(identifier)) {
++                    model = candidate;
++                    models.remove(index);
++                    break;
++                }
++            }
++            if (model == null)
++                throw new IOException("An animated persona texture is missing its model");
++            final var atlas =
++                    atlases.computeIfAbsent(
++                            type, ignored -> new BedrockPersonaAnimationAtlas(size));
++            final var tile = atlas.add(identifier, animation.image(), (int) animation.frames());
++            surfaces.add(new Surface(model, tile, type, 3, false));
++        }
 +        for (final var pack : packs.values()) {
 +            final var geometries = BedrockPersonaSources.geometries(pack);
 +            final var equipped = BedrockPersonaSources.recipes(pack, slot);
@@ -14055,156 +14203,112 @@ index 0000000..2d0af2d
 +                                                            recipe ->
 +                                                                    BedrockPersonaGeometry.includes(
 +                                                                            source,
-+                                                                            recipe.has("id")
-+                                                                                    ? BedrockLimbSide
-+                                                                                            .fromRecipe(
-+                                                                                                    recipe.get(
-+                                                                                                                    "id")
-+                                                                                                            .getAsString())
-+                                                                                            .mask()
-+                                                                                    : 3)))) {
++                                                                            side(recipe))))) {
 +                for (final var recipe : recipes) {
 +                    final JsonObject source = asset.source();
-+                    final int sideMask =
-+                            recipe.has("id")
-+                                    ? BedrockLimbSide.fromRecipe(recipe.get("id").getAsString())
-+                                            .mask()
-+                                    : 3;
++                    final int sideMask = side(recipe);
 +                    if (!BedrockPersonaGeometry.includes(source, sideMask)) continue;
-+                    final String texture = source.get("texture").getAsString();
-+                    final String tileId = pack.id() + "/" + texture + "/" + recipe;
-+                    Tile tile = tiles.get(tileId);
-+                    final int count = asset.frames();
-+                    if (tile == null) {
-+                        final BufferedImage image =
-+                                BedrockPersonaTint.apply(
-+                                        asset, BedrockPersonaTint.palette(asset, slot, recipe));
-+                        if (count < 1 || count > 256 || image.getHeight() % count != 0)
-+                            throw new IOException("Invalid persona animation length");
-+                        final int width = image.getWidth(), frameHeight = image.getHeight() / count;
-+                        if (width > FRAME_SIZE || frameHeight > FRAME_SIZE)
-+                            throw new IOException("A persona animation frame is too large");
-+                        if (x + width > FRAME_SIZE) {
-+                            x = 0;
-+                            y += rowHeight;
-+                            rowHeight = 0;
-+                        }
-+                        if (y + frameHeight > FRAME_SIZE)
-+                            throw new IOException(
-+                                    "The equipped animations exceed the texture atlas");
-+                        tile = new Tile(image, x, y, count, frameHeight);
-+                        tiles.put(tileId, tile);
-+                        x += width;
-+                        rowHeight = Math.max(rowHeight, frameHeight);
-+                        frames = lcm(frames, count);
-+                    } else if (count != tile.frames())
-+                        throw new IOException(
-+                                "A persona texture has conflicting animation lengths");
-+                    final JsonObject geometry =
-+                            geometries.get(source.get("geometry").getAsString());
-+                    if (geometry == null)
++                    final int size = asset.image().getWidth(), type = size == 32 ? 2 : 3;
++                    BedrockPersonaAnimationAtlas.validate(
++                            asset.image(), asset.frames(), type == 2 ? 32 : 128);
++                    final var atlas =
++                            atlases.computeIfAbsent(
++                                    type, ignored -> new BedrockPersonaAnimationAtlas(size));
++                    final var tile =
++                            atlas.add(
++                                    pack.id()
++                                            + "/"
++                                            + source.get("texture").getAsString()
++                                            + "/"
++                                            + recipe,
++                                    BedrockPersonaTint.apply(
++                                            asset, BedrockPersonaTint.palette(asset, slot, recipe)),
++                                    asset.frames());
++                    final JsonObject model = geometries.get(source.get("geometry").getAsString());
++                    if (model == null)
 +                        throw new IOException("A persona animation is missing its geometry");
-+                    surfaces.add(new Surface(geometry, tile, sideMask));
++                    surfaces.add(new Surface(model, tile, type, sideMask, true));
 +                }
 +            }
 +        }
 +        if (surfaces.isEmpty()) return composed;
-+        final JsonObject geometry = JsonParser.parseString(composed.geometry()).getAsJsonObject();
-+        final JsonArray models = geometry.getAsJsonArray("minecraft:geometry");
-+        final Map<String, JsonObject> body = new LinkedHashMap<>(),
-+                animated = new LinkedHashMap<>();
++        final Map<String, JsonObject> body = new LinkedHashMap<>();
 +        models.get(0)
 +                .getAsJsonObject()
 +                .getAsJsonArray("bones")
 +                .forEach(
 +                        element -> {
-+                            final JsonObject bone = element.getAsJsonObject(),
-+                                    pose = bone.deepCopy();
-+                            pose.remove("poly_mesh");
-+                            pose.remove("cubes");
-+                            final String name = bone.get("name").getAsString();
-+                            body.put(name, bone);
-+                            animated.put(name, pose);
++                            final JsonObject bone = element.getAsJsonObject();
++                            body.put(bone.get("name").getAsString(), bone);
 +                        });
-+        for (final var surface : surfaces)
-+            for (final var element : surface.geometry().getAsJsonArray("bones")) {
-+                if (!BedrockPersonaGeometry.includes(
-+                        surface.geometry(), element.getAsJsonObject(), surface.sideMask()))
-+                    continue;
-+                final JsonObject incoming =
-+                        BedrockPersonaGeometry.canonical(element.getAsJsonObject());
-+                final String name = incoming.get("name").getAsString();
-+                if (!incoming.has("cubes") && !incoming.has("poly_mesh")) continue;
-+                if (body.containsKey(name)) {
-+                    body.get(name).remove("poly_mesh");
-+                    body.get(name).remove("cubes");
-+                }
-+                BedrockPersonaGeometry.mapUvs(
-+                        incoming,
-+                        surface.tile().image().getWidth(),
-+                        surface.tile().height(),
-+                        surface.tile().x(),
-+                        surface.tile().y(),
-+                        FRAME_SIZE);
-+                BedrockPersonaGeometry.merge(animated, incoming);
++        for (final var entry : atlases.entrySet()) {
++            final int type = entry.getKey();
++            final var atlas = entry.getValue();
++            final Map<String, JsonObject> animated = new LinkedHashMap<>();
++            for (final var bone : body.values()) {
++                final JsonObject pose = bone.deepCopy();
++                pose.remove("poly_mesh");
++                pose.remove("cubes");
++                animated.put(pose.get("name").getAsString(), pose);
 +            }
-+        final String identifier = "geometry.persona.animated_pieces";
-+        final JsonObject model = new JsonObject(), description = new JsonObject();
-+        description.addProperty("identifier", identifier);
-+        description.addProperty("texture_width", FRAME_SIZE);
-+        description.addProperty("texture_height", FRAME_SIZE);
-+        model.add("description", description);
-+        final JsonArray bones = new JsonArray();
-+        animated.values().forEach(bones::add);
-+        model.add("bones", bones);
-+        models.add(model);
-+        final JsonObject patch = JsonParser.parseString(composed.resourcePatch()).getAsJsonObject();
-+        patch.getAsJsonObject("geometry").addProperty("animated_128x128", identifier);
-+        final BufferedImage strip =
-+                new BufferedImage(FRAME_SIZE, FRAME_SIZE * frames, BufferedImage.TYPE_INT_ARGB);
-+        final Graphics2D graphics = strip.createGraphics();
-+        try {
-+            graphics.setComposite(AlphaComposite.Src);
-+            for (int frame = 0; frame < frames; frame++)
-+                for (final var tile : tiles.values()) {
-+                    final int offset = frame % tile.frames() * tile.height();
-+                    graphics.drawImage(
-+                            tile.image(),
-+                            tile.x(),
-+                            frame * FRAME_SIZE + tile.y(),
-+                            tile.x() + tile.image().getWidth(),
-+                            frame * FRAME_SIZE + tile.y() + tile.height(),
++            for (final var surface : surfaces) {
++                if (surface.type() != type) continue;
++                for (final var element : surface.geometry().getAsJsonArray("bones")) {
++                    if (!BedrockPersonaGeometry.includes(
++                            surface.geometry(), element.getAsJsonObject(), surface.sideMask()))
++                        continue;
++                    final JsonObject incoming =
++                            BedrockPersonaGeometry.canonical(element.getAsJsonObject());
++                    final String name = incoming.get("name").getAsString();
++                    if (!incoming.has("cubes") && !incoming.has("poly_mesh")) continue;
++                    if (surface.replacesStatic() && body.containsKey(name)) {
++                        body.get(name).remove("poly_mesh");
++                        body.get(name).remove("cubes");
++                    }
++                    BedrockPersonaGeometry.mapUvs(
++                            incoming,
++                            surface.tile().image().getWidth(),
++                            surface.tile().height(),
++                            surface.tile().x(),
 +                            0,
-+                            offset,
-+                            tile.image().getWidth(),
-+                            offset + tile.height(),
-+                            null);
++                            atlas.width(),
++                            atlas.height());
++                    BedrockPersonaGeometry.merge(animated, incoming);
 +                }
-+        } finally {
-+            graphics.dispose();
++            }
++            final String identifier = "geometry.persona." + binding(type);
++            final JsonObject model = new JsonObject(), description = new JsonObject();
++            description.addProperty("identifier", identifier);
++            description.addProperty("texture_width", atlas.width());
++            description.addProperty("texture_height", atlas.height());
++            model.add("description", description);
++            final JsonArray bones = new JsonArray();
++            animated.values().forEach(bones::add);
++            model.add("bones", bones);
++            models.add(model);
++            bindings.addProperty(binding(type), identifier);
++            animations.add(new AnimationData(atlas.image(), type, atlas.frames(), 0));
 +        }
-+        final List<AnimationData> animations = new ArrayList<>(composed.animations());
-+        animations.add(new AnimationData(strip, 3, frames, 0));
 +        return new BedrockPersonaModel.Converted(
 +                composed.atlas(), geometry.toString(), patch.toString(), List.copyOf(animations));
 +    }
 +
-+    private static int lcm(final int left, final int right) throws IOException {
-+        int a = left, b = right;
-+        while (b != 0) {
-+            final int remainder = a % b;
-+            a = b;
-+            b = remainder;
-+        }
-+        final int length = left / a * right;
-+        if (length > 256)
-+            throw new IOException("The equipped animations have incompatible lengths");
-+        return length;
++    private static int side(final JsonObject recipe) {
++        return recipe.has("id")
++                ? BedrockLimbSide.fromRecipe(recipe.get("id").getAsString()).mask()
++                : 3;
 +    }
 +
-+    private record Tile(BufferedImage image, int x, int y, int frames, int height) {}
++    private static String binding(final int type) {
++        return type == 2 ? "animated_32x32" : "animated_128x128";
++    }
 +
-+    private record Surface(JsonObject geometry, Tile tile, int sideMask) {}
++    private record Surface(
++            JsonObject geometry,
++            BedrockPersonaAnimationAtlas.Tile tile,
++            int type,
++            int sideMask,
++            boolean replacesStatic) {}
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssets.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssets.java
 new file mode 100644
@@ -14606,10 +14710,10 @@ index 0000000..f6c16ef
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaBody.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaBody.java
 new file mode 100644
-index 0000000..11a4f66
+index 0000000..ea5eee4
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaBody.java
-@@ -0,0 +1,345 @@
+@@ -0,0 +1,388 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -14619,6 +14723,8 @@ index 0000000..11a4f66
 +
 +import com.google.gson.JsonArray;
 +import com.google.gson.JsonObject;
++
++import net.raphimc.viabedrock.protocol.model.SkinData.AnimationData;
 +
 +import java.awt.image.BufferedImage;
 +import java.io.IOException;
@@ -14650,12 +14756,6 @@ index 0000000..11a4f66
 +                    .noneMatch(piece -> piece.id().equalsIgnoreCase(id.split("/", 2)[0])))
 +                return false;
 +        }
-+        for (final var pack : packs.values())
-+            for (final var texture :
-+                    BedrockPersonaSources.read(
-+                            pack, source -> BedrockPersonaSources.matches(source, slot)))
-+                if (!texture.face() && !texture.source().has("geometry") && texture.frames() > 1)
-+                    return false;
 +        return true;
 +    }
 +
@@ -14685,7 +14785,7 @@ index 0000000..11a4f66
 +        final List<Layer> layers = new ArrayList<>();
 +        final List<Surface> surfaces = new ArrayList<>();
 +        boolean skeleton = false, body = false;
-+        int bodySize = 128;
++        int bodySize = 128, bodyFrames = 1;
 +        BufferedImage clothingMap = null;
 +        for (final var piece : pieces) {
 +            final String type = piece.metadata().get("piece_type").getAsString();
@@ -14716,12 +14816,13 @@ index 0000000..11a4f66
 +                if (!texture.metadata().equals(piece.metadata())
 +                        || texture.face()
 +                        || texture.source().has("geometry")) continue;
-+                if (texture.frames() != 1)
-+                    throw new IOException("A shared body texture needs animated assembly");
++                if (texture.frames() > 1)
++                    BedrockPersonaAnimationAtlas.validate(texture.image(), texture.frames(), 128);
++                bodyFrames = Math.max(bodyFrames, texture.frames());
 +                if (piece.recipes().size() != 1)
 +                    throw new IOException("A body texture has an ambiguous recipe");
 +                final int size = texture.image().getWidth();
-+                if (size != texture.image().getHeight())
++                if (size != texture.image().getHeight() / texture.frames())
 +                    throw new IOException("A shared body texture must be square");
 +                bodySize = Math.max(bodySize, size);
 +                layers.add(
@@ -14769,7 +14870,11 @@ index 0000000..11a4f66
 +        if (!skeleton || !body || layers.isEmpty())
 +            throw new IOException("The character is missing its skeleton, body or skin textures");
 +        if (bodySize > 1024) throw new IOException("The persona body texture is too large");
-+        final BufferedImage bodyTexture = compose(layers, bodySize, clothingMap);
++        if (bodyFrames > 1 && bodySize != 128)
++            throw new IOException("An animated shared body texture needs 128-pixel layers");
++        final BufferedImage composed = compose(layers, bodySize, clothingMap, bodyFrames);
++        final BufferedImage bodyTexture = composed.getSubimage(0, 0, bodySize, bodySize);
++        final BufferedImage bodyStrip = bodyFrames > 1 ? composed : null;
 +        final Map<String, BufferedImage> images = new LinkedHashMap<>();
 +        images.put("body", bodyTexture);
 +        for (final var surface : surfaces)
@@ -14802,7 +14907,8 @@ index 0000000..11a4f66
 +        for (final var surface : surfaces)
 +            for (final String zone : zones(surface.source(), surface.side()))
 +                owners.put(zone, surface);
-+        final Map<String, JsonObject> bones = new LinkedHashMap<>();
++        final Map<String, JsonObject> bones = new LinkedHashMap<>(),
++                bodySurfaces = new LinkedHashMap<>();
 +        for (final var surface : surfaces) {
 +            final boolean animated = surface.texture() != null && surface.texture().frames() > 1;
 +            final List<String> zones = zones(surface.source(), surface.side());
@@ -14818,6 +14924,11 @@ index 0000000..11a4f66
 +                    continue;
 +                final JsonObject bone = BedrockPersonaGeometry.canonical(incoming);
 +                if (replaced || animated) {
++                    bone.remove("cubes");
++                    bone.remove("poly_mesh");
++                } else if (bodyStrip != null && surface.texture() == null) {
++                    BedrockPersonaGeometry.mapUvs(bone, bodySize, bodySize, 0, 0, bodySize);
++                    BedrockPersonaGeometry.merge(bodySurfaces, bone.deepCopy());
 +                    bone.remove("cubes");
 +                    bone.remove("poly_mesh");
 +                } else
@@ -14852,8 +14963,32 @@ index 0000000..11a4f66
 +        final JsonObject patch = new JsonObject(), bindings = new JsonObject();
 +        bindings.addProperty("default", identifier);
 +        patch.add("geometry", bindings);
++        final List<AnimationData> animations = new ArrayList<>();
++        if (bodyStrip != null) {
++            final Map<String, JsonObject> animated = new LinkedHashMap<>();
++            for (final var entry : bones.entrySet()) {
++                final JsonObject pose = entry.getValue().deepCopy();
++                pose.remove("cubes");
++                pose.remove("poly_mesh");
++                animated.put(entry.getKey(), pose);
++            }
++            for (final var bone : bodySurfaces.values())
++                BedrockPersonaGeometry.merge(animated, bone);
++            final JsonObject animatedModel = new JsonObject(),
++                    animatedDescription = new JsonObject();
++            animatedDescription.addProperty("identifier", "geometry.persona.animated_body");
++            animatedDescription.addProperty("texture_width", bodySize);
++            animatedDescription.addProperty("texture_height", bodySize);
++            animatedModel.add("description", animatedDescription);
++            final JsonArray animatedBones = new JsonArray();
++            animated.values().forEach(animatedBones::add);
++            animatedModel.add("bones", animatedBones);
++            models.add(animatedModel);
++            bindings.addProperty("animated_128x128", "geometry.persona.animated_body");
++            animations.add(new AnimationData(bodyStrip, 3, bodyFrames, 0));
++        }
 +        return new BedrockPersonaModel.Converted(
-+                atlas, document.toString(), patch.toString(), List.of());
++                atlas, document.toString(), patch.toString(), List.copyOf(animations));
 +    }
 +
 +    private static List<String> zones(final JsonObject source, final int side) {
@@ -14872,24 +15007,36 @@ index 0000000..11a4f66
 +    }
 +
 +    private static BufferedImage compose(
-+            final List<Layer> layers, final int size, final BufferedImage clothingMap) {
-+        final BufferedImage image = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
++            final List<Layer> layers,
++            final int size,
++            final BufferedImage clothingMap,
++            final int frames) {
++        final BufferedImage image =
++                new BufferedImage(size, size * frames, BufferedImage.TYPE_INT_ARGB);
 +        for (final var layer : layers) {
 +            final var source = layer.texture();
-+            for (int y = 0; y < size; y++) {
-+                final int sy = (int) ((y + 0.5F) * source.image().getHeight() / size);
++            final int height = source.image().getHeight() / source.frames();
++            for (int y = 0; y < image.getHeight(); y++) {
++                final int offset = y / size % source.frames() * height;
++                final int sy = (int) ((y % size + 0.5F) * height / size) + offset;
 +                for (int x = 0; x < size; x++) {
 +                    final int sx = (int) ((x + 0.5F) * source.image().getWidth() / size);
 +                    if (clothingMap != null && source.image().getRGB(sx, sy) >>> 24 != 0) {
 +                        final int map =
 +                                clothingMap.getRGB(
 +                                        x * clothingMap.getWidth() / size,
-+                                        y * clothingMap.getHeight() / size);
++                                        y % size * clothingMap.getHeight() / size);
 +                        final int dx = Math.clamp(x + ((map >>> 16) & 255) - 128, 0, size - 1);
-+                        final int dy = Math.clamp(y + ((map >>> 8) & 255) - 128, 0, size - 1);
-+                        if (map >>> 24 != 0 && (dx != x || dy != y)) {
++                        final int dy = Math.max(0, y + ((map >>> 8) & 255) - 128);
++                        if (map >>> 24 != 0 && (dx != x || dy != y) && dy < image.getHeight()) {
 +                            final int tx = (int) ((dx + 0.5F) * source.image().getWidth() / size);
-+                            final int ty = (int) ((dy + 0.5F) * source.image().getHeight() / size);
++                            final int segment =
++                                    y / (size * source.frames()) * (size * source.frames());
++                            final int ty =
++                                    Math.clamp(
++                                            (dy - segment) * height / size,
++                                            0,
++                                            source.image().getHeight() - 1);
 +                            if (source.image().getRGB(tx, ty) >>> 24 == 0) image.setRGB(dx, dy, 0);
 +                        }
 +                    }
@@ -15357,10 +15504,10 @@ index 0000000..b0075d8
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaGeometry.java
 new file mode 100644
-index 0000000..638c439
+index 0000000..50306ff
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaGeometry.java
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,202 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -15519,6 +15666,18 @@ index 0000000..638c439
 +            final int y,
 +            final int atlasSize)
 +            throws IOException {
++        mapUvs(bone, width, height, x, y, atlasSize, atlasSize);
++    }
++
++    static void mapUvs(
++            final JsonObject bone,
++            final int width,
++            final int height,
++            final int x,
++            final int y,
++            final int atlasWidth,
++            final int atlasHeight)
++            throws IOException {
 +        if (bone.has("cubes"))
 +            for (final var element : bone.getAsJsonArray("cubes")) {
 +                final JsonObject cube = element.getAsJsonObject();
@@ -15535,11 +15694,11 @@ index 0000000..638c439
 +        for (final var element : mesh.getAsJsonArray("uvs")) {
 +            final JsonArray uv = element.getAsJsonArray();
 +            final float u = uv.get(0).getAsFloat(), v = uv.get(1).getAsFloat();
-+            uv.set(0, new JsonPrimitive((x + u * (normalized ? width : 1)) / atlasSize));
++            uv.set(0, new JsonPrimitive((x + u * (normalized ? width : 1)) / atlasWidth));
 +            uv.set(
 +                    1,
 +                    new JsonPrimitive(
-+                            1F - (y + height - v * (normalized ? height : 1)) / atlasSize));
++                            1F - (y + height - v * (normalized ? height : 1)) / atlasHeight));
 +        }
 +        mesh.addProperty("normalized_uvs", true);
 +    }
@@ -22458,12 +22617,127 @@ index 0000000..98ebd55
 +        return entry.has("id") ? entry.get("id").getAsString() : "";
 +    }
 +}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimationAtlasTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimationAtlasTest.java
+new file mode 100644
+index 0000000..f664737
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimationAtlasTest.java
+@@ -0,0 +1,109 @@
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++import com.google.gson.JsonParser;
++
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++import java.awt.image.BufferedImage;
++import java.io.IOException;
++import java.nio.file.Files;
++import java.nio.file.Path;
++
++final class BedrockPersonaAnimationAtlasTest {
++    @Test
++    void rejectsUnsupportedSourceFramesAndOversizedCombinedStrips() throws Exception {
++        assertThrows(
++                IOException.class,
++                () -> BedrockPersonaAnimationAtlas.validate(image(32, 3), 3, 32));
++        assertThrows(
++                IOException.class,
++                () -> BedrockPersonaAnimationAtlas.validate(image(64, 2), 2, 32));
++        final var atlas = new BedrockPersonaAnimationAtlas(128);
++        atlas.add("first", image(128, 256), 256);
++        assertThrows(IOException.class, () -> atlas.add("second", image(128, 2), 2));
++        final var wide = new BedrockPersonaAnimationAtlas(32);
++        for (int tile = 0; tile < 32; tile++) wide.add(Integer.toString(tile), image(32, 1), 1);
++        assertThrows(IOException.class, () -> wide.add("overflow", image(32, 1), 1));
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_ANIMATION_PACKING_RESULT", matches = ".+")
++    void matchesNativePackingDimensionsAndRepeatedColumnPositions() throws Exception {
++        final var rows =
++                JsonParser.parseString(
++                                Files.readString(
++                                        Path.of(
++                                                System.getenv(
++                                                        "STACKANVIL_ANIMATION_PACKING_RESULT"))))
++                        .getAsJsonArray();
++        for (final var element : rows) {
++            final var row = element.getAsJsonObject();
++            if (!row.get("accepted").getAsBoolean()) continue;
++            final int size = row.get("type").getAsInt() == 3 ? 128 : 32;
++            final var atlas = new BedrockPersonaAnimationAtlas(size);
++            final var columns = row.getAsJsonArray("columns");
++            for (int column = 0; column < columns.size(); column++) {
++                int frames = 1;
++                for (final var source : columns.get(column).getAsJsonArray())
++                    frames = Math.max(frames, source.getAsJsonArray().get(1).getAsInt());
++                final var image = image(size, frames);
++                for (int frame = 0; frame < frames; frame++)
++                    image.setRGB(0, frame * size, 0xFF000001 + frame);
++                atlas.add(Integer.toString(column), image, frames);
++            }
++            assertEquals(row.get("width").getAsInt(), atlas.width());
++            assertEquals(row.get("height").getAsInt(), atlas.image().getHeight());
++            assertEquals(row.get("frames").getAsInt(), atlas.frames());
++            for (int column = 0; column < columns.size(); column++) {
++                final int count =
++                        columns.get(column).getAsJsonArray().asList().stream()
++                                .mapToInt(source -> source.getAsJsonArray().get(1).getAsInt())
++                                .max()
++                                .orElseThrow();
++                for (int frame = 0; frame < atlas.frames(); frame++)
++                    assertEquals(
++                            0xFF000001 + frame % count,
++                            atlas.image().getRGB(column * size, frame * size));
++            }
++        }
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_ANIMATION_VALIDATION_RESULT", matches = ".+")
++    void matchesNativeSourceDimensionAndFrameValidation() throws Exception {
++        final var rows =
++                JsonParser.parseString(
++                                Files.readString(
++                                        Path.of(
++                                                System.getenv(
++                                                        "STACKANVIL_ANIMATION_VALIDATION_RESULT"))))
++                        .getAsJsonArray();
++        for (final var element : rows) {
++            final var row = element.getAsJsonObject();
++            final var image =
++                    new BufferedImage(
++                            row.get("width").getAsInt(),
++                            row.get("height").getAsInt(),
++                            BufferedImage.TYPE_INT_ARGB);
++            final int size = row.get("type").getAsInt() == 3 ? 128 : 32;
++            if (row.get("accepted").getAsBoolean())
++                assertDoesNotThrow(
++                        () ->
++                                BedrockPersonaAnimationAtlas.validate(
++                                        image, row.get("frames").getAsInt(), size));
++            else
++                assertThrows(
++                        IOException.class,
++                        () ->
++                                BedrockPersonaAnimationAtlas.validate(
++                                        image, row.get("frames").getAsInt(), size));
++        }
++    }
++
++    private static BufferedImage image(final int size, final int frames) {
++        return new BufferedImage(size, size * frames, BufferedImage.TYPE_INT_ARGB);
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssemblerTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssemblerTest.java
 new file mode 100644
-index 0000000..f19604e
+index 0000000..8764281
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssemblerTest.java
-@@ -0,0 +1,233 @@
+@@ -0,0 +1,234 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -22494,17 +22768,17 @@ index 0000000..f19604e
 +                        "{\"geometry\":{\"default\":\"geometry.test\"}}",
 +                        List.of());
 +        final String id = java.util.UUID.randomUUID().toString();
-+        final var source = new BufferedImage(2, 4, BufferedImage.TYPE_INT_ARGB);
-+        for (int y = 0; y < 4; y++) for (int x = 0; x < 2; x++) source.setRGB(x, y, 0xFFCC9966);
++        final var source = new BufferedImage(32, 64, BufferedImage.TYPE_INT_ARGB);
++        for (int y = 0; y < 64; y++) for (int x = 0; x < 32; x++) source.setRGB(x, y, 0xFFCC9966);
 +        final var png = new ByteArrayOutputStream();
 +        ImageIO.write(source, "png", png);
-+        final byte[] tga = new byte[18 + 2 * 4 * 4];
++        final byte[] tga = new byte[18 + 32 * 64 * 4];
 +        tga[2] = 2;
-+        tga[12] = 2;
-+        tga[14] = 4;
++        tga[12] = 32;
++        tga[14] = 64;
 +        tga[16] = 32;
 +        tga[17] = 32;
-+        for (int pixel = 0; pixel < 8; pixel++) tga[18 + pixel * 4 + 2] = (byte) 255;
++        for (int pixel = 0; pixel < 32 * 64; pixel++) tga[18 + pixel * 4 + 2] = (byte) 255;
 +        final var pack =
 +                new BedrockPersonaAssets.Pack(
 +                        id,
@@ -22574,8 +22848,8 @@ index 0000000..f19604e
 +                        .getAsInt();
 +        assertNotEquals(left, right);
 +        for (int frame = 0; frame < 2; frame++) {
-+            assertEquals(0xFFAF3020, animation.image().getRGB(left, frame * 128));
-+            assertEquals(0xFF202FB0, animation.image().getRGB(right, frame * 128));
++            assertEquals(0xFFAF3020, animation.image().getRGB(left, frame * 32));
++            assertEquals(0xFF202FB0, animation.image().getRGB(right, frame * 32));
 +        }
 +    }
 +
@@ -22594,7 +22868,7 @@ index 0000000..f19604e
 +                """
 +                {"geometry_sources":[
 +                  {"geometry":"geometry.left","texture":"first.png","animated":true,"frames":2,"arm_size":"wide","body_size":"medium"},
-+                  {"geometry":"geometry.right","texture":"second.png","animated":true,"frames":3,"arm_size":"wide","body_size":"medium"},
++                  {"geometry":"geometry.right","texture":"second.png","animated":true,"frames":4,"arm_size":"wide","body_size":"medium"},
 +                  {"geometry":"geometry.unused","texture":"missing.png","animated":true,"frames":5,"arm_size":"slim","body_size":"medium"}]}
 +                """;
 +        final String geometry =
@@ -22614,15 +22888,15 @@ index 0000000..f19604e
 +                                "first.png",
 +                                strip(2),
 +                                "second.png",
-+                                strip(3)));
++                                strip(4)));
 +        final var slot =
 +                BedrockPersonaProfileTest.starterSlot(BedrockCharacterProfiles.Starter.STEVE);
 +        final var result = BedrockPersonaAssembler.assemble(preview, slot, Map.of(pack.id(), pack));
 +        final var animation = result.animations().getFirst();
-+        assertEquals(6, animation.frames());
-+        for (int frame = 0; frame < 6; frame++) {
-+            assertEquals(0xFF000001 + frame % 2, animation.image().getRGB(0, frame * 128));
-+            assertEquals(0xFF000001 + frame % 3, animation.image().getRGB(2, frame * 128));
++        assertEquals(4, animation.frames());
++        for (int frame = 0; frame < 4; frame++) {
++            assertEquals(0xFF000001 + frame % 2, animation.image().getRGB(0, frame * 32));
++            assertEquals(0xFF000001 + frame % 4, animation.image().getRGB(32, frame * 32));
 +        }
 +        final var models =
 +                JsonParser.parseString(result.geometry())
@@ -22639,7 +22913,7 @@ index 0000000..f19604e
 +        final JsonObject right =
 +                bones.get(2).getAsJsonObject().getAsJsonArray("cubes").get(0).getAsJsonObject();
 +        assertEquals(
-+                2,
++                32,
 +                right.getAsJsonObject("uv")
 +                        .getAsJsonObject("north")
 +                        .getAsJsonArray("uv")
@@ -22690,8 +22964,9 @@ index 0000000..f19604e
 +    }
 +
 +    private static byte[] strip(final int frames) throws Exception {
-+        final BufferedImage image = new BufferedImage(2, frames * 2, BufferedImage.TYPE_INT_ARGB);
-+        for (int frame = 0; frame < frames; frame++) image.setRGB(0, frame * 2, 0xFF000001 + frame);
++        final BufferedImage image = new BufferedImage(32, frames * 32, BufferedImage.TYPE_INT_ARGB);
++        for (int frame = 0; frame < frames; frame++)
++            image.setRGB(0, frame * 32, 0xFF000001 + frame);
 +        final ByteArrayOutputStream output = new ByteArrayOutputStream();
 +        ImageIO.write(image, "png", output);
 +        return output.toByteArray();
@@ -22699,7 +22974,7 @@ index 0000000..f19604e
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssetsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssetsTest.java
 new file mode 100644
-index 0000000..9704260
+index 0000000..db21643
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssetsTest.java
 @@ -0,0 +1,357 @@
@@ -22981,15 +23256,15 @@ index 0000000..9704260
 +        assertEquals(1, assembled.animations().size());
 +        final var animation = assembled.animations().getFirst();
 +        assertEquals(16, animation.frames());
-+        assertEquals(128, animation.image().getWidth());
-+        assertEquals(2048, animation.image().getHeight());
++        assertEquals(32, animation.image().getWidth());
++        assertEquals(512, animation.image().getHeight());
 +        final var restored =
 +                BedrockPersonaAnimations.read(
 +                                BedrockPersonaAnimations.write(assembled.animations()))
 +                        .getFirst();
 +        assertArrayEquals(
-+                animation.image().getRGB(0, 0, 128, 2048, null, 0, 128),
-+                restored.image().getRGB(0, 0, 128, 2048, null, 0, 128));
++                animation.image().getRGB(0, 0, 32, 512, null, 0, 32),
++                restored.image().getRGB(0, 0, 32, 512, null, 0, 32));
 +        final var models =
 +                JsonParser.parseString(assembled.geometry())
 +                        .getAsJsonObject()
@@ -23062,10 +23337,10 @@ index 0000000..9704260
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaBodyTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaBodyTest.java
 new file mode 100644
-index 0000000..5924063
+index 0000000..a6cde20
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaBodyTest.java
-@@ -0,0 +1,386 @@
+@@ -0,0 +1,592 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -23091,71 +23366,8 @@ index 0000000..5924063
 +final class BedrockPersonaBodyTest {
 +    @Test
 +    void composesLayersAndReplacesOnlyTheSelectedLimbZone() throws Exception {
-+        final var starter =
-+                BedrockPersonaProfileTest.starterSlot(BedrockCharacterProfiles.Starter.STEVE);
-+        final Map<String, BedrockPersonaAssets.Pack> packs = new LinkedHashMap<>();
-+        final String skeleton = id(starter, "persona_skeleton"), body = id(starter, "persona_body");
-+        packs.put(
-+                skeleton,
-+                pack(
-+                        skeleton,
-+                        """
-+                        {"piece_type":"persona_skeleton","geometry_sources":[{"geometry":"geometry.skeleton","arm_size":""}]}
-+                        """,
-+                        """
-+                        {"geometry.skeleton":{"bones":[{"name":"root"},{"name":"body","parent":"root","pivot":[0,24,0]},
-+                          {"name":"leftArm","parent":"body","pivot":[5,22,0]},{"name":"rightArm","parent":"body","pivot":[-5,22,0]}]}}
-+                        """,
-+                        Map.of()));
-+        packs.put(
-+                body,
-+                pack(
-+                        body,
-+                        """
-+                        {"piece_type":"persona_body","clothing_map":"clothing.tga","geometry_sources":[
-+                          {"zone":"left_arm","geometry":"geometry.left","arm_size":"wide"},
-+                          {"zone":"right_arm","geometry":"geometry.right","arm_size":"wide"},
-+                          {"zone":"left_arm","geometry":"geometry.unused","arm_size":"slim"}]}
-+                        """,
-+                        """
-+                        {"geometry.left":{"bones":[{"name":"leftArm","parent":"body","cubes":[{"origin":[0,0,0],"size":[1,1,1],"uv":[0,0]}]}]},
-+                         "geometry.right":{"bones":[{"name":"rightArm","parent":"body","cubes":[{"origin":[0,0,0],"size":[1,1,1],"uv":[0,0]}]}]}}
-+                        """,
-+                        Map.of("clothing.tga", clothingMap())));
-+        final BufferedImage skin = image(128, 128, 0xFF804020), top = image(128, 128, 0);
-+        top.setRGB(10, 12, 0xFF102040);
-+        for (final var entry : Map.of("persona_skin", skin, "persona_top", top).entrySet()) {
-+            final String id = id(starter, entry.getKey());
-+            packs.put(
-+                    id,
-+                    pack(
-+                            id,
-+                            "{\"piece_type\":\""
-+                                    + entry.getKey()
-+                                    + "\",\"texture_sources\":[{\"texture\":\"texture.png\"}]}",
-+                            "{}",
-+                            Map.of("texture.png", png(entry.getValue()))));
-+        }
-+        final String replacement = java.util.UUID.randomUUID().toString();
-+        packs.put(
-+                replacement,
-+                pack(
-+                        replacement,
-+                        """
-+                        {"piece_type":"persona_arms","geometry_sources":[
-+                          {"zone":["left_arm"],"side":"left","geometry":"geometry.arm","texture":"texture.png","body_size":"medium","arm_size":"wide"},
-+                          {"zone":["right_arm"],"side":"right","geometry":"geometry.unused","texture":"missing.png","body_size":"medium","arm_size":"slim"}]}
-+                        """,
-+                        """
-+                        {"geometry.arm":{"bones":[{"name":"leftArmArmor","parent":"leftArm","cubes":[{"origin":[0,0,0],"size":[1,1,1],"uv":[0,0]}]}]}}
-+                        """,
-+                        Map.of("texture.png", png(image(2, 2, 0xFFCC9966)))));
-+        final JsonObject profile = starter.profile().deepCopy();
-+        profile.getAsJsonObject("personaCollection")
-+                .getAsJsonArray("universalApp")
-+                .add(JsonParser.parseString("{\"id\":\"" + replacement + "/l\"}"));
-+        final var slot = slot(profile, starter.arm(), starter.skinColor());
-+        final var result = BedrockPersonaBody.assemble(slot, packs, null);
++        final var fixture = bodyFixture(1);
++        final var result = BedrockPersonaBody.assemble(fixture.slot(), fixture.packs(), null);
 +        assertEquals(256, result.atlas().getWidth());
 +        assertEquals(0xFF804020, result.atlas().getRGB(1, 1));
 +        assertEquals(result.atlas().getRGB(1, 1), result.atlas().getRGB(0, 0));
@@ -23343,6 +23555,275 @@ index 0000000..5924063
 +                        .mapToInt(bone -> bone.getAsJsonArray("cubes").size())
 +                        .sum());
 +    }
++
++    @Test
++    void composesAnimatedClothingWithoutMovingStaticPieceTextures() throws Exception {
++        final var fixture = bodyFixture(2);
++        final var body = BedrockPersonaBody.assemble(fixture.slot(), fixture.packs(), null);
++        final var result = BedrockPersonaAssembler.assemble(body, fixture.slot(), fixture.packs());
++        final var animation = result.animations().getFirst();
++        assertEquals(3, animation.type());
++        assertEquals(2, animation.frames());
++        assertEquals(128, animation.image().getWidth());
++        assertEquals(256, animation.image().getHeight());
++        assertEquals(0xFF102040, animation.image().getRGB(10, 12));
++        assertEquals(0, animation.image().getRGB(9, 13));
++        assertEquals(0xFF804020, animation.image().getRGB(10, 128 + 12));
++        assertEquals(0xFF804020, animation.image().getRGB(9, 128 + 13));
++        assertEquals(0xFF406020, animation.image().getRGB(20, 128 + 30));
++        assertEquals(0xFF804020, animation.image().getRGB(20, 30));
++        assertFalse(bones(result).get("rightarm").has("cubes"));
++        assertTrue(bones(result).get("leftarmarmor").has("cubes"));
++        final var model =
++                JsonParser.parseString(result.geometry())
++                        .getAsJsonObject()
++                        .getAsJsonArray("minecraft:geometry")
++                        .get(1)
++                        .getAsJsonObject();
++        final var animatedBones =
++                model.getAsJsonArray("bones").asList().stream()
++                        .map(element -> element.getAsJsonObject())
++                        .filter(bone -> bone.has("cubes"))
++                        .toList();
++        assertEquals(1, animatedBones.size());
++        assertEquals("rightarm", animatedBones.getFirst().get("name").getAsString());
++        assertEquals(
++                0,
++                animatedBones
++                        .getFirst()
++                        .getAsJsonArray("cubes")
++                        .get(0)
++                        .getAsJsonObject()
++                        .getAsJsonArray("uv")
++                        .get(0)
++                        .getAsInt());
++        assertDoesNotThrow(() -> parse(result));
++        final var restored =
++                BedrockPersonaAnimations.read(BedrockPersonaAnimations.write(result.animations()));
++        assertArrayEquals(
++                animation.image().getRGB(0, 0, 128, 256, null, 0, 128),
++                restored.getFirst().image().getRGB(0, 0, 128, 256, null, 0, 128));
++    }
++
++    @Test
++    void combinesSharedBodyAndGeometryStripsWithIndependentNativeGroups() throws Exception {
++        final var fixture = bodyFixture(2);
++        final var body = BedrockPersonaBody.assemble(fixture.slot(), fixture.packs(), null);
++        final String id = java.util.UUID.randomUUID().toString();
++        final var pack =
++                pack(
++                        id,
++                        """
++                        {"piece_type":"persona_arms","geometry_sources":[
++                          {"geometry":"geometry.large","texture":"large.png","animated":true,"frames":4},
++                          {"geometry":"geometry.small","texture":"small.png","animated":true,"frames":8}]}
++                        """,
++                        """
++                        {"geometry.large":{"bones":[{"name":"leftarmarmor","parent":"leftarm",
++                          "poly_mesh":{"normalized_uvs":true,"positions":[[0,0,0],[1,0,0],[0,1,0]],
++                            "normals":[[0,0,1]],"uvs":[[0,1],[1,1],[0,0]],"polys":[[[0,0,0],[1,0,1],[2,0,2]]]}}]},
++                         "geometry.small":{"bones":[{"name":"rightarmarmor","parent":"rightarm",
++                           "cubes":[{"origin":[0,0,0],"size":[1,1,1],"uv":[0,0]}]}]}}
++                        """,
++                        Map.of(
++                                "large.png",
++                                animatedPixels(128, 4),
++                                "small.png",
++                                animatedPixels(32, 8)));
++        final Map<String, BedrockPersonaAssets.Pack> packs = new LinkedHashMap<>(fixture.packs());
++        packs.put(id, pack);
++        final var result = BedrockPersonaAssembler.assemble(body, fixture.slot(), packs);
++        assertEquals(2, result.animations().size());
++        final var large =
++                result.animations().stream()
++                        .filter(animation -> animation.type() == 3)
++                        .findFirst()
++                        .orElseThrow();
++        final var small =
++                result.animations().stream()
++                        .filter(animation -> animation.type() == 2)
++                        .findFirst()
++                        .orElseThrow();
++        assertEquals(4, large.frames());
++        assertEquals(256, large.image().getWidth());
++        assertEquals(512, large.image().getHeight());
++        assertEquals(8, small.frames());
++        assertEquals(32, small.image().getWidth());
++        assertEquals(256, small.image().getHeight());
++        for (int frame = 0; frame < 4; frame++) {
++            assertEquals(
++                    frame % 2 == 0 ? 0xFF102040 : 0xFF804020,
++                    large.image().getRGB(10, frame * 128 + 12));
++            assertEquals(0xFF000001 + frame, large.image().getRGB(128, frame * 128));
++        }
++        for (int frame = 0; frame < 8; frame++)
++            assertEquals(0xFF000001 + frame, small.image().getRGB(0, frame * 32));
++        final var models =
++                JsonParser.parseString(result.geometry())
++                        .getAsJsonObject()
++                        .getAsJsonArray("minecraft:geometry");
++        final var meshes =
++                models.get(1).getAsJsonObject().getAsJsonArray("bones").asList().stream()
++                        .map(element -> element.getAsJsonObject())
++                        .filter(bone -> bone.has("poly_mesh"))
++                        .toList();
++        assertEquals(1, meshes.size());
++        final var uvs = meshes.getFirst().getAsJsonObject("poly_mesh").getAsJsonArray("uvs");
++        assertEquals(0.5F, uvs.get(0).getAsJsonArray().get(0).getAsFloat());
++        assertEquals(1F, uvs.get(0).getAsJsonArray().get(1).getAsFloat());
++        assertEquals(1F, uvs.get(1).getAsJsonArray().get(0).getAsFloat());
++        assertEquals(0F, uvs.get(2).getAsJsonArray().get(1).getAsFloat());
++        assertFalse(bones(result).get("leftarmarmor").has("cubes"));
++        assertDoesNotThrow(() -> parse(result));
++        final var claims = BedrockPersonaAnimations.claims(result.animations());
++        assertEquals(256, claims.getFirst().get("ImageWidth"));
++        assertEquals(4.0F, claims.getFirst().get("Frames"));
++    }
++
++    private static byte[] animatedPixels(final int size, final int frames) throws Exception {
++        final var image = image(size, size * frames, 0);
++        for (int frame = 0; frame < frames; frame++)
++            image.setRGB(0, frame * size, 0xFF000001 + frame);
++        return png(image);
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_ANIMATED_BODY_RGBA", matches = ".+")
++    void matchesNativeAnimatedBodyCompositionAndPerFrameTintMasks() throws Exception {
++        final var fixture = bodyFixture(2);
++        final String topId = id(fixture.slot(), "persona_top");
++        final var previous = fixture.packs().get(topId);
++        final Map<String, byte[]> files = new LinkedHashMap<>(previous.files());
++        final var metadata =
++                JsonParser.parseString(
++                                new String(files.get("piece.meta.json"), StandardCharsets.UTF_8))
++                        .getAsJsonObject();
++        metadata.add("tint_base_color", JsonParser.parseString("{\"r_color\":\"#102040\"}"));
++        metadata.add("tint_color", JsonParser.parseString("{\"r_color\":\"#CC8844\"}"));
++        metadata.getAsJsonArray("texture_sources")
++                .get(0)
++                .getAsJsonObject()
++                .addProperty("tint_map", "mask.tga");
++        files.put("piece.meta.json", metadata.toString().getBytes(StandardCharsets.UTF_8));
++        final var source =
++                javax.imageio.ImageIO.read(
++                        new java.io.ByteArrayInputStream(files.get("texture.png")));
++        source.setRGB(30, 128 + 40, 0x80102040);
++        source.setRGB(40, 127, 0xFF102040);
++        final byte[] clothing =
++                fixture.packs().get(id(fixture.slot(), "persona_body")).files().get("clothing.tga");
++        clothing[18 + (127 * 128 + 40) * 4 + 1] = (byte) 129;
++        clothing[18 + (127 * 128 + 40) * 4 + 2] = (byte) 128;
++        clothing[18 + (127 * 128 + 40) * 4 + 3] = (byte) 255;
++        files.put("texture.png", png(source));
++        final byte[] mask = new byte[18 + 128 * 256 * 4];
++        mask[2] = 2;
++        mask[12] = (byte) 128;
++        mask[15] = 1;
++        mask[16] = 32;
++        mask[17] = 32;
++        mask[18 + ((128 + 30) * 128 + 20) * 4 + 2] = (byte) 255;
++        mask[18 + ((128 + 40) * 128 + 30) * 4 + 2] = (byte) 255;
++        files.put("mask.tga", mask);
++        fixture.packs().put(topId, new BedrockPersonaAssets.Pack(topId, files));
++        final var profile = fixture.slot().profile().deepCopy();
++        for (final var entry :
++                profile.getAsJsonObject("personaCollection").getAsJsonArray("universalApp"))
++            if (entry.getAsJsonObject().has("id")
++                    && entry.getAsJsonObject().get("id").getAsString().startsWith(topId))
++                entry.getAsJsonObject().remove("col");
++        final var slot = slot(profile, fixture.slot().arm(), fixture.slot().skinColor());
++        final var body = BedrockPersonaBody.assemble(slot, fixture.packs(), null);
++        final var result = BedrockPersonaAssembler.assemble(body, slot, fixture.packs());
++        final var image = result.animations().getFirst().image();
++        final byte[] raw =
++                Files.readAllBytes(Path.of(System.getenv("STACKANVIL_ANIMATED_BODY_RGBA")));
++        assertEquals(image.getWidth() * image.getHeight() * 4, raw.length);
++        final int[] expected = new int[raw.length / 4];
++        for (int pixel = 0; pixel < expected.length; pixel++) {
++            final int offset = pixel * 4;
++            expected[pixel] =
++                    (raw[offset + 3] & 255) << 24
++                            | (raw[offset] & 255) << 16
++                            | (raw[offset + 1] & 255) << 8
++                            | raw[offset + 2] & 255;
++        }
++        assertArrayEquals(expected, image.getRGB(0, 0, 128, 256, null, 0, 128));
++    }
++
++    private static BodyFixture bodyFixture(final int frames) throws Exception {
++        final var starter =
++                BedrockPersonaProfileTest.starterSlot(BedrockCharacterProfiles.Starter.STEVE);
++        final Map<String, BedrockPersonaAssets.Pack> packs = new LinkedHashMap<>();
++        final String skeleton = id(starter, "persona_skeleton"), body = id(starter, "persona_body");
++        packs.put(
++                skeleton,
++                pack(
++                        skeleton,
++                        """
++                        {"piece_type":"persona_skeleton","geometry_sources":[{"geometry":"geometry.skeleton","arm_size":""}]}
++                        """,
++                        """
++                        {"geometry.skeleton":{"bones":[{"name":"root"},{"name":"body","parent":"root","pivot":[0,24,0]},
++                          {"name":"leftArm","parent":"body","pivot":[5,22,0]},{"name":"rightArm","parent":"body","pivot":[-5,22,0]}]}}
++                        """,
++                        Map.of()));
++        packs.put(
++                body,
++                pack(
++                        body,
++                        """
++                        {"piece_type":"persona_body","clothing_map":"clothing.tga","geometry_sources":[
++                          {"zone":"left_arm","geometry":"geometry.left","arm_size":"wide"},
++                          {"zone":"right_arm","geometry":"geometry.right","arm_size":"wide"},
++                          {"zone":"left_arm","geometry":"geometry.unused","arm_size":"slim"}]}
++                        """,
++                        """
++                        {"geometry.left":{"bones":[{"name":"leftArm","parent":"body","cubes":[{"origin":[0,0,0],"size":[1,1,1],"uv":[0,0]}]}]},
++                         "geometry.right":{"bones":[{"name":"rightArm","parent":"body","cubes":[{"origin":[0,0,0],"size":[1,1,1],"uv":[0,0]}]}]}}
++                        """,
++                        Map.of("clothing.tga", clothingMap())));
++        final BufferedImage skin = image(128, 128, 0xFF804020), top = image(128, 128 * frames, 0);
++        top.setRGB(10, 12, 0xFF102040);
++        if (frames > 1) top.setRGB(20, 128 + 30, 0xFF406020);
++        for (final var entry : Map.of("persona_skin", skin, "persona_top", top).entrySet()) {
++            final String id = id(starter, entry.getKey());
++            packs.put(
++                    id,
++                    pack(
++                            id,
++                            "{\"piece_type\":\""
++                                    + entry.getKey()
++                                    + "\",\"texture_sources\":[{\"texture\":\"texture.png\",\"frames\":"
++                                    + (entry.getKey().equals("persona_top") ? frames : 1)
++                                    + ",\"animated\":true}]}",
++                            "{}",
++                            Map.of("texture.png", png(entry.getValue()))));
++        }
++        final String replacement = java.util.UUID.randomUUID().toString();
++        packs.put(
++                replacement,
++                pack(
++                        replacement,
++                        """
++                        {"piece_type":"persona_arms","geometry_sources":[
++                          {"zone":["left_arm"],"side":"left","geometry":"geometry.arm","texture":"texture.png","body_size":"medium","arm_size":"wide"},
++                          {"zone":["right_arm"],"side":"right","geometry":"geometry.unused","texture":"missing.png","body_size":"medium","arm_size":"slim"}]}
++                        """,
++                        """
++                        {"geometry.arm":{"bones":[{"name":"leftArmArmor","parent":"leftArm","cubes":[{"origin":[0,0,0],"size":[1,1,1],"uv":[0,0]}]}]}}
++                        """,
++                        Map.of("texture.png", png(image(2, 2, 0xFFCC9966)))));
++        final JsonObject profile = starter.profile().deepCopy();
++        profile.getAsJsonObject("personaCollection")
++                .getAsJsonArray("universalApp")
++                .add(JsonParser.parseString("{\"id\":\"" + replacement + "/l\"}"));
++        final var slot = slot(profile, starter.arm(), starter.skinColor());
++        return new BodyFixture(slot, packs);
++    }
++
++    private record BodyFixture(
++            BedrockCharacterProfiles.Slot slot, Map<String, BedrockPersonaAssets.Pack> packs) {}
 +
 +    private static double span(final JsonObject mesh) {
 +        final var positions = mesh.getAsJsonArray("positions").asList();
