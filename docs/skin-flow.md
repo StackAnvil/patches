@@ -166,7 +166,15 @@ The add-on downloads emote packs through the current account's entitlement recei
 
 Menu models retain the native root, waist, and body hierarchy. Bone poses also apply to animated clothing surfaces. The sampler supports position, rotation, scale, pre/post keyframes, linear and Catmull-Rom interpolation, and Molang frame queries. Each playback has its own variable state. Expressions have size and execution limits. Entity-relative rotations use the authored hierarchy.
 
-The target native loader selects the first declared emote animation source. The add-on preserves that order and accepts additional declarations. An unavailable first source remains an error. Effects, timelines, and delays remain unsupported.
+The target native loader selects the first declared emote animation source. The add-on preserves that order and accepts additional declarations. An unavailable first source remains an error. Effects and timelines remain unsupported.
+
+The sampler evaluates `start_delay` once before playback. Delays consume frame time before `anim_time_update` advances the clock. Previews stop from playback state. Incoming world emotes retain the packet duration as their deadline, including durations longer than the declared animation length.
+
+Independent execution of the Bedrock 1.26.51.1 animation player establishes two boundary behaviors. Exact delay expiry retains the full frame delta. An overshoot uses only its remaining time. Loops retain the last frame at an exact boundary and wrap after crossing it.
+
+The completion flag persists after the first cycle. The native player reevaluates `loop_delay` on every subsequent active update, including updates within later cycles. Java preserves these target behaviors. Repeated samples at the same elapsed time reuse the pose without another expression evaluation.
+
+Private native clock fixtures cover initial delays, loop delays, custom time updates, ordinary completion, and held final frames. These fixtures isolate the clock from geometry and effects. They do not establish timeline execution or visible native motion equivalence. A running Java client passes 15 checks for delayed preview poses, geometry transforms, packet deadlines, replay, and completion reset. The replayed stack builds, and all 123 fixture-enabled add-on tests pass with no skips.
 
 Private Bedrock 1.26.51 Battle Cry and Kadoosh assets resolve to 6.5 and 4.75 seconds. Asset tests sample every frame at 60 Hz. A Java GUI recording verifies Battle Cry movement, attached clothing, readable controls at the default GUI scale, and pose reset after completion. The recording uses private native assets and a local appearance fixture. It does not verify a live Java account download.
 
@@ -186,7 +194,7 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 
 - Resolve free assets for accounts without usable receipt keys and implement animated shared body textures. Verify native cape motion. These recipes still depend on the service model. Compare more overlapping clothing combinations against native results.
 - Compare more face sizes, tint channels, and equipped combinations against native results.
-- Compare corrected blink and strip timing with native multiplayer video. Implement emote effects, timelines, delays, chat announcements, and unavailable remote assets. Compare entity-relative rotations against native playback.
+- Compare corrected blink and strip timing with native multiplayer video. Implement emote effects, timelines, chat announcements, and unavailable remote assets. Compare entity-relative rotations against native playback.
 - Add other piece palettes, verify native leg edits, and resolve free limb side recipes. Add paid purchase/redemption flows and account classic-pack downloads.
 - Verify versioned vanilla model overrides and native parent-name behavior. Complete classic controller blending, completion queries, item-action bindings, geometry-provided alias precedence, and first-person playback. Compare inherited skins and equipment flags with native rendering, including first-person views.
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. A white quad above the player moved independently with the sky clouds; it was not an extra face surface.

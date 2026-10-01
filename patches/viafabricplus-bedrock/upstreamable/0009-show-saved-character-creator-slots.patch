@@ -1,4 +1,4 @@
-From d7331f983e386b89ad9af5052e74ebda34cca4f8 Mon Sep 17 00:00:00 2001
+From 1cfcf5cef2b1e05229583a0c7ef134cde3ba6f14 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -64,7 +64,7 @@ bounded AST size and nested-loop execution. Apply Bedrock's 1024-iteration
 loop cap and a host execution budget. Interpolate pre/post discontinuities,
 linear and Catmull-Rom tracks, blend weights, scale, and animation clocks.
 Creator animation schemas and Blockbench's interpolation implementation
-guide the sampler. Effects and delays fail explicitly until their playback exists.
+guide the sampler. Effects and timelines fail explicitly until their playback exists.
 Entity-relative rotation uses the authored bone hierarchy. Owned native 1.26.51 Battle Cry and
 Kadoosh metadata resolve to 6.5 and 4.75 seconds; private asset tests sample
 every frame at 60 Hz. A Java GUI recording verifies visible Battle Cry motion, attached clothing,
@@ -236,6 +236,25 @@ first sources remain errors; later declarations do not supply a fallback.
 This behavior comes from focused inspection of the matching native loader
 and validator. Tests cover source ordering, sampled poses, missing files,
 and empty lists. All native binaries and exports remain private.
+
+Implement start and loop delays in the shared bone sampler from focused
+Bedrock 1.26.51.1 clock inspection and independent execution. The native
+player evaluates start delay once, consumes wait time before its custom
+clock, retains the full delta at exact expiry, and wraps only after crossing
+the last loop frame. Its completed flag persists, so loop delay reevaluates
+on every subsequent active update, including updates within later cycles.
+Preserve these target behaviors rather than imposing different semantics
+from the general Creator description. Native update, reset, and completion
+routines are FUN_141e68a20, FUN_141e69a60, and FUN_141e76b30.
+
+Reuse the sampled pose for repeated elapsed-time passes. Stop previews from
+playback state and preserve an incoming emote packet's duration without
+truncating it to the asset length. Ordinary tracks stop after the final
+frame; held tracks retain that frame. Tests compare isolated native clock
+execution and cover delayed activation, expiry, loop boundaries, custom
+clocks, blend suspension, repeated passes, held poses, and restart.
+Timeline execution, sounds, particles, and controller completion queries
+remain separate work. Private binaries and harnesses remain outside Git.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   54 +
@@ -253,12 +272,12 @@ and empty lists. All native binaries and exports remain private.
  .../bedrock/ViaFabricPlusBedrock.java         |    3 +
  .../appearance/BedrockActorAnimation.java     |  421 ++
  .../appearance/BedrockAppearanceStore.java    |  110 +-
- .../appearance/BedrockBoneAnimation.java      |  345 +
+ .../appearance/BedrockBoneAnimation.java      |  393 +
  .../bedrock/appearance/BedrockBrArchive.java  |   73 +
  .../appearance/BedrockBuiltinAssets.java      |  392 +
  .../appearance/BedrockCharacterProfiles.java  | 1213 +++
  .../appearance/BedrockClassicAssets.java      |   69 +
- .../appearance/BedrockEmotePlayback.java      |  388 +
+ .../appearance/BedrockEmotePlayback.java      |  389 +
  .../bedrock/appearance/BedrockEmotes.java     |   99 +
  .../bedrock/appearance/BedrockLimbSide.java   |   52 +
  .../bedrock/appearance/BedrockMolang.java     |  341 +
@@ -284,7 +303,7 @@ and empty lists. All native binaries and exports remain private.
  .../bedrock/render/BedrockGeometry.java       |   24 +-
  .../render/BedrockPlayerAnimationState.java   |   16 +
  .../bedrock/render/BedrockPlayerModel.java    |   43 +
- .../bedrock/render/BedrockPlayerSkins.java    |  290 +-
+ .../bedrock/render/BedrockPlayerSkins.java    |  289 +-
  .../screen/BedrockCharacterSlotsScreen.java   | 1187 +++
  .../screen/BedrockClassicSkinPackScreen.java  |    2 +-
  .../screen/BedrockDressingRoomScreen.java     |   33 +-
@@ -297,7 +316,7 @@ and empty lists. All native binaries and exports remain private.
  .../viafabricplus-bedrock.mixins.json         |    3 +
  .../appearance/BedrockActorAnimationTest.java |  205 +
  .../BedrockAppearanceStoreTest.java           |   28 +
- .../appearance/BedrockBoneAnimationTest.java  |  124 +
+ .../appearance/BedrockBoneAnimationTest.java  |  258 +
  .../appearance/BedrockBuiltinAssetsTest.java  |  367 +
  .../BedrockCharacterProfilesTest.java         |  461 ++
  .../bedrock/appearance/BedrockEmotesTest.java |  141 +
@@ -312,7 +331,7 @@ and empty lists. All native binaries and exports remain private.
  .../appearance/BedrockPersonaTintTest.java    |   87 +
  .../render/BedrockAnimatedModelTest.java      |   55 +
  .../render/BedrockPlayerModelTest.java        |  100 +
- 75 files changed, 22147 insertions(+), 59 deletions(-)
+ 75 files changed, 22329 insertions(+), 59 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -10371,10 +10390,10 @@ index d54e7f7..5eebd99 100644
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimation.java
 new file mode 100644
-index 0000000..85b54de
+index 0000000..e10a74e
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimation.java
-@@ -0,0 +1,345 @@
+@@ -0,0 +1,393 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -10401,6 +10420,8 @@ index 0000000..85b54de
 +    private final Map<String, Bone> bones;
 +    private final BedrockMolang.Program blendWeight;
 +    private final BedrockMolang.Program timeUpdate;
++    private final BedrockMolang.Program startDelay;
++    private final BedrockMolang.Program loopDelay;
 +
 +    private BedrockBoneAnimation(
 +            final float length,
@@ -10409,7 +10430,9 @@ index 0000000..85b54de
 +            final boolean overridePose,
 +            final Map<String, Bone> bones,
 +            final BedrockMolang.Program blendWeight,
-+            final BedrockMolang.Program timeUpdate) {
++            final BedrockMolang.Program timeUpdate,
++            final BedrockMolang.Program startDelay,
++            final BedrockMolang.Program loopDelay) {
 +        this.length = length;
 +        this.loop = loop;
 +        this.holdLastFrame = holdLastFrame;
@@ -10417,6 +10440,8 @@ index 0000000..85b54de
 +        this.bones = bones;
 +        this.blendWeight = blendWeight;
 +        this.timeUpdate = timeUpdate;
++        this.startDelay = startDelay;
++        this.loopDelay = loopDelay;
 +    }
 +
 +    public float length() {
@@ -10444,14 +10469,13 @@ index 0000000..85b54de
 +                    List.of(
 +                            "sound_effects",
 +                            "particle_effects",
-+                            "timeline",
-+                            "start_delay",
-+                            "loop_delay")) {
++                            "timeline")) {
 +                if (animation.has(field))
-+                    throw new IOException("This animation needs effect or delay playback");
++                    throw new IOException("This animation needs effect or timeline playback");
 +            }
-+            final JsonObject definitions = animation.getAsJsonObject("bones");
-+            if (definitions == null || definitions.size() > 256)
++            final JsonObject definitions = animation.has("bones")
++                    ? animation.getAsJsonObject("bones") : new JsonObject();
++            if (definitions.size() > 256)
 +                throw new IOException("Invalid animation bone count");
 +            final Map<String, Bone> bones = new LinkedHashMap<>();
 +            float end = 0;
@@ -10489,7 +10513,9 @@ index 0000000..85b54de
 +                    BedrockMolang.Program.parse(animation.get("blend_weight"), 1),
 +                    animation.has("anim_time_update")
 +                            ? BedrockMolang.Program.parse(animation.get("anim_time_update"), 0)
-+                            : null);
++                            : null,
++                    BedrockMolang.Program.parse(animation.get("start_delay"), 0),
++                    BedrockMolang.Program.parse(animation.get("loop_delay"), 0));
 +        } catch (RuntimeException e) {
 +            throw new IOException("Invalid Bedrock bone animation", e);
 +        }
@@ -10524,24 +10550,64 @@ index 0000000..85b54de
 +
 +    public final class Playback {
 +        private final BedrockMolang molang;
-+        private float previousElapsed;
++        private float previousElapsed = Float.NaN;
 +        private float clock;
++        private float delay = Float.NaN;
++        private boolean completed;
++        private Map<String, Transform> pose = Map.of();
 +
 +        private Playback(final BedrockMolang molang) {
 +            this.molang = molang;
 +        }
 +
++        /** Whether this playback has reached its end at least once, including a loop. */
++        public boolean completed() {
++            return this.completed;
++        }
++
++        /** A stopped track contributes no pose; held tracks retain their final frame. */
++        public boolean stopped() {
++            return !loop && !holdLastFrame && this.clock > length;
++        }
++
 +        public Map<String, Transform> sample(final float elapsed, final Map<String, ?> queries) {
-+            final float delta = Math.max(0, elapsed - this.previousElapsed);
-+            this.molang.queries(queries, this.clock, elapsed, delta);
-+            this.clock =
-+                    timeUpdate == null
-+                            ? Math.max(0, elapsed)
-+                            : Math.max(0, this.molang.evaluate(timeUpdate, this.clock));
-+            final float time = loop ? this.clock % length : Math.min(this.clock, length);
-+            this.molang.queries(queries, time, elapsed, delta);
-+            this.previousElapsed = elapsed;
++            if (!Float.isFinite(elapsed)) return Map.of();
++            final float time = Math.max(0, elapsed);
++            if (time < this.previousElapsed) {
++                this.previousElapsed = Float.NaN;
++                this.clock = 0;
++                this.delay = Float.NaN;
++                this.completed = false;
++            }
++            if (time == this.previousElapsed) return this.pose;
++            float delta = Float.isNaN(this.previousElapsed) ? time : time - this.previousElapsed;
++            this.previousElapsed = time;
++            this.pose = Map.of();
++            this.molang.queries(queries, this.clock, time, delta);
 +            final float weight = Math.clamp(this.molang.evaluate(blendWeight, 1), 0, 1);
++            if (weight < Math.ulp(1F)) return this.pose;
++            if (Float.isNaN(this.delay))
++                this.delay = Math.max(0, this.molang.evaluate(startDelay, 0));
++            if (this.delay > 0) {
++                this.delay -= delta;
++                // The target player retains the full delta when delay reaches exactly zero.
++                if (this.delay < 0) delta = -this.delay;
++            }
++            if (this.delay > 0) return this.pose;
++            this.molang.queries(queries, this.clock, time, delta);
++            this.clock = this.molang.evaluate(timeUpdate, this.clock + delta);
++            if (this.clock >= length) {
++                this.completed = true;
++                this.delay = 0;
++            }
++            if (holdLastFrame) this.clock = Math.min(this.clock, length);
++            else if (loop && this.completed) {
++                // The native completion flag persists, so this runs on every later active update.
++                this.delay = Math.max(0, this.molang.evaluate(loopDelay, 0));
++                if (this.clock > length) this.clock %= length;
++            }
++            if (this.stopped()) return this.pose;
++            this.molang.queries(queries, this.clock, time, delta);
 +            final Map<String, Transform> result = new LinkedHashMap<>();
 +            bones.forEach(
 +                    (name, bone) ->
@@ -10549,15 +10615,16 @@ index 0000000..85b54de
 +                                    name,
 +                                    new Transform(
 +                                            bone.position()
-+                                                    .sample(time, this.molang)
++                                                    .sample(this.clock, this.molang)
 +                                                    .blend(ZERO, weight),
 +                                            bone.rotation()
-+                                                    .sample(time, this.molang)
++                                                    .sample(this.clock, this.molang)
 +                                                    .blend(ZERO, weight),
 +                                            bone.scale()
-+                                                    .sample(time, this.molang)
++                                                    .sample(this.clock, this.molang)
 +                                                    .blend(ONE, weight), bone.entityRelativeRotation)));
-+            return Map.copyOf(result);
++            this.pose = Map.copyOf(result);
++            return this.pose;
 +        }
 +    }
 +
@@ -12493,10 +12560,10 @@ index 0000000..f4b977f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java
 new file mode 100644
-index 0000000..4edb06d
+index 0000000..fa9ac73
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java
-@@ -0,0 +1,388 @@
+@@ -0,0 +1,389 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -12832,10 +12899,7 @@ index 0000000..4edb06d
 +            final long received,
 +            final long ticks) {
 +        REQUESTS.remove(player);
-+        final float duration =
-+                ticks > 0
-+                        ? Math.min(ticks / 20F, emote.animation().length())
-+                        : emote.animation().length();
++        final float duration = ticks > 0 ? ticks / 20F : Float.POSITIVE_INFINITY;
 +        final Playing playing =
 +                new Playing(emote.id(), emote.animation().playback(), received, duration, null);
 +        if (!playing.expired(System.nanoTime())) PLAYING.put(player, playing);
@@ -12865,7 +12929,10 @@ index 0000000..4edb06d
 +                            position);
 +            PLAYING.put(player, playing);
 +        }
-+        return playing.animation().sample((now - playing.started()) / 1_000_000_000F, Map.of());
++        final var pose =
++                playing.animation().sample((now - playing.started()) / 1_000_000_000F, Map.of());
++        if (playing.animation().stopped()) PLAYING.remove(player);
++        return pose;
 +    }
 +
 +    private record AccountEmotes(
@@ -12881,7 +12948,8 @@ index 0000000..4edb06d
 +            float duration,
 +            net.minecraft.world.phys.Vec3 origin) {
 +        boolean expired(final long now) {
-+            return now - this.started >= (long) (this.duration * 1_000_000_000D);
++            return this.animation.stopped()
++                    || (now - this.started) / 1_000_000_000D >= this.duration;
 +        }
 +    }
 +}
@@ -16943,7 +17011,7 @@ index 0000000..2224643
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 78bb51f..4d57f30 100644
+index 78bb51f..6d04a48 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -19,35 +19,48 @@
@@ -17220,7 +17288,7 @@ index 78bb51f..4d57f30 100644
      public static AvatarRenderer<?> renderer(final PlayerSkin skin, final float ageInTicks) {
          if (skin == null || skin.body() == null) {
              return null;
-@@ -193,10 +358,43 @@ public final class BedrockPlayerSkins {
+@@ -193,10 +358,42 @@ public final class BedrockPlayerSkins {
      public static Model.Simple previewModel(final Identifier texture) {
          final UUID id = PLAYER_BY_TEXTURE.get(texture);
          final Appearance appearance = id == null ? null : APPEARANCES.get(id);
@@ -17256,18 +17324,17 @@ index 78bb51f..4d57f30 100644
 +        if (appearance.playback != null) {
 +            final PreviewPlayback playback = appearance.playback;
 +            final float elapsed = (System.nanoTime() - playback.started()) / 1_000_000_000F;
-+            if (!playback.animation().loop()
-+                    && !playback.animation().holdLastFrame()
-+                    && elapsed > playback.animation().length()) {
++            final var pose = playback.sample().sample(elapsed, Map.of());
++            if (playback.sample().stopped()) {
 +                appearance.playback = null;
-+            } else appearance.previewPose = playback.sample().sample(elapsed, Map.of());
++            } else if (!pose.isEmpty()) appearance.previewPose = pose;
 +        }
 +        appearance.previewModel.pose(appearance.previewPose);
 +        return appearance.previewModel.model();
      }
  
      /** Supplies the additional animated surfaces in the same pose as a menu's primary skin. */
-@@ -206,14 +404,19 @@ public final class BedrockPlayerSkins {
+@@ -206,14 +403,19 @@ public final class BedrockPlayerSkins {
          if (appearance == null || appearance.surfaces.isEmpty()) return List.of();
          if (appearance.previewSurfaces == null)
              appearance.previewSurfaces = appearance.surfaces.stream().map(surface -> new PreviewSurface(
@@ -17289,7 +17356,7 @@ index 78bb51f..4d57f30 100644
  
      public static void rendererContext(final EntityRendererProvider.Context context) {
          rendererContext = context;
-@@ -238,7 +441,8 @@ public final class BedrockPlayerSkins {
+@@ -238,7 +440,8 @@ public final class BedrockPlayerSkins {
      }
  
      private static Identifier textureId(final UUID playerUuid, final String kind) {
@@ -17299,7 +17366,7 @@ index 78bb51f..4d57f30 100644
      }
  
      private static boolean supportedImage(final BufferedImage image) {
-@@ -264,7 +468,10 @@ public final class BedrockPlayerSkins {
+@@ -264,7 +467,10 @@ public final class BedrockPlayerSkins {
  
      static String geometryName(final String resourcePatch, final String binding) {
          try {
@@ -17311,7 +17378,7 @@ index 78bb51f..4d57f30 100644
              final var name = geometry.get(binding);
              return name != null && name.isJsonPrimitive() && name.getAsJsonPrimitive().isString()
                  ? name.getAsString() : "";
-@@ -322,7 +529,8 @@ public final class BedrockPlayerSkins {
+@@ -322,7 +528,8 @@ public final class BedrockPlayerSkins {
              final Map<Integer, JsonObject> animatedModels = new HashMap<>();
              for (final var entry : models) {
                  final JsonObject model = entry.getAsJsonObject();
@@ -17321,7 +17388,7 @@ index 78bb51f..4d57f30 100644
                  if (name.equals(identifier)) {
                      if (body != null) {
                          return null;
-@@ -361,7 +569,8 @@ public final class BedrockPlayerSkins {
+@@ -361,7 +568,8 @@ public final class BedrockPlayerSkins {
                  final JsonObject model = animatedModels.get(type);
                  final var animation = animationByType.get(type);
                  if (model == null) {
@@ -17331,7 +17398,7 @@ index 78bb51f..4d57f30 100644
                          return null;
                      }
                      continue;
-@@ -376,7 +585,8 @@ public final class BedrockPlayerSkins {
+@@ -376,7 +584,8 @@ public final class BedrockPlayerSkins {
                  BedrockGeometry.playerModel(parsed, false, meshes);
                  surfaces.add(new Surface(parsed, Map.copyOf(meshes), animation));
              }
@@ -17341,7 +17408,7 @@ index 78bb51f..4d57f30 100644
                  if (!coverage.getOrDefault(part, false)) {
                      return null;
                  }
-@@ -424,12 +634,21 @@ public final class BedrockPlayerSkins {
+@@ -424,12 +633,21 @@ public final class BedrockPlayerSkins {
                      }
                  }
              }
@@ -17366,7 +17433,7 @@ index 78bb51f..4d57f30 100644
              }
          }
          return meshes;
-@@ -467,13 +686,18 @@ public final class BedrockPlayerSkins {
+@@ -467,13 +685,18 @@ public final class BedrockPlayerSkins {
          private final PlayerSkin skin;
          private final long started = System.nanoTime();
          private final Geometry geometry;
@@ -20071,10 +20138,10 @@ index b8fbd8a..68c6474 100644
              _ -> new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB));
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimationTest.java
 new file mode 100644
-index 0000000..59d2cc5
+index 0000000..2ad493c
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBoneAnimationTest.java
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,258 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -20082,8 +20149,11 @@ index 0000000..59d2cc5
 +import com.google.gson.JsonParser;
 +
 +import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 +
 +import java.io.IOException;
++import java.nio.file.Files;
++import java.nio.file.Path;
 +import java.util.Map;
 +
 +final class BedrockBoneAnimationTest {
@@ -20159,6 +20229,137 @@ index 0000000..59d2cc5
 +        final var transform = playback.sample(2.5F, Map.of()).get("head");
 +        assertEquals(22.5F, transform.rotation().x());
 +        assertEquals(new BedrockBoneAnimation.Vector(2, 2, 2), transform.scale());
++    }
++
++    @Test
++    void waitsForTheInitialDelayAndRetainsOnlyAnOvershootingFramesRemainder() throws Exception {
++        final var definition = animation("""
++                {"animation_length":2,"start_delay":"v.starts=(v.starts??0)+1;return 0.75;",
++                 "bones":{"head":{"position":["q.anim_time","v.starts","q.delta_time"]}}}
++                """);
++        final var player = definition.playback();
++        assertTrue(player.sample(0, Map.of()).isEmpty());
++        assertTrue(player.sample(0.5F, Map.of()).isEmpty());
++        assertFalse(player.completed());
++        assertEquals(new BedrockBoneAnimation.Vector(0.25F, 1, 0.25F),
++                player.sample(1, Map.of()).get("head").position());
++        assertEquals(new BedrockBoneAnimation.Vector(0.5F, 1, 0.25F),
++                player.sample(1.25F, Map.of()).get("head").position());
++        assertEquals(1, definition.playback().sample(1, Map.of()).get("head").position().y());
++    }
++
++    @Test
++    void preservesNativeExactDelayAndLoopBoundariesAndPersistentCompletion() throws Exception {
++        final var player = animation("""
++                {"loop":true,"animation_length":1,"start_delay":0.5,
++                 "loop_delay":"v.loops=(v.loops??0)+1;return 0.5;",
++                 "bones":{"head":{"position":["q.anim_time","v.loops??0","q.delta_time"]}}}
++                """).playback();
++        assertTrue(player.sample(0, Map.of()).isEmpty());
++        assertEquals(new BedrockBoneAnimation.Vector(0.5F, 0, 0.5F),
++                player.sample(0.5F, Map.of()).get("head").position());
++        assertEquals(new BedrockBoneAnimation.Vector(1, 1, 0.5F),
++                player.sample(1, Map.of()).get("head").position());
++        assertTrue(player.completed());
++        assertFalse(player.stopped());
++        assertTrue(player.sample(1.25F, Map.of()).isEmpty());
++        final var restarted = player.sample(1.75F, Map.of()).get("head").position();
++        assertEquals(0.25F, restarted.x());
++        assertEquals(2, restarted.y());
++        assertEquals(0.25F, restarted.z());
++        assertTrue(player.sample(2, Map.of()).isEmpty());
++        assertEquals(3, player.sample(2.5F, Map.of()).get("head").position().y());
++    }
++
++    @Test
++    void usesTheWrappedClockForMolangAndDoesNotAdvanceRepeatedRenderPasses() throws Exception {
++        final var player = animation("""
++                {"loop":true,"animation_length":1,"anim_time_update":"q.anim_time+q.delta_time*2",
++                 "bones":{"head":{"position":["q.anim_time","v.frames=(v.frames??0)+1;return v.frames;",0]}}}
++                """).playback();
++        assertEquals(0.5F, player.sample(0.25F, Map.of()).get("head").position().x());
++        final var boundary = player.sample(0.5F, Map.of());
++        assertEquals(1, boundary.get("head").position().x());
++        assertSame(boundary, player.sample(0.5F, Map.of()));
++        assertEquals(new BedrockBoneAnimation.Vector(0.5F, 3, 0),
++                player.sample(0.75F, Map.of()).get("head").position());
++        assertEquals(1, player.sample(1, Map.of()).get("head").position().x());
++    }
++
++    @Test
++    void freezesTheClockAndDelayWhileTheTrackHasNoBlendWeight() throws Exception {
++        final var player = animation("""
++                {"animation_length":2,"blend_weight":"q.enabled","start_delay":0.25,
++                 "bones":{"head":{"position":["q.anim_time",0,0]}}}
++                """).playback();
++        assertTrue(player.sample(1, Map.of()).isEmpty());
++        assertTrue(player.sample(1.125F, Map.of("enabled", 1)).isEmpty());
++        assertTrue(player.sample(2, Map.of()).isEmpty());
++        assertEquals(0.125F, player.sample(2.25F, Map.of("enabled", 1))
++                .get("head").position().x());
++    }
++
++    @Test
++    void stopsAfterTheFinalFrameButKeepsHeldTracksAndReevaluatesDelaysOnRestart() throws Exception {
++        final var player = animation("""
++                {"animation_length":1,"start_delay":"v.starts=(v.starts??0)+1;return 0.25;",
++                 "bones":{"head":{"position":["q.anim_time","v.starts",0]}}}
++                """).playback();
++        assertEquals(1, player.sample(1.25F, Map.of()).get("head").position().x());
++        assertTrue(player.completed());
++        assertFalse(player.stopped());
++        assertTrue(player.sample(1.5F, Map.of()).isEmpty());
++        assertTrue(player.stopped());
++        assertTrue(player.sample(0, Map.of()).isEmpty());
++        assertFalse(player.completed());
++        assertFalse(player.stopped());
++        assertEquals(2, player.sample(0.5F, Map.of()).get("head").position().y());
++        final var held = animation("""
++                {"loop":"hold_on_last_frame","animation_length":1,
++                 "bones":{"head":{"position":["q.anim_time",0,0]}}}
++                """).playback();
++        assertEquals(1, held.sample(2, Map.of()).get("head").position().x());
++        assertTrue(held.completed());
++        assertFalse(held.stopped());
++        assertEquals(1, held.sample(3, Map.of()).get("head").position().x());
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_ANIMATION_CLOCK_RESULT", matches = ".+")
++    void matchesIndependentTargetGameClockExecution() throws Exception {
++        final var cases = JsonParser.parseString(Files.readString(
++                Path.of(System.getenv("STACKANVIL_ANIMATION_CLOCK_RESULT")))).getAsJsonArray();
++        for (final var element : cases) {
++            final var data = element.getAsJsonObject();
++            final var config = data.getAsJsonObject("config");
++            final var source = JsonParser.parseString("""
++                    {"animation_length":1,"bones":{"head":{"position":["q.anim_time","v.starts","v.loops??0"]}}}
++                    """).getAsJsonObject();
++            source.addProperty("start_delay", "v.starts=(v.starts??0)+1;return "
++                    + (config.has("start") ? config.get("start").getAsFloat() : 0) + ";");
++            source.addProperty("loop_delay", "v.loops=(v.loops??0)+1;return "
++                    + (config.has("loop_delay") ? config.get("loop_delay").getAsFloat() : 0) + ";");
++            source.addProperty("anim_time_update", "q.anim_time+q.delta_time*"
++                    + (config.has("speed") ? config.get("speed").getAsFloat() : 1));
++            final int mode = config.has("loop") ? config.get("loop").getAsInt() : 0;
++            if (mode == 2) source.addProperty("loop", "hold_on_last_frame");
++            else source.addProperty("loop", mode == 1);
++            final var player = BedrockBoneAnimation.parse(source).playback();
++            float elapsed = 0;
++            for (final var frame : data.getAsJsonArray("steps")) {
++                final var expected = frame.getAsJsonObject();
++                elapsed += expected.get("delta").getAsFloat();
++                final var pose = player.sample(elapsed, Map.of());
++                assertEquals(expected.get("completed").getAsInt() == 1, player.completed());
++                assertEquals(expected.get("sampled").getAsBoolean(), !pose.isEmpty());
++                if (pose.isEmpty()) continue;
++                final var position = pose.get("head").position();
++                assertEquals(expected.get("clock").getAsFloat(), position.x(), 0.000001F);
++                final var calls = expected.getAsJsonObject("calls");
++                assertEquals(calls.get("start").getAsInt(), position.y());
++                assertEquals(calls.get("loop").getAsInt(), position.z());
++            }
++        }
 +    }
 +
 +    @Test
