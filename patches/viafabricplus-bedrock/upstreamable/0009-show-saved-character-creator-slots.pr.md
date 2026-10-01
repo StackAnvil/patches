@@ -529,7 +529,7 @@ Add box, sphere, disc, and entity-bounds shapes through one sampler. Generalize 
 
 Target Bedrock 1.26.51.1 functions `1462a6be0`, `1462ad0e0`, `1462aa600`, `1462ab2c0`, and `1462a81f0` establish these behaviors. Constructors select outward direction by default for volume and entity shapes. Independent native execution supplies 646 cases. Production matches every position, direction, and ordered random call exactly as float32. The harness supplies random and entity-bounds accessors; actual native sampling, normalization, projection, and face selection execute.
 
-Timeline and controller particle requests retain an actor bounds accessor. World extraction passes current bounds to each emission, including unbound emitters with fixed origins. Tests verify changing dimensions between births, expression order, and scalar versus vector speed. Licensed assets, executables, and native fixtures stay private. Local-space transforms and native visible parity remain separate work.
+Timeline and controller particle requests retain an actor attachment accessor. World extraction passes current actor bounds to attached emissions. Unbound emitters retain their fixed origin without actor bounds. Tests verify changing dimensions between births, expression order, and scalar versus vector speed. Licensed assets, executables, and native fixtures stay private. Local-space transforms and native visible parity remain separate work.
 
 Sources: Microsoft's [box reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftemitter_shape_box?view=minecraft-bedrock-stable), [sphere reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftemitter_shape_sphere?view=minecraft-bedrock-stable), [disc reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftemitter_disc?view=minecraft-bedrock-stable), and [entity-bounds reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftemitter_shape_entity-aabb?view=minecraft-bedrock-stable). The matching executable establishes the target calculations.
 
@@ -572,3 +572,27 @@ Another 40 native context cases verify lifetime and age variables, including neg
 Source: [Microsoft particle lifetime reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftparticle_lifetime_expression?view=minecraft-bedrock-stable). The target execution establishes update ordering beyond that reference.
 
 All 276 fixture-enabled add-on tests pass with no failures or skips. The full dependency build and bundle pass. A muted Java 26.3 world probe verifies update and render callbacks, nanosecond clocks, motion, loop creation, activation, expiration drainage, and resource release. It uses the existing older-protocol server through the Java proxy route. Direct protocol 2193 joins and native visible comparisons remain unverified.
+
+## Attached particle transforms
+
+Replace live position-only origins with actor and locator matrices. Attached emitters start at zero. Unbound emitters retain the original world position without actor bounds. Parse `minecraft:emitter_local_space` and preserve its position, rotation, and velocity flags.
+
+Bedrock 1.26.51.1 `14215b3c0` retains the full locator matrix when position lookup succeeds. Its fallback uses `1419f7910` for actor translation and yaw. Disabled yaw retains the native 180-degree baseline. A found locator retains rotation and scale even when the rotation flag is false.
+
+Birth function `14215a440` transforms position, velocity, and facing before particle initialization. It adds cached emitter velocity afterward. Main update `142158a40` calculates the next cached velocity after births. The first displacement is zero. Actor loss clears local-position particles while world-space particles drain. Render function `14215cc90` multiplies the attachment and original emitter matrices before transforming particle positions.
+
+Independent native execution supplies 192 actor matrix cases, 60 birth cases, 192 emitter updates, and 180 render position cases. Production matches the captured float32 results and initialization observations. The probes execute the target instructions with supplied actor accessors, locator matrices, callback bodies, and imported float math. The render probe supplies interpolation factors and current/previous particle fields.
+
+World playback samples interpolated actor position and body yaw. Posed bone matrices supply locator rotation and scale; translations convert from pixels. Each attachment owns its matrix snapshot. Geometry tests verify rotated bone axes, inherited scale, scale discard, and world translation.
+
+Authored locator rotation, registry-only actor lookup, native locator construction, GPU billboard orientation, and visible native scale remain unverified. Production still needs native render interpolation comparisons. These checks do not establish complete particle or skin parity. Executables, probes, assets, screenshots, and fixtures remain private.
+
+### Attachment verification
+
+All 281 fixture-enabled add-on tests pass with no failures or skips. Fresh standalone package acquisition, license decryption, extraction, and cache reuse pass. The full dependency build and bundle pass.
+
+A muted Java 26.3 world probe verifies the actor adapter and immutable matrix snapshots. World-space births stay fixed while local-position particles follow a moving locator. Unbound particles retain their original position. Actor loss clears local-position particles; world-space particles drain through their lifetime. Update and render callbacks execute, and cleanup releases textures.
+
+The same probe compares 49 matrix products against independent execution of native function `140544f00`. Every float32 output matches exactly. These products use supplied matrices. They do not establish native locator construction or visible scale parity.
+
+The world probe uses the existing protocol 2169 server through its Java proxy route. Direct protocol 2193 joins and native visible comparisons remain unverified.

@@ -318,7 +318,7 @@ Animation timelines and controller entries now resolve particle aliases through 
 
 The particle runtime supports instant and steady emission with once, looping, and expression emitter lifetimes. It accepts point, custom, box, sphere, disc, and entity-bounds shapes. It supports initial speed and spin, dynamic or parametric motion, tint gradients, flipbooks, and rectangular billboards. The two admitted facing modes are `rotate_xyz` and `lookat_xyz`. PNG and TGA textures follow pack precedence. Server libraries retain particle definitions and their referenced textures.
 
-The world renderer creates bounded emitters and images. Attached origins follow static model locators and the current actor position. Unbound origins remain fixed. Account changes and world cleanup invalidate pending work and release textures. Unsupported components report an asset error.
+The world renderer creates bounded emitters and images. Attached emitters sample the actor and posed locator matrices together. Unbound emitters retain their initial world position and have no live actor bounds. Account changes and world cleanup invalidate pending work and release textures. Unsupported components report an asset error.
 
 Independent execution of Bedrock 1.26.51.1 supplies 200 motion cases and 492 billboard cases. Production kernels match their float32 results. A changing-rate test also follows the native steady emitter's cached rate until its next emission.
 
@@ -350,7 +350,15 @@ Another 40 native context cases verify lifetime and age variables, including neg
 
 All 276 fixture-enabled add-on tests pass with no failures or skips. The full dependency build and bundle pass. A muted Java world probe verifies update and render callbacks, nanosecond clocks, motion, loop creation, activation, expiration drainage, and resource release. This probe uses the existing older-protocol server through its Java proxy route and does not establish native visible parity.
 
-Local-space transforms, other facing modes, manual emission, curves, and nested effect events remain incomplete. Native comparisons still need to establish attachment rotation, random and variable registration, tint quantization, and visible scale. These component tests do not establish complete particle parity.
+Attached births now use the target position, velocity, and facing transforms. Local-space flags control birth transforms and the current render matrix. Locator matrices retain their rotation and scale. Actor fallback uses the target yaw and baseline rotation. Initialization runs after birth transforms and before inherited velocity. Births inherit the previous update's cached velocity. Local-position particles clear when their actor disappears. World-space particles drain normally.
+
+Independent execution supplies 192 actor matrix cases, 60 birth cases, 192 emitter updates, and 180 render position cases. Production matches their float32 matrix products, origin calculations, cached velocities, initialization observations, and actor-loss behavior. The harness supplies actor accessors and locator matrices. Render position fixtures supply interpolation factors and particle fields. These fixtures exclude native locator construction, registry-only actor lookup, GPU billboarding, and visible comparisons.
+
+All 281 fixture-enabled add-on tests pass with no failures or skips. The full dependency build and bundle pass. A muted Java world probe verifies moving attachments, fixed world-space births, unbound positions, actor loss, callbacks, and texture release. It also matches 49 native matrix products exactly as float32. Supplied matrices and the existing older-protocol proxy route limit these checks. Direct protocol 2193 joins and native visible comparisons remain unverified.
+
+World attachments use interpolated actor position and body yaw with the current posed bone hierarchy. Bone translations convert from pixels; direction axes retain rotation and scale. The Java locator adapter preserves inherited scale and the existing scale-discard option. Authored locator rotation and native comparisons of the adapter remain incomplete.
+
+Other facing modes, manual emission, curves, and nested effect events remain incomplete. Native comparisons still need to establish render interpolation, random and variable registration, tint quantization, and visible scale. These component tests do not establish complete particle parity.
 
 ### Missing features
 
@@ -371,6 +379,6 @@ The loader now uses the matching 68-alias player definition. Its added tracks in
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. This establishes visual presence, not complete timing or format parity.
 - Verify fresh interactive Store sign-in and helper runtime behavior on Windows and macOS. Linux acquisition, license decryption, extraction, and cache reuse already pass.
 
-The replayed full stack builds, and all 269 fixture-enabled add-on tests pass with no failures or skips. The rebuilt client also passes 13,578 native curve comparisons and a conditional-assignment check. Earlier Java runtime probes passed 1,324 checks across previously implemented paths. The new overlay probe passes 722 checks for the updated graph and renderer paths. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
+The replayed full stack builds, and all 281 fixture-enabled add-on tests pass with no failures or skips. The rebuilt client also passes 13,578 native curve comparisons and a conditional-assignment check. Earlier Java runtime probes passed 1,324 checks across previously implemented paths. The new overlay probe passes 722 checks for the updated graph and renderer paths. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
 
 Keep login JWTs, receipts, content keys, raw flows, screenshots, player textures, and account data private under `.stackanvil/`.
