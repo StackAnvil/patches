@@ -26,6 +26,18 @@ Missing legacy parents resolve from the licensed package's base vanilla model li
 
 Licensed tests resolve all seven inherited entries from the base skin-model library, including parents supplied by entity model files. Equal duplicate definitions share one library entry. Conflicting definitions remain errors. Versioned vanilla overlays and native visual comparisons remain pending. A broader library check found an unresolved `rightarm` parent in the native legacy vex model. The importer rejects this model until native parent-name behavior is established. Classic skin animation aliases and render flags survive import and transport. Local alias playback uses the licensed player graph. Geometry-provided alias precedence remains incomplete.
 
+## Account-owned classic packs
+
+The Dressing Room has an Owned packs action. It reads the authenticated `MultiItemPage_PersonaSkinSelector` Store page and lists owned skin packs. Open pack downloads the selected pack and opens the shared classic preview. Refresh updates the account list. Returning from preview retains the selected pack and clears download status.
+
+The loader uses the selected account's current inventory receipt and PlayFab catalog. It requires a receipt key for the selected pack UUID. It checks the published product, pack UUID, type, and Store version before downloading `skinbinary` from an official HTTPS CDN. It decrypts the content index and files in memory. Local imports and account downloads use the same pack reader, geometry loader, and appearance store. Production requires no native installation or copied content keys.
+
+The native Store request uses empty entitlements and version fields. The service resolves ownership from authentication. Inventory product IDs can identify shell products without downloadable content. The loader therefore uses the product IDs from the Store page. Store catalog versions and manifest versions can differ. The loader compares versions between Store and PlayFab metadata, then checks the downloaded manifest UUID separately.
+
+Private Bedrock 1.26.51.1 captures establish the request and content type. Fresh authenticated requests downloaded Birdie Wings and Earth Skin through production code. Their archives use different ZIP wrapper names. Both custom models load, including Earth Skin's null root-parent fields.
+
+The replayed full stack passes 163 fixture-enabled tests with no skips. A running Java client passes 32 checks for real downloads, list selection, readable controls, custom-model preview, and Back navigation. These checks do not change account profiles. Marketplace purchases, redemption, and remote classic selection synchronization remain incomplete.
+
 ## Classic skin declarations
 
 The importer preserves `skins.json` animation aliases in `SkinResourcePatch`, with `enable_attachables`, `held_item_ignores_lighting`, and `hide_armor`. Explicit false flags differ from absent flags. Empty animation aliases remain empty. These declarations do not populate `SkinAnimationData`.
@@ -229,7 +241,7 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 - Resolve free assets for accounts without usable receipt keys. These recipes still depend on the service model. Verify native cape motion. Compare more overlapping clothing combinations against native results.
 - Compare more face sizes, tint channels, and equipped combinations against native results.
 - Compare corrected blink and strip timing with native multiplayer video. Implement emote effects, named actor events, chat announcements, and unavailable remote assets. Compare entity-relative rotations against native playback.
-- Establish premium piece color controls and channels, and verify native leg edits. Add paid purchase/redemption flows and account classic-pack downloads.
+- Establish premium piece color controls and channels, and verify native leg edits. Add paid purchase/redemption flows and remote classic selection synchronization.
 - Verify versioned vanilla model overrides and native parent-name behavior. Complete classic item-action bindings, geometry-provided alias precedence, and first-person playback. Compare inherited skins and equipment flags with native rendering, including first-person views.
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. A white quad above the player moved independently with the sky clouds; it was not an extra face surface.
 
