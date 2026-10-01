@@ -1,4 +1,4 @@
-From c2b57325d63b1b2f2ddc54540cb83dbe66b25033 Mon Sep 17 00:00:00 2001
+From 251ad074c855d025d5d18e8548d95cd23dd7781f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:39:38 +0200
 Subject: [PATCH] feat(blocks): apply native custom block shapes and lighting
@@ -15,18 +15,30 @@ Water-free redstone-wire carriers expand the core pool without consuming
 ordinary Bedrock wire mappings. Suppress their Java ambient redstone
 particles and use constant white tint sources for block and terrain
 particle colors only while custom metadata owns the state.
+
+Honor explicit custom material face_dimming=false in flat and ambient
+occlusion rendering. Java 26.3 uses an upward model override, but Nether
+cardinal lighting still dims that direction to 0.9. Restore multiplier 1
+only for registered custom carriers with that override. Preserve ordinary
+states, world light, emission and ambient occlusion. Decode generated mixed
+face models through the Java cuboid loader in a focused integration test.
+The target Hive protocol 2193 capture contains 136 disabled material instances.
 ---
  .../bedrock/block/BedrockCustomBlocks.java    |  85 ++++++++++
  .../features/block/MixinBlockColors.java      |  34 ++++
+ .../block/MixinCustomBlockLighting.java       |  29 ++++
  .../features/block/MixinCustomBlockState.java | 149 ++++++++++++++++++
  .../block/MixinRedstoneWireBlock.java         |  29 ++++
- .../viafabricplus-bedrock.mixins.json         |   3 +
+ .../viafabricplus-bedrock.mixins.json         |   4 +
+ .../block/BedrockCustomBlockLightingTest.java |  54 +++++++
  .../block/BedrockCustomBlocksTest.java        |  62 ++++++++
- 6 files changed, 362 insertions(+)
+ 8 files changed, 446 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBlockColors.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockLighting.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinRedstoneWireBlock.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockLightingTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocksTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java
@@ -159,6 +171,41 @@ index 0000000..48b052b
 +        }
 +    }
 +
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockLighting.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockLighting.java
+new file mode 100644
+index 0000000..8e5c0e3
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockLighting.java
+@@ -0,0 +1,29 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
++
++import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
++import com.llamalad7.mixinextras.sugar.Local;
++import com.viaversion.viafabricplus.bedrock.block.BedrockCustomBlocks;
++import net.minecraft.client.renderer.block.BlockModelLighter;
++import net.minecraft.client.resources.model.geometry.BakedQuad;
++import net.minecraft.core.Direction;
++import net.minecraft.world.level.block.state.BlockState;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++@Mixin(BlockModelLighter.class)
++public abstract class MixinCustomBlockLighting {
++
++    @ModifyExpressionValue(method = {"prepareQuadAmbientOcclusion", "prepareQuadFlat"}, at = @At(value = "INVOKE",
++        target = "Lnet/minecraft/client/renderer/block/BlockModelLighter;getDirectionalBrightness(Lnet/minecraft/world/level/CardinalLighting;Lnet/minecraft/client/resources/model/geometry/BakedQuad;Lnet/minecraft/core/Direction;)F"))
++    private float customDirectionalBrightness(final float original, @Local(argsOnly = true) final BlockState state,
++                                              @Local(argsOnly = true) final BakedQuad quad) {
++        // Converted custom models mark face_dimming=false with an upward override.
++        // Honor that explicit setting even when the dimension dims upward faces.
++        return quad.materialInfo().shadeDirectionOverride() == Direction.UP && BedrockCustomBlocks.current(state) != null ? 1F : original;
++    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockState.java
 new file mode 100644
@@ -351,10 +398,10 @@ index 0000000..c05289d
 +
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 441603a..660f988 100644
+index 441603a..6de31b5 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -30,10 +30,12 @@
+@@ -30,10 +30,13 @@
      "features.block.MixinBambooStalkBlock",
      "features.block.MixinBedBlock",
      "features.block.MixinBlockBehaviour_Properties",
@@ -364,10 +411,11 @@ index 441603a..660f988 100644
      "features.block.MixinChestBlock",
      "features.block.MixinConduitBlock",
 +    "features.block.MixinCustomBlockState",
++    "features.block.MixinCustomBlockLighting",
      "features.block.MixinDoorBlock",
      "features.block.MixinDragonEggBlock",
      "features.block.MixinEndPortalFrameBlock",
-@@ -41,6 +43,7 @@
+@@ -41,6 +44,7 @@
      "features.block.MixinLadderBlock",
      "features.block.MixinLanternBlock",
      "features.block.MixinLecternBlock",
@@ -375,6 +423,66 @@ index 441603a..660f988 100644
      "features.block.MixinSeaPickleBlock",
      "features.block.MixinTrapDoorBlock",
      "features.creative.MixinCreativeModeInventoryScreen",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockLightingTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockLightingTest.java
+new file mode 100644
+index 0000000..49dcd6e
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockLightingTest.java
+@@ -0,0 +1,54 @@
++package com.viaversion.viafabricplus.bedrock.block;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import net.minecraft.client.resources.model.cuboid.CuboidModel;
++import net.minecraft.client.resources.model.cuboid.UnbakedCuboidGeometry;
++import net.minecraft.core.Direction;
++import net.minecraft.world.level.CardinalLighting;
++import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockModel;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++
++import java.io.StringReader;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockCustomBlockLightingTest {
++
++    @Test
++    void javaDecoderRetainsPerFaceDimmingWithoutFullbrightOrExtraFaces() {
++        final CompoundTag material = new CompoundTag();
++        material.putString("texture", "mushroom_block_skin_red");
++        final CompoundTag unshaded = material.copy();
++        unshaded.putByte("face_dimming", (byte) 0);
++        final CompoundTag materials = new CompoundTag();
++        materials.put("*", material);
++        materials.put("west", unshaded);
++        final CompoundTag components = new CompoundTag();
++        components.putString("minecraft:geometry", "minecraft:geometry.full_block");
++        components.put("minecraft:material_instances", materials);
++        final var visual = CustomBlockModel.compile(new ResourcePackStorage(List.of()), "test:block", 1, components);
++        final var model = CuboidModel.fromStream(new StringReader(visual.modelJson()));
++        final var geometry = (UnbakedCuboidGeometry) model.geometry();
++        assertEquals(2, geometry.elements().size());
++        int faceCount = 0;
++        for (final var element : geometry.elements()) {
++            faceCount += element.faces().size();
++            assertEquals(0, element.lightEmission());
++            assertEquals(0, element.from().x());
++            assertEquals(16, element.to().x());
++            if (element.faces().containsKey(Direction.WEST)) {
++                assertEquals(Direction.UP, element.shadeDirectionOverride());
++                assertEquals(1F, CardinalLighting.DEFAULT.byFace(element.shadeDirectionOverride()));
++                assertEquals(1, element.faces().size());
++            } else {
++                assertNull(element.shadeDirectionOverride());
++                assertEquals(5, element.faces().size());
++            }
++        }
++        assertEquals(6, faceCount);
++        assertEquals(0, visual.lightEmission());
++        assertTrue(model.ambientOcclusion());
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocksTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocksTest.java
 new file mode 100644
 index 0000000..66c7660

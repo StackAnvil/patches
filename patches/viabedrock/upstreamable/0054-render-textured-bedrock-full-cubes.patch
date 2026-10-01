@@ -1,4 +1,4 @@
-From abc0168824d30dc0262417229afe475ae8d11ff2 Mon Sep 17 00:00:00 2001
+From 24c95fbebe24f8076041fd96927047d7f55074ef Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:38:26 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -57,8 +57,15 @@ components come directly from network NBT, so retain the wire emission
 field minecraft:light_emission.emission without speculative JSON aliases.
 Network-NBT and permutation tests preserve transparent, partial, opaque,
 emitting and omitted-component behavior.
+
+Preserve per-face material face_dimming from the same target Hive capture.
+Its serialized material instances contain 136 explicit false values.
+Java 26.3 ignores the older shade flag, so use shade_direction_override
+with the upward direction to remove directional attenuation while retaining
+world light and ambient occlusion. Partition mixed-face elements without
+changing their bounds, rotations, UVs, emission, or solid-block occlusion.
 ---
- .../api/model/CustomBlockVisual.java          |  26 ++
+ .../api/model/CustomBlockVisual.java          |  26 +
  .../definition/BlockDefinitions.java          |  17 +-
  .../definition/CustomBlockDefinition.java     |  57 +++
  .../definition/ModelDefinitions.java          |   7 +
@@ -69,18 +76,18 @@ emitting and omitted-component behavior.
  .../protocol/packet/ResourcePackPackets.java  |  44 +-
  .../protocol/rewriter/BlockStateRewriter.java |  60 ++-
  .../rewriter/ResourcePackRewriter.java        |   2 +
- .../resourcepack/CustomBlockModel.java        | 417 ++++++++++++++++++
- .../CustomBlockResourceRewriter.java          | 202 +++++++++
- .../CustomBlockStateDefinitions.java          | 153 +++++++
+ .../resourcepack/CustomBlockModel.java        | 445 ++++++++++++++++++
+ .../CustomBlockResourceRewriter.java          | 202 ++++++++
+ .../CustomBlockStateDefinitions.java          | 153 ++++++
  .../protocol/storage/ChunkTracker.java        |  33 +-
- .../storage/CustomBlockPackStorage.java       | 103 +++++
+ .../storage/CustomBlockPackStorage.java       | 103 ++++
  .../protocol/storage/ResourcePackStorage.java |  34 ++
- .../rewriter/CustomBlockBoneGeometryTest.java | 177 ++++++++
- .../CustomBlockModelSelectionTest.java        | 310 +++++++++++++
+ .../rewriter/CustomBlockBoneGeometryTest.java | 177 +++++++
+ .../CustomBlockModelSelectionTest.java        | 341 ++++++++++++++
  .../CustomBlockStateDefinitionsTest.java      | 218 +++++++++
  .../protocol/storage/ChunkTrackerTest.java    |  23 +
  .../storage/CustomBlockPackStorageTest.java   | 168 +++++++
- 22 files changed, 2148 insertions(+), 21 deletions(-)
+ 22 files changed, 2207 insertions(+), 21 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockVisual.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/CustomBlockDefinition.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
@@ -681,10 +688,10 @@ index 07a19fa9..9b746b0c 100644
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
 new file mode 100644
-index 00000000..02d23e7e
+index 00000000..aeb26ad0
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
-@@ -0,0 +1,417 @@
+@@ -0,0 +1,445 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -749,6 +756,7 @@ index 00000000..02d23e7e
 +        final Map<String, String> textureBindings = new LinkedHashMap<>();
 +        final Map<String, String> textureMethods = new LinkedHashMap<>();
 +        final Map<Direction, String> directionMethods = new LinkedHashMap<>();
++        final Map<String, Boolean> faceDimming = new LinkedHashMap<>();
 +        boolean opaque = true;
 +        boolean ao = true;
 +        String renderMethod = "opaque";
@@ -776,6 +784,7 @@ index 00000000..02d23e7e
 +            textureMethods.put(binding, method);
 +            textureIds.put(direction, image == null ? vanillaTexture : "viabedrock:block/custom/slot_" + javaState + '/' + binding);
 +            directionMethods.put(direction, method);
++            faceDimming.put(face, !(material.get("face_dimming") instanceof NumberTag value) || value.asInt() != 0);
 +            opaque &= method.equals("opaque") || !method.equals("blend") && CustomBlockResourceRewriter.hasOpaquePixels(image);
 +            ao &= !(material.get("ambient_occlusion") instanceof NumberTag value) || value.asDouble() != 0;
 +            if (method.equals("blend") || renderMethod.equals("opaque")) {
@@ -808,12 +817,38 @@ index 00000000..02d23e7e
 +        model.addProperty("ambientocclusion", ao);
 +        final Transform transformation = new Transform(components.getCompoundTag("minecraft:transformation"));
 +        transformModel(model, transformation);
++        applyFaceDimming(model, faceDimming);
 +        final boolean occluding = fullCube && opaque && transformation.identity();
 +        return new CustomBlockVisual(state, javaState, textureBindings.values().iterator().next(), JsonUtil.sort(model, Comparator.naturalOrder()).toString(), renderMethod,
 +                boxes(components.getCompoundTag("minecraft:collision_box"), false, transformation),
 +                boxes(components.getCompoundTag("minecraft:selection_box"), true, transformation), occluding,
 +                light(components, "minecraft:light_emission", "emission", 0),
 +                light(components, "minecraft:block_light_filter", "lightLevel", 15), textureBindings, textureMethods);
++    }
++
++    private static void applyFaceDimming(final JsonObject model, final Map<String, Boolean> faceDimming) {
++        final JsonArray elements = new JsonArray();
++        for (JsonElement value : model.getAsJsonArray("elements")) {
++            final JsonObject element = value.getAsJsonObject();
++            final JsonObject shadedFaces = new JsonObject();
++            final JsonObject unshadedFaces = new JsonObject();
++            for (Map.Entry<String, JsonElement> face : element.getAsJsonObject("faces").entrySet()) {
++                (faceDimming.getOrDefault(face.getKey(), true) ? shadedFaces : unshadedFaces).add(face.getKey(), face.getValue());
++            }
++            if (!shadedFaces.isEmpty()) {
++                element.add("faces", shadedFaces);
++                elements.add(element);
++            }
++            if (!unshadedFaces.isEmpty()) {
++                final JsonObject unshaded = element.deepCopy();
++                unshaded.add("faces", unshadedFaces);
++                // Java 26.3 replaces the old shade flag with a direction override.
++                // Upward faces have no directional attenuation, without making them emissive.
++                unshaded.addProperty("shade_direction_override", "up");
++                elements.add(unshaded);
++            }
++        }
++        model.add("elements", elements);
 +    }
 +
 +    private static int light(final CompoundTag components, final String component, final String key, final int fallback) {
@@ -1942,10 +1977,10 @@ index 00000000..a347e5aa
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
 new file mode 100644
-index 00000000..b95539e2
+index 00000000..a48616db
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
-@@ -0,0 +1,310 @@
+@@ -0,0 +1,341 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2150,6 +2185,37 @@ index 00000000..b95539e2
 +        assertNotNull(legacy);
 +        assertEquals("gold", legacy.textures().get("up"));
 +        assertEquals("ruby", legacy.textures().get("side"));
++    }
++
++    @Test
++    void partitionsFaceDimmingWithoutChangingGeometryOrLightEmission() {
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB))));
++        final CompoundTag components = components("minecraft:geometry.full_block", "ruby", "opaque");
++        final CompoundTag west = new CompoundTag();
++        west.putString("texture", "gold");
++        west.putByte("face_dimming", (byte) 0);
++        components.getCompoundTag("minecraft:material_instances").put("west", west);
++        final var visual = CustomBlockModel.compile(storage, "test:block", 12, components);
++        final var elements = JsonParser.parseString(visual.modelJson()).getAsJsonObject().getAsJsonArray("elements");
++        assertEquals(2, elements.size());
++        final var shaded = elements.get(0).getAsJsonObject();
++        final var unshaded = elements.get(1).getAsJsonObject();
++        assertEquals(5, shaded.getAsJsonObject("faces").size());
++        assertEquals(1, unshaded.getAsJsonObject("faces").size());
++        assertTrue(unshaded.getAsJsonObject("faces").has("west"));
++        assertFalse(shaded.has("shade_direction_override"));
++        assertEquals("up", unshaded.get("shade_direction_override").getAsString());
++        assertEquals(shaded.get("from"), unshaded.get("from"));
++        assertEquals(shaded.get("to"), unshaded.get("to"));
++        assertEquals(shaded.get("rotation"), unshaded.get("rotation"));
++        assertTrue(visual.occluding());
++        assertEquals(0, visual.lightEmission());
++
++        components.getCompoundTag("minecraft:material_instances").getCompoundTag("*").putByte("face_dimming", (byte) 0);
++        final var allUnshaded = CustomBlockModel.compile(storage, "test:block", 12, components);
++        final var allElements = JsonParser.parseString(allUnshaded.modelJson()).getAsJsonObject().getAsJsonArray("elements");
++        assertEquals(1, allElements.size());
++        assertEquals(6, allElements.get(0).getAsJsonObject().getAsJsonObject("faces").size());
 +    }
 +
 +    @Test

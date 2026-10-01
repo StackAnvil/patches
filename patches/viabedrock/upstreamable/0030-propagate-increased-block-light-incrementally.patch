@@ -1,16 +1,35 @@
-From 354cd6f73736eba20c9a3f013ffeb573891a4dac Mon Sep 17 00:00:00 2001
+From 2772c7ededf96f05aca9a18bc4753c3dbdea30e8 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 03:59:09 +0200
 Subject: [PATCH] perf(lighting): propagate increased block light incrementally
 
 Flood-fill new emission into cached light arrays and send only changed sections. Recompute the versioned region when emission falls, opacity changes, or nearby chunk state is incomplete; align light snapshots with waterlogged Java block states.
+
+Resolve Bedrock slab filtering by Java slab type when constructing the
+light snapshot table. An isolated official Bedrock Dedicated Server
+1.26.51.1 probe, build 51061372 and protocol 2193, measured getSkyLightLevel
+and getLightLevel through sealed shafts and tunnels without client joins.
+Top and bottom oak and smooth-stone slabs read skylight 14 at the slab
+then 13 below; double slabs block both sky and block light. Java combines
+half and double slabs under one identifier, so its identifier opacity
+zero loses both native distinctions. Half slabs now filter one level
+and type=double filters 15.
+
+The same target probe shows top/bottom stairs pass full skylight 15,
+water and leaves filter one level, and single slabs pass block light
+14 then 13. Preserve those measured scalar rules instead of importing
+Java face occlusion. Numeric propagation tests reproduce the native
+shaft and tunnel measurements; raw official probe output stays private.
 ---
  .../api/chunk/light/LightEngine.java          | 123 +++++++++++++++++-
+ .../protocol/data/BedrockMappingData.java     |  11 +-
  .../protocol/storage/ChunkTracker.java        | 122 +++++++++++++++--
  .../api/chunk/light/LightEngineTest.java      |  99 ++++++++++++++
+ .../data/BlockLightFilteringTest.java         |  88 +++++++++++++
  .../protocol/storage/ChunkTrackerTest.java    |  10 ++
- 4 files changed, 341 insertions(+), 13 deletions(-)
+ 6 files changed, 439 insertions(+), 14 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/chunk/light/LightEngineTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightFilteringTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/chunk/light/LightEngine.java b/src/main/java/net/raphimc/viabedrock/api/chunk/light/LightEngine.java
 index 7083d930..f4575d23 100644
@@ -153,6 +172,35 @@ index 7083d930..f4575d23 100644
                  continue;
              }
  
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java b/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java
+index 98d435ad..b3219510 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/data/BedrockMappingData.java
+@@ -1055,7 +1055,7 @@ public class BedrockMappingData extends MappingDataBase {
+             final String identifier = blockState.namespacedIdentifier();
+ 
+             final Integer opacity = opacityByIdentifier.get(identifier);
+-            this.javaBlockOpacity[stateId] = opacity != null ? opacity.byteValue() : (byte) 15;
++            this.javaBlockOpacity[stateId] = (byte) getStateLightOpacity(blockState, opacity != null ? opacity : 15);
+ 
+             // State dependent emission rules take precedence over the static values from the data asset
+             final int stateEmission = this.getStateLightEmission(blockState);
+@@ -1068,6 +1068,15 @@ public class BedrockMappingData extends MappingDataBase {
+         }
+     }
+ 
++    static int getStateLightOpacity(final BlockState blockState, final int defaultOpacity) {
++        // Bedrock single slabs diffuse skylight; doubles are opaque. Java uses the same block
++        // identifier for both, so identifier-only opacity cannot represent their filtering.
++        if (blockState.identifier().endsWith("_slab")) {
++            return blockState.hasProperty("type", "double") ? 15 : 1;
++        }
++        return defaultOpacity;
++    }
++
+     /**
+      * Light emission of a java block state that depends on its block state properties.
+      * Returns -1 if the block has no state dependent emission rule.
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 index fb7ffb20..001bbfab 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
@@ -433,6 +481,100 @@ index 00000000..775b9f8c
 +                region[4][sourceY >> 4][sourceIndex] = previousSourceState;
 +            }
 +        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightFilteringTest.java b/src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightFilteringTest.java
+new file mode 100644
+index 00000000..0a39b368
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightFilteringTest.java
+@@ -0,0 +1,88 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.data;
++
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.api.chunk.light.LightEngine;
++import net.raphimc.viabedrock.api.model.BlockState;
++import org.junit.jupiter.api.Test;
++
++import java.io.InputStreamReader;
++import java.nio.charset.StandardCharsets;
++import java.util.Arrays;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class BlockLightFilteringTest {
++
++    @Test
++    void matchesNativeSkyShaftAndBlockLightTunnelMeasurements() {
++        final var opacityData = JsonParser.parseReader(new InputStreamReader(BlockLightFilteringTest.class.getResourceAsStream(
++                "/assets/viabedrock/data/java/block_light_properties.json"), StandardCharsets.UTF_8)).getAsJsonObject().getAsJsonObject("opacity");
++        final List<Measurement> measurements = List.of(
++                new Measurement("minecraft:oak_slab[type=bottom]", 14, 14),
++                new Measurement("minecraft:oak_slab[type=top]", 14, 14),
++                new Measurement("minecraft:oak_slab[type=double]", 0, 0),
++                new Measurement("minecraft:smooth_stone_slab[type=bottom]", 14, 14),
++                new Measurement("minecraft:smooth_stone_slab[type=top]", 14, 14),
++                new Measurement("minecraft:smooth_stone_slab[type=double]", 0, 0),
++                new Measurement("minecraft:oak_stairs[half=bottom]", 15, 14),
++                new Measurement("minecraft:oak_stairs[half=top]", 15, 14),
++                new Measurement("minecraft:oak_leaves", 14, 14),
++                new Measurement("minecraft:water", 14, 14),
++                new Measurement("minecraft:glass", 15, 14),
++                new Measurement("minecraft:stone", 0, 0));
++        for (final Measurement measurement : measurements) {
++            final BlockState state = BlockState.fromString(measurement.state());
++            final var configured = opacityData.get(state.namespacedIdentifier());
++            final byte filter = (byte) BedrockMappingData.getStateLightOpacity(state, configured == null ? 15 : configured.getAsInt());
++            final byte[] opacity = {0, 15, 15, filter};
++            final byte[] emission = {0, 0, 15, 0};
++            final int[][][] region = opaqueRegion();
++            for (int y = 1; y < 32; y++) {
++                region[4][y >> 4][index(8, y & 15, 8)] = 0;
++            }
++            region[4][1][index(8, 4, 8)] = 3;
++            final var sky = LightEngine.computeCenterLight(region, 2, true, emission, opacity);
++            assertEquals(measurement.sky(), light(sky.skyLight(2), 8, 4, 8), measurement.state());
++            for (int distance = 1; distance <= 4; distance++) {
++                final int below = 20 - distance;
++                final int expected = measurement.sky() == 15 ? 15 : Math.max(0, measurement.sky() - distance);
++                assertEquals(expected, light(sky.skyLight((below >> 4) + 1), 8, below & 15, 8), measurement.state());
++            }
++
++            region[4][0][index(6, 8, 4)] = 2;
++            region[4][0][index(7, 8, 4)] = 3;
++            region[4][0][index(8, 8, 4)] = 0;
++            final var block = LightEngine.computeCenterLight(region, 2, false, emission, opacity);
++            assertEquals(measurement.block(), light(block.blockLight(1), 7, 8, 4), measurement.state());
++            assertEquals(Math.max(0, measurement.block() - 1), light(block.blockLight(1), 8, 8, 4), measurement.state());
++        }
++    }
++
++    private static int[][][] opaqueRegion() {
++        final int[][][] region = new int[9][2][4096];
++        for (final int[][] chunk : region) {
++            for (final int[] section : chunk) {
++                Arrays.fill(section, 1);
++            }
++        }
++        return region;
++    }
++
++    private static int index(final int x, final int y, final int z) {
++        return (y << 8) | (z << 4) | x;
++    }
++
++    private static int light(final byte[] data, final int x, final int y, final int z) {
++        return data == null ? 0 : (data[(y << 7) | (z << 3) | (x >> 1)] >>> ((x & 1) << 2)) & 15;
++    }
++
++    private record Measurement(String state, int sky, int block) {
 +    }
 +
 +}

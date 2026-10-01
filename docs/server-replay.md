@@ -84,7 +84,11 @@ Minehut reaches its age-selection form. This does not verify admission beyond th
 
 Custom block mapping and model checks cover the captured definitions. They do not prove every state or animation matches the official client. Legacy plain texture-array variation selection, nonuniform scaling of rotated cubes, and double-sided alpha-test back faces remain limitations. Custom blocks using carriers without fluid support also lose a second water layer. The Hive recording includes wet and dry `hive:cat_tail` plants, so a future fluid fix must preserve water by position.
 
-Custom light filters use the runtime network components. The Hive recording exposed 12,098 placements whose transparent or partial filters previously became fully opaque. This input error is fixed. Lighting still uses Java brightness and sunset curves. The propagation engine uses scalar opacity and does not test directional faces of partial blocks, which can allow light leaks.
+Custom light filters use the runtime network components. The Hive recording exposed 12,098 placements whose transparent or partial filters previously became fully opaque. This input error is fixed. The converter also preserves explicit `face_dimming: false` material settings. The Hive capture contains 136 such material instances across 131 custom block definitions.
+
+Native Bedrock 1.26.51.1 server measurements distinguish slab states. Single slabs reduce skylight, while double slabs block it. Stairs transmit skylight regardless of their upper or lower orientation. The light engine uses these native results rather than Java face-occlusion rules. The saved Hive world contains 17,078 half slabs and 11,795 double slabs.
+
+Lighting still uses Java brightness and sunset curves. The native gamma shader uses a different transform, but its slider mapping remains unverified. These fixes do not establish pixel-identical exposure, ambient occlusion, or custom world lighting.
 
 ## Limits
 
