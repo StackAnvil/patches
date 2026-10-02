@@ -163,24 +163,25 @@ define("water-flow", "blocks", async (player) => {
     expected: "The placed water flows into multiple blocks; inspect Java screenshots for the same flow." };
 });
 
-define("offhand-block-place", "blocks", async (player) => {
+define("offhand-ineligible-block", "equipment", async (player) => {
   await prepareArena(player);
   blockAt(player.dimension, 0, 1, 2).setType("minecraft:stone");
-  equipment(player).setEquipment(EquipmentSlot.Offhand, new ItemStack("minecraft:dirt", 2));
-  player.teleport(position(), { dimension: arena.dimension, facingLocation: position(0.5, 1.5, 2.5) });
+  const gear = equipment(player);
+  gear.setEquipment(EquipmentSlot.Offhand, new ItemStack("minecraft:dirt", 2));
   await nextTick();
-  const equipped = equipment(player).getEquipment(EquipmentSlot.Offhand);
-  if (equipped?.typeId !== "minecraft:dirt") throw new Error(`Bedrock rejected offhand dirt: ${equipped?.typeId ?? "empty"}`);
-  return {};
-}, (player) => {
+  const rejected = !gear.getEquipment(EquipmentSlot.Offhand);
+  if (!rejected) throw new Error("This native server accepted ordinary dirt in its offhand slot.");
+  giveSelected(player, "minecraft:dirt", 2);
+  return { nativeRejected: rejected };
+}, (player, fixture) => {
+  const hand = inventory(player).getItem(player.selectedSlotIndex);
   const neighbors = [[-1, 1, 2], [1, 1, 2], [0, 0, 2], [0, 2, 2], [0, 1, 1], [0, 1, 3]];
   const placed = neighbors.filter(([x, y, z]) => blockAt(player.dimension, x, y, z).typeId === "minecraft:dirt");
-  const offhand = equipment(player).getEquipment(EquipmentSlot.Offhand);
-  return { passed: placed.length === 0 && offhand?.typeId === "minecraft:dirt" && offhand.amount === 2
-      && !inventory(player).getItem(player.selectedSlotIndex)
-      && blockAt(player.dimension, 0, 1, 2).typeId === "minecraft:stone",
-    observed: { placed, offhand: offhand?.typeId, amount: offhand?.amount },
-    expected: "Bedrock leaves offhand dirt unused with an empty main hand." };
+  const observed = { nativeRejected: fixture.nativeRejected, offhand: equipment(player).getEquipment(EquipmentSlot.Offhand)?.typeId,
+    mainhand: hand?.typeId, amount: hand?.amount, total: countItem(inventory(player), "minecraft:dirt"), placed };
+  return { passed: observed.nativeRejected && !observed.offhand && observed.mainhand === "minecraft:dirt"
+      && observed.amount === 2 && observed.total === 2 && placed.length === 0,
+    observed, expected: "Native Bedrock rejects offhand dirt; Java restores the unchanged mainhand and empty offhand." };
 });
 
 define("offhand-shield-use", "equipment", async (player) => {

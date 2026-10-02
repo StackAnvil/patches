@@ -11,14 +11,19 @@ export const gameplayCaseIds = [
   "creative-select", "creative-replace", "creative-replace-main", "creative-replace-twice", "equip-helmet", "equip-offhand", "offhand-remove", "eat-golden-apple", "entity-attack", "entity-name",
   "map-hold", "command-time", "command-completion", "command-denied", "respawn", "dimension-change",
   "chest-transfer", "chest-rapid-transfer", "chest-pickup-all", "lab-table-then-chest", "chest-boat-transfer", "chest-minecart-transfer", "furnace-quick-move-log", "furnace-quick-move-coal", "enchant-basic",
-  "offhand-block-place", "offhand-shield-use", "offhand-elytra-rocket", "mainhand-elytra-rocket", "boat-forward", "minecart-dismount",
+  "offhand-ineligible-block", "offhand-shield-use", "offhand-elytra-rocket", "mainhand-elytra-rocket", "boat-forward", "minecart-dismount",
   "shield-projectile-baseline", "shield-projectile-block",
   "crafting-manual-sticks", "crafting-book-sticks", "crafting-bulk-sticks",
 ] as const;
 
-export const allGameplayCaseIds = [...gameplayCaseIds, ...geyserCaseIds] as const;
+export const allGameplayCaseIds = [...gameplayCaseIds, ...geyserCaseIds, "offhand-block-place"] as const;
 export type GameplayCaseId = typeof allGameplayCaseIds[number];
 export type GameplayPhase = "prepare" | "start" | "verify" | "invalidate";
+
+export function gameplayCasesForBackend(geyser: boolean): GameplayCaseId[] {
+  return geyser ? gameplayCaseIds.filter((id) => id !== "lab-table-then-chest")
+    .map((id) => id === "offhand-ineligible-block" ? "offhand-block-place" : id) : [...gameplayCaseIds];
+}
 
 export interface GameplayEvent {
   id: string;
@@ -100,6 +105,31 @@ async function javaWindow(ui: Ui): Promise<{ width: number; height: number }> {
   return window;
 }
 
+/** The probe fixes GUI scale to two and prepares hotbar slot zero before input. */
+export async function waitForJavaWorldHud(ui: Ui, alive: () => boolean, timeoutMs = 20_000, pollMs = 100): Promise<void> {
+  const window = await javaWindow(ui);
+  const left = (Math.floor(window.width / 2 / 2) - 92) * 2;
+  const top = (Math.floor(window.height / 2) - 23) * 2;
+  // Opaque pixels from Java 26.3's hotbar_selection sprite. They establish that
+  // the actual world HUD is drawn, rather than a dimension loading/menu screen.
+  const samples = [
+    { x: 3, y: 1, rgb: [246, 246, 246] },
+    { x: 3, y: 2, rgb: [161, 178, 157] },
+    { x: 1, y: 7, rgb: [213, 232, 208] },
+  ];
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!alive()) throw new Error("A game process stopped before Java's world HUD became visible.");
+    const pixels = await Promise.all(samples.map(async ({ x, y }) => (await ui([
+      "ui", "pixel", String((left + x * 2 + 0.5) / (window.width - 1)), String((top + y * 2 + 0.5) / (window.height - 1)), "--client", "java",
+    ])).trim().split(/\s+/).map(Number)));
+    if (pixels.every((pixel, index) => pixel.length === 3
+      && pixel.every((channel, channelIndex) => Math.abs(channel - samples[index]!.rgb[channelIndex]!) <= 2))) return;
+    await Bun.sleep(pollMs);
+  }
+  throw new Error(`Java's world HUD did not become visible within ${timeoutMs / 1000}s.`);
+}
+
 async function javaDeathScreenVisible(ui: Ui): Promise<boolean> {
   const pixel = async (x: number, y: number) => (await ui([
     "ui", "pixel", String(x), String(y), "--client", "java",
@@ -179,6 +209,54 @@ async function removeOffhandToInventory(ui: Ui): Promise<void> {
   await clickGui(ui, window, 176, 166, 16, 92);
   await Bun.sleep(500);
   await uiKey(ui, "Escape");
+}
+
+async function rejectIneligibleOffhandBlock(ui: Ui): Promise<void> {
+  const window = await javaWindow(ui);
+  const slots = [[80, 65], [85, 70], [90, 75], [11, 145], [16, 150], [21, 155],
+    [150, 15], [150, 162], [10, 162]] as const;
+  const readSlots = () => Promise.all(slots.map(async ([x, y]) => {
+    const left = (window.width - 176 * 2) / 2;
+    const top = (window.height - 166 * 2) / 2;
+    return (await ui(["ui", "pixel", String((left + x * 2 + 0.5) / (window.width - 1)),
+      String((top + y * 2 + 0.5) / (window.height - 1)), "--client", "java"])).trim().split(/\s+/).map(Number);
+  }));
+  await uiKey(ui, "e");
+  const deadline = Date.now() + 10_000;
+  let baseline: number[][] | undefined;
+  while (Date.now() < deadline) {
+    const pixels = await readSlots();
+    // Observe the actual inventory panel and empty offhand before accepting
+    // colored dirt pixels in its main hotbar item as the reference snapshot.
+    const visible = pixels.slice(6).every((pixel) => pixel.length === 3
+      && pixel.every((channel) => Math.abs(channel - 198) <= 2));
+    const empty = pixels.slice(0, 3).every((pixel) => pixel.length === 3
+      && Math.max(...pixel) - Math.min(...pixel) <= 2);
+    if (visible && empty && pixels.slice(3, 6).some((pixel) => Math.max(...pixel) - Math.min(...pixel) > 15)) {
+      baseline = pixels.slice(0, 6);
+      break;
+    }
+    await Bun.sleep(100);
+  }
+  if (!baseline) throw new Error("Java did not render the fixture's mainhand dirt in its inventory.");
+  await uiKey(ui, "Escape");
+  await uiKey(ui, "f");
+  await uiKey(ui, "e");
+  let synchronized = false;
+  const syncDeadline = Date.now() + 10_000;
+  while (Date.now() < syncDeadline) {
+    const pixels = await readSlots();
+    const visible = pixels.slice(6).every((pixel) => pixel.length === 3
+      && pixel.every((channel) => Math.abs(channel - 198) <= 2));
+    if (visible && pixels.slice(0, 6).every((pixel, index) => pixel.length === 3
+      && pixel.every((channel, component) => Math.abs(channel - baseline![index]![component]!) <= 2))) {
+      synchronized = true;
+      break;
+    }
+    await Bun.sleep(100);
+  }
+  await uiKey(ui, "Escape");
+  if (!synchronized) throw new Error("Java retained a ghost offhand item or lost its mainhand after the rejected swap.");
 }
 
 async function openChest(ui: Ui, sneak = false): Promise<{ width: number; height: number }> {
@@ -293,6 +371,9 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
     case "entity-name":
     case "map-hold":
       await uiMouse(ui, "right");
+      return;
+    case "offhand-ineligible-block":
+      await rejectIneligibleOffhandBlock(ui);
       return;
     case "chest-transfer":
     case "custom-item-transfer":
@@ -494,7 +575,7 @@ export async function runGameplayCases(ids: readonly GameplayCaseId[], options: 
       await respawnJavaClient(options.ui);
       options.server.stdin?.write(`scriptevent vbprobe:prepare ${id} ${run}\n`);
       await waitForGameplayEvent(id, run, "prepare", log, alive);
-      await Bun.sleep(500);
+      await waitForJavaWorldHud(options.ui, alive);
       screenshots.push(await options.ui(["ui", "screenshot", `gameplay-${id}-${run}-before`, "--client", "java",
         "--output-dir", options.artifactDir]));
       await driveGameplay(id, options.ui, async () => {

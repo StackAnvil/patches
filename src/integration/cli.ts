@@ -12,7 +12,7 @@ import { activeDisplay, displayEnv, ensureDisplay, stopDisplay } from "../lab/di
 import { root } from "../model.ts";
 import { artifact, installPrism } from "../prism.ts";
 import { installEntityProbe, waitForProbe } from "./entity-probe.ts";
-import { allGameplayCaseIds, gameplayCaseIds, installProbeGuiScale, runGameplayCases, type GameplayCaseId } from "./gameplay-probe.ts";
+import { allGameplayCaseIds, gameplayCasesForBackend, installProbeGuiScale, runGameplayCases, type GameplayCaseId } from "./gameplay-probe.ts";
 import { convertedGeyserTexturesMatch, geyserBedrockVersion, geyserCaseIds, geyserEntityUpdatesMatch, installJavaProbe } from "./geyser.ts";
 import { convertedPackCount, convertedTextureMatches, installResourceProbe } from "./resource-probe.ts";
 import { connectionFailure, waitForJoin, type JoinRoute } from "./join.ts";
@@ -486,10 +486,16 @@ async function main(): Promise<void> {
   const gameplayCases: GameplayCaseId[] = [...new Set([
     ...(geyserProbe ? geyserCaseIds : []),
     ...(gameplayInput ? gameplayInput.split(",") as GameplayCaseId[]
-      : gameplayProbe ? gameplayCaseIds.filter((id) => !geyserRoute || id !== "lab-table-then-chest") : []),
+      : gameplayProbe ? gameplayCasesForBackend(geyserRoute) : []),
     ...(negativeControls ? ["chest-transfer" as const] : []),
   ])];
   if (gameplayCases.some((id) => !allGameplayCaseIds.includes(id))) throw new Error(`Unknown gameplay case. Use: ${allGameplayCaseIds.join(", ")}.`);
+  if (gameplayCases.includes("offhand-block-place") && !geyserRoute) {
+    throw new Error("Delivered offhand dirt requires the java-geyser backend; use offhand-ineligible-block on java-bedrock.");
+  }
+  if (gameplayCases.includes("offhand-ineligible-block") && geyserRoute) {
+    throw new Error("Offhand item eligibility requires the java-bedrock backend; use offhand-block-place on java-geyser.");
+  }
   if ((geyserProbe || negativeControls || gameplayCases.some((id) => geyserCaseIds.includes(id as typeof geyserCaseIds[number]))) && !geyserRoute) {
     throw new Error("Geyser cases and negative controls require --route java-geyser.");
   }
