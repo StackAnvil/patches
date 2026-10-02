@@ -916,3 +916,29 @@ Cold-load start timing, live frame timing, retained component lifetime, complete
 
 
 All 387 fixture-enabled tests pass across 78 suites with no failures, errors, or skips. This includes all 84 particle tests. Fresh package licensing, extraction, and cache reuse pass. All 16 patches replay. The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
+
+
+## Publish particle counts at native batch boundaries
+
+The [Molang query reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/queryfunctions?view=minecraft-bedrock-stable) describes effect counts by particle type and total counts across the world. Native Bedrock 1.26.51.1 supplies the publication timing used here.
+
+The registered callbacks are `14065a9e0`, `14065aa60`, `14065aae0`, and `14065ab60`. They dispatch through emitter slots `0x88`, `0x90`, `0x98`, and `0xa0`. The effect emitter reader uses the manager's live identifier map. The total emitter reader uses its registered vector size. The particle readers use the effect map and total published after the last completed update batch.
+
+Register new emitters before child initialization. Remove dead emitters during pruning before the batch. Keep particle counts unchanged throughout updates. Sample each emitter's population immediately after its update, then publish all samples together. New children enter particle counts when they receive their own update. A later callback can add particles to an earlier emitter without changing that earlier sample.
+
+The constructor initializes the query context's emitter owner to zero before the first restart. Initial creation expressions therefore see zero counts. A refreshed owner supplies live counts during later loop restarts. Preserve these bindings through query refreshes and particle copies. Matching definition identifiers share effect counts across resource libraries. Stop clears registration and published counts.
+
+Independent execution supplies 84 prepared scalar cases and 672 callback calls. Cases cover missing contexts, matching and missing effect identifiers, inline and heap names, repeated reads after count changes, and unsigned 64-bit conversion to float32. Native callback dispatch, key lookup, cache reads, and conversion execute. Byte comparison is supplied.
+
+Another probe executes four manager frames with 36 count receipts around updates, child initialization, manual births, removal, and publication. Native expiry/population getters, count readers, pruning, captured update batches, accumulation, and publication execute. Platform clocks, ambient grid access, map allocation/access helpers, cleanup, and emitter identity/update/destructor callbacks are supplied. Registration increments and prepared population changes come from supplied callbacks. These checks exclude real factory construction, emitter updates, Molang, and visible output.
+
+Two prepared restart cases execute native component dispatch and read all four native count callbacks from the creation expression's context. Resource and actor access and the expression callback are supplied. Random variable registration is skipped; lifetime and rate vectors are empty. Prepared owner states follow the inspected constructor and refresh writes. These cases exclude full constructor execution and real expression evaluation.
+
+Production tests compare native publication receipts through the shared batch implementation and real Molang bindings. Additional emitter tests cover zero counts on initial creation, bound loop restarts, child initialization, particle copies, refreshed queries, missing effect keys, and clearing counters.
+
+Client frame gates, platform clocks, complete expression context, other world particle sources, and visible playback remain unverified. Full particle and skin parity remains incomplete. Executables, licenses, assets, probes, and fixtures stay private.
+
+
+All 391 fixture-enabled tests pass across 79 suites with no failures, errors, or skips. This includes all 88 particle tests. Fresh package licensing, extraction, and cache reuse pass. All 16 patches replay.
+
+The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
