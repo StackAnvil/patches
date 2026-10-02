@@ -16,6 +16,7 @@ public final class ReplayCamera {
     private ReplayCamera() { }
 
     public static void tick(Object minecraft) {
+        ReplayResourcePacks.tick(minecraft);
         try {
             if (!checked) {
                 directory = Path.of(Files.readString(Path.of("stackanvil-replay-directory.txt")).trim());

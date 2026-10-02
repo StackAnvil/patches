@@ -354,9 +354,6 @@ async function main(): Promise<void> {
     // Give verified manual setup its own bound without shortening the recorded scene.
     let waitingForNativeConnection = client === "native";
     let until = Date.now() + (waitingForNativeConnection ? 300_000 : seconds * 1000);
-    let accepted = false;
-    let packReadyAt: number | undefined;
-    let lastPackClick = 0;
     while (!stopped && Date.now() < until && alive(gamePid) && (!child || alive(child.pid))) {
       if (waitingForNativeConnection && existsSync(join(directory, "packets.sbr"))) {
         waitingForNativeConnection = false;
@@ -366,11 +363,6 @@ async function main(): Promise<void> {
       const log = await logText(game.log);
       if (client === "native" && /Native connection failed:|Native capture failed:|StackAnvil native capture connection closed/.test(await logText(proxyLog))) break;
       if (/Mixin transformation .* failed|Client disconnected with reason:|handlerAdded\(\) has thrown|(?:Unreported|Reported) exception thrown!|A fatal error has been detected by the Java Runtime Environment/.test(log)) break;
-      accepted ||= /Reloading ResourceManager:.*server\//.test(log);
-      if (/All resource packs have been loaded/.test(client === "addon" ? log : await logText(proxyLog))) packReadyAt ??= Date.now();
-      if (client !== "native" && !accepted && packReadyAt && Date.now() - packReadyAt > 3500 && Date.now() - lastPackClick > 2500) {
-        await ui(["click", "0.32", "0.69"], directory); lastPackClick = Date.now();
-      }
       await Bun.sleep(500);
     }
     await writeFile(join(directory, "client.log"), await logText(game.log), { mode: 0o600 });
