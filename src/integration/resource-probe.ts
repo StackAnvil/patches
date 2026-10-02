@@ -1,6 +1,7 @@
 import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { root } from "../model.ts";
+import { registerWorldPack } from "./world-packs.ts";
 
 const source = join(root, "test-packs", "resource-probe");
 const packSource = join(source, "resource_pack");
@@ -28,17 +29,15 @@ export async function installResourceProbe(serverHome: string, worldName: string
 
   const world = join(serverHome, "worlds", worldName);
   await mkdir(world, { recursive: true });
-  await writeFile(join(world, "world_resource_packs.json"), `${JSON.stringify([
-    { pack_id: manifest.header.uuid, version: manifest.header.version },
-  ], null, 2)}\n`);
+  await registerWorldPack(join(world, "world_resource_packs.json"),
+    { pack_id: manifest.header.uuid, version: manifest.header.version });
 
   const behaviorSource = join(source, "behavior_pack");
   const behaviorManifest = JSON.parse(await readFile(join(behaviorSource, "manifest.json"), "utf8")) as PackManifest;
   const behavior = join(serverHome, "behavior_packs", "stackanvil-resource-probe");
   await cp(behaviorSource, behavior, { recursive: true });
-  await writeFile(join(world, "world_behavior_packs.json"), `${JSON.stringify([
-    { pack_id: behaviorManifest.header.uuid, version: behaviorManifest.header.version },
-  ], null, 2)}\n`);
+  await registerWorldPack(join(world, "world_behavior_packs.json"),
+    { pack_id: behaviorManifest.header.uuid, version: behaviorManifest.header.version });
 }
 
 export function convertedPackCount(log: string): number {

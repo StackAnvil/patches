@@ -1,6 +1,7 @@
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { root } from "../model.ts";
+import { registerWorldPack } from "./world-packs.ts";
 
 const packRoot = join(root, "test-packs", "entity-probe");
 const packSource = join(packRoot, "behavior_pack");
@@ -36,9 +37,8 @@ export async function installEntityProbe(serverHome: string, worldName: string):
   await buildEntityProbe(join(serverHome, "behavior_packs", packName));
   const world = join(serverHome, "worlds", worldName);
   await mkdir(world, { recursive: true });
-  await writeFile(join(world, "world_behavior_packs.json"), JSON.stringify([
-    { pack_id: manifest.header.uuid, version: manifest.header.version },
-  ], null, 2) + "\n");
+  await registerWorldPack(join(world, "world_behavior_packs.json"),
+    { pack_id: manifest.header.uuid, version: manifest.header.version });
 }
 
 export interface ProbeResult {
