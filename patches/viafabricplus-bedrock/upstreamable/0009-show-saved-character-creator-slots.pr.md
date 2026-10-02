@@ -690,3 +690,17 @@ Parse successful and failed offer arrays and opaque transaction IDs. Existing sy
 A live asynchronous production probe synchronizes ten offers with no failures and no new transactions. It preserves every saved appearance and existing receipt key. Subsequent production catalog loads return two owned classic packs and the persona emotes, including the earlier acquired Shadow Boxing item. Interactive screen behavior and paid acquisition remain unverified.
 
 All 316 fixture-enabled add-on tests pass with no failures, errors, or skips. Five new cases cover the redemption payload, invalid credentials, partial results, malformed results, and a private native request/response fixture. Fresh licensed-package extraction and cache reuse also pass. Captures, credentials, receipts, account snapshots, and probes stay private.
+
+## Particle render curves
+
+Support all four documented curve types: linear, Bezier, Catmull-Rom, and Bezier chains. [Microsoft's curve reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecurves) describes their definitions and render variables. The Bedrock 1.26.51.1 parser and evaluators establish the target behavior.
+
+Evaluate curves before each particle's render expressions. Preserve independent variables, dynamic nodes, curve dependencies, and native node evaluation order. Empty chains leave registered values unchanged. Clamp horizontal ranges to float epsilon. Chain control offsets divide slopes by three without scaling by segment duration. Preserve the native grouping of float multiplications and additions near boundaries.
+
+Independent execution supplies 196 evaluator cases and 90 range and variable publication cases. Production matches every result exactly. The harness supplies constant Molang nodes, parsed chain segments, imported floor, and variable lookup/write boundaries. Parsing, variable registration, render scheduling, and visible comparisons remain outside these fixtures.
+
+Four additional executions record native Molang node access. Linear reads the right node before the left. Bezier reads all four from last to first, including a clamped input. Catmull-Rom reads its four segment nodes in order. The Java evaluator preserves these orders for expressions with side effects.
+
+Five targeted tests cover native comparisons, particle state isolation, render callback order, dynamic ranges, expression dependencies, and malformed definitions. These tests exercise the emitter's visual output, but do not establish native visible parity. Raw binaries, decompilation, fixtures, and probes remain private.
+
+All 321 fixture-enabled add-on tests pass with no failures, errors, or skips after replaying all 16 patches. Fresh licensed-package extraction and cache reuse also pass. The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.

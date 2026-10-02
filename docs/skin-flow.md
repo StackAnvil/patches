@@ -388,7 +388,11 @@ World attachments use interpolated actor position and body yaw with the current 
 
 Another 144 native locator cases verify rotation composition and final axis normalization. The probe supplies resolved bone matrices, stored radians, preprocessed offsets, and unit conversion. Geometry parsing, actor transforms, and world conversion remain outside these fixtures.
 
-Other facing modes, manual emission, curves, and nested effect events remain incomplete. Native comparisons still need to establish render interpolation, random and variable registration, tint quantization, and visible scale. These component tests do not establish complete particle parity.
+Particle curves now support linear, Bezier, Catmull-Rom, and Bezier-chain definitions. Each particle evaluates curves before its render expressions. Dynamic nodes retain the target evaluation order. Empty chains leave existing variables unchanged. Horizontal ranges clamp to float epsilon. Chain slope offsets divide by three without scaling by segment duration.
+
+Independent execution of Bedrock 1.26.51.1 supplies 196 evaluator cases and 90 range and publication cases. Production matches their float32 results exactly. The harness supplies constant Molang nodes, parsed chain segments, imported floor, and variable access boundaries. These cases exclude parsing, variable registration, render scheduling, and visible comparisons. Runtime tests cover separate particle variables, repeated render callbacks, dynamic ranges, curve dependencies, and malformed definitions.
+
+Other facing modes, manual emission, and nested effect events remain incomplete. Native comparisons still need to establish render interpolation, random and variable registration, tint quantization, and visible scale. These component tests do not establish complete particle parity.
 
 ### Missing features
 
@@ -409,6 +413,6 @@ The loader now uses the matching 68-alias player definition. Its added tracks in
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. This establishes visual presence, not complete timing or format parity.
 - Verify fresh interactive Store sign-in and helper runtime behavior on Windows and macOS. Linux acquisition, license decryption, extraction, and cache reuse already pass.
 
-The replayed full stack builds, and all 316 fixture-enabled add-on tests pass with no failures or skips. The rebuilt client also passes 13,578 native curve comparisons and a conditional-assignment check. Earlier Java runtime probes passed 1,324 checks across previously implemented paths. The new overlay probe passes 722 checks for the updated graph and renderer paths. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
+The replayed full stack builds, and all 321 fixture-enabled add-on tests pass with no failures or skips. The rebuilt client also passes 13,578 native curve comparisons and a conditional-assignment check. Earlier Java runtime probes passed 1,324 checks across previously implemented paths. The new overlay probe passes 722 checks for the updated graph and renderer paths. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
 
 Keep login JWTs, receipts, content keys, raw flows, screenshots, player textures, and account data private under `.stackanvil/`.
