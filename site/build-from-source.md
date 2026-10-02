@@ -6,8 +6,15 @@ description: Build and inspect a StackAnvil patch stack locally.
 ---
 
 # Build from source
+{: .no_toc }
 
 This guide is for contributors and developers. If you want to play, follow the [player guide]({{ '/getting-started/' | relative_url }}) to set up ViaProxy or a Fabric client with ViaFabricPlus and the Bedrock add-on.
+
+## On this page
+{: .no_toc .text-delta }
+
+- TOC
+{:toc}
 
 ## Requirements
 

@@ -6,6 +6,7 @@ description: How StackAnvil applies, edits, and exports focused patches.
 ---
 
 # Patch workflow
+{: .no_toc }
 
 Each patch target has an ordered `series.json`. StackAnvil applies `setup`, then `upstreamable`, then `deferred` patches.
 
@@ -16,6 +17,12 @@ Each patch target has an ordered `series.json`. StackAnvil applies `setup`, then
 | Deferred | Work another upstream PR already covers | No |
 
 The full build uses all three groups. The upstream PR checkout starts from clean upstream and applies only the first upstreamable patch.
+
+## On this page
+{: .no_toc .text-delta }
+
+- TOC
+{:toc}
 
 ## Edit an existing patch
 

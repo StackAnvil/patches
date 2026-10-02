@@ -6,6 +6,7 @@ description: Four patch targets and the pinned upstream ViaFabricPlus build.
 ---
 
 # Projects
+{: .no_toc }
 
 StackAnvil stores patch files in this repository. Generated source checkouts stay under `.worktrees/` on your machine.
 
@@ -15,6 +16,12 @@ StackAnvil stores patch files in this repository. Generated source checkouts sta
 | ViaFabricPlus Bedrock add-on | [ViaVersionAddons/viafabricplus-bedrock](https://github.com/ViaVersionAddons/viafabricplus-bedrock) | 25 | `bun run build viafabricplus-bedrock` |
 | CubeConverter | [oryxel1/CubeConverter](https://github.com/oryxel1/CubeConverter/tree/vv-json) | 17 | `bun run build cubeconverter` |
 | ViaProxy | [ViaVersion/ViaProxy](https://github.com/ViaVersion/ViaProxy) | 25 | `bun run build viaproxy` |
+
+## On this page
+{: .no_toc .text-delta }
+
+- TOC
+{:toc}
 
 ## ViaBedrock
 
