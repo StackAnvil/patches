@@ -1,4 +1,4 @@
-From 940dc973ae28d917d38c0b4ed899146ea886e443 Mon Sep 17 00:00:00 2001
+From 5f87dff79690781d564bee6425fc5f54f436a135 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1009,6 +1009,16 @@ births and include manual children in the current render extraction.
 The 48 target dispatcher/context receipts verify initialization order.
 Native cold-load timing, first update ordering for new emitters, live
 component lifetime, and visible playback still need comparisons.
+
+Match the target particle manager's update batch membership. Prune dead
+emitters before batch capture, replace each removed entry with the last
+entry, and retain emitters that die during the update until a later batch.
+Children appended by update callbacks wait for the next captured batch.
+
+The complete manager and its native expiry/population getters execute in
+16 prepared schedules covering 80 frames. Platform clocks, ambient grid,
+metrics, and emitter identity/update/destructor callbacks are supplied.
+Live timing, real native emitter updates, and visible playback remain open.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   54 +
@@ -1057,11 +1067,12 @@ component lifetime, and visible playback still need comparisons.
  .../appearance/BedrockParticleEffect.java     |  628 ++
  .../appearance/BedrockParticleEvents.java     |  170 +
  .../appearance/BedrockParticleFacing.java     |  151 +
+ .../appearance/BedrockParticleFrames.java     |   27 +
  .../appearance/BedrockParticleGraph.java      |   44 +
  .../appearance/BedrockParticleLayouts.java    |  413 +
  .../appearance/BedrockParticleLifetime.java   |  100 +
  .../BedrockParticleLifetimeEvents.java        |   64 +
- .../appearance/BedrockParticlePlayback.java   |  358 +
+ .../appearance/BedrockParticlePlayback.java   |  357 +
  .../appearance/BedrockParticleQueries.java    |   37 +
  .../appearance/BedrockParticleShape.java      |  165 +
  .../appearance/BedrockParticleSpace.java      |   43 +
@@ -1149,6 +1160,7 @@ component lifetime, and visible playback still need comparisons.
  .../appearance/BedrockParticleEffectTest.java |  218 +
  .../appearance/BedrockParticleEventsTest.java |  299 +
  .../appearance/BedrockParticleFacingTest.java |  153 +
+ .../appearance/BedrockParticleFramesTest.java |  112 +
  .../appearance/BedrockParticleGraphTest.java  |   74 +
  .../BedrockParticleLifetimeTest.java          |  146 +
  .../BedrockParticleQueriesTest.java           |   99 +
@@ -1174,7 +1186,7 @@ component lifetime, and visible playback still need comparisons.
  .../render/BedrockModelLocatorsTest.java      |  112 +
  .../render/BedrockPlayerActorStateTest.java   |  129 +
  .../render/BedrockPlayerModelTest.java        |  100 +
- 164 files changed, 37349 insertions(+), 92 deletions(-)
+ 166 files changed, 37487 insertions(+), 92 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -1216,6 +1228,7 @@ component lifetime, and visible playback still need comparisons.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffect.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEvents.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFacing.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFrames.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleGraph.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleLayouts.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleLifetime.java
@@ -1298,6 +1311,7 @@ component lifetime, and visible playback still need comparisons.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffectTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEventsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFacingTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFramesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleGraphTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleLifetimeTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleQueriesTest.java
@@ -19258,6 +19272,39 @@ index 0000000..7767a3f
 +        return length < MIN_DIRECTION ? value.zero() : value.div(length);
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFrames.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFrames.java
+new file mode 100644
+index 0000000..da20625
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFrames.java
+@@ -0,0 +1,27 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import java.util.List;
++import java.util.function.Predicate;
++
++/** Removes dead emitters before capturing the native manager's update batch. */
++final class BedrockParticleFrames {
++    private BedrockParticleFrames() {}
++
++    static <T> List<T> batch(final List<T> emitters, final Predicate<T> alive) {
++        int index = 0;
++        while (index < emitters.size()) {
++            if (alive.test(emitters.get(index))) {
++                index++;
++            } else {
++                final T last = emitters.removeLast();
++                if (index < emitters.size()) emitters.set(index, last);
++            }
++        }
++        return List.copyOf(emitters);
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleGraph.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleGraph.java
 new file mode 100644
 index 0000000..30c4da6
@@ -19905,10 +19952,10 @@ index 0000000..99dc06a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePlayback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePlayback.java
 new file mode 100644
-index 0000000..8000974
+index 0000000..110cafc
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePlayback.java
-@@ -0,0 +1,358 @@
+@@ -0,0 +1,357 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -20179,14 +20226,13 @@ index 0000000..8000974
 +        };
 +        final var cameraMatrix = new BedrockParticleAttachment.Matrix(
 +                new Matrix4f().rotation(camera.rotation()).get(new float[16]));
-+        // Inline child creation may append emitters. New emitters start updating on the next frame.
-+        for (final Playing playing : List.copyOf(EMITTERS)) {
++        // Prune before capturing the batch. Children appended during updates wait for the next batch.
++        for (final Playing playing : BedrockParticleFrames.batch(EMITTERS, playing -> playing.emitter.alive())) {
 +            final var attachment = playing.attachment == null ? null : playing.attachment.get();
 +            playing.emitter.queryContext(attachment, camera.position());
 +            playing.emitter.advance(elapsed, BedrockParticlePlayback::available, attachment, terrain);
 +            for (final String message : playing.emitter.drainLogs())
 +                ViaFabricPlusBedrock.impl().logger().debug("Bedrock particle {}: {}", playing.key.event, message);
-+            if (!playing.emitter.alive()) EMITTERS.remove(playing);
 +        }
 +        // Manual child particles are visible in this frame even though new emitters have not advanced yet.
 +        for (final Playing playing : EMITTERS) {
@@ -35520,6 +35566,124 @@ index 0000000..54b3b63
 +    }
 +    private static void assertVector(final JsonArray expected, final Vector3f actual, final String context) {
 +        for (int axis = 0; axis < 3; axis++) assertEquals(expected.get(axis).getAsFloat(), actual.get(axis), 1e-6F, context);
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFramesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFramesTest.java
+new file mode 100644
+index 0000000..3ed65e9
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleFramesTest.java
+@@ -0,0 +1,112 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++import net.minecraft.world.phys.Vec3;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Random;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockParticleFramesTest {
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_PARTICLE_REFERENCE", matches = ".+")
++    void matchesNativeBatchesRemovalAndChildrenAcrossManagerFrames() throws Exception {
++        final var fixture = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_PARTICLE_REFERENCE"),
++                "native-particle-manager-update-result.json"))).getAsJsonObject();
++        int frames = 0;
++        for (final var entry : fixture.getAsJsonArray("cases")) {
++            final var row = entry.getAsJsonObject();
++            final List<Node> emitters = new ArrayList<>();
++            final Map<Integer, Node> nodes = new HashMap<>();
++            for (int id = 0; id < 3; id++) {
++                final Node node = new Node(id);
++                emitters.add(node);
++                nodes.put(id, node);
++            }
++            for (final var frame : row.getAsJsonArray("steps")) {
++                frames++;
++                final var step = frame.getAsJsonObject();
++                final List<Receipt> actual = new ArrayList<>();
++                // Native initialization and skip gates select whether a batch runs. This test compares batch semantics.
++                if (step.get("index").getAsInt() > 0 && !step.get("skip").getAsBoolean()) {
++                    final var batch = BedrockParticleFrames.batch(emitters, node -> {
++                        if (!node.alive) actual.add(new Receipt("destroyed", node.id));
++                        return node.alive;
++                    });
++                    for (final Node node : batch) {
++                        actual.add(new Receipt("update", node.id));
++                        node.updates++;
++                        if (node.id == row.get("spawner").getAsInt() && node.updates == 1) {
++                            for (int id = 10; id < 10 + row.get("children").getAsInt(); id++) {
++                                final Node child = new Node(id);
++                                emitters.add(child);
++                                nodes.put(id, child);
++                                actual.add(new Receipt("born", id));
++                            }
++                        }
++                        if (node.id == row.get("expires").getAsInt() && node.updates == 1) {
++                            node.alive = false;
++                            node.size = 0;
++                            actual.add(new Receipt("expired", node.id));
++                        }
++                    }
++                }
++                final List<Receipt> expected = new ArrayList<>();
++                for (final var receipt : step.getAsJsonArray("events")) {
++                    final var event = receipt.getAsJsonObject();
++                    for (final String kind : List.of("update", "born", "expired", "destroyed"))
++                        if (event.has(kind)) expected.add(new Receipt(kind, event.get(kind).getAsInt()));
++                }
++                assertEquals(expected, actual, step.toString());
++                assertEquals(step.getAsJsonArray("members").asList().stream().map(value -> value.getAsInt()).toList(),
++                        emitters.stream().map(node -> node.id).toList());
++                for (final var expectedSize : step.getAsJsonObject("sizes").entrySet())
++                    assertEquals(expectedSize.getValue().getAsInt(), nodes.get(Integer.parseInt(expectedSize.getKey())).size);
++                for (final var expectedUpdates : step.getAsJsonObject("updates").entrySet())
++                    assertEquals(expectedUpdates.getValue().getAsInt(), nodes.get(Integer.parseInt(expectedUpdates.getKey())).updates);
++            }
++        }
++        assertEquals(80, frames);
++    }
++
++    @Test
++    void retainsEmittersThatDieDuringTheirUpdateUntilTheNextBatch() throws Exception {
++        final var document = BedrockParticleEffectTest.burst();
++        final var components = document.getAsJsonObject("particle_effect").getAsJsonObject("components");
++        components.getAsJsonObject("minecraft:emitter_rate_instant").addProperty("num_particles", 0);
++        components.getAsJsonObject("minecraft:emitter_lifetime_once").addProperty("active_time", 0);
++        final var emitter = BedrockParticleEffect.read(document).emitter(new BedrockMolang(), new Random(1), Vec3.ZERO);
++        final var emitters = new ArrayList<>(List.of(emitter));
++        final var first = BedrockParticleFrames.batch(emitters, BedrockParticleEffect.Emitter::alive);
++        assertEquals(1, first.size());
++        emitter.advance(1, 0, null, (x, y, z) -> List.of());
++        assertFalse(emitter.alive());
++        assertEquals(1, emitters.size());
++        assertTrue(BedrockParticleFrames.batch(emitters, BedrockParticleEffect.Emitter::alive).isEmpty());
++        assertTrue(emitters.isEmpty());
++        assertEquals(1, first.size());
++    }
++
++    private record Receipt(String kind, int id) {}
++    private static final class Node {
++        final int id;
++        boolean alive = true;
++        int size = 1, updates;
++
++        Node(final int id) { this.id = id; }
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleGraphTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleGraphTest.java

@@ -402,9 +402,14 @@ Manual emission and particle lifetime events now support nested particle effects
 
 Root effects now preload their reachable child definitions and textures before playback. Discovery includes sequence and random branches, deduplicates shared effects, and terminates cycles. Missing child handles suppress that child while the source expression still runs. Resource generation changes cancel old playback requests.
 
+The native manager removes dead emitters before building its update batch. It replaces each removed entry with the last entry. Emitters that die during an update remain registered until a later batch. Child emitters created during an update wait for a later batch. Java now follows those membership and order rules.
+
+Independent instruction execution supplies 16 manager schedules with 80 frames. The native expiry getter, population getter, batch construction, removal, and update loop execute. Platform clocks, ambient grid samples, metrics access, and emitter identity/update/destructor callbacks are supplied. These checks exclude real emitter updates, factories, resource loading, Molang, and visible output.
+
+
 The emitter dispatches child requests directly before the source expression. Child initialization uses fresh variables and the refreshed child query context. Manual children can emit during the parent update. Population checks account for those births, and rendering includes the new manual particles in that frame.
 
-Production ordering tests use all 48 native dispatcher/context cases described below. Graph tests cover pending dependencies, shared effects, cycles, missing handles, and discovery limits. Native frame order for newly created emitters, cold-load start timing, and visible playback still need comparisons.
+Production ordering tests use all 48 native dispatcher/context cases described below. Graph tests cover pending dependencies, shared effects, cycles, missing handles, and discovery limits. Prepared manager checks now cover the first update of child emitters. Cold-load start timing and visible playback still need comparisons.
 
 
 Collision events now use the incoming velocity and final contact normal. Ordinary child emitters retain that frame through loading. Both block expiration filters use original Bedrock block identities. The extracted water-drip effect now spawns three splash particles after contact.
@@ -443,7 +448,7 @@ Independent execution supplies 54 prepared native context cases and seven scalar
 
 Actor resolution, level access, expression callbacks, variable access, and motion component lookup are supplied boundaries. Live actor updates and complete query coverage remain unverified. Spell-color structures, effect-count queries, and complete offscreen actor context remain incomplete. Retained registry components still need native live lifecycle comparisons.
 
-Native checks still need to establish frame order for newly created emitters and complete expression context. Native comparisons still need to establish render interpolation, random and variable registration, tint quantization, and visible scale. These component tests do not establish complete particle parity.
+Native checks still need to establish live frame timing and complete expression context. Native comparisons still need to establish render interpolation, random and variable registration, tint quantization, and visible scale. These component tests do not establish complete particle parity.
 
 ### Missing features
 
@@ -464,6 +469,6 @@ The loader now uses the matching 68-alias player definition. Its added tracks in
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. This establishes visual presence, not complete timing or format parity.
 - Verify fresh interactive Store sign-in and helper runtime behavior on Windows and macOS. Linux acquisition, license decryption, extraction, and cache reuse already pass.
 
-The replayed full stack builds, and all 385 fixture-enabled add-on tests pass with no failures or skips. The rebuilt client also passes 13,578 native curve comparisons and a conditional-assignment check. Earlier Java runtime probes passed 1,324 checks across previously implemented paths. The new overlay probe passes 722 checks for the updated graph and renderer paths. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
+The replayed full stack builds, and all 387 fixture-enabled add-on tests pass with no failures or skips. The rebuilt client also passes 13,578 native curve comparisons and a conditional-assignment check. Earlier Java runtime probes passed 1,324 checks across previously implemented paths. The new overlay probe passes 722 checks for the updated graph and renderer paths. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
 
 Keep login JWTs, receipts, content keys, raw flows, screenshots, player textures, and account data private under `.stackanvil/`.

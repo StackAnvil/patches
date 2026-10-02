@@ -890,7 +890,7 @@ Preload reachable child definitions and textures before root playback. Discovery
 
 Replace the emitter's deferred event queue with a direct dispatcher. Child construction, query refresh, initialization, and manual emission finish before the event leaf evaluates its source expression. Manual children reuse their existing emitter. Population checks refresh during births so inline children cannot exhaust the shared budget unnoticed.
 
-Update a snapshot of existing emitters, then collect visuals from the current population. This avoids mutation during iteration and includes newly emitted manual children in the same render extraction. Newly constructed emitters receive their first update on the next frame. Native frame order for those new emitters remains unverified.
+Update a snapshot of existing emitters, then collect visuals from the current population. This avoids mutation during iteration and includes newly emitted manual children in the same render extraction. Newly constructed emitters receive their first update on the next frame. The prepared manager checks described below now cover update batch membership. Live frame timing remains unverified.
 
 Production tests compare initialization/source order across all 48 native cases, including invalid handles and registry contexts. They evaluate the child Molang script and verify variable isolation. Additional tests cover pending/shared/cyclic dependencies, missing handles, discovery limits, parsed branches, and population contention during manual child births. Existing event tests now observe direct callbacks.
 
@@ -898,3 +898,21 @@ These tests use the previously recorded native receipts. They do not execute nat
 
 
 All 385 fixture-enabled tests pass across 77 suites with no failures, errors, or skips. This includes all 82 particle tests. Fresh package licensing, extraction, and cache reuse pass. All 16 patches replay. The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
+
+
+## Preserve native emitter batch membership
+
+Native manager `FUN_14216d250` removes dead emitters before building a temporary update batch. Each removal replaces the dead entry with the last registered entry. Its update loop captures the batch end before any emitter callback runs. Child emitters appended by those callbacks wait for a later batch.
+
+Production previously removed emitters immediately after their update and preserved the remaining list order. Move removal before batch capture and use the native replacement order. Emitters that die during an update remain registered until the next batch. The render pass still includes newly emitted manual particles.
+
+Independent instruction execution supplies 16 manager schedules with 80 frames. The complete manager function executes against prepared primary and temporary arrays. Native expiry getter `FUN_142158a20` checks the expiry flag and empty population. Native population getter `FUN_14215cc70` computes the count from the particle range. Native removal, batch construction, loop bounds, clock conversion, skip gate, and callback order execute.
+
+The probe supplies platform counter/frequency, ambient grid samples, metrics access and cleanup, and emitter identity/update/destructor callbacks. The update callback appends prepared child records or changes the parent expiry flag and population range. It does not execute real emitter updates, factory construction, resource loading, Molang, or visible playback.
+
+Production tests compare callback order, registered membership, population sizes, and update counts across all 80 frames. The fixture selects initialization and skip frames. The Java batch comparison does not establish the client mapping for those native gates or platform clocks. A real emitter regression verifies that an emitter that dies during its update remains registered until the next batch.
+
+Cold-load start timing, live frame timing, retained component lifetime, complete query context, and native visible playback remain incomplete. Executables, assets, native probes, and fixtures remain private.
+
+
+All 387 fixture-enabled tests pass across 78 suites with no failures, errors, or skips. This includes all 84 particle tests. Fresh package licensing, extraction, and cache reuse pass. All 16 patches replay. The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
