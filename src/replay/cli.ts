@@ -16,7 +16,14 @@ import { verifyRendering, type SceneFeatures, type RenderAudit } from "./verific
 
 const execute = promisify(execFile);
 const privateRoot = join(root, ".stackanvil", "replay");
-const servers = { cubecraft: "play.cubecraft.net:19132", hive: "geo.hivebedrock.cloud:19132", minehut: "bedrock.minehut.com:19132", geyser: "test.geysermc.org:19132" };
+const servers = {
+  cubecraft: "play.cubecraft.net:19132",
+  hive: "geo.hivebedrock.cloud:19132",
+  lifeboat: "play.lbsg.net:19132",
+  galaxite: "play.galaxite.net:19132",
+  minehut: "bedrock.minehut.com:19132",
+  geyser: "test.geysermc.org:19132",
+};
 const prismData = join(homedir(), ".var/app/org.prismlauncher.PrismLauncher/data/PrismLauncher");
 const accountDefault = join(prismData, "instances/StackAnvil Desktop 26.3/minecraft/config/viafabricplus/bedrock.json");
 const children: ChildProcess[] = [];
@@ -261,7 +268,7 @@ async function main(): Promise<void> {
     return;
   }
   if (mode === "inspect" && input) { console.log(JSON.stringify(await inspectJournal(join(resolve(input), "packets.sbr")), null, 2)); return; }
-  if (!input || (mode !== "record" && mode !== "replay")) throw new Error("Usage: bun run server-replay <record cubecraft|hive|minehut|geyser|local --target host:port|replay directory|inspect directory> [--seconds 120]");
+  if (!input || (mode !== "record" && mode !== "replay")) throw new Error("Usage: bun run server-replay <record cubecraft|hive|lifeboat|galaxite|minehut|geyser|local --target host:port|replay directory|inspect directory> [--seconds 120]");
   const option = (name: string) => { const at = args.indexOf(name); return at < 0 ? undefined : args[at + 1]; };
   const seconds = Number(option("--seconds") ?? 120);
   const client = option("--client") ?? (mode === "replay" ? "addon" : "proxy");
