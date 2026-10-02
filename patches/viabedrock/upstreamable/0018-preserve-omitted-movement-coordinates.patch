@@ -1,17 +1,31 @@
-From 19396bc25d03e3026a2f1cbfe23b8fbf269359ea Mon Sep 17 00:00:00 2001
+From 58e2002d67cb4845aecb17e9d8755eb5ee21a9b0 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 20:04:00 +0200
-Subject: [PATCH] fix(entities): preserve omitted movement coordinates
+Subject: [PATCH] fix(entities): preserve Bedrock spatial updates
 
-Bedrock move-entity-delta packets may omit unchanged axes. When a local-player correction carried only some coordinates, the translator replaced every missing axis with zero and sent the wrong Java position. Merge only the supplied axes for both local and remote entities while preserving the existing rule that ignores non-forced local updates.
+Bedrock move-entity-delta packets may omit unchanged axes. Merge only the
+supplied coordinates for local corrections and remote actors so omitted
+axes cannot become zero. Preserve the rule that ignores non-forced local
+updates.
+
+Protocol 2193 also sends MotionPredictionHints instead of ordinary actor
+velocity updates when spatial optimizations are enabled. Translate its
+runtime ID and motion through the same Java velocity writer, retain its
+ground state, and discard updates for actors that no longer exist. The
+Mojang 1.26.51 metadata archive establishes the field order and omission
+of the tick carried by SetActorMotion. Registered-handler tests verify
+the encoded Java packet, unsigned runtime IDs, ground transitions, and
+removed actors without replacing their positions.
 ---
- .../protocol/packet/EntityPackets.java        | 19 +++++-------
- .../packet/EntityMovementPacketsTest.java     | 30 +++++++++++++++++++
- 2 files changed, 37 insertions(+), 12 deletions(-)
+ .../protocol/packet/EntityPackets.java        |  49 +++++----
+ .../packet/EntityMovementPacketsTest.java     |  30 +++++
+ .../packet/MotionPredictionPacketTest.java    | 104 ++++++++++++++++++
+ 3 files changed, 161 insertions(+), 22 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/EntityMovementPacketsTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/MotionPredictionPacketTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
-index 21a9f951..d14d95dc 100644
+index 21a9f951..97e1b74c 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
 @@ -71,6 +71,11 @@ public final class EntityPackets {
@@ -54,6 +68,54 @@ index 21a9f951..d14d95dc 100644
              if (hasPitch) {
                  entity.setRotation(new Position3f(MathUtil.byte2Float(pitch), entity.rotation().y(), entity.rotation().z()));
              }
+@@ -330,20 +325,19 @@ public final class EntityPackets {
+             wrapper.write(Types.BOOLEAN, entity.isOnGround()); // on ground
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.SET_ENTITY_MOTION, ClientboundPackets26_3.SET_ENTITY_MOTION, wrapper -> {
+-            final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+-
+             final long entityRuntimeId = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
+             final Position3f motion = wrapper.read(BedrockTypes.POSITION_3F); // motion
+             wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // tick
+-
+-            final Entity entity = entityTracker.getEntityByRid(entityRuntimeId);
+-            if (entity == null) {
+-                wrapper.cancel();
+-                return;
++            writeEntityMotion(wrapper, entityRuntimeId, motion);
++        });
++        protocol.registerClientbound(ClientboundBedrockPackets.MOTION_PREDICTION_HINTS, ClientboundPackets26_3.SET_ENTITY_MOTION, wrapper -> {
++            final long entityRuntimeId = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // entity runtime id
++            final Position3f motion = wrapper.read(BedrockTypes.POSITION_3F); // motion
++            final boolean onGround = wrapper.read(Types.BOOLEAN); // on ground
++            final Entity entity = writeEntityMotion(wrapper, entityRuntimeId, motion);
++            if (entity != null) {
++                entity.setOnGround(onGround);
+             }
+-
+-            wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
+-            wrapper.write(Types.LOW_PRECISION_VECTOR, new Vector3d(motion.x(), motion.y(), motion.z())); // velocity
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.REMOVE_ENTITY, ClientboundPackets26_3.REMOVE_ENTITIES, wrapper -> {
+             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+@@ -655,6 +649,17 @@ public final class EntityPackets {
+         });
+     }
+ 
++    private static Entity writeEntityMotion(final PacketWrapper wrapper, final long runtimeId, final Position3f motion) {
++        final Entity entity = wrapper.user().get(EntityTracker.class).getEntityByRid(runtimeId);
++        if (entity == null) {
++            wrapper.cancel();
++            return null;
++        }
++        wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
++        wrapper.write(Types.LOW_PRECISION_VECTOR, new Vector3d(motion.x(), motion.y(), motion.z())); // velocity
++        return entity;
++    }
++
+     private EntityPackets() {
+     }
+ 
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/EntityMovementPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/EntityMovementPacketsTest.java
 new file mode 100644
 index 00000000..d275dee5
@@ -87,6 +149,116 @@ index 00000000..d275dee5
 +        assertEquals(new Position3f(13F, 34F, 57F),
 +                EntityPackets.mergePosition(current, true, 13F, false, 0F, true, 57F));
 +        assertEquals(current, EntityPackets.mergePosition(current, false, 0F, false, 0F, false, 0F));
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/MotionPredictionPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/MotionPredictionPacketTest.java
+new file mode 100644
+index 00000000..43ed285c
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/MotionPredictionPacketTest.java
+@@ -0,0 +1,104 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
++
++import java.lang.reflect.Proxy;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class MotionPredictionPacketTest {
++
++    @ParameterizedTest
++    @ValueSource(booleans = {false, true})
++    void translatesSpatialOptimizationVelocityAndTracksGroundState(final boolean onGround) throws Exception {
++        final EntityTracker[] trackers = new EntityTracker[1];
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, args) ->
++                        method.getName().equals("get") && args[0] == EntityTracker.class ? trackers[0] : null);
++        final EntityTracker tracker = trackers[0] = new EntityTracker(user);
++        final Entity entity = tracker.addEntity(new Entity(user, 21, 0x100000002L, "minecraft:player", 301,
++                UUID.randomUUID(), EntityTypes26_3.PLAYER), false);
++        final Position3f position = new Position3f(1F, 65F, 3F);
++        entity.setPosition(position);
++        entity.setOnGround(!onGround);
++
++        final ByteBuf input = Unpooled.buffer();
++        final ByteBuf output = Unpooled.buffer();
++        try {
++            BedrockTypes.UNSIGNED_VAR_LONG.write(input, entity.runtimeId());
++            BedrockTypes.POSITION_3F.write(input, new Position3f(-0.25F, 0.5F, 1.25F));
++            Types.BOOLEAN.write(input, onGround);
++            final PacketWrapper packet = new PacketWrapperImpl(ClientboundBedrockPackets.MOTION_PREDICTION_HINTS, input, user);
++            final TestProtocol protocol = new TestProtocol();
++            protocol.translate(packet);
++            packet.writeToBuffer(output);
++
++            assertEquals(ClientboundPackets26_3.SET_ENTITY_MOTION.getId(), Types.VAR_INT.read(output));
++            assertEquals(entity.javaId(), Types.VAR_INT.read(output));
++            final var velocity = Types.LOW_PRECISION_VECTOR.read(output);
++            assertEquals(-0.25, velocity.x(), 0.001);
++            assertEquals(0.5, velocity.y(), 0.001);
++            assertEquals(1.25, velocity.z(), 0.001);
++            assertEquals(onGround, entity.isOnGround());
++            assertEquals(position, entity.position());
++            assertEquals(0, input.readableBytes());
++            assertEquals(0, output.readableBytes());
++
++            tracker.removeEntity(entity);
++            final ByteBuf removedInput = Unpooled.buffer();
++            try {
++                BedrockTypes.UNSIGNED_VAR_LONG.write(removedInput, entity.runtimeId());
++                BedrockTypes.POSITION_3F.write(removedInput, new Position3f(0F, 0F, 0F));
++                Types.BOOLEAN.write(removedInput, !onGround);
++                final PacketWrapper removed = new PacketWrapperImpl(ClientboundBedrockPackets.MOTION_PREDICTION_HINTS, removedInput, user);
++                protocol.translate(removed);
++                assertTrue(removed.isCancelled());
++                assertEquals(0, removedInput.readableBytes());
++                assertEquals(onGround, entity.isOnGround());
++            } finally {
++                removedInput.release();
++            }
++        } finally {
++            input.release();
++            output.release();
++        }
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++
++        private TestProtocol() {
++            EntityPackets.register(this);
++        }
++
++        private void translate(final PacketWrapper packet) throws Exception {
++            final var mapping = this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++            mapping.applyType(packet);
++            mapping.handler().handle(packet);
++        }
++
 +    }
 +
 +}
