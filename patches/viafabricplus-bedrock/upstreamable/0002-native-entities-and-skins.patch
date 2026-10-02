@@ -1,4 +1,4 @@
-From 7708face52a0893c0fee3c21a96d026907bd4389 Mon Sep 17 00:00:00 2001
+From 859074c0ff39c74cecd951027457485f476d48a4 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:07 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -255,6 +255,28 @@ offset. Native scale zero alone does not imply marker state. Direct native
 snapshots remain authoritative and do not read mutable state while drawing.
 Six focused anchor tests pass, including scoped marker recovery and the
 unchanged sparse bounds, identity, fallback and lighting cases.
+
+Bedrock 1.26.51.1/protocol 2193 name producer 141d55a60 selects
+its depth-tested material and replaces foreground alpha with 0.125
+from target constant 14e61e13c when actor flag 1 (sneaking) is set.
+The ordinary name path retains actor foreground RGBA. Exact target PE
+SHA-256 is 537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7.
+
+Java 26.3 SubmitNodeCollection.submitNameTag instead uses alpha
+max((backgroundAlpha + 0.75) * 0.5, 0.5) for its discrete NORMAL pass.
+Capture the enclosing seeThrough argument directly with MixinExtras
+Local(argsOnly=true) and replace only the accepted native discrete
+NORMAL foreground alpha with byte 32. Preserve RGB, background, light,
+ordinary opaque NORMAL passes, other display modes, and Java sessions.
+The accepted native ordinary SEE_THROUGH pass continues to use alpha 255.
+
+This reproduces the verified crouching branch. It does not infer the
+unmapped native internal flag 129, conditional PLAYER_INDEX color mode,
+actor fade states, or glyph billboard transforms. Base actor and default
+player foreground getters both return opaque white; they do not justify
+a blanket gray player color.
+
+Compilation and twelve focused nametag and anchor tests pass with no failures or skips.
 ---
  build.gradle.kts                              |   6 +
  .../friends/FriendWorldSkinProvider.java      |   8 +
@@ -264,7 +286,7 @@ unchanged sparse bounds, identity, fallback and lighting cases.
  .../render/MixinBedrockActorRenderType.java   |  47 ++++
  .../render/MixinBedrockNameTagMetadata.java   |  33 +++
  .../render/MixinBedrockNameTagRenderer.java   |  56 +++++
- .../features/render/MixinBedrockNameTags.java |  59 +++++
+ .../features/render/MixinBedrockNameTags.java |  61 +++++
  .../render/MixinBedrockRidingMetadata.java    |  38 +++
  .../render/MixinBedrockRidingPosition.java    |  27 ++
  .../features/render/MixinCustomEntity.java    |  59 +++++
@@ -278,7 +300,7 @@ unchanged sparse bounds, identity, fallback and lighting cases.
  .../bedrock/render/BedrockEntityRenderer.java | 188 ++++++++++++++
  .../bedrock/render/BedrockGeometry.java       | 215 ++++++++++++++++
  .../bedrock/render/BedrockNameTagAnchors.java |  75 ++++++
- .../bedrock/render/BedrockNameTags.java       |  53 ++++
+ .../bedrock/render/BedrockNameTags.java       |  56 +++++
  .../bedrock/render/BedrockPlayerRenderer.java |  53 ++++
  .../bedrock/render/BedrockPlayerSkins.java    | 236 ++++++++++++++++++
  .../bedrock/render/BedrockRidingAnchors.java  |  71 ++++++
@@ -295,12 +317,12 @@ unchanged sparse bounds, identity, fallback and lighting cases.
  .../bedrock/render/BedrockCubeFacesTest.java  | 182 ++++++++++++++
  .../render/BedrockEntityRendererTest.java     |  50 ++++
  .../render/BedrockNameTagAnchorsTest.java     | 120 +++++++++
- .../bedrock/render/BedrockNameTagsTest.java   |  88 +++++++
+ .../bedrock/render/BedrockNameTagsTest.java   | 100 ++++++++
  .../render/BedrockPlayerMaterialsTest.java    |  42 ++++
  .../render/BedrockRidingAnchorsTest.java      | 130 ++++++++++
  .../bedrock/render/BedrockSkinQueueTest.java  |  83 ++++++
  .../render/CustomEntityRenderStoreTest.java   |  36 +++
- 44 files changed, 2912 insertions(+), 1 deletion(-)
+ 44 files changed, 2929 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractClientPlayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorPipelines.java
@@ -639,10 +661,10 @@ index 0000000..4b616d4
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java
 new file mode 100644
-index 0000000..9b2b8a6
+index 0000000..8ed6255
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,61 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -653,6 +675,7 @@ index 0000000..9b2b8a6
 +import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 +import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 +import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.llamalad7.mixinextras.sugar.Local;
 +import com.mojang.blaze3d.vertex.PoseStack;
 +import com.viaversion.viafabricplus.ViaFabricPlus;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockNameTagAnchors;
@@ -679,11 +702,12 @@ index 0000000..9b2b8a6
 +                                                           final FormattedCharSequence name, final int light,
 +                                                           final int color, final int background,
 +                                                           final Font.DisplayMode mode,
-+                                                           final Operation<TextFeatureRenderer.Submit> original) {
++                                                           final Operation<TextFeatureRenderer.Submit> original,
++                                                           @Local(argsOnly = true) final boolean seeThrough) {
 +        final boolean nativeContext = BedrockNameTagAnchors.enabled(
 +                ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST));
 +        return original.call(pose, x, y, name, light,
-+                BedrockNameTags.foregroundColor(nativeContext, mode, color), background, mode);
++                BedrockNameTags.foregroundColor(nativeContext, seeThrough, mode, color), background, mode);
 +    }
 +
 +    @WrapMethod(method = "submitNameTag")
@@ -1839,10 +1863,10 @@ index 0000000..02572ba
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTags.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTags.java
 new file mode 100644
-index 0000000..d52aa72
+index 0000000..477d0fe
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTags.java
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,56 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1863,8 +1887,11 @@ index 0000000..d52aa72
 +    private BedrockNameTags() {
 +    }
 +
-+    public static int foregroundColor(final boolean nativeContext, final Font.DisplayMode mode, final int color) {
-+        return nativeContext && mode == Font.DisplayMode.SEE_THROUGH ? color | 0xFF000000 : color;
++    public static int foregroundColor(final boolean nativeContext, final boolean seeThrough,
++                                      final Font.DisplayMode mode, final int color) {
++        if (!nativeContext) return color;
++        if (!seeThrough && mode == Font.DisplayMode.NORMAL) return color & 0x00FFFFFF | 0x20000000;
++        return mode == Font.DisplayMode.SEE_THROUGH ? color | 0xFF000000 : color;
 +    }
 +
 +    public static List<Line> layout(final Component name, final int lineHeight, final int baseline) {
@@ -3144,10 +3171,10 @@ index 0000000..012ca09
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java
 new file mode 100644
-index 0000000..ef7481c
+index 0000000..c71c4d2
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,100 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3167,14 +3194,26 @@ index 0000000..ef7481c
 +
 +final class BedrockNameTagsTest {
 +    @Test
-+    void preservesForegroundRgbAndRetainsOtherPassesAndConnections() {
++    void preservesForegroundRgbAcrossNativeOrdinaryAndCrouchedPasses() {
 +        for (final int color : new int[]{0x2054FF54, 0x80FFFFFF, 0x7F123456, 0xFFABCDEF}) {
 +            assertEquals(color | 0xFF000000,
-+                    BedrockNameTags.foregroundColor(true, Font.DisplayMode.SEE_THROUGH, color));
++                    BedrockNameTags.foregroundColor(true, true, Font.DisplayMode.SEE_THROUGH, color));
++            assertEquals(color,
++                    BedrockNameTags.foregroundColor(true, true, Font.DisplayMode.NORMAL, color));
++            assertEquals(color & 0x00FFFFFF | 0x20000000,
++                    BedrockNameTags.foregroundColor(true, false, Font.DisplayMode.NORMAL, color));
++        }
++    }
++
++    @Test
++    void retainsOtherModesAndJavaConnections() {
++        for (final int color : new int[]{0x2054FF54, 0x80FFFFFF, 0x7F123456, 0xFFABCDEF}) {
 +            for (final Font.DisplayMode mode : Font.DisplayMode.values()) {
-+                assertEquals(color, BedrockNameTags.foregroundColor(false, mode, color));
-+                if (mode != Font.DisplayMode.SEE_THROUGH) {
-+                    assertEquals(color, BedrockNameTags.foregroundColor(true, mode, color));
++                for (final boolean seeThrough : new boolean[]{false, true}) {
++                    assertEquals(color, BedrockNameTags.foregroundColor(false, seeThrough, mode, color));
++                    if (mode != Font.DisplayMode.NORMAL && mode != Font.DisplayMode.SEE_THROUGH) {
++                        assertEquals(color, BedrockNameTags.foregroundColor(true, seeThrough, mode, color));
++                    }
 +                }
 +            }
 +        }
