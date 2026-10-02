@@ -1074,3 +1074,11 @@ All 14 focused tests pass with native asset fixtures enabled and no skipped case
 The rebuilt production client also exercises the missing-catalog-entry route with Robot Dance. It resolves the product, downloads the archive, and samples 450 frames. The item remains unowned and cannot equip. All saved slot profiles match their prior values. Real UI input selects the paid offer and opens its active-character preview. A recording verifies changing poses, completion reset, Replay, and Stop. A fresh HTTPS read confirms all six original cloud recipes afterward.
 
 This change does not establish complete emote parity. Assets absent from the official catalog or incompatible with available receipt keys remain unavailable. Dynamic actor queries, effect aliases, communication filters, and native world timing still need verification.
+
+### Emote selection and responsive controls
+
+The emote detail panel now shows Not owned for offers that cannot equip. Locked and paid offers retain their preview action and separate acquisition checks. Resizing recalculates the catalog page from the selected item. The wheel uses a diamond when all three rows fit, and a single row otherwise. Narrow windows reduce the button width to fit all four positions.
+
+Live production checks select unowned Robot Dance at 1280 by 694, resize to 640 by 480, and return to the original size. The selected index stays 20. The small layout shows page 21 of 32, with Robot Dance in its single tile. All four buttons remain inside the 320 by 240 GUI and above the footer. At GUI scale 1, the taller layout retains the diamond and the same selected offer. The original scale is restored. Independent HTTPS reads confirm all six original cloud recipes. A fresh production profile load confirms the original active recipe. The dependency build and Prism bundle pass. Captures and account data remain private.
+
+A read-only account loader inspection decodes all 32 current catalog emotes. None declares sound effects, particle effects, or timeline events. Hover uses actor lifetime expressions. These observations guide the next timing comparison; they do not establish complete effect or emote parity.
