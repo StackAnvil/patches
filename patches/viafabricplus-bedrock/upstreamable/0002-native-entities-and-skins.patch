@@ -1,4 +1,4 @@
-From e1f0cc3b17f557b2974df861ff9615d39b09cc95 Mon Sep 17 00:00:00 2001
+From aa3004ba0daecececdcbbadc35006fb2b7350d35 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:07 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -56,6 +56,25 @@ Validate ordered mixed-material selection and ancestor transform retention
 with focused tests. Render the actual two shader variants through Mesa EGL
 for 192 numerical scenarios covering world normals, alpha equality,
 fractional and above-one multipliers, and lightmap bypass.
+
+Resolve effective actor material inheritance before selecting the verified
+native alpha-test shader. Apply complete definition replacement in pack
+order and inherited defines/states with additions and removals. Classify
+the resulting ENTITY shader fields and culling state, rather than a list
+of custom material names. Unknown shader flags, states, and sampler changes
+retain the existing fallback. Scope caches to the active resource pack
+storage and keep material aliases on the same bounded render-type cache.
+
+The saved CubeCraft lobby uses cc_lobby_banner:entity with ALPHA_TEST and
+ignore_lighting. Bedrock 1.26.51.1 entity.material establishes that this is
+the native one-sided alpha-test family. The installed material SHA-256 is
+fb971460c91e30fa2071f703db699934671e92b5b62617056b68a57eb7cf3eef;
+the saved server material SHA-256 is
+bfdabff5a1aaae7d314966fa9ba71a244f4d6d9947300777ec1d4e3cbdcf7b61.
+Private probes resolve the actual banner to cull=true. Target assets remain
+private. Emissive, additive, and UV-animation shader support remain outside
+this change. Test inheritance, culling changes, pack replacement, invalid
+shader families, cyclic parents, missing parents, and independent caches.
 ---
  build.gradle.kts                              |   6 +
  .../friends/FriendWorldSkinProvider.java      |   8 +
@@ -67,9 +86,10 @@ fractional and above-one multipliers, and lightmap bypass.
  .../render/MixinEntityRenderDispatcher.java   |  93 +++++++
  .../render/MixinMinecraftSkinLifecycle.java   |  46 ++++
  .../render/MixinPlayerSkinWidget.java         |  28 +++
+ .../BedrockActorMaterialDefinitions.java      | 128 ++++++++++
  .../bedrock/render/BedrockActorMaterials.java |  56 +++++
- .../render/BedrockActorRenderTypes.java       |  46 ++++
- .../bedrock/render/BedrockEntityRenderer.java | 175 +++++++++++++
+ .../render/BedrockActorRenderTypes.java       |  45 ++++
+ .../bedrock/render/BedrockEntityRenderer.java | 178 +++++++++++++
  .../bedrock/render/BedrockGeometry.java       | 215 ++++++++++++++++
  .../bedrock/render/BedrockPlayerRenderer.java |  33 +++
  .../bedrock/render/BedrockPlayerSkins.java    | 236 ++++++++++++++++++
@@ -80,10 +100,11 @@ fractional and above-one multipliers, and lightmap bypass.
  .../shaders/core/bedrock_actor.vsh            |  47 ++++
  .../viafabricplus-bedrock.accesswidener       |   3 +
  .../viafabricplus-bedrock.mixins.json         |   7 +
+ .../BedrockActorMaterialDefinitionsTest.java  |  90 +++++++
  .../render/BedrockActorMaterialsTest.java     |  48 ++++
  .../render/BedrockEntityRendererTest.java     |  27 ++
  .../bedrock/render/BedrockSkinQueueTest.java  |  83 ++++++
- 26 files changed, 1454 insertions(+), 1 deletion(-)
+ 28 files changed, 1674 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractClientPlayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorPipelines.java
@@ -92,6 +113,7 @@ fractional and above-one multipliers, and lightmap bypass.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftSkinLifecycle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinPlayerSkinWidget.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterials.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
@@ -102,6 +124,7 @@ fractional and above-one multipliers, and lightmap bypass.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStore.java
  create mode 100644 src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.fsh
  create mode 100644 src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.vsh
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRendererTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinQueueTest.java
@@ -538,6 +561,140 @@ index 0000000..582c708
 +        original.call(graphics, custom == null ? model : custom, texture, scale, rotationX, rotationY, pivotY, left, top, right, bottom);
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
+new file mode 100644
+index 0000000..9cc5972
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
+@@ -0,0 +1,128 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.List;
++import java.util.Map;
++import java.util.Optional;
++import java.util.Set;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++
++/** Resolves pack material inheritance before selecting the verified native actor shader. */
++public final class BedrockActorMaterialDefinitions {
++    private final Map<String, Definition> definitions = new HashMap<>();
++    private final Map<String, Optional<AlphaTest>> resolved = new HashMap<>();
++
++    private BedrockActorMaterialDefinitions(final List<JsonObject> documents) {
++        // Authored metadata for the target's already supported ENTITY alpha-test variants.
++        this.add(JsonParser.parseString("""
++            {"materials":{
++                "entity":{"vertexShader":"shaders/entity.vertex","fragmentShader":"shaders/entity.fragment",
++                    "defines":["USE_OVERLAY"]},
++                "entity_nocull:entity":{"+states":["DisableCulling"]},
++                "entity_alphatest:entity_nocull":{"+defines":["ALPHA_TEST"]},
++                "entity_alphatest_one_sided:entity":{"+defines":["ALPHA_TEST"]}
++            }}
++            """).getAsJsonObject());
++        documents.forEach(this::add);
++    }
++
++    public static BedrockActorMaterialDefinitions load(final ResourcePackStorage packs) {
++        final List<JsonObject> documents = new ArrayList<>();
++        for (var pack : packs.getPackStackBottomToTop()) {
++            for (String path : pack.content().getFilesDeep("materials/", ".material")) {
++                try {
++                    documents.add(pack.content().getJson(path));
++                } catch (RuntimeException invalid) {
++                    ViaFabricPlusBedrock.impl().logger().warn("Could not parse actor material definitions {}", path, invalid);
++                }
++            }
++        }
++        return read(documents);
++    }
++
++    static BedrockActorMaterialDefinitions read(final List<JsonObject> documents) {
++        return new BedrockActorMaterialDefinitions(documents);
++    }
++
++    public Optional<AlphaTest> alphaTest(final String name) {
++        if (!this.definitions.containsKey(name)) return Optional.empty();
++        return this.resolved.computeIfAbsent(name, identifier -> {
++            final Effective effective = this.resolve(identifier, new HashSet<>());
++            if (effective == null || !effective.verifiedFields
++                || !"shaders/entity.vertex".equals(effective.vertexShader)
++                || !"shaders/entity.fragment".equals(effective.fragmentShader)
++                || !effective.defines.equals(Set.of("USE_OVERLAY", "ALPHA_TEST"))
++                || !Set.of("DisableCulling").containsAll(effective.states)) {
++                return Optional.empty();
++            }
++            return Optional.of(new AlphaTest(!effective.states.contains("DisableCulling")));
++        });
++    }
++
++    private void add(final JsonObject document) {
++        final JsonObject materials = document.getAsJsonObject("materials");
++        if (materials == null) return;
++        for (var entry : materials.entrySet()) {
++            if (!entry.getValue().isJsonObject()) continue;
++            final int separator = entry.getKey().indexOf(':');
++            final String name = separator < 0 ? entry.getKey() : entry.getKey().substring(0, separator);
++            final String parent = separator < 0 ? null : entry.getKey().substring(separator + 1);
++            this.definitions.put(name, new Definition(parent, entry.getValue().getAsJsonObject().deepCopy()));
++        }
++    }
++
++    private Effective resolve(final String name, final Set<String> ancestors) {
++        final Definition definition = this.definitions.get(name);
++        if (definition == null || ancestors.size() >= 128 || !ancestors.add(name)) return null;
++        final Effective parent = definition.parent == null ? new Effective(null, null, Set.of(), Set.of(), true)
++            : this.resolve(definition.parent, ancestors);
++        ancestors.remove(name);
++        if (parent == null) return null;
++        final JsonObject fields = definition.fields;
++        try {
++            boolean verified = parent.verifiedFields;
++            for (String key : fields.keySet()) {
++                if (!Set.of("vertexShader", "fragmentShader", "defines", "+defines", "-defines",
++                    "states", "+states", "-states", "msaaSupport").contains(key)) verified = false;
++            }
++            return new Effective(string(fields, "vertexShader", parent.vertexShader),
++                string(fields, "fragmentShader", parent.fragmentShader),
++                flags(fields, "defines", parent.defines), flags(fields, "states", parent.states), verified);
++        } catch (RuntimeException invalid) {
++            return null;
++        }
++    }
++
++    private static String string(final JsonObject fields, final String key, final String inherited) {
++        return fields.has(key) ? fields.get(key).getAsString() : inherited;
++    }
++
++    private static Set<String> flags(final JsonObject fields, final String key, final Set<String> inherited) {
++        final Set<String> result = new HashSet<>(fields.has(key) ? strings(fields.get(key)) : inherited);
++        if (fields.has("-" + key)) result.removeAll(strings(fields.get("-" + key)));
++        if (fields.has("+" + key)) result.addAll(strings(fields.get("+" + key)));
++        return Set.copyOf(result);
++    }
++
++    private static Set<String> strings(final JsonElement array) {
++        final Set<String> result = new HashSet<>();
++        for (JsonElement value : array.getAsJsonArray()) result.add(value.getAsString());
++        return result;
++    }
++
++    public record AlphaTest(boolean cull) {}
++    private record Definition(String parent, JsonObject fields) {}
++    private record Effective(String vertexShader, String fragmentShader, Set<String> defines,
++                             Set<String> states, boolean verifiedFields) {}
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterials.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterials.java
 new file mode 100644
 index 0000000..8e46c00
@@ -602,10 +759,10 @@ index 0000000..8e46c00
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
 new file mode 100644
-index 0000000..f9f8bad
+index 0000000..d131104
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,45 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -643,8 +800,7 @@ index 0000000..f9f8bad
 +        return builder.build();
 +    }
 +
-+    public static RenderType create(final Identifier texture, final String material, final boolean ignoreLighting, final float multiplier) {
-+        final boolean cull = "entity_alphatest_one_sided".equals(material);
++    public static RenderType create(final Identifier texture, final boolean cull, final boolean ignoreLighting, final float multiplier) {
 +        final RenderPipeline pipeline = PIPELINES.get((ignoreLighting ? 2 : 0) + (cull ? 1 : 0));
 +        final RenderType type = RenderType.create("bedrock_actor", RenderSetup.builder(pipeline)
 +            .withTexture("Sampler0", texture).useLightmap().useOverlay().createRenderSetup());
@@ -654,10 +810,10 @@ index 0000000..f9f8bad
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 new file mode 100644
-index 0000000..11ea676
+index 0000000..cd593c9
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
-@@ -0,0 +1,175 @@
+@@ -0,0 +1,178 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -720,6 +876,7 @@ index 0000000..11ea676
 +        }
 +    };
 +    private ResourcePackStorage currentPacks;
++    private BedrockActorMaterialDefinitions materialDefinitions;
 +
 +    public BedrockEntityRenderer(final EntityRendererProvider.Context context) {
 +        super(context);
@@ -749,6 +906,7 @@ index 0000000..11ea676
 +        final UserConnection connection = ViaFabricPlus.api().userConnection();
 +        if (connection == null || !connection.has(ResourcePackStorage.class)) {
 +            this.currentPacks = null;
++            this.materialDefinitions = null;
 +            this.models.clear();
 +            this.renderTypes.clear();
 +            return;
@@ -760,6 +918,7 @@ index 0000000..11ea676
 +        final ResourcePackStorage packs = connection.get(ResourcePackStorage.class);
 +        if (this.currentPacks != packs) {
 +            this.currentPacks = packs;
++            this.materialDefinitions = BedrockActorMaterialDefinitions.load(packs);
 +            this.models.clear();
 +            this.renderTypes.clear();
 +        }
@@ -788,11 +947,11 @@ index 0000000..11ea676
 +            for (var material : materials.entrySet()) {
 +                final ModelKey modelKey = new ModelKey(evaluated.geometryValue(), material.getValue());
 +                final Model<EntityRenderState> model = this.models.computeIfAbsent(modelKey, _ -> BedrockGeometry.entityModel(geometry, material.getValue()));
-+                final boolean supported = "entity_alphatest".equals(material.getKey()) || "entity_alphatest_one_sided".equals(material.getKey());
++                final var alphaTest = this.materialDefinitions.alphaTest(material.getKey());
 +                final RenderType type;
-+                if (supported) {
-+                    final MaterialKey key = new MaterialKey(texture, material.getKey(), evaluated.ignoreLighting(), evaluated.lightColorMultiplier());
-+                    type = this.renderTypes.computeIfAbsent(key, _ -> BedrockActorRenderTypes.create(texture, material.getKey(), evaluated.ignoreLighting(), evaluated.lightColorMultiplier()));
++                if (alphaTest.isPresent()) {
++                    final MaterialKey key = new MaterialKey(texture, alphaTest.get().cull(), evaluated.ignoreLighting(), evaluated.lightColorMultiplier());
++                    type = this.renderTypes.computeIfAbsent(key, _ -> BedrockActorRenderTypes.create(texture, key.cull(), evaluated.ignoreLighting(), evaluated.lightColorMultiplier()));
 +                } else {
 +                    type = RenderTypes.entityTranslucent(texture);
 +                }
@@ -826,7 +985,7 @@ index 0000000..11ea676
 +    private record ModelKey(String geometry, Set<String> bones) {
 +    }
 +
-+    private record MaterialKey(Identifier texture, String material, boolean ignoreLighting, float multiplier) {
++    private record MaterialKey(Identifier texture, boolean cull, boolean ignoreLighting, float multiplier) {
 +    }
 +
 +    private record RenderedModel(Model<EntityRenderState> model, RenderType renderType) {
@@ -1574,6 +1733,102 @@ index 17da109..85ecea8 100644
      "features.movement.MixinEntity",
      "features.movement.MixinEntityFluidInteraction",
      "features.movement.MixinEntityFluidInteraction_CurrentAccumulator",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
+new file mode 100644
+index 0000000..42f3e98
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
+@@ -0,0 +1,90 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import java.util.List;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockActorMaterialDefinitionsTest {
++    @Test
++    void resolvesNativeAlphaTestInheritanceAndCulling() {
++        final var materials = read("""
++            {"banner:entity":{"+defines":["ALPHA_TEST"]},
++             "double_sided:banner":{"+states":["DisableCulling"]},
++             "single_sided:double_sided":{"-states":["DisableCulling"]}}
++            """);
++        assertTrue(materials.alphaTest("banner").orElseThrow().cull());
++        assertFalse(materials.alphaTest("double_sided").orElseThrow().cull());
++        assertTrue(materials.alphaTest("single_sided").orElseThrow().cull());
++        assertFalse(materials.alphaTest("entity_alphatest").orElseThrow().cull());
++        assertTrue(materials.alphaTest("entity_alphatest_one_sided").orElseThrow().cull());
++    }
++
++    @Test
++    void higherPackReplacesTheWholeDefinitionAndItsParent() {
++        final var materials = BedrockActorMaterialDefinitions.read(List.of(document("""
++            {"banner:entity_alphatest":{"+states":["DisableDepthWrite"]},
++             "dependent:banner":{}}
++            """), document("""
++            {"banner:entity_alphatest_one_sided":{}}
++            """)));
++        assertTrue(materials.alphaTest("dependent").orElseThrow().cull());
++        final var separatePack = read("""
++            {"banner:entity_alphatest":{}}
++            """);
++        assertFalse(separatePack.alphaTest("banner").orElseThrow().cull());
++    }
++
++    @Test
++    void replacementAndRemovalPreventUnsupportedInheritedFlags() {
++        final var materials = read("""
++            {"emission:entity_alphatest":{"+defines":["USE_EMISSIVE"]},
++             "removed:emission":{"-defines":["USE_EMISSIVE"]},
++             "replacement:emission":{"defines":["USE_OVERLAY","ALPHA_TEST"],"states":[]},
++             "opaque:entity_alphatest":{"-defines":["ALPHA_TEST"]}}
++            """);
++        assertTrue(materials.alphaTest("emission").isEmpty());
++        assertFalse(materials.alphaTest("removed").orElseThrow().cull());
++        assertTrue(materials.alphaTest("replacement").orElseThrow().cull());
++        assertTrue(materials.alphaTest("opaque").isEmpty());
++    }
++
++    @Test
++    void unsupportedShaderAndRenderStatesRetainFallback() {
++        final var materials = read("""
++            {"shader:entity_alphatest":{"fragmentShader":"shaders/other.fragment"},
++             "blend:entity_alphatest":{"+states":["Blending"]},
++             "depth:entity_alphatest":{"depthFunc":"Always"},
++             "uv:entity_alphatest":{"+defines":["USE_UV_ANIM"]},
++             "malformed:entity_alphatest":{"defines":false}}
++            """);
++        for (String name : List.of("shader", "blend", "depth", "uv", "malformed", "missing")) {
++            assertTrue(materials.alphaTest(name).isEmpty());
++        }
++    }
++
++    @Test
++    void cyclicAndMissingParentsDoNotResolve() {
++        final var materials = read("""
++            {"a:b":{},"b:a":{},"self:self":{},"missing_parent:absent":{}}
++            """);
++        for (String name : List.of("a", "b", "self", "missing_parent")) {
++            assertTrue(materials.alphaTest(name).isEmpty());
++        }
++    }
++
++    private static BedrockActorMaterialDefinitions read(final String materials) {
++        return BedrockActorMaterialDefinitions.read(List.of(document(materials)));
++    }
++
++    private static JsonObject document(final String materials) {
++        return JsonParser.parseString("{\"materials\":" + materials + "}").getAsJsonObject();
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialsTest.java
 new file mode 100644
 index 0000000..865c89a

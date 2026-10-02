@@ -15,3 +15,11 @@ The licensed Bedrock 1.26.51.1 Windows executable, CPU function `141eb6120`, and
 Validation: focused tests cover mixed material overrides and retained ancestor pivots and rotation. The actual vertex and fragment shaders pass 192 Mesa EGL numerical scenarios. These cover cardinal and rotated normals, alpha at the cutoff, fractional and above-one multipliers, and lightmap bypass. The owning feature build passes.
 
 Scope: unsupported materials, including emissive alpha, retain the existing fallback. Ordinary lit directional shading retains the Java path while the native light alpha sign remains unverified. This change does not claim full actor shader parity or render controller support through ViaProxy.
+
+Resolve effective actor material inheritance before selecting the verified alpha-test shader. Higher packs replace complete definitions, including their parent. Apply define and state replacement, addition, and removal. Missing and cyclic parents use the existing fallback.
+
+CubeCraft's saved banner uses `cc_lobby_banner:entity` with `ALPHA_TEST` and a controller that sets `ignore_lighting`. This selects the same one-sided alpha-test family as the target's built-in material. A private probe of the actual saved material documents resolves the banner with culling enabled. The renderer therefore keeps its native lightmap bypass and alpha cutoff.
+
+The installed Bedrock 1.26.51.1 `entity.material` SHA-256 is `fb971460c91e30fa2071f703db699934671e92b5b62617056b68a57eb7cf3eef`. The saved server material SHA-256 is `bfdabff5a1aaae7d314966fa9ba71a244f4d6d9947300777ec1d4e3cbdcf7b61`. Assets and raw probes stay private.
+
+Five focused tests cover inheritance, culling, whole-definition pack replacement, define removal, unsupported shader fields, invalid definitions, parent cycles, and independent pack caches. Together with the existing material tests, all seven cases pass. Unknown flags, states, shader overrides, and sampler changes retain the fallback. This does not add emissive, additive, or actor UV animation support.

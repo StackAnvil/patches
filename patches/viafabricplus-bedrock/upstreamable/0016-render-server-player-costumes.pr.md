@@ -14,3 +14,12 @@ Controller state sounds now use the shared actor alias and PCM path. A muted cli
 Resolve particle definitions with the server's sound resources in pack order. Retain referenced PNG and TGA textures from every layer so an upper texture can replace a lower definition's image. Keep unrelated textures outside this effect library. Apply the existing resource size and file limits to definitions and images together.
 
 A targeted test changes the emission count through an identifier override and replaces a lower PNG with an upper TGA. Runtime component admission and emitter playback belong to the Character Creator patch.
+
+Missing particle images no longer abort the player graph. The saved CubeCraft
+1.26.51.1 pack includes an unused emitter with texture `_`. The library retains
+safe relative references and returns no image when that file is absent. Path
+traversal checks and resource limits still apply. Runtime support for particle
+components and materials stays separate.
+
+All nine resource library tests pass with the private fixtures. They cover
+missing placeholders, supported emission, image lookup and traversal rejection.
