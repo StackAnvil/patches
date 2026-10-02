@@ -966,3 +966,18 @@ These checks exclude native object property lookup, real native expressions, liv
 All 396 fixture-enabled tests pass across 80 suites with no failures, errors, or skips. This includes all 88 particle tests and the spell-color structure and network snapshot checks. Fresh package licensing, extraction, and cache reuse pass. All 16 patches replay.
 
 The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
+
+
+### Flatpak helper startup
+
+A private native/Java comparison loaded the same account and identified its active Alex recipe in slot five. Native HTTPS and Java service responses have the same profile hash and persona collection. Preparing that recipe failed before extraction: Prism's Flatpak runtime lacks WebKitGTK, so the helper closes stdin during startup. The service avatar loaded, but that image does not verify local model rendering.
+
+Flatpak now runs the bundled helper on the host through `flatpak-spawn --host --watch-bus`, with the client display preserved. The launcher must permit `org.freedesktop.Flatpak`; the host must provide WebKitGTK. Runtime checks reproduce denied access and confirm that permitted host execution reaches the helper protocol. Neither path reads an installed Bedrock game.
+
+The process exchange drains output while delivering the request and parses bounded receipt lines throughout the stream. Startup failures receive a separate error. Raw helper output stays out of logs and UI. Five real child-process cases cover large diagnostics, simultaneous pipe traffic, missing receipts, failure receipts, and success before request delivery. A separate client JVM exit also stops its helper. Full visible parity and fresh interactive Store sign-in remain open.
+
+The final run passes all 402 fixture-enabled tests across 81 suites, with zero failures, errors, or skips. It includes fresh license acquisition, official package extraction, and cache reuse. All 16 patches replay.
+
+The rebuilt private Flatpak client acquires the official package through the host bridge. It uses its previous helper Store session. Extraction creates the versioned cache and assembles the active model. A second live failure exposed an eight-digit-only skin-color check: native Alex uses six-digit RGB. Accept both native RGB and ARGB strings and preserve them in model storage and `SkinData`. The expanded roundtrip test covers both formats, animations, atlas storage, and return to classic selection.
+
+Reloading the compiled color fix in the private JVM lets the production retry save and render the matched nine-piece slim Alex. The preview's saved profile hash matches the native HTTPS profile. Its geometry identifier proves that this recipe still uses Microsoft's GLTF body fallback. The non-default Skin catalog piece is unresolved; the extracted face is assembled locally. Idle videos and screenshots remain private. Cameras, poses, lighting, and animation phases differ, so this verifies the working acquisition/assembly/render path without proving visible parity. Native current skin-color wire formatting and fresh interactive Store sign-in remain open.

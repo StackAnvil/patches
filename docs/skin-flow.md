@@ -214,6 +214,8 @@ Sources: [Persona render controllers](https://github.com/Mojang/bedrock-samples/
 
 The add-on bundles an Xodus-based package helper. First use opens Microsoft Store sign-in when no Store session exists. Sign in with the selected Bedrock account. The helper checks the Xbox user ID before requesting the package license.
 
+Flatpak launches the bundled helper through `flatpak-spawn --host`. The launcher must permit access to `org.freedesktop.Flatpak`, and the host must provide WebKitGTK. The helper keeps the client display and exits with its launcher. A private Prism comparison exposed missing WebKitGTK inside the sandbox. Denied host access now produces a startup error instead of a broken pipe. This path uses the bundled helper and its own Store session. It does not read an installed Bedrock game.
+
 The current pin selects Bedrock 1.26.51.1, package version 1.26.5101.0, for ViaBedrock protocol 2193. The package URL identifies the matching official Xbox CDN build. Its pinned header checksum anchors the package hash tree. The helper verifies metadata and encrypted file pages before decryption because this CDN serves the package over HTTP.
 
 The helper obtains a device-bound license from Microsoft and unwraps its content key. It reads the segment index or the NTFS persona directory. The NTFS reader handles resident files and ordinary streams with multiple data runs. It downloads persona files and all stable vanilla layers for models, animations, controllers, client entities, sounds, and particles. Particle textures and the shared texture archive supply the referenced atlases.
@@ -223,6 +225,8 @@ Java unpacks version 1 BR archives beneath their original piece directories. Sha
 The cache lives under the add-on's `bedrock-assets/persona/<account>/<version>.zip` directory. Each file has a checksum, and the cache records the package identity. Cache format 5 includes the layered model, actor, and effect libraries and their pack manifests. Older caches refresh before use. A failed refresh keeps the previous cache. Store credentials remain in a separate private directory, and the helper reuses its device identity.
 
 The source loader indexes piece metadata, PNG face strips, BGRA TGA tint masks, and geometry by native piece UUID. Equipped built-in pieces enter the same asset loader as owned pieces. Wave, Clap, Over There, and Follow Me use their extracted animation sources for previews and world playback. Built-in emotes retain their piece UUID as the wire identity.
+
+A live Flatpak client also acquired the package through the permitted host bridge, using its prior helper Store session. Its preview renders the active nine-piece Alex recipe captured from native HTTPS. This recipe still uses Microsoft's GLTF body fallback because its catalog Skin asset is unresolved. The extracted face assets render locally. The appearance store accepts native six-digit RGB and eight-digit ARGB recipe colors. It preserves those values in saved models and `SkinData`. Matching camera, pose, lighting, animation phase, and native wire formatting still need verification.
 
 A live Java test used the bundled helper to obtain the official license and acquire the expanded libraries. It unpacked the archives and reused the versioned cache. Earlier fixture tests sample all four emotes and decode face masks. No downloaded content or credentials enter the repository. Fresh interactive Store sign-in and the Windows and macOS helper builds still need runtime verification.
 
