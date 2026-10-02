@@ -1,4 +1,4 @@
-From 17226114d7d42d52c3d786b29684ea332060913a Mon Sep 17 00:00:00 2001
+From a8db6172dff6301a91bc80a636b8d9f7763b9411 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:07 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -115,6 +115,21 @@ ported shaders through 672 lit and unlit scenarios at tolerance 1e-6,
 including colored alpha-zero pixels, transparent black, fractional alpha,
 overlay, world normals, and fractional or above-one light multipliers.
 Galaxy USE_MASK and controller UV animation retain the fallback.
+
+Map explicit Bedrock east and west UV faces through the same model-space
+conversion as box UVs. The saved target 1.26.51.1 CubeCraft banner declares
+only a west face and rotates its bone by 90 degrees plus the verified
+camera query. The previous per-face mapping put that texture on the
+opposite surface, so its inherited one-sided material culled the plane.
+Source and Java carrier yaw are both zero in that scene. Numerical probes
+show the previous triangle winding faces away from the camera and the
+corrected face faces toward it without changing rotation or culling.
+
+Semantic tests compare equivalent box and explicit lateral faces,
+asymmetric surface positions, and transformed one-sided winding across
+eight camera directions and four actor yaws. Native assets and probes
+remain private. This does not add client script variables or galaxy UV
+animation.
 ---
  build.gradle.kts                              |   6 +
  .../friends/FriendWorldSkinProvider.java      |   8 +
@@ -142,10 +157,11 @@ Galaxy USE_MASK and controller UV animation retain the fallback.
  .../viafabricplus-bedrock.mixins.json         |   7 +
  .../BedrockActorMaterialDefinitionsTest.java  | 115 +++++++++
  .../render/BedrockActorMaterialsTest.java     |  48 ++++
+ .../bedrock/render/BedrockCubeFacesTest.java  | 127 ++++++++++
  .../render/BedrockEntityRendererTest.java     |  50 ++++
  .../bedrock/render/BedrockSkinQueueTest.java  |  83 ++++++
  .../render/CustomEntityRenderStoreTest.java   |  36 +++
- 29 files changed, 1790 insertions(+), 1 deletion(-)
+ 30 files changed, 1917 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractClientPlayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorPipelines.java
@@ -167,6 +183,7 @@ Galaxy USE_MASK and controller UV animation retain the fallback.
  create mode 100644 src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.vsh
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialsTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCubeFacesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRendererTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinQueueTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStoreTest.java
@@ -1054,7 +1071,7 @@ index 0000000..7cf321f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 new file mode 100644
-index 0000000..52b059d
+index 0000000..1f62280
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 @@ -0,0 +1,215 @@
@@ -1246,13 +1263,13 @@ index 0000000..52b059d
 +    }
 +
 +    private static org.cube.converter.util.element.Direction sourceFace(final UVMap uv, final Direction direction) {
-+        final Direction source = uv.getUvType() == UVType.BOX ? switch (direction) {
-+            case DOWN -> Direction.UP;
-+            case UP -> Direction.DOWN;
++        final Direction source = switch (direction) {
++            case DOWN -> uv.getUvType() == UVType.BOX ? Direction.UP : Direction.DOWN;
++            case UP -> uv.getUvType() == UVType.BOX ? Direction.DOWN : Direction.UP;
 +            case WEST -> Direction.EAST;
 +            case EAST -> Direction.WEST;
 +            default -> direction;
-+        } : direction;
++        };
 +        return org.cube.converter.util.element.Direction.valueOf(source.name());
 +    }
 +
@@ -1980,6 +1997,139 @@ index 0000000..865c89a
 +        assertTrue(light.hasChild("cube_0"));
 +        assertEquals(-6F, light.y);
 +        assertEquals((float) Math.PI / 6F, body.zRot, 0.000001F);
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCubeFacesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCubeFacesTest.java
+new file mode 100644
+index 0000000..85fcb6c
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCubeFacesTest.java
+@@ -0,0 +1,127 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.mojang.blaze3d.vertex.PoseStack;
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import java.util.Arrays;
++import java.util.List;
++import java.util.Locale;
++import net.minecraft.client.model.geom.ModelPart;
++import net.minecraft.util.RandomSource;
++import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++import org.cube.converter.util.element.Position3V;
++import org.cube.converter.util.element.UVMap;
++import org.joml.Vector3f;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++final class BedrockCubeFacesTest {
++
++    @Test
++    void equivalentLateralBoxAndExplicitUvsKeepTheSameVerticesAndTextureCoordinates() throws Exception {
++        final JsonObject explicit = new JsonObject();
++        final UVMap box = UVMap.fromBoxUV(new Position3V(5, 6, 7), new Float[] {2F, 3F}, false);
++        box.getUvMap().forEach((direction, bounds) -> {
++            final JsonObject face = new JsonObject();
++            face.add("uv", vector(bounds[0], bounds[1]));
++            face.add("uv_size", vector(bounds[2] - bounds[0], bounds[3] - bounds[1]));
++            explicit.add(direction.name().toLowerCase(Locale.ROOT), face);
++        });
++        final var boxed = cube(model(vector(2, 3)));
++        final var perFace = cube(model(explicit));
++        for (int index = 2; index < boxed.polygons.length; index++) {
++            final var expected = boxed.polygons[index];
++            final var actual = perFace.polygons[index];
++            assertEquals(expected.normal(), actual.normal());
++            for (int vertex = 0; vertex < 4; vertex++) {
++                assertEquals(expected.vertices()[vertex], actual.vertices()[vertex]);
++            }
++        }
++    }
++
++    @Test
++    void explicitEastAndWestSelectOppositeCubeSurfaces() throws Exception {
++        for (String direction : List.of("east", "west")) {
++            final JsonObject uv = new JsonObject();
++            final JsonObject face = new JsonObject();
++            face.add("uv", vector(2, 3));
++            face.add("uv_size", vector(7, 6));
++            uv.add(direction, face);
++            final var polygon = cube(model(uv)).polygons[0];
++            final float expectedX = direction.equals("east") ? 2F : 7F;
++            assertEquals(direction.equals("east") ? -1F : 1F, polygon.normal().x());
++            for (var vertex : polygon.vertices()) {
++                assertEquals(expectedX, vertex.x());
++            }
++            assertEquals(2F / 64F, Arrays.stream(polygon.vertices()).map(ModelPart.Vertex::u).min(Float::compare).orElseThrow());
++            assertEquals(9F / 64F, Arrays.stream(polygon.vertices()).map(ModelPart.Vertex::u).max(Float::compare).orElseThrow());
++        }
++    }
++
++    @Test
++    void oneSidedWestBannerFacesItsCameraAcrossQuadrantsAndActorYaw() throws Exception {
++        final var geometry = BedrockGeometryModel.fromJson("""
++            {"minecraft:geometry":[{"description":{"identifier":"geometry.banner","texture_width":72,"texture_height":48},
++            "bones":[{"name":"banner","pivot":[0,16,0],"rotation":[0,90,0],
++            "cubes":[{"origin":[0,0,-24],"size":[0,32,48],"uv":{"west":{"uv":[0,0],"uv_size":[72,48]}}}]}]}]}
++            """).getFirst();
++        final var model = BedrockGeometry.entityModel(geometry);
++        final double[][] cameraDirections = {{0, 1}, {1, 1}, {1, 0}, {1, -1}, {0, -1}, {-1, -1}, {-1, 0}, {-1, 1}};
++        for (var camera : cameraDirections) {
++            for (float bodyYaw : new float[] {0, 35, 90, -120}) {
++                model.resetPose();
++                // Target 1.26.51.1 query.rotation_to_camera(1) minus query.body_y_rotation.
++                final float cameraYaw = (float) Math.toDegrees(Math.atan2(camera[1], camera[0])) - 90F;
++                model.root().getChild("banner").yRot += (float) Math.toRadians(cameraYaw - bodyYaw);
++                final PoseStack poses = new PoseStack();
++                BedrockEntityRenderer.applyActorTransform(poses, bodyYaw, 1.7F);
++                model.root().visit(poses, (pose, path, index, cube) -> {
++                    for (var face : cube.polygons) {
++                        final Vector3f first = vertex(face, 0, pose);
++                        final Vector3f second = vertex(face, 1, pose);
++                        final Vector3f third = vertex(face, 2, pose);
++                        final Vector3f winding = second.sub(first).cross(third.sub(first)).normalize();
++                        final Vector3f expected = new Vector3f((float) camera[0], 0, (float) camera[1]).normalize();
++                        assertTrue(winding.dot(expected) > 0.999F);
++                        final Vector3f normal = pose.normal().transform(new Vector3f(face.normal())).normalize();
++                        assertTrue(normal.dot(expected) > 0.999F);
++                    }
++                });
++            }
++        }
++    }
++
++    private static Vector3f vertex(final ModelPart.Polygon face, final int index, final PoseStack.Pose pose) {
++        final var vertex = face.vertices()[index];
++        return pose.pose().transformPosition(new Vector3f(vertex.worldX(), vertex.worldY(), vertex.worldZ()));
++    }
++
++    private static ModelPart model(final JsonElement uv) throws Exception {
++        final JsonObject definition = JsonParser.parseString("""
++            {"minecraft:geometry":[{"description":{"identifier":"geometry.faces","texture_width":64,"texture_height":64},
++            "bones":[{"name":"root","pivot":[0,0,0],"cubes":[{"origin":[2,3,4],"size":[5,6,7]}]}]}]}
++            """).getAsJsonObject();
++        definition.getAsJsonArray("minecraft:geometry").get(0).getAsJsonObject().getAsJsonArray("bones")
++            .get(0).getAsJsonObject().getAsJsonArray("cubes").get(0).getAsJsonObject().add("uv", uv);
++        return BedrockGeometry.entityModel(BedrockGeometryModel.fromJson(definition).getFirst()).root();
++    }
++
++    private static ModelPart.Cube cube(final ModelPart root) {
++        return root.getChild("root").getChild("cube_0").getRandomCube(RandomSource.create());
++    }
++
++    private static JsonArray vector(final float... values) {
++        final JsonArray result = new JsonArray();
++        for (float value : values) result.add(value);
++        return result;
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRendererTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRendererTest.java
