@@ -1,0 +1,144 @@
+From 45861f20992bc6078932f4cb6910a2d95ee8faa7 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 15:16:26 +0200
+Subject: [PATCH] fix(players): encode head rotation in Java 26.3 field order
+
+Java 26.3 ClientboundMoveEntityPacket.Rot.STREAM_CODEC reads and writes
+entity ID, on-ground boolean, yaw byte, then pitch byte. The Bedrock
+OnlyHeadRot translation retained the older order with on-ground last,
+so the client consumed the source pitch as yaw and the boolean as pitch.
+Actual Hive seated-player observations confirmed the failure: a captured
+25.15747-degree pitch became a 23.90625-degree Java yaw, while on-ground
+true became a 1.40625-degree pitch. This changes only the Java wire order;
+retained body/head rotation, position and ground-state semantics stay as
+upstream currently implements them.
+---
+ .../protocol/packet/OtherPlayerPackets.java   |   2 +-
+ .../packet/PlayerHeadRotationPacketTest.java  | 100 ++++++++++++++++++
+ 2 files changed, 101 insertions(+), 1 deletion(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerHeadRotationPacketTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
+index 48767edb..ac096248 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
+@@ -174,9 +174,9 @@ public final class OtherPlayerPackets {
+                 entity.setRotation(new Position3f(rotation.x(), entity.rotation().y(), entity.rotation().z()));
+                 wrapper.setPacketType(ClientboundPackets26_3.MOVE_ENTITY_ROT);
+                 wrapper.write(Types.VAR_INT, entity.javaId()); // entity id
++                wrapper.write(Types.BOOLEAN, entity.isOnGround()); // on ground
+                 wrapper.write(Types.BYTE, MathUtil.float2Byte(entity.rotation().y())); // yaw
+                 wrapper.write(Types.BYTE, MathUtil.float2Byte(rotation.x())); // pitch
+-                wrapper.write(Types.BOOLEAN, entity.isOnGround()); // on ground
+                 return;
+             }
+ 
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerHeadRotationPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerHeadRotationPacketTest.java
+new file mode 100644
+index 00000000..5103f06c
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerHeadRotationPacketTest.java
+@@ -0,0 +1,100 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PositionMode;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
++
++import java.lang.reflect.Proxy;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class PlayerHeadRotationPacketTest {
++
++    @ParameterizedTest
++    @ValueSource(booleans = {false, true})
++    void headOnlyMovementEncodesTheJavaRotationCodecOrder(final boolean onGround) throws Exception {
++        final EntityTracker[] trackers = new EntityTracker[1];
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, args) ->
++                        method.getName().equals("get") && args[0] == EntityTracker.class ? trackers[0] : null);
++        final EntityTracker tracker = trackers[0] = new EntityTracker(user);
++        final Entity player = tracker.addEntity(new Entity(user, 21, 101, "minecraft:player", 301,
++                UUID.randomUUID(), EntityTypes26_3.PLAYER), false);
++        final Position3f position = new Position3f(1F, 65F, 3F);
++        player.setPosition(position);
++        player.setRotation(new Position3f(0F, 90F, -45F));
++        player.setOnGround(onGround);
++
++        final ByteBuf input = Unpooled.buffer();
++        final ByteBuf output = Unpooled.buffer();
++        try {
++            BedrockTypes.UNSIGNED_VAR_LONG.write(input, player.runtimeId());
++            BedrockTypes.POSITION_3F.write(input, new Position3f(20F, 80F, 40F));
++            BedrockTypes.POSITION_3F.write(input, new Position3f(-22.5F, 180F, 135F));
++            Types.BYTE.write(input, (byte) PositionMode.OnlyHeadRot.getValue());
++            Types.BOOLEAN.write(input, !onGround);
++            BedrockTypes.UNSIGNED_VAR_LONG.write(input, 0L);
++            Types.BOOLEAN.write(input, false);
++            BedrockTypes.UNSIGNED_VAR_LONG.write(input, 123L);
++            final PacketWrapper packet = new PacketWrapperImpl(ClientboundBedrockPackets.MOVE_PLAYER, input, user);
++
++            new TestProtocol().translate(packet);
++            packet.writeToBuffer(output);
++
++            assertEquals(ClientboundPackets26_3.MOVE_ENTITY_ROT.getId(), Types.VAR_INT.read(output));
++            // Java 26.3 ClientboundMoveEntityPacket.Rot reads id, onGround, yaw, pitch.
++            assertEquals(player.javaId(), Types.VAR_INT.read(output));
++            assertEquals(onGround, Types.BOOLEAN.read(output));
++            assertEquals((byte) 64, Types.BYTE.read(output));
++            assertEquals((byte) -16, Types.BYTE.read(output));
++            assertEquals(0, output.readableBytes());
++            assertEquals(0, input.readableBytes());
++            assertEquals(position, player.position());
++            assertEquals(new Position3f(-22.5F, 90F, -45F), player.rotation());
++            assertEquals(onGround, player.isOnGround());
++        } finally {
++            input.release();
++            output.release();
++        }
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++
++        private TestProtocol() {
++            OtherPlayerPackets.register(this);
++        }
++
++        private void translate(final PacketWrapper packet) throws Exception {
++            final var mapping = this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++            mapping.applyType(packet);
++            mapping.handler().handle(packet);
++        }
++
++    }
++
++}
+-- 
+2.55.0
+
