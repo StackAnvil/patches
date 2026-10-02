@@ -1034,3 +1034,15 @@ renderer handles the model coordinate reflection for both box and explicit
 UVs. Preserve upper-face reversal of both UV axes and lower-face reversal
 of V. The unchanged captured native oracle passes for all four persona
 heights, including positions, normals, texture coordinates and atlas pixels.
+
+### Native free redemption and right-leg account save
+
+Native 1.26.51.1 lists Coin Stacks and Prosthetic Leg as immediately available free pieces. Other zero-price legs require redemption. The native Coin Stacks right-leg recipe contains exactly one `id` field with the `/fr` suffix. This observation comes from the native client's local recipe data. That data marks the edit with `offlineUpdate`; no native appearance PUT is observed. It verifies the stored recipe format, without proving native cloud synchronization.
+
+The Java screen selects Coin Stacks, chooses Right, and saves through its production account flow. Independent HTTPS readback verifies the exact native right-leg entry, with the active recipe's existing fields and the other five profiles preserved. A guarded restore verifies all six original cloud recipes. Local geometry masking and rendering for this leg remain unverified.
+
+A separate native Brawny Get operation uses `/transaction/virtual` with Minecoin `Amount` set to the string `0`, followed by `/transaction/redeem/xbox`. Both requests return 200. The UI then permits Equip. This verifies an actual zero-price redemption flow; it does not test a paid purchase. The free entitlement is retained.
+
+Native Equip changes the local base entry's free-source flag and sets `offlineUpdate`. Cleanup stops only the owned native process, restores its original active recipe from an earlier private snapshot, and preserves its other five local profiles. The current slot matches only those known changes before restoration. A private relaunch verifies that the original native recipe survives restart. Cloud recipes also remain restored. Native local format version and offline synchronization differ from the account service format and still need separate investigation.
+
+Raw local data, transaction bodies, credentials, and screenshots remain private. These observations add coverage for a free right-leg account edit and native zero-price redemption; they do not establish complete Dressing Room or rendering parity.
