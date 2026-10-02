@@ -1,51 +1,48 @@
-From ada5d8842ad5bee05c7a0da4defa21e29598be52 Mon Sep 17 00:00:00 2001
+From 3a6b1be180984d46b76bd2fabf9514d8597c41f3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 01:54:45 +0200
-Subject: [PATCH] feat(render): reproduce the native Bedrock classic lightmap
+Subject: [PATCH] feat(render): reproduce native Bedrock classic lighting
 
-Java 26.3 applies a different gamma transform and derives Nether ambient
-light after its brightness curve. Render actual Bedrock Overworld and
-Nether connections with a dedicated reloadable lightmap pipeline instead.
-Keep immutable inputs in the render state, update when inputs change,
-and close the native uniform buffer with its owning Java lightmap.
+Reconstruct the classic light-image calculation recovered locally from the
+official Windows 1.26.51.1 executable with PistonDecompiler and Ghidra.
+Preserve its brightness tables, weather and sunrise inputs, Nether offset,
+per-channel gamma, and byte truncation in a reload-managed GPU pipeline.
 
-Port the scalar image builder and verified producers from the official
-Bedrock 1.26.51.1 executable (SHA-256
-537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7):
-146619c50 supplies block RGB, per-channel quartic gamma and byte truncation;
-142313be0 supplies the native 16-float table with Nether's clamped +0.1;
-1423122e0, 14230e620 and 146235f20 supply daylight, weather and sunrise;
-14692cd30 supplies Nether's white sky and fixed full sky factor;
-1448018f0 fixes both ambient bias stages on and the white boost off.
-The ordinary contribution fixes the previous boss value to zero, so its
-boss RGB branch stays absent instead of importing Java boss behavior.
+Activate the same pipeline for ViaProxy clients through versioned appearance
+metadata in an accepted converted server pack. Local packs and unsupported
+protocol metadata cannot enable it. Resource reload and disconnect clear
+the context; stale asynchronous reload completion cannot reactivate it.
 
-Use the direct native-compatible gamma range and the native NV/conduit
-duration curve. Darkness consumes Java's effect blend lifecycle, whose
-exact native fade timing remains unverified. The End retains Java's
-pipeline until its animated native sky input is established. Enhanced
-lighting and resource-pack lighting overrides are outside this port.
+Omit Java low-light vignette on supported Bedrock sessions. Native Hive
+reference item surfaces have uniform texture colors, whereas 18,140 Java
+white-item pixels fit the extra Java vignette within 0.33 encoded RGB bytes.
+This overlay incorrectly darkened the world and held items toward edges.
 
-Validate eight targeted input/uniform tests and the actual fragment shader
-through Mesa EGL against an independent native float32 oracle. All 11,520
-pixels across 45 scenarios match the reference bytes exactly.
+Use immutable frame inputs to preserve Java refresh behavior while updating
+changed native inputs. Ordinary Java sessions retain their original renderer;
+End light-image inputs and enhanced native lighting remain outside this port.
 ---
- .../access/IBedrockLightmapState.java         | 14 ++++
+ .../access/IBedrockLightmapState.java         | 14 +++
  .../access/IBedrockLightmapWeather.java       | 11 +++
- .../features/render/MixinBedrockLightmap.java | 43 +++++++++++
- .../render/MixinBedrockLightmapExtractor.java | 36 +++++++++
- .../render/MixinBedrockLightmapPipelines.java | 26 +++++++
- .../render/MixinBedrockLightmapState.java     | 28 +++++++
- .../render/MixinBedrockLightmapWeather.java   | 31 ++++++++
- .../light/BedrockLightmapExtractor.java       | 54 +++++++++++++
- .../render/light/BedrockLightmapMath.java     | 74 ++++++++++++++++++
- .../light/BedrockLightmapParameters.java      | 60 +++++++++++++++
- .../render/light/BedrockLightmapRenderer.java | 55 +++++++++++++
- .../shaders/core/bedrock_lightmap.fsh         | 49 ++++++++++++
- .../viafabricplus-bedrock.mixins.json         |  5 ++
- .../render/light/BedrockLightmapMathTest.java | 77 +++++++++++++++++++
- .../light/BedrockLightmapParametersTest.java  | 38 +++++++++
- 15 files changed, 601 insertions(+)
+ .../features/render/MixinBedrockLightmap.java | 43 +++++++++
+ .../render/MixinBedrockLightmapExtractor.java | 36 +++++++
+ .../render/MixinBedrockLightmapPipelines.java | 26 +++++
+ .../render/MixinBedrockLightmapState.java     | 28 ++++++
+ .../render/MixinBedrockLightmapWeather.java   | 31 ++++++
+ .../MixinBedrockRenderingConnection.java      | 22 +++++
+ .../MixinBedrockRenderingResources.java       | 24 +++++
+ .../features/render/MixinBedrockVignette.java | 28 ++++++
+ .../light/BedrockLightmapExtractor.java       | 66 +++++++++++++
+ .../render/light/BedrockLightmapMath.java     | 74 +++++++++++++++
+ .../light/BedrockLightmapParameters.java      | 60 ++++++++++++
+ .../render/light/BedrockLightmapRenderer.java | 55 +++++++++++
+ .../light/BedrockRenderingMetadata.java       | 76 +++++++++++++++
+ .../shaders/core/bedrock_lightmap.fsh         | 49 ++++++++++
+ .../viafabricplus-bedrock.mixins.json         |  8 ++
+ .../render/light/BedrockLightmapMathTest.java | 77 +++++++++++++++
+ .../light/BedrockLightmapParametersTest.java  | 38 ++++++++
+ .../light/BedrockRenderingMetadataTest.java   | 94 +++++++++++++++++++
+ 20 files changed, 860 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockLightmapState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockLightmapWeather.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmap.java
@@ -53,13 +50,18 @@ pixels across 45 scenarios match the reference bytes exactly.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmapPipelines.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmapState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmapWeather.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingConnection.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingResources.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockVignette.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapExtractor.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapMath.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapParameters.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapRenderer.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockRenderingMetadata.java
  create mode 100644 src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_lightmap.fsh
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapMathTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapParametersTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockRenderingMetadataTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockLightmapState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockLightmapState.java
 new file mode 100644
@@ -292,12 +294,104 @@ index 0000000..4d635c6
 +        return this.skyFlashTime;
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingConnection.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingConnection.java
+new file mode 100644
+index 0000000..6311d59
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingConnection.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockRenderingMetadata;
++import net.minecraft.client.multiplayer.ClientCommonPacketListenerImpl;
++import net.minecraft.network.DisconnectionDetails;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(ClientCommonPacketListenerImpl.class)
++public abstract class MixinBedrockRenderingConnection {
++    @Inject(method = "onDisconnect", at = @At("HEAD"))
++    private void clearNativeMetadata(final DisconnectionDetails details, final CallbackInfo ci) {
++        BedrockRenderingMetadata.clear();
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingResources.java
+new file mode 100644
+index 0000000..27e98b5
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingResources.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockRenderingMetadata;
++import net.minecraft.server.packs.PackType;
++import net.minecraft.server.packs.resources.ReloadableResourceManager;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(ReloadableResourceManager.class)
++public abstract class MixinBedrockRenderingResources {
++    @Inject(method = "<init>", at = @At("RETURN"))
++    private void registerNativeMetadata(final PackType type, final CallbackInfo ci) {
++        if (type == PackType.CLIENT_RESOURCES) {
++            ((ReloadableResourceManager) (Object) this).registerReloadListener(new BedrockRenderingMetadata());
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockVignette.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockVignette.java
+new file mode 100644
+index 0000000..75b1d93
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockVignette.java
+@@ -0,0 +1,28 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockLightmapExtractor;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.gui.Hud;
++import net.minecraft.world.entity.Entity;
++import org.spongepowered.asm.mixin.Final;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(Hud.class)
++public abstract class MixinBedrockVignette {
++    @Shadow @Final private Minecraft minecraft;
++
++    @Inject(method = "extractVignette", at = @At("HEAD"), cancellable = true)
++    private void retainNativeEdges(final GuiGraphicsExtractor graphics, final Entity camera, final CallbackInfo ci) {
++        if (BedrockLightmapExtractor.dimension(this.minecraft) != null) ci.cancel();
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapExtractor.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapExtractor.java
 new file mode 100644
-index 0000000..d0b508b
+index 0000000..d40570b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapExtractor.java
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,66 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -323,11 +417,8 @@ index 0000000..d0b508b
 +    public static @Nullable BedrockLightmapParameters extract(final Minecraft minecraft, final float partialTick) {
 +        final var level = minecraft.level;
 +        final var player = minecraft.player;
-+        final var connection = ViaFabricPlus.api().userConnection();
-+        if (level == null || player == null || connection == null
-+            || !connection.getProtocolInfo().serverProtocolVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST)
-+            || !connection.has(ChunkTracker.class) || !connection.has(GameSessionStorage.class)) return null;
-+        final Dimension dimension = connection.get(ChunkTracker.class).getDimension();
++        final Dimension dimension = dimension(minecraft);
++        if (dimension == null) return null;
 +        // The End uses a separate animated sky producer, rather than this classic daylight calculation.
 +        if (dimension != Dimension.OVERWORLD && dimension != Dimension.NETHER) return null;
 +        final boolean nether = dimension == Dimension.NETHER;
@@ -344,6 +435,21 @@ index 0000000..d0b508b
 +        return new BedrockLightmapParameters(BedrockLightmapMath.levels(nether), sky.color(),
 +            sky.factor(), gamma, BedrockLightmapMath.darknessPulse(level.getLevelData().getGameTime(), partialTick, darkness),
 +            vision, !nether && !minecraft.options.hideLightningFlash().get() && weather.viaFabricPlusBedrock$skyFlash() > 0);
++    }
++
++    public static @Nullable Dimension dimension(final Minecraft minecraft) {
++        if (minecraft.level == null || minecraft.player == null) return null;
++        final var connection = ViaFabricPlus.api().userConnection();
++        if (connection != null && connection.getProtocolInfo().serverProtocolVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST)) {
++            if (!connection.has(ChunkTracker.class) || !connection.has(GameSessionStorage.class)) return null;
++            return connection.get(ChunkTracker.class).getDimension();
++        }
++        if (!BedrockRenderingMetadata.active() || minecraft.getConnection() == null) return null;
++        final String key = minecraft.level.dimension().identifier().toString();
++        for (final Dimension dimension : Dimension.values()) {
++            if (dimension.getKey().equals(key)) return dimension;
++        }
++        return null;
 +    }
 +
 +    private static int longestDuration(final @Nullable MobEffectInstance first, final @Nullable MobEffectInstance second) {
@@ -559,6 +665,88 @@ index 0000000..87d80cf
 +        this.uniforms.close();
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockRenderingMetadata.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockRenderingMetadata.java
+new file mode 100644
+index 0000000..1425e56
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockRenderingMetadata.java
+@@ -0,0 +1,76 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.light;
++
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.minecraft.resources.Identifier;
++import net.minecraft.server.packs.repository.PackSource;
++import net.minecraft.server.packs.resources.ResourceManager;
++import net.minecraft.server.packs.resources.SimplePreparableReloadListener;
++import net.minecraft.util.profiling.ProfilerFiller;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import org.apache.logging.log4j.LogManager;
++import org.apache.logging.log4j.Logger;
++
++import java.io.IOException;
++import java.math.BigDecimal;
++import java.nio.charset.StandardCharsets;
++import java.util.concurrent.atomic.AtomicReference;
++
++/** Versioned, reload-scoped appearance provenance supplied by a converted server pack. */
++public final class BedrockRenderingMetadata extends SimplePreparableReloadListener<BedrockRenderingMetadata.Prepared> {
++    private static final Logger LOGGER = LogManager.getLogger("Bedrock rendering metadata");
++    private static final Identifier LOCATION = Identifier.fromNamespaceAndPath("viabedrock", "client_rendering.json");
++    private static final AtomicReference<State> STATE = new AtomicReference<>(new State(false));
++
++    public static boolean active() {
++        return STATE.get().active;
++    }
++
++    public static void clear() {
++        STATE.set(new State(false));
++    }
++
++    @Override
++    protected Prepared prepare(final ResourceManager resources, final ProfilerFiller profiler) {
++        final State pending = new State(false);
++        STATE.set(pending);
++        for (final var resource : resources.getResourceStack(LOCATION)) {
++            if (resource.source().location().source() != PackSource.SERVER) continue;
++            try (final var input = resource.open()) {
++                final byte[] content = input.readNBytes(513);
++                if (content.length > 512) continue;
++                if (supported(JsonParser.parseString(new String(content, StandardCharsets.UTF_8)))) return new Prepared(pending, true);
++            } catch (final IOException | RuntimeException error) {
++                LOGGER.debug("Ignoring invalid Bedrock rendering metadata", error);
++            }
++        }
++        return new Prepared(pending, false);
++    }
++
++    @Override
++    protected void apply(final Prepared prepared, final ResourceManager resources, final ProfilerFiller profiler) {
++        STATE.compareAndSet(prepared.pending, new State(prepared.supported));
++    }
++
++    record State(boolean active) {
++    }
++
++    record Prepared(State pending, boolean supported) {
++    }
++
++    static boolean supported(final JsonElement metadata) {
++        return metadata.isJsonObject()
++            && numberMatches(metadata.getAsJsonObject().get("format"), 1)
++            && numberMatches(metadata.getAsJsonObject().get("bedrock_protocol"), ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++    }
++
++    private static boolean numberMatches(final JsonElement value, final int expected) {
++        return value != null && value.isJsonPrimitive() && value.getAsJsonPrimitive().isNumber()
++            && value.getAsBigDecimal().compareTo(BigDecimal.valueOf(expected)) == 0;
++    }
++}
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_lightmap.fsh b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_lightmap.fsh
 new file mode 100644
 index 0000000..2a2ae69
@@ -615,13 +803,16 @@ index 0000000..2a2ae69
 +    fragColor = vec4(color, 1.0);
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 6de31b5..3ebffff 100644
+index bbf7b33..6da939a 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -54,6 +54,11 @@
-     "features.misc.MixinInventoryScreen",
-     "features.misc.MixinMinecraft",
+@@ -56,6 +56,14 @@
      "features.render.MixinAbstractClientPlayer",
+     "features.render.MixinBedrockActorPipelines",
+     "features.render.MixinBedrockActorRenderType",
++    "features.render.MixinBedrockRenderingResources",
++    "features.render.MixinBedrockRenderingConnection",
++    "features.render.MixinBedrockVignette",
 +    "features.render.MixinBedrockLightmapWeather",
 +    "features.render.MixinBedrockLightmapState",
 +    "features.render.MixinBedrockLightmapExtractor",
@@ -755,6 +946,106 @@ index 0000000..841e19f
 +        assertEquals(0F, buffer.getFloat(100));
 +        assertEquals(0F, buffer.getFloat(104));
 +        assertEquals(0F, buffer.getFloat(108));
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockRenderingMetadataTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockRenderingMetadataTest.java
+new file mode 100644
+index 0000000..029ac02
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockRenderingMetadataTest.java
+@@ -0,0 +1,94 @@
++package com.viaversion.viafabricplus.bedrock.render.light;
++
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import net.minecraft.network.chat.Component;
++import net.minecraft.server.packs.PackLocationInfo;
++import net.minecraft.server.packs.PackResources;
++import net.minecraft.server.packs.repository.PackSource;
++import net.minecraft.server.packs.resources.Resource;
++import net.minecraft.server.packs.resources.ResourceManager;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.Test;
++
++import java.io.ByteArrayInputStream;
++import java.lang.reflect.Proxy;
++import java.nio.charset.StandardCharsets;
++import java.util.List;
++import java.util.Optional;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockRenderingMetadataTest {
++    @AfterEach
++    void clear() {
++        BedrockRenderingMetadata.clear();
++    }
++
++    @Test
++    void onlyAcceptsTheSupportedIntegerProtocolAndFormat() {
++        final JsonObject data = metadata();
++        assertTrue(BedrockRenderingMetadata.supported(data));
++        data.addProperty("bedrock_protocol", ProtocolConstants.BEDROCK_PROTOCOL_VERSION + 0.5);
++        assertFalse(BedrockRenderingMetadata.supported(data));
++        data.addProperty("bedrock_protocol", ProtocolConstants.BEDROCK_PROTOCOL_VERSION - 1);
++        assertFalse(BedrockRenderingMetadata.supported(data));
++        data.addProperty("bedrock_protocol", String.valueOf(ProtocolConstants.BEDROCK_PROTOCOL_VERSION));
++        assertFalse(BedrockRenderingMetadata.supported(data));
++        data.addProperty("bedrock_protocol", ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++        data.addProperty("format", 2);
++        assertFalse(BedrockRenderingMetadata.supported(data));
++    }
++
++    @Test
++    void localResourcePacksCannotActivateNativeRendering() {
++        final var listener = new BedrockRenderingMetadata();
++        final ResourceManager resources = resources(PackSource.DEFAULT);
++        listener.apply(listener.prepare(resources, null), resources, null);
++        assertFalse(BedrockRenderingMetadata.active());
++    }
++
++    @Test
++    void serverPackReloadRemovalRestoresOrdinaryJavaRendering() {
++        final var listener = new BedrockRenderingMetadata();
++        final ResourceManager accepted = resources(PackSource.SERVER);
++        listener.apply(listener.prepare(accepted, null), accepted, null);
++        assertTrue(BedrockRenderingMetadata.active());
++        final ResourceManager removed = resources();
++        listener.apply(listener.prepare(removed, null), removed, null);
++        assertFalse(BedrockRenderingMetadata.active());
++    }
++
++    @Test
++    void staleReloadCompletionCannotReactivateAfterDisconnectOrAReplacementReload() {
++        final var listener = new BedrockRenderingMetadata();
++        final ResourceManager accepted = resources(PackSource.SERVER);
++        final var pending = listener.prepare(accepted, null);
++        BedrockRenderingMetadata.clear();
++        listener.apply(pending, accepted, null);
++        assertFalse(BedrockRenderingMetadata.active());
++        final var older = listener.prepare(accepted, null);
++        final ResourceManager removed = resources();
++        listener.apply(listener.prepare(removed, null), removed, null);
++        listener.apply(older, accepted, null);
++        assertFalse(BedrockRenderingMetadata.active());
++    }
++
++    private static JsonObject metadata() {
++        final JsonObject metadata = new JsonObject();
++        metadata.addProperty("format", 1);
++        metadata.addProperty("bedrock_protocol", ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++        return metadata;
++    }
++
++    private static ResourceManager resources(final PackSource... sources) {
++        final List<Resource> resources = java.util.Arrays.stream(sources).map(source -> {
++            final PackLocationInfo location = new PackLocationInfo("fixture", Component.empty(), source, Optional.empty());
++            final PackResources pack = (PackResources) Proxy.newProxyInstance(PackResources.class.getClassLoader(), new Class<?>[]{PackResources.class},
++                (proxy, method, args) -> method.getName().equals("location") ? location : null);
++            return new Resource(pack, () -> new ByteArrayInputStream(metadata().toString().getBytes(StandardCharsets.UTF_8)));
++        }).toList();
++        return (ResourceManager) Proxy.newProxyInstance(ResourceManager.class.getClassLoader(), new Class<?>[]{ResourceManager.class},
++            (proxy, method, args) -> method.getName().equals("getResourceStack") ? resources : null);
 +    }
 +}
 -- 

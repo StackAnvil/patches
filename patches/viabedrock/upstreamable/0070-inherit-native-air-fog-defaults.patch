@@ -1,0 +1,150 @@
+From 194b1e283043aa4693c953e8d1a8bc4468c6cba2 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 03:26:55 +0200
+Subject: [PATCH] fix(biomes): inherit native air fog defaults
+
+When a biome fog has no air color, inherit the effective resource-pack
+minecraft:fog_default air color before using a last-resort native value.
+The synthetic the_void biome uses the same inherited default. This keeps
+server overrides effective instead of replacing them with Java's default
+#C0D8FF. Limit this change to registry air fog inputs.
+
+Bedrock 1.26.51.1 (protocol 2193) ships default air #ABD2FF in its licensed
+vanilla_1.16.100, vanilla_1.18.0, and vanilla_1.19.0 fog archives. The
+vanilla_1.19.0 archive SHA-256 is
+74fd138548bcead6bd466ac26a5e10f7ad3988def3dff9277b7aceb94fe59e94;
+default_fog_setting.json SHA-256 is
+373bd242339101bea36d7f1cc3cbb5b03d8b5a8d23d7759e46d0950d3549f45b.
+The existing fog loader already applies pack precedence. Preserve explicit
+biome air colors, including black, and use #ABD2FF only when both levels
+lack air. Native assets and extracted evidence remain private.
+
+The full native sky shader is still unported; correcting this input does
+not establish complete sky or fog pixel parity. Focused numerical tests
+cover biome precedence, pack defaults, missing definitions, and water-only
+fog definitions. The full core suite and both Checkstyle tasks pass.
+---
+ .../protocol/data/JavaRegistries.java         | 24 ++++++----
+ .../protocol/data/JavaRegistriesFogTest.java  | 46 +++++++++++++++++++
+ 2 files changed, 61 insertions(+), 9 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/data/JavaRegistriesFogTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/data/JavaRegistries.java b/src/main/java/net/raphimc/viabedrock/protocol/data/JavaRegistries.java
+index ea3cd901..99801d58 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/data/JavaRegistries.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/data/JavaRegistries.java
+@@ -40,7 +40,7 @@ import java.util.logging.Level;
+ public final class JavaRegistries {
+ 
+     private static final int BEDROCK_DEFAULT_WATER_COLOR = 4501493;
+-    private static final int JAVA_DEFAULT_FOG_COLOR = 12638463;
++    private static final int BEDROCK_DEFAULT_AIR_FOG_COLOR = 0xABD2FF;
+ 
+     public static CompoundTag createJavaRegistries(final GameSessionStorage gameSession, final ResourcePackStorage resourcePackStorage) {
+         final CompoundTag registries = BedrockProtocol.MAPPINGS.getJavaRegistries().copy();
+@@ -74,7 +74,8 @@ public final class JavaRegistries {
+ 
+     private static CompoundTag buildJavaBiomeRegistry(final CompoundTag biomeDefinitions, final ResourcePackStorage resourcePackStorage) {
+         final CompoundTag javaBiomes = new CompoundTag();
+-        javaBiomes.put("minecraft:the_void", getTheVoidBiome());
++        final FogDefinitions.FogDefinition defaultFogDefinition = resourcePackStorage.getFogs().get("minecraft:fog_default");
++        javaBiomes.put("minecraft:the_void", getTheVoidBiome(getAirFogColor(null, defaultFogDefinition)));
+ 
+         final Map<String, Object> foliageColor = BedrockProtocol.MAPPINGS.getBedrockToJavaBiomeExtraData().get("foliage_color");
+         final Map<String, Object> grassColor = BedrockProtocol.MAPPINGS.getBedrockToJavaBiomeExtraData().get("grass_color");
+@@ -129,11 +130,7 @@ public final class JavaRegistries {
+             } else {
+                 attributes.putInt("minecraft:visual/sky_color", getSkyColor(bedrockBiome.getDoubleTag("temperature").asFloat()));
+             }
+-            if (bedrockFogDefinition != null && bedrockFogDefinition.colors().containsKey("air")) {
+-                attributes.putInt("minecraft:visual/fog_color", bedrockFogDefinition.colors().get("air"));
+-            } else {
+-                attributes.putInt("minecraft:visual/fog_color", JAVA_DEFAULT_FOG_COLOR);
+-            }
++            attributes.putInt("minecraft:visual/fog_color", getAirFogColor(bedrockFogDefinition, defaultFogDefinition));
+             if (bedrockFogDefinition != null && bedrockFogDefinition.colors().containsKey("water")) {
+                 attributes.putInt("minecraft:visual/water_fog_color", bedrockFogDefinition.colors().get("water"));
+             } else {
+@@ -169,7 +166,16 @@ public final class JavaRegistries {
+         return javaBiomes;
+     }
+ 
+-    private static CompoundTag getTheVoidBiome() {
++    static int getAirFogColor(final FogDefinitions.FogDefinition biomeFogDefinition, final FogDefinitions.FogDefinition defaultFogDefinition) {
++        final Integer biomeColor = biomeFogDefinition != null ? biomeFogDefinition.colors().get("air") : null;
++        if (biomeColor != null) {
++            return biomeColor;
++        }
++        final Integer defaultColor = defaultFogDefinition != null ? defaultFogDefinition.colors().get("air") : null;
++        return defaultColor != null ? defaultColor : BEDROCK_DEFAULT_AIR_FOG_COLOR;
++    }
++
++    private static CompoundTag getTheVoidBiome(final int airFogColor) {
+         final CompoundTag biome = new CompoundTag();
+         biome.putFloat("temperature", 0.5F);
+         biome.putFloat("downfall", 0.5F);
+@@ -181,7 +187,7 @@ public final class JavaRegistries {
+         biome.put("attributes", attributes);
+         attributes.putInt("minecraft:visual/sky_color", getSkyColor(0.5F));
+         attributes.putInt("minecraft:visual/water_fog_color", BEDROCK_DEFAULT_WATER_COLOR);
+-        attributes.putInt("minecraft:visual/fog_color", JAVA_DEFAULT_FOG_COLOR);
++        attributes.putInt("minecraft:visual/fog_color", airFogColor);
+         effects.putInt("water_color", BEDROCK_DEFAULT_WATER_COLOR);
+         return biome;
+     }
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/data/JavaRegistriesFogTest.java b/src/test/java/net/raphimc/viabedrock/protocol/data/JavaRegistriesFogTest.java
+new file mode 100644
+index 00000000..05383c57
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/data/JavaRegistriesFogTest.java
+@@ -0,0 +1,46 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.data;
++
++import java.util.Map;
++import net.raphimc.viabedrock.api.resourcepack.definition.FogDefinitions.FogDefinition;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class JavaRegistriesFogTest {
++
++    @Test
++    void explicitBiomeAirOverridesPackDefaultIncludingBlack() {
++        final var packDefault = new FogDefinition("minecraft:fog_default", Map.of("air", 0x112233));
++        assertEquals(0, JavaRegistries.getAirFogColor(new FogDefinition("biome", Map.of("air", 0)), packDefault));
++        assertEquals(0x987654, JavaRegistries.getAirFogColor(new FogDefinition("biome", Map.of("air", 0x987654)), packDefault));
++    }
++
++    @Test
++    void missingBiomeAirInheritsEffectivePackDefaultBeforeNativeFallback() {
++        final var waterOnly = new FogDefinition("biome", Map.of("water", 0x556677));
++        final var packDefault = new FogDefinition("minecraft:fog_default", Map.of("air", 0x123456));
++        assertEquals(0x123456, JavaRegistries.getAirFogColor(waterOnly, packDefault));
++        assertEquals(0x123456, JavaRegistries.getAirFogColor(null, packDefault));
++        assertEquals(0xABD2FF, JavaRegistries.getAirFogColor(waterOnly, null));
++        assertEquals(0xABD2FF, JavaRegistries.getAirFogColor(waterOnly, new FogDefinition("minecraft:fog_default", Map.of("water", 0x778899))));
++        assertEquals(0xABD2FF, JavaRegistries.getAirFogColor(null, null));
++    }
++
++}
+-- 
+2.55.0
+
+

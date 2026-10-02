@@ -1,26 +1,39 @@
-From a75a220e9eaa7213da03d3b2be0bd156dc672772 Mon Sep 17 00:00:00 2001
+From 3b7dbbeceb0e2d0fef8d58763c3241f145a1b1f9 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 19:39:20 +0200
-Subject: [PATCH] fix(world): initialize and preserve Bedrock clock time
+Subject: [PATCH] fix(world): preserve native Bedrock world clock semantics
 
-StartGame carries the day-cycle stop time, which is -1 while the cycle runs.
-Using it as the initial clock position shows the wrong time until Bedrock sends
-SetTime. Fall back to the level time for that initial packet and use the stop
-time only when present.
+Initialize the day clock from level time when StartGame has no day-cycle stop
+time, preserving complete tick counts for day counts and moon phases.
+Legacy SetTime follows the doDayLightCycle rule while game age advances
+independently.
 
-Keep the full SetTime tick count in the Java world clock instead of reducing it
-to one day, preserving day count and moon phase across sleep and time commands.
+A saved official Windows Bedrock 1.26.51.1 session using protocol 2193 sends
+SetTime 12445 followed by GameRulesChanged with dodaylightcycle=false.
+Java previously retained the running rate from SetTime after storing that
+rule update, so its lobby drifted into night while the native scene stayed
+at twilight. The capture contains no SyncWorldClocks updates.
 
-Track Bedrock clock initialization and state updates by ID and advance the Java clock from player tick age so later updates do not reset the client timeline.
+Track the legacy Overworld clock against game age. When the daylight rule
+changes, resend its current full tick count and paused or running rate.
+Resuming after a long pause must continue from the paused value rather than
+resetting to the last server time or counting ticks spent paused. A new
+legacy SetTime replaces the snapshot. Explicit Overworld SyncWorldClocks
+updates clear legacy tracking and retain their own rates; updates to other
+clocks remain independent.
+
+Numerical tests cover long pauses, resume without a jump, new server times,
+independent explicit clocks, and full-count packet serialization.
 ---
- .../viabedrock/protocol/BedrockProtocol.java  |  1 +
- .../protocol/packet/JoinPackets.java          | 16 +++-
- .../protocol/packet/WorldPackets.java         | 66 +++++++++++--
- .../protocol/storage/JoinGameStorage.java     |  2 +-
- .../protocol/storage/WorldClockTracker.java   | 81 ++++++++++++++++
- .../protocol/packet/WorldPacketsTest.java     | 92 +++++++++++++++++++
- .../storage/WorldClockTrackerTest.java        | 74 +++++++++++++++
- 7 files changed, 320 insertions(+), 12 deletions(-)
+ .../viabedrock/protocol/BedrockProtocol.java  |   1 +
+ .../protocol/packet/JoinPackets.java          |  16 ++-
+ .../protocol/packet/WorldPackets.java         |  77 +++++++++++-
+ .../protocol/storage/GameRulesStorage.java    |   3 +
+ .../protocol/storage/JoinGameStorage.java     |   2 +-
+ .../protocol/storage/WorldClockTracker.java   | 104 ++++++++++++++++
+ .../protocol/packet/WorldPacketsTest.java     | 103 ++++++++++++++++
+ .../storage/WorldClockTrackerTest.java        | 115 ++++++++++++++++++
+ 8 files changed, 409 insertions(+), 12 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/WorldClockTracker.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/WorldPacketsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/WorldClockTrackerTest.java
@@ -38,7 +51,7 @@ index 2cd6622a..3e72aeeb 100644
          user.put(new BlobCache(user));
          user.put(new PacketSyncStorage(user));
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-index 6e99cdeb..3f385268 100644
+index 6e99cdeb..4c895fd8 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 @@ -230,7 +230,7 @@ public final class JoinPackets {
@@ -67,9 +80,9 @@ index 6e99cdeb..3f385268 100644
 -        setTime.write(BedrockTypes.VAR_INT, joinGameStorage.currentTime()); // time of day
 -        setTime.send(BedrockProtocol.class, false);
 +        final PacketWrapper setTime = PacketWrapper.create(ClientboundPackets26_3.SET_TIME, user);
-+        WorldPackets.writeJavaTime(setTime, gameSession.getLevelTime(),
++        WorldPackets.writeLegacyTime(setTime, WorldPackets.currentJavaGameTime(user),
 +            initialDayTime(joinGameStorage.dayCycleStopTime(), gameSession.getLevelTime()),
-+            gameRulesStorage.getGameRule("doDayLightCycle"));
++            user.get(GameRulesStorage.class).getGameRule("doDayLightCycle"));
 +        setTime.send(BedrockProtocol.class);
 +    }
 +
@@ -79,10 +92,18 @@ index 6e99cdeb..3f385268 100644
  
      private JoinPackets() {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
-index 617b1b5a..62827457 100644
+index 617b1b5a..f075b732 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
-@@ -27,6 +27,7 @@ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
+@@ -19,6 +19,7 @@ package net.raphimc.viabedrock.protocol.packet;
+ 
+ import com.viaversion.nbt.tag.CompoundTag;
+ import com.viaversion.nbt.tag.Tag;
++import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.minecraft.*;
+ import com.viaversion.viaversion.api.minecraft.blockentity.BlockEntity;
+ import com.viaversion.viaversion.api.minecraft.chunks.ChunkSection;
+@@ -27,6 +28,7 @@ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
  import com.viaversion.viaversion.api.protocol.remapper.PacketHandler;
  import com.viaversion.viaversion.api.protocol.remapper.PacketHandlers;
  import com.viaversion.viaversion.api.type.Types;
@@ -90,7 +111,7 @@ index 617b1b5a..62827457 100644
  import com.viaversion.viaversion.libs.fastutil.ints.IntObjectPair;
  import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
  import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
-@@ -54,6 +55,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.SubChunkPack
+@@ -54,6 +56,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.SubChunkPack
  import net.raphimc.viabedrock.protocol.data.enums.java.Relative;
  import net.raphimc.viabedrock.protocol.data.enums.java.RespawnKeepFlag;
  import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
@@ -98,7 +119,7 @@ index 617b1b5a..62827457 100644
  import net.raphimc.viabedrock.protocol.model.BlockChangeEntry;
  import net.raphimc.viabedrock.protocol.model.Position3f;
  import net.raphimc.viabedrock.protocol.rewriter.BlockEntityRewriter;
-@@ -530,12 +532,24 @@ public final class WorldPackets {
+@@ -530,12 +533,24 @@ public final class WorldPackets {
          });
          protocol.registerClientbound(ClientboundBedrockPackets.SET_TIME, ClientboundPackets26_3.SET_TIME, wrapper -> {
              final long bedrockTime = wrapper.read(BedrockTypes.VAR_INT); // time
@@ -108,7 +129,7 @@ index 617b1b5a..62827457 100644
 -            wrapper.write(Types.VAR_LONG, bedrockTime >= 0L ? bedrockTime % 24000L : 24000L + (bedrockTime % 24000L)); // total ticks
 -            wrapper.write(Types.FLOAT, 0F); // partial tick
 -            wrapper.write(Types.FLOAT, wrapper.user().get(GameRulesStorage.class).getGameRule("doDayLightCycle") ? 1F : 0F); // rate
-+            writeJavaTime(wrapper, currentJavaGameTime(wrapper), bedrockTime,
++            writeLegacyTime(wrapper, currentJavaGameTime(wrapper.user()), bedrockTime,
 +                wrapper.user().get(GameRulesStorage.class).getGameRule("doDayLightCycle"));
 +        });
 +        protocol.registerClientbound(ClientboundBedrockPackets.SYNC_WORLD_CLOCKS, ClientboundPackets26_3.SET_TIME, wrapper -> {
@@ -125,21 +146,31 @@ index 617b1b5a..62827457 100644
 +                wrapper.cancel();
 +                return;
 +            }
-+            writeJavaTime(wrapper, currentJavaGameTime(wrapper), javaUpdates);
++            writeJavaTime(wrapper, currentJavaGameTime(wrapper.user()), javaUpdates);
          });
  
          protocol.registerServerbound(ServerboundPackets26_3.SIGN_UPDATE, ServerboundBedrockPackets.BLOCK_ENTITY_DATA, wrapper -> {
-@@ -573,6 +587,43 @@ public final class WorldPackets {
+@@ -573,6 +588,53 @@ public final class WorldPackets {
          });
      }
  
-+    static void writeJavaTime(final PacketWrapper wrapper, final long gameTime, final long bedrockTime, final boolean dayCycleEnabled) {
-+        writeJavaTime(wrapper, gameTime, List.of(new JavaClockUpdate(0, bedrockTime, dayCycleEnabled)));
++    static void writeLegacyTime(final PacketWrapper wrapper, final long gameTime, final long bedrockTime, final boolean running) {
++        wrapper.user().get(WorldClockTracker.class).setLegacyTime(gameTime, bedrockTime, running);
++        writeJavaTime(wrapper, gameTime, List.of(new JavaClockUpdate(0, bedrockTime, running)));
 +    }
 +
-+    private static long currentJavaGameTime(final PacketWrapper wrapper) {
-+        final long levelTime = wrapper.user().get(GameSessionStorage.class).getLevelTime();
-+        final ClientPlayerEntity player = wrapper.user().get(EntityTracker.class).getClientPlayer();
++    public static void updateLegacyDayCycle(final UserConnection user, final boolean running) {
++        final long gameTime = currentJavaGameTime(user);
++        user.get(WorldClockTracker.class).updateLegacyDayCycle(gameTime, running).ifPresent(update -> {
++            final PacketWrapper setTime = PacketWrapper.create(ClientboundPackets26_3.SET_TIME, user);
++            writeJavaTime(setTime, gameTime, List.of(new JavaClockUpdate(0, update.time(), !update.paused())));
++            setTime.send(BedrockProtocol.class);
++        });
++    }
++
++    static long currentJavaGameTime(final UserConnection user) {
++        final long levelTime = user.get(GameSessionStorage.class).getLevelTime();
++        final ClientPlayerEntity player = user.get(EntityTracker.class).getClientPlayer();
 +        return javaGameTime(levelTime, player != null ? player.age() : 0);
 +    }
 +
@@ -173,7 +204,7 @@ index 617b1b5a..62827457 100644
      static long packSectionPosition(final BlockPosition section) {
          return (section.x() & 0x3FFFFFL) << 42 | (section.z() & 0x3FFFFFL) << 20 | (section.y() & 0xFFFFFL);
      }
-@@ -580,4 +631,7 @@ public final class WorldPackets {
+@@ -580,4 +642,7 @@ public final class WorldPackets {
      private WorldPackets() {
      }
  
@@ -181,6 +212,27 @@ index 617b1b5a..62827457 100644
 +    }
 +
  }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRulesStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRulesStorage.java
+index 9dcfed5b..8f8bd5ed 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRulesStorage.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/GameRulesStorage.java
+@@ -27,6 +27,7 @@ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent;
+ import net.raphimc.viabedrock.protocol.data.enums.java.GameEventType;
+ import net.raphimc.viabedrock.protocol.model.GameRule;
++import net.raphimc.viabedrock.protocol.packet.WorldPackets;
+ 
+ import java.util.HashMap;
+ import java.util.Locale;
+@@ -63,6 +64,8 @@ public class GameRulesStorage extends StoredObject {
+                         PacketFactory.sendJavaGameEvent(this.user(), GameEventType.IMMEDIATE_RESPAWN, (boolean) gameRule.value() ? 1F : 0F);
+                     } else if (gameRule.name().equalsIgnoreCase("doLimitedCrafting")) {
+                         PacketFactory.sendJavaGameEvent(this.user(), GameEventType.LIMITED_CRAFTING, (boolean) gameRule.value() ? 1F : 0F);
++                    } else if (gameRule.name().equalsIgnoreCase("doDayLightCycle")) {
++                        WorldPackets.updateLegacyDayCycle(this.user(), (boolean) gameRule.value());
+                     }
+                 }
+             }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/JoinGameStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/JoinGameStorage.java
 index 85bfa586..cdad57cf 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/JoinGameStorage.java
@@ -194,10 +246,10 @@ index 85bfa586..cdad57cf 100644
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/WorldClockTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/WorldClockTracker.java
 new file mode 100644
-index 00000000..e45e2378
+index 00000000..94c8e7d1
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/WorldClockTracker.java
-@@ -0,0 +1,81 @@
+@@ -0,0 +1,104 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -213,12 +265,14 @@ index 00000000..e45e2378
 +import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 +import com.viaversion.viaversion.api.type.Types;
 +import com.viaversion.viaversion.exception.InformativeException;
++import com.viaversion.viaversion.util.Key;
 +import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 +
 +import java.util.ArrayList;
 +import java.util.HashMap;
 +import java.util.List;
 +import java.util.Map;
++import java.util.Optional;
 +
 +public class WorldClockTracker implements StorableObject {
 +
@@ -227,6 +281,21 @@ index 00000000..e45e2378
 +    private static final int MAX_CLOCKS = 256;
 +
 +    private final Map<Long, String> clockNames = new HashMap<>();
++    private LegacyClock legacyOverworld;
++
++    public void setLegacyTime(final long gameTime, final long time, final boolean running) {
++        this.legacyOverworld = new LegacyClock(gameTime, time, running);
++    }
++
++    public Optional<ClockUpdate> updateLegacyDayCycle(final long gameTime, final boolean running) {
++        if (this.legacyOverworld == null || this.legacyOverworld.running() == running) {
++            return Optional.empty();
++        }
++        final long time = this.legacyOverworld.time() + (this.legacyOverworld.running()
++            ? Math.max(0L, gameTime - this.legacyOverworld.gameTime()) : 0L);
++        this.setLegacyTime(gameTime, time, running);
++        return Optional.of(new ClockUpdate("minecraft:overworld", time, !running));
++    }
 +
 +    public List<ClockUpdate> readUpdates(final PacketWrapper wrapper) throws InformativeException {
 +        final int type = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
@@ -264,6 +333,9 @@ index 00000000..e45e2378
 +                }
 +            }
 +        }
++        if (updates.stream().anyMatch(update -> Key.namespaced(update.name()).equals("minecraft:overworld"))) {
++            this.legacyOverworld = null;
++        }
 +        return updates;
 +    }
 +
@@ -278,13 +350,16 @@ index 00000000..e45e2378
 +    public record ClockUpdate(String name, long time, boolean paused) {
 +    }
 +
++    private record LegacyClock(long gameTime, long time, boolean running) {
++    }
++
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/WorldPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/WorldPacketsTest.java
 new file mode 100644
-index 00000000..22ac6c1d
+index 00000000..acb10056
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/WorldPacketsTest.java
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,103 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -297,14 +372,17 @@ index 00000000..22ac6c1d
 +package net.raphimc.viabedrock.protocol.packet;
 +
 +import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.api.connection.UserConnection;
 +import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 +import com.viaversion.viaversion.api.type.Types;
 +import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
 +import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
 +import io.netty.buffer.ByteBuf;
 +import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.storage.WorldClockTracker;
 +import org.junit.jupiter.api.Test;
 +
++import java.lang.reflect.Proxy;
 +import java.util.List;
 +
 +import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -312,9 +390,17 @@ index 00000000..22ac6c1d
 +class WorldPacketsTest {
 +
 +    @Test
-+    void keepsCompleteBedrockTimeInJavaClockUpdate() throws Exception {
-+        final PacketWrapper wrapper = new PacketWrapperImpl(ClientboundPackets26_3.SET_TIME, null, null);
-+        WorldPackets.writeJavaTime(wrapper, WorldPackets.javaGameTime(100L, 20), 48_001L, true);
++    void writesCompleteLegacyTimeWithTheDaylightRuleRate() throws Exception {
++        final WorldClockTracker tracker = new WorldClockTracker();
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, args) -> {
++                    if (method.getName().equals("get") && args[0] == WorldClockTracker.class) {
++                        return tracker;
++                    }
++                    throw new UnsupportedOperationException(method.getName());
++                });
++        final PacketWrapper wrapper = new PacketWrapperImpl(ClientboundPackets26_3.SET_TIME, null, user);
++        WorldPackets.writeLegacyTime(wrapper, WorldPackets.javaGameTime(100L, 20), 48_001L, true);
 +
 +        final ByteBuf buffer = Unpooled.buffer();
 +        try {
@@ -379,10 +465,10 @@ index 00000000..22ac6c1d
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/WorldClockTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/WorldClockTrackerTest.java
 new file mode 100644
-index 00000000..0ad1be6c
+index 00000000..3ed3d7b5
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/WorldClockTrackerTest.java
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,115 @@
 +package net.raphimc.viabedrock.protocol.storage;
 +
 +import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
@@ -396,12 +482,51 @@ index 00000000..0ad1be6c
 +import java.util.List;
 +
 +import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
 +
 +class WorldClockTrackerTest {
 +
 +    @Test
++    void pausesAndResumesTheCurrentLegacyTimeWithoutResettingDayCounts() {
++        final WorldClockTracker tracker = new WorldClockTracker();
++        tracker.setLegacyTime(100L, 48_001L, true);
++        assertEquals(new WorldClockTracker.ClockUpdate("minecraft:overworld", 48_021L, true),
++            tracker.updateLegacyDayCycle(120L, false).orElseThrow());
++        assertTrue(tracker.updateLegacyDayCycle(10_000L, false).isEmpty());
++        assertEquals(new WorldClockTracker.ClockUpdate("minecraft:overworld", 48_021L, false),
++            tracker.updateLegacyDayCycle(20_000L, true).orElseThrow());
++        assertEquals(new WorldClockTracker.ClockUpdate("minecraft:overworld", 48_052L, true),
++            tracker.updateLegacyDayCycle(20_031L, false).orElseThrow());
++    }
++
++    @Test
++    void appliesNewServerTimeWhilePausedAndKeepsUnrelatedExplicitClocksIndependent() throws Exception {
++        final WorldClockTracker tracker = new WorldClockTracker();
++        tracker.setLegacyTime(100L, 12_445L, true);
++        assertEquals(12_445L, tracker.updateLegacyDayCycle(100L, false).orElseThrow().time());
++        tracker.setLegacyTime(500L, -6_000L, false);
++        final ByteBuf initialization = Unpooled.buffer();
++        try {
++            BedrockTypes.UNSIGNED_VAR_INT.write(initialization, 1);
++            BedrockTypes.UNSIGNED_VAR_INT.write(initialization, 1);
++            BedrockTypes.UNSIGNED_VAR_LONG.write(initialization, 43L);
++            BedrockTypes.STRING.write(initialization, "minecraft:the_end");
++            BedrockTypes.VAR_INT.write(initialization, 6_000);
++            Types.BOOLEAN.write(initialization, false);
++            BedrockTypes.UNSIGNED_VAR_INT.write(initialization, 0);
++            tracker.readUpdates(new PacketWrapperImpl(ClientboundBedrockPackets.SYNC_WORLD_CLOCKS, initialization, null));
++            assertEquals(new WorldClockTracker.ClockUpdate("minecraft:overworld", -6_000L, false),
++                tracker.updateLegacyDayCycle(25_000L, true).orElseThrow());
++            assertEquals(-5_960L, tracker.updateLegacyDayCycle(25_040L, false).orElseThrow().time());
++        } finally {
++            initialization.release();
++        }
++    }
++
++    @Test
 +    void tracksClockIdsAcrossInitializationAndStateUpdates() throws Exception {
 +        final WorldClockTracker tracker = new WorldClockTracker();
++        tracker.setLegacyTime(100L, 12_445L, true);
 +        final ByteBuf initialization = Unpooled.buffer();
 +        try {
 +            BedrockTypes.UNSIGNED_VAR_INT.write(initialization, 1); // initialize registry
@@ -431,6 +556,7 @@ index 00000000..0ad1be6c
 +                    new WorldClockTracker.ClockUpdate("minecraft:the_end", 6_000, true)),
 +                    tracker.readUpdates(new PacketWrapperImpl(ClientboundBedrockPackets.SYNC_WORLD_CLOCKS, initialization, null)));
 +            assertEquals(0, initialization.readableBytes());
++            assertTrue(tracker.updateLegacyDayCycle(200L, false).isEmpty());
 +        } finally {
 +            initialization.release();
 +        }
@@ -451,6 +577,7 @@ index 00000000..0ad1be6c
 +                    new WorldClockTracker.ClockUpdate("minecraft:overworld", 1_000, false)),
 +                    tracker.readUpdates(new PacketWrapperImpl(ClientboundBedrockPackets.SYNC_WORLD_CLOCKS, sync, null)));
 +            assertEquals(0, sync.readableBytes());
++            assertTrue(tracker.updateLegacyDayCycle(300L, true).isEmpty());
 +        } finally {
 +            sync.release();
 +        }

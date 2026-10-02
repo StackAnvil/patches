@@ -1,6 +1,10 @@
 Java 26.3 applies a different lightmap gamma transform from Bedrock 1.26.51.1. Its Nether brightness calculation also applies ambient light at a different stage.
 
-This patch uses a dedicated shader for actual Bedrock Overworld and Nether connections. It reproduces the classic native light-image calculation, including its float table, colored block light, sunrise tint, weather factor, quartic gamma, and byte truncation. Nether keeps the native white sky and full sky factor.
+This patch uses a dedicated shader for supported Bedrock Overworld and Nether sessions. It reproduces the classic native light-image calculation, including its float table, colored block light, sunrise tint, weather factor, quartic gamma, and byte truncation. Nether keeps the native white sky and full sky factor.
+
+Direct Bedrock connections activate the pipeline through their protocol state. ViaProxy sessions activate it through versioned metadata in an accepted converted server pack. Local packs and unsupported metadata cannot activate it. Resource reload and disconnect clear the context. A stale asynchronous reload completion cannot restore it.
+
+The patch also omits Java's low-light vignette on supported Bedrock sessions. Native Hive reference surfaces have uniform texture colors. A fit across 18,140 Java white-item pixels explains the extra vignette within 0.33 encoded RGB bytes. This overlay darkened the world and held items toward the screen edges. The fit identifies that overlay. It does not prove complete image parity.
 
 Immutable render snapshots refresh the lightmap when inputs change between ticks. This covers brightness changes, darkness animation, and transitions between supported and unsupported connections. The shader joins the normal resource reload pipeline. Its uniform buffer closes with its owning lightmap.
 
@@ -10,6 +14,16 @@ Validation passed eight targeted tests for inputs, snapshot equality, and unifor
 
 The End retains the existing Java pipeline because its animated native sky producer is incomplete. Darkness uses Java's effect blend lifecycle, whose exact native fade timing remains unverified. Enhanced lighting and resource-pack lighting overrides remain outside this port. The GPU checks establish the calculation for supplied inputs, not complete visual parity with a running native client.
 
-The full dependency-ordered build passes: six CubeConverter tests, 276 core tests, and 241 executed add-on tests. Another 63 add-on cases require private fixtures and remain skipped. Both core Checkstyle tasks pass. Tooling checks and all 49 tooling tests pass.
+A saved native Hive session exposed a separate clock error. It sends `SetTime` 12445, then `GameRulesChanged` with `dodaylightcycle=false`. Java previously stored the rule without changing its clock rate, so the scene drifted into night. Core clock patch `0014` now pauses and resumes legacy time at its current value. Explicit `SyncWorldClocks` rates remain independent. A measured night-floor value alone did not establish visual success for this fixed-time lobby.
 
-The complete saved Hive scene passes local transport and rendering checks after the server resource-pack reload. Render-state observations confirm the native lightmap is active at gamma 0.5. All supplied geometry skins retain their pixels, and remote-player and custom-actor draws are verified. The native day factor reaches its measured night floor of 0.2. No new public Hive connection was made. Captures and screenshots remain private.
+Official-client loopback replay now provides a controlled reference without another public join. Verification requires the complete scene payload SHA-256, completed pack reconstruction, local-player initialization, gameplay input, and a reference screenshot. Its `reference-captured` result remains distinct from add-on rendering verification.
+
+The ViaProxy route uses the accepted server-pack metadata for lighting, but it still lacks native actor and player geometry. Its replay therefore requires `--transport-only`. Actor material and controller lighting controls belong to the separate actor rendering patches.
+
+Targeted metadata regressions cover accepted server packs, rejected local packs, strict protocol numbers, reload replacement, disconnect, and stale completion. The dependency-ordered build passes. The complete add-on suite passes with all private fixtures enabled after integrating the latest main changes. The full CubeConverter suite passes eight tests, and the core suite passes its clock and renderer regressions with both Checkstyle tasks. Tooling checks and all 50 tooling tests pass.
+
+Complete loopback replays preserve the original Hive scene payload SHA-256. The direct add-on passes native actor and player rendering assertions. Actual ViaProxy frame observations hold time at 12445 and confirm the native lightmap stays active after the initial pack reload. Static scenery registration validates the color comparison within about one native pixel. Full difference maps still include changing actors, HUD, clouds, and resolution differences.
+
+The corrected terrain is much closer to the official reference. The sky still differs, and held-item sampling and directional shading remain incomplete. The final Java compass color is explained by its measured block light and quad normal. A brightness gain cannot resolve these separate inputs. Native assets, decompiler output, recordings, and screenshots remain private.
+
+The final ViaProxy comparison measures the same 12,039 pixels across three aligned terrain regions. Encoded RGB errors fall from 33.9 to 6.1 on the left masonry, 41.6 to 11.6 on the castle, and 36.1 to 10.0 on the pavement. Their weighted error drops 73.7%. This is a result for those regions, not an overall pixel parity score. Pavement edge alignment is validated locally but lies outside the building feature hull. Sky gradients and clouds remain different. The separate core fog patch corrects inherited air color without claiming a complete sky port.

@@ -3,12 +3,12 @@ import { createHash } from "node:crypto";
 
 export const journalMagic = 0x53425231;
 export const maxJournalBytes = 512 * 1024 * 1024;
-export interface PacketSummary { protocol: number; clientbound: number; serverbound: number; elapsedSeconds: number; ids: Record<number, number>; reachedStartGame: boolean; reachedSpawn: boolean; sceneSha256: string }
+export interface PacketSummary { protocol: number; clientbound: number; serverbound: number; elapsedSeconds: number; ids: Record<number, number>; serverboundIds: Record<number, number>; reachedStartGame: boolean; reachedSpawn: boolean; sceneSha256: string }
 
 /** Read packet boundaries without exposing player, chat, skin, or token payloads. */
 export function summarizeJournal(bytes: Buffer): PacketSummary {
   if (bytes.length < 8 || bytes.length > maxJournalBytes || bytes.readUInt32BE(0) !== journalMagic) throw new Error("Invalid packet journal header.");
-  const result: PacketSummary = { protocol: bytes.readUInt32BE(4), clientbound: 0, serverbound: 0, elapsedSeconds: 0, ids: {}, reachedStartGame: false, reachedSpawn: false, sceneSha256: "" };
+  const result: PacketSummary = { protocol: bytes.readUInt32BE(4), clientbound: 0, serverbound: 0, elapsedSeconds: 0, ids: {}, serverboundIds: {}, reachedStartGame: false, reachedSpawn: false, sceneSha256: "" };
   const scene = createHash("sha256");
   let offset = 8;
   let previous = -1n;
@@ -38,7 +38,10 @@ export function summarizeJournal(bytes: Buffer): PacketSummary {
         scene.update(bytes.subarray(offset - 4, offset));
         scene.update(bytes.subarray(offset, offset + length));
       }
-    } else result.serverbound++;
+    } else {
+      result.serverbound++;
+      result.serverboundIds[id] = (result.serverboundIds[id] ?? 0) + 1;
+    }
     previous = nanos;
     result.elapsedSeconds = Number(nanos) / 1e9;
     offset += length;

@@ -1,0 +1,117 @@
+From 8f5db92499254e224248b38919f0cb79cf7da25a Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 02:20:53 +0200
+Subject: [PATCH] feat(controllers): preserve actor lighting controls
+
+Retain ignore_lighting and the light_color_multiplier expression from Bedrock render controllers so renderers can reproduce their selected lighting. Preserve material override order as it determines which wildcard or bone-specific expression wins. Defaults keep controllers without those fields lit at their original strength.
+---
+ .../controller/BedrockRenderController.java   |  3 +-
+ .../controller/BedrockControllerParser.java   | 10 +++--
+ .../BedrockControllerLightingTest.java        | 38 +++++++++++++++++++
+ 3 files changed, 46 insertions(+), 5 deletions(-)
+ create mode 100644 src/test/java/org/cube/converter/parser/bedrock/controller/BedrockControllerLightingTest.java
+
+diff --git a/src/main/java/org/cube/converter/data/bedrock/controller/BedrockRenderController.java b/src/main/java/org/cube/converter/data/bedrock/controller/BedrockRenderController.java
+index e76cc41..b48e8c2 100644
+--- a/src/main/java/org/cube/converter/data/bedrock/controller/BedrockRenderController.java
++++ b/src/main/java/org/cube/converter/data/bedrock/controller/BedrockRenderController.java
+@@ -13,7 +13,8 @@ import static org.cube.converter.util.GsonUtil.*;
+ // TODO: hurt color, overlay color, etc....
+ public record BedrockRenderController(String identifier, Map<String, String> materialsMap,
+                                       String geometryExpression, List<String> textureExpressions,
+-                                      List<Array> materials, List<Array> textures, List<Array> geometries) {
++                                      List<Array> materials, List<Array> textures, List<Array> geometries,
++                                      boolean ignoreLighting, String lightColorMultiplierExpression) {
+     public record Array(String name, List<String> values) {
+         public static List<Array> parse(final JsonObject object) {
+             if (object == null) {
+diff --git a/src/main/java/org/cube/converter/parser/bedrock/controller/BedrockControllerParser.java b/src/main/java/org/cube/converter/parser/bedrock/controller/BedrockControllerParser.java
+index 6949359..2f8d078 100644
+--- a/src/main/java/org/cube/converter/parser/bedrock/controller/BedrockControllerParser.java
++++ b/src/main/java/org/cube/converter/parser/bedrock/controller/BedrockControllerParser.java
+@@ -7,7 +7,7 @@ import org.cube.converter.data.bedrock.controller.BedrockRenderController;
+ import org.cube.converter.util.GsonUtil;
+ 
+ import java.util.ArrayList;
+-import java.util.HashMap;
++import java.util.LinkedHashMap;
+ import java.util.List;
+ import java.util.Map;
+ 
+@@ -45,7 +45,7 @@ public class BedrockControllerParser {
+                 }
+             }
+ 
+-            final Map<String, String> materialsMap = new HashMap<>();
++            final Map<String, String> materialsMap = new LinkedHashMap<>();
+             if (object.has("materials")) {
+                 for (final JsonElement element : object.getAsJsonArray("materials")) {
+                     if (!element.isJsonObject()) {
+@@ -55,9 +55,11 @@ public class BedrockControllerParser {
+                 }
+             }
+ 
++            final boolean ignoreLighting = object.has("ignore_lighting") && object.get("ignore_lighting").getAsBoolean();
++            final String lightColorMultiplier = object.has("light_color_multiplier") ? object.get("light_color_multiplier").getAsString() : "1.0";
+             final JsonObject arrays = object.getAsJsonObject("arrays");
+             if (arrays == null) {
+-                list.add(new BedrockRenderController(identifier, materialsMap, geometryExpression, textureExpressions, List.of(), List.of(), List.of()));
++                list.add(new BedrockRenderController(identifier, materialsMap, geometryExpression, textureExpressions, List.of(), List.of(), List.of(), ignoreLighting, lightColorMultiplier));
+                 continue;
+             }
+ 
+@@ -65,7 +67,7 @@ public class BedrockControllerParser {
+             final List<BedrockRenderController.Array> geometries = BedrockRenderController.Array.parse(arrays.getAsJsonObject("geometries"));
+             final List<BedrockRenderController.Array> materials = BedrockRenderController.Array.parse(arrays.getAsJsonObject("materials"));
+ 
+-            list.add(new BedrockRenderController(identifier, materialsMap, geometryExpression, textureExpressions, materials, textures, geometries));
++            list.add(new BedrockRenderController(identifier, materialsMap, geometryExpression, textureExpressions, materials, textures, geometries, ignoreLighting, lightColorMultiplier));
+         }
+ 
+         return list;
+diff --git a/src/test/java/org/cube/converter/parser/bedrock/controller/BedrockControllerLightingTest.java b/src/test/java/org/cube/converter/parser/bedrock/controller/BedrockControllerLightingTest.java
+new file mode 100644
+index 0000000..d9be730
+--- /dev/null
++++ b/src/test/java/org/cube/converter/parser/bedrock/controller/BedrockControllerLightingTest.java
+@@ -0,0 +1,38 @@
++package org.cube.converter.parser.bedrock.controller;
++
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockControllerLightingTest {
++    @Test
++    void retainsLightingExpressionsAndMaterialOverrideOrderWithArrays() {
++        final var controller = BedrockControllerParser.parse("""
++            {"render_controllers":{"controller.render.logo":{
++                "geometry":"Geometry.default","textures":["Texture.default"],
++                "materials":[{"*":"Material.default"},{"Light*":"Array.materials[query.variant]"}],
++                "ignore_lighting":true,"light_color_multiplier":"query.variant * 0.5",
++                "arrays":{"materials":{"Array.materials":["Material.normal","Material.glow"]}}
++            }}}
++            """).get(0);
++        assertTrue(controller.ignoreLighting());
++        assertEquals("query.variant * 0.5", controller.lightColorMultiplierExpression());
++        assertEquals(List.of("*", "Light*"), List.copyOf(controller.materialsMap().keySet()));
++        assertEquals(2, controller.materials().get(0).values().size());
++    }
++
++    @Test
++    void defaultsAndNumericMultipliersDoNotRequireArrays() {
++        final var defaults = BedrockControllerParser.parse("""
++            {"render_controllers":{"controller.render.default":{}}}
++            """).get(0);
++        assertFalse(defaults.ignoreLighting());
++        assertEquals(1F, Float.parseFloat(defaults.lightColorMultiplierExpression()));
++        final var dimmed = BedrockControllerParser.parse("""
++            {"render_controllers":{"controller.render.default":{"light_color_multiplier":0.4}}}
++            """).get(0);
++        assertEquals(0.4F, Float.parseFloat(dimmed.lightColorMultiplierExpression()));
++    }
++}
+-- 
+2.55.0

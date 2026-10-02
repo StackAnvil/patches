@@ -65,6 +65,14 @@ final class ReplaySceneDiagnostics {
                     Class<?> attribute = Class.forName("net.minecraft.world.attribute.EnvironmentAttribute");
                     Object skyFactor = Class.forName("net.minecraft.world.attribute.EnvironmentAttributes").getField("SKY_LIGHT_FACTOR").get(null);
                     state.put("skyLightFactor", probe.getClass().getMethod("getValue", attribute, float.class).invoke(probe, skyFactor, 0F));
+                    Map<String, Object> colors = new LinkedHashMap<>();
+                    Class<?> attributes = Class.forName("net.minecraft.world.attribute.EnvironmentAttributes");
+                    for (String name : List.of("SKY_COLOR", "FOG_COLOR", "CLOUD_COLOR", "SUNRISE_SUNSET_COLOR")) {
+                        Object value = probe.getClass().getMethod("getValue", attribute, float.class)
+                                .invoke(probe, attributes.getField(name).get(null), 0F);
+                        colors.put(name, new Gson().toJsonTree(value));
+                    }
+                    state.put("environmentColors", colors);
                     nativeLightmap(renderer, state);
                     Object foot = world.getClass().getMethod("getBlockState", blockPosition).invoke(world, position);
                     Object below = world.getClass().getMethod("getBlockState", blockPosition).invoke(world, call(position, "below"));

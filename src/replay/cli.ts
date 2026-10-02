@@ -86,7 +86,7 @@ async function buildFabricRecorder(jar: string, build: string): Promise<string> 
     name: "StackAnvil private replay recorder", environment: "client", mixins: ["stackanvil-recorder.mixins.json"],
     depends: { "viafabricplus-bedrock": "*" } }), { mode: 0o600 });
   await writeFile(join(classes, "stackanvil-recorder.mixins.json"), JSON.stringify({ required: true,
-    package: "com.enderdash.agent.replay.fabric.mixin", compatibilityLevel: "JAVA_25", client: ["MixinPacketCodec", "MixinPlayerSkins", "MixinRenderStore", "MixinCustomEntity", "MixinCustomActorFrame", "MixinReplayCamera", "MixinPlayerFrame"] }), { mode: 0o600 });
+    package: "com.enderdash.agent.replay.fabric.mixin", compatibilityLevel: "JAVA_25", client: ["MixinPacketCodec", "MixinPlayerSkins", "MixinRenderStore", "MixinCustomEntity", "MixinCustomActorFrame", "MixinHeldItemLight", "MixinReplayCamera", "MixinPlayerFrame"] }), { mode: 0o600 });
   const output = join(build, "fabric-recorder.jar");
   await execute("jar", ["--create", "--file", output, "-C", classes, "."]);
   return output;
@@ -138,10 +138,8 @@ async function launchJava(directory: string, bind: number, client: "addon" | "pr
     const file = await artifact(project);
     await cp(file, join(mods, basename(file)));
   }
-  if (client === "addon") {
-    await cp(recorder, join(mods, "stackanvil-recorder.jar"));
-    await writeFile(join(game, "stackanvil-replay-directory.txt"), directory, { mode: 0o600 });
-  }
+  await cp(recorder, join(mods, "stackanvil-recorder.jar"));
+  await writeFile(join(game, "stackanvil-replay-directory.txt"), directory, { mode: 0o600 });
   const launcherLog = join(directory, "launcher.log");
   service("flatpak", ["run", "--nosocket=wayland", "--socket=x11", `--filesystem=${join(root, ".stackanvil/lab")}:ro`, `--filesystem=${directory}`,
     ...(client === "addon" ? [`--filesystem=${join(privateRoot, "client-assets")}`] : []),
@@ -261,7 +259,6 @@ async function main(): Promise<void> {
   const client = option("--client") ?? (mode === "replay" ? "addon" : "proxy");
   const transportOnly = args.includes("--transport-only");
   if (client !== "addon" && client !== "proxy" && client !== "native") throw new Error("--client must be addon, proxy, or native.");
-  if (client === "native" && mode !== "record") throw new Error("Native capture is a recording route. Use addon for rendering regression replay.");
   if (!Number.isInteger(seconds) || seconds < 20 || seconds > 300) throw new Error("--seconds must be between 20 and 300.");
   if (mode === "record" && input === "hive" && client !== "native" && !args.includes("--allow-hive")) throw new Error("ViaBedrock blacklists The Hive because translated clients can be banned. Use an official client capture, or explicitly pass --allow-hive for this diagnostic join.");
   let target = servers[input as keyof typeof servers];
@@ -273,7 +270,7 @@ async function main(): Promise<void> {
   await mkdir(privateRoot, { recursive: true, mode: 0o700 });
   await chmod(privateRoot, 0o700);
   const { classes, plugin, build } = await buildPlugin(jar);
-  const recorder = client === "addon" ? await buildFabricRecorder(jar, build) : "";
+  const recorder = client !== "native" ? await buildFabricRecorder(jar, build) : "";
   const directory = join(privateRoot, `${new Date().toISOString().replaceAll(":", "-")}-${mode}-${mode === "record" ? input : "scene"}`);
   await mkdir(directory, { mode: 0o700 });
   const proxyHome = join(directory, "proxy");
@@ -321,7 +318,7 @@ async function main(): Promise<void> {
       await ready(child, proxyLog, /ViaProxy started successfully/);
     } else if (client === "native") {
       const separator = target!.lastIndexOf(":");
-      const account = input === "local" ? "offline" : resolve(option("--account") ?? process.env.STACKANVIL_BEDROCK_ACCOUNT ?? accountDefault);
+      const account = mode === "replay" || input === "local" ? "offline" : resolve(option("--account") ?? process.env.STACKANVIL_BEDROCK_ACCOUNT ?? accountDefault);
       child = service("java", [`-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`,
         "com.enderdash.agent.replay.NativeCaptureProxy", directory, String(bind), target!.slice(0, separator), target!.slice(separator + 1), account], directory, proxyLog);
       await ready(child, proxyLog, /StackAnvil native capture ready/);
@@ -376,13 +373,20 @@ async function main(): Promise<void> {
   if (mode === "replay") {
     const original = await inspectJournal(join(resolve(input), "packets.sbr"));
     if (original.sceneSha256 !== summary.sceneSha256) throw new Error("The replay changed or omitted scene packet payloads.");
+    if (client === "native") {
+      if (!summary.serverboundIds[113] || !summary.serverboundIds[144]) throw new Error("The official client did not acknowledge its local player and begin gameplay input.");
+      if (!existsSync(join(directory, "scene.png")) || existsSync(join(directory, "screenshot-error.txt"))) throw new Error("The official replay produced no reference screenshot.");
+      await writeFile(join(directory, "verification.json"), JSON.stringify({ transport: "pass", rendering: "reference-captured", evidence: ["complete unchanged scene payloads", "native local-player initialization", "native gameplay input", "resource-pack reconstruction", "reference screenshot"] }, null, 2), { mode: 0o600 });
+      console.log("PASS offline official-client transport: complete unchanged scene, native gameplay acknowledgments, and saved reference screenshot.");
+      return;
+    }
     const clientLog = await logText(join(directory, "client.log"));
     if (!/Reloading ResourceManager:.*server\//.test(clientLog)) throw new Error("Java did not load the replay resource pack.");
     const { stdout } = await execute("java", [`-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`, "com.enderdash.agent.replay.SceneFeatures", join(resolve(input), "packets.sbr")]);
     const expected = JSON.parse(stdout) as SceneFeatures;
     const auditFile = join(directory, "render-audit.json");
     const audit = existsSync(auditFile) ? JSON.parse(await readFile(auditFile, "utf8")) as RenderAudit : undefined;
-    const failures = client === "addon" ? verifyRendering(expected, audit, clientLog, !!original.ids[12]) : ["The proxy route does not exercise native appearance rendering."];
+    const failures = client === "addon" ? verifyRendering(expected, audit, clientLog, !!original.ids[12]) : ["The proxy route lacks native actor and player appearance state; lighting observations remain available in the private frame audit."];
     await writeFile(join(directory, "verification.json"), JSON.stringify({ transport: "pass", rendering: failures.length ? "fail" : "pass", failures, unregisteredActors: expected.unregisteredActorIdentifiers ?? [], expected }, null, 2), { mode: 0o600 });
     console.log("PASS offline scene transport: playable spawn, complete payloads, and Java resource pack load.");
     if (failures.length) {

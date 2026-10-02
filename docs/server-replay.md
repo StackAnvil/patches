@@ -56,11 +56,19 @@ bun run server-replay replay .stackanvil/replay/<recording> --seconds 150
 bun run server-replay selftest
 ```
 
-Allow enough time for Java startup, pack conversion, and the full recorded scene. The scene clock starts at the recorded resource-pack stack. Earlier scene packets keep their order and arrive immediately after local pack negotiation. This skips the captured download delay and preserves world timing. Subchunk replies wait for matching requests from the local client, which can load packs more slowly than the captured client. The scene clock pauses during that wait; a missing request fails after 15 seconds. Packet bytes and order stay unchanged.
+Allow enough time for client startup, pack conversion, and the full recorded scene. The scene clock starts at the recorded resource-pack stack. Earlier scene packets keep their order and arrive immediately after local pack negotiation. This skips the captured download delay and preserves world timing. Subchunk replies wait for matching requests from the local client, which can load packs more slowly than the captured client. The scene clock pauses during that wait; a missing request fails after 15 seconds. Packet bytes and order stay unchanged.
 
 The replay server binds only to loopback. It creates a fresh offline handshake and serves packs through a loopback HTTP endpoint. It preserves the captured entity IDs, skins, world data, and packet order. Server transfers and recorded disconnects do not run.
 
-Replay connects the Fabric add-on directly to the local Bedrock replay server. This exercises its native skin and entity renderer. A separate recorder mod exists only in the private test instance.
+The default replay connects the Fabric add-on directly to the local Bedrock replay server. This exercises its native skin and entity renderer. A separate recorder mod exists only in the private test instance.
+
+For an official-client reference, use:
+
+```bash
+bun run server-replay replay .stackanvil/replay/<recording> --client native --seconds 180
+```
+
+The native route uses the same isolated installation and graphics safety checks as native recording. It connects through the recording relay to the loopback replay server. It requires the complete scene payload SHA-256, completed pack reconstruction, local-player initialization, gameplay input, and a saved reference screenshot. Its report uses `rendering: reference-captured`. It does not substitute for the add-on's rendering assertions.
 
 Skins can reference built-in Bedrock animations. For those scenes, pass `--account /absolute/path/to/bedrock.json` to select your saved Bedrock account. The client obtains its licensed, versioned assets once and reuses `.stackanvil/replay/client-assets/`. This cache stays private and separate from the packet recording. The replay server still connects only over loopback; initial asset acquisition can contact the official account and asset services.
 
@@ -70,13 +78,19 @@ Rendering checks compare installed skin dimensions and pixel hashes against pack
 
 These assertions cover asset installation and model resolution. They cannot prove every animation frame, shader effect, or camera view matches the official client. Inspect the saved screenshot and add a focused regression for those behaviors.
 
-Private `camera-audit.jsonl` observations include frame time, world clocks, player light levels, gamma, and Java’s skylight factor. When the native lightmap is active, the audit also records its actual render-state sky factor, gamma, darkness pulse, night vision, and sunrise color. They also cover scenes that omit the local-player skin. Match world time and camera position when comparing lighting. A running world clock continues into night after the recorded scene ends.
+Private `camera-audit.jsonl` observations include frame time, world clocks, player light levels, gamma, and Java’s skylight factor. They also record sky, fog, cloud, and sunrise environment colors. When the native lightmap is active, the audit records its actual render-state sky factor, gamma, darkness pulse, night vision, and sunrise color. They also cover scenes that omit the local-player skin. Match world time and camera position when comparing lighting. A running world clock continues after the recorded scene ends. A later `doDayLightCycle` change pauses or resumes the legacy day clock at its current time. Explicit `SyncWorldClocks` updates retain their own rates.
 
-Use `--client proxy --transport-only` to check the separate Java → ViaProxy route. The proxy route does not exercise the add-on's native appearance renderer. `--transport-only` preserves rendering failures in the report while allowing a transport check to finish.
+Private `held-item-light-audit.jsonl` observations record actual first-person submissions. They include packed light, quad normals, tint layers, material emission, and the selected pipeline. Observations do not change the item or camera. Compare them with the screenshot timestamp; startup light values can change while chunks load.
+
+The native Hive recording sends `SetTime` 12445, then `GameRulesChanged` with `dodaylightcycle=false`. Java previously stored that rule without updating its running clock rate. The clock patch now sends the pause to Java. This fixes the lobby's drift into night. Legacy `SetTime` still advances while daylight is enabled.
+
+Use `--client proxy --transport-only` to check the separate Java → ViaProxy route. An accepted converted server pack carries versioned Bedrock rendering metadata. The add-on uses this metadata to activate the native lightmap and disable Java's low-light vignette on the proxy route. Local packs and unsupported metadata cannot activate this context. Resource reload and disconnect clear it. Stale reload completion cannot restore it.
+
+The proxy route still does not support native actor and player geometry. It therefore requires `--transport-only`. This flag preserves rendering failures in the report while allowing a transport check to finish.
 
 ## Validation scope
 
-The native recording screenshot shows the official Bedrock client. The local replay screenshot shows ViaFabricPlus with the Bedrock add-on.
+Native recording and `--client native` replay screenshots show the official Bedrock client. Default replay screenshots show ViaFabricPlus with the Bedrock add-on.
 
 Private regression recordings cover CubeCraft, Hive, the public Geyser test server, and Minehut. CubeCraft exercises 240 skin updates, 37 advertised custom actor types, and actual native actor and player submissions. The Geyser scene exercises supplied player geometry and custom block packs.
 
@@ -92,7 +106,19 @@ Water filtering also follows the native measurements. Waterlogged stairs, fences
 
 The Bedrock lightmap uses formulas recovered from the licensed Windows 1.26.51.1 executable with PistonDecompiler and local Ghidra analysis. Its Overworld day angle, sunrise tint, weather response, block-light color, Nether brightness offset, and per-channel brightness correction differ from Java’s renderer. The native caller applies two small ambient bias stages. Its brightness slider reads `gfx_gamma` directly, with a default of 0.5. The separate fullscreen gamma calibration does not define this slider.
 
-The lightmap applies only to an active Bedrock connection in supported vanilla dimensions. Ordinary Java connections retain Java lighting. Native shader binaries, decompiler output, and licensed assets remain private. This port does not establish pixel-identical ambient occlusion, Vibrant Visuals, ray tracing, or custom world lighting. The End retains Java’s lightmap until its animated native brightness input is verified.
+The lightmap applies to supported vanilla dimensions on direct Bedrock connections or proxy sessions with accepted converted server packs. Ordinary Java connections retain Java lighting.
+
+Biome air fog inherits the effective `minecraft:fog_default` color when the selected fog defines only other media. Explicit biome colors and server-pack defaults keep precedence. The native last-resort air color is `#ABD2FF`, rather than Java's `#C0D8FF`.
+
+Java's low-light vignette also darkened the world and held items toward the screen edges. A fit across 18,140 white-item pixels explains this extra overlay within 0.33 encoded RGB bytes. Native Hive reference surfaces have uniform texture colors. Supported Bedrock sessions now omit the Java vignette. This fit identifies the overlay. It does not establish complete image parity.
+
+Actor controllers preserve `ignore_lighting`, their floating `light_color_multiplier`, and ordered bone material overrides. Supported alpha-test materials retain texture alpha only when it exceeds 0.5. Unlit actors bypass block and sky light but retain native directional shading in world space. These rules come from the target native CPU code and ENTITY shaders.
+
+Emissive-alpha materials and ordinary lit directional shading retain the existing fallback. Native shader binaries, decompiler output, and licensed assets remain private. This port does not establish pixel-identical ambient occlusion, Vibrant Visuals, ray tracing, or custom world lighting. The End retains Java’s lightmap until its animated native brightness input is verified.
+
+The saved Hive comparison still shows differences in sky gradients, clouds, and held-item shading. Java's final compass color matches its measured eye-block light and quad normal. Native held-item sample position and shader selection remain unresolved. Native clouds are enabled; removing them is not a supported parity fix.
+
+For image comparisons, align static building features and validate each measured region's edges. Use the same pixels before and after a change. Full difference maps also include moving actors, nameplates, HUD, and texture filtering. Those pixels cannot support an overall renderer parity percentage.
 
 ## Limits
 

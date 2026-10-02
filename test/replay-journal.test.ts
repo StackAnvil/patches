@@ -33,6 +33,19 @@ describe("private Bedrock packet journals", () => {
     const missing = summarizeJournal(journal([{ direction: 1, nanos: 0n, payload: [11, 1] }]));
     expect(missing.sceneSha256).not.toBe(original.sceneSha256);
   });
+  test("keeps native gameplay acknowledgments separate from server scene packets", () => {
+    const summary = summarizeJournal(journal([
+      { direction: 1, nanos: 0n, payload: [113] },
+      { direction: 1, nanos: 1n, payload: [144, 1] },
+      { direction: 0, nanos: 2n, payload: [113] },
+      { direction: 0, nanos: 3n, payload: [144, 1] },
+      { direction: 0, nanos: 4n, payload: [144, 1] },
+    ]));
+    expect(summary.ids).toEqual({ 113: 1, 144: 1 });
+    expect(summary.serverboundIds).toEqual({ 113: 1, 144: 2 });
+    const serverOnly = summarizeJournal(journal([{ direction: 1, nanos: 0n, payload: [113] }]));
+    expect(serverOnly.serverboundIds).toEqual({});
+  });
   test("rejects every partial entry instead of silently accepting a broken scene", () => {
     const bytes = journal([{ direction: 1, nanos: 0n, payload: [11, 1, 2, 3] }]);
     for (let length = 9; length < bytes.length; length++) expect(() => summarizeJournal(bytes.subarray(0, length))).toThrow();
