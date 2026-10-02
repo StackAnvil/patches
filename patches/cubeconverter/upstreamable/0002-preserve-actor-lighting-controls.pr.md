@@ -9,3 +9,17 @@ Retain controller UV offset and scale expressions with native identity defaults.
 Bedrock 1.26.51.1 parser `141cabf60` initializes UV offset to zero and scale to one. Installed ENTITY vertex DXIL applies `UV * scale + offset`. The licensed executable SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`; target protocol is 2193. Native assets remain private.
 
 Targeted tests cover signed and fractional numeric components, invalid neighboring fields, malformed pairs, and identity defaults. This metadata does not add material mask effects or infer blending states.
+
+
+Legacy `description.animation_controllers` declarations retain their alias,
+identifier, and order for client entities and attachables. Absent fields
+default to an empty list. Existing constructor callers remain compatible.
+The parser keeps this metadata independently of modern `scripts.animate`;
+client code chooses supported playback semantics.
+
+The active native Bedrock 1.26.51.1 Hive entity uses format 1.8.0 and declares
+a controller without modern animation scripts. The only active saved
+entity entry has SHA-256
+`58cf3b66a2ebe76751415ae7f5f9ad81b44464e5ec987f4f22d6e49639cc1f80`.
+Tests verify ordered immutable declarations, independent modern scripts,
+malformed neighbors, and defaults without implicit controllers.

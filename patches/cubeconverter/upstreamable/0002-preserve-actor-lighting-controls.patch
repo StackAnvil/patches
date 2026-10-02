@@ -1,4 +1,4 @@
-From c6966d11dee703af3ad6efe764d59a5b1c0944ae Mon Sep 17 00:00:00 2001
+From b0adced526dc6ddc0ab426de20915d7db153a65d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 02:20:53 +0200
 Subject: [PATCH] feat(controllers): preserve actor rendering controls
@@ -20,13 +20,92 @@ UVAnimation.zw plus UVAnimation.xy. Its material uniform default is
 Saved CubeCraft controllers require camera and lifetime expressions;
 carry those expressions without assuming that a protocol worker knows
 the rendering camera. Native assets and raw exports remain private.
+
+Preserve legacy client entity and attachable animation-controller aliases
+as immutable ordered declarations, independently of modern script entries.
+Keep existing constructors source-compatible and default absent declarations
+to an empty list. Parsing does not select a state or impose renderer policy.
+Tests verify declaration order, independent scripts, malformed neighbors
+and absent declarations.
+
+Retain legacy description.animation_controllers declarations in order.
+The active saved protocol 2193 Hive client entity uses format 1.8.0 with
+face/center animation aliases and a declared single-default-state
+controller, without scripts.animate. Dropping the declaration prevented
+its supported rotation_to_camera bone animation from reaching the draw.
+The final saved pack stack has exactly one definition for this identifier.
+Its entity entry SHA-256 is
+58cf3b66a2ebe76751415ae7f5f9ad81b44464e5ec987f4f22d6e49639cc1f80;
+the containing pack SHA-256 is
+13facb13e8f0aa5ac233253e5deeca0e8c294512ca5f02bb7c38a8fd5da5d028.
+Native Bedrock 1.26.51.1 protocol 2193 renders its labels facing the camera.
+Raw assets and captures stay private; generic tests reproduce the schema.
 ---
+ .../data/bedrock/BedrockAttachableData.java   |  7 +++
+ .../data/bedrock/BedrockEntityData.java       | 27 ++++++++
  .../controller/BedrockRenderController.java   |  7 ++-
  .../controller/BedrockControllerParser.java   | 33 ++++++++--
+ .../bedrock/data/BedrockDataParser.java       |  5 +-
  .../BedrockControllerLightingTest.java        | 62 +++++++++++++++++++
- 3 files changed, 97 insertions(+), 5 deletions(-)
+ .../BedrockLegacyAnimationControllerTest.java | 38 ++++++++++++
+ 7 files changed, 172 insertions(+), 7 deletions(-)
  create mode 100644 src/test/java/org/cube/converter/parser/bedrock/controller/BedrockControllerLightingTest.java
+ create mode 100644 src/test/java/org/cube/converter/parser/bedrock/controller/BedrockLegacyAnimationControllerTest.java
 
+diff --git a/src/main/java/org/cube/converter/data/bedrock/BedrockAttachableData.java b/src/main/java/org/cube/converter/data/bedrock/BedrockAttachableData.java
+index d66f15d..57afc24 100644
+--- a/src/main/java/org/cube/converter/data/bedrock/BedrockAttachableData.java
++++ b/src/main/java/org/cube/converter/data/bedrock/BedrockAttachableData.java
+@@ -7,4 +7,11 @@ public class BedrockAttachableData extends BedrockEntityData {
+     public BedrockAttachableData(String identifier, Scripts scripts, List<RenderController> controllers, Map<String, String> materials, Map<String, String> animations, Map<String, String> textures, Map<String, String> geometries) {
+         super(identifier, scripts, controllers, materials, animations, textures, geometries);
+     }
++
++    public BedrockAttachableData(String identifier, Scripts scripts, List<RenderController> controllers,
++                                Map<String, String> materials, Map<String, String> animations,
++                                Map<String, String> textures, Map<String, String> geometries,
++                                List<AnimationController> animationControllers) {
++        super(identifier, scripts, controllers, materials, animations, textures, geometries, animationControllers);
++    }
+ }
+diff --git a/src/main/java/org/cube/converter/data/bedrock/BedrockEntityData.java b/src/main/java/org/cube/converter/data/bedrock/BedrockEntityData.java
+index 21f1685..48a5b0c 100644
+--- a/src/main/java/org/cube/converter/data/bedrock/BedrockEntityData.java
++++ b/src/main/java/org/cube/converter/data/bedrock/BedrockEntityData.java
+@@ -24,6 +24,33 @@ public class BedrockEntityData {
+     private final Map<String, String> animations;
+     private final Map<String, String> textures;
+     private final Map<String, String> geometries;
++    private final List<AnimationController> animationControllers;
++
++    public BedrockEntityData(String identifier, Scripts scripts, List<RenderController> controllers,
++                             Map<String, String> materials, Map<String, String> animations,
++                             Map<String, String> textures, Map<String, String> geometries) {
++        this(identifier, scripts, controllers, materials, animations, textures, geometries, List.of());
++    }
++
++    public record AnimationController(String alias, String identifier) {
++        public static List<AnimationController> parse(final JsonArray array) {
++            if (array == null) {
++                return List.of();
++            }
++            final List<AnimationController> controllers = new ArrayList<>();
++            for (final JsonElement element : array) {
++                if (!element.isJsonObject()) {
++                    continue;
++                }
++                for (final var entry : element.getAsJsonObject().entrySet()) {
++                    if (entry.getValue().isJsonPrimitive() && entry.getValue().getAsJsonPrimitive().isString()) {
++                        controllers.add(new AnimationController(entry.getKey(), entry.getValue().getAsString()));
++                    }
++                }
++            }
++            return List.copyOf(controllers);
++        }
++    }
+ 
+     public record RenderController(String identifier, String condition) {
+         public static List<RenderController> parse(final JsonArray array) {
 diff --git a/src/main/java/org/cube/converter/data/bedrock/controller/BedrockRenderController.java b/src/main/java/org/cube/converter/data/bedrock/controller/BedrockRenderController.java
 index e76cc41..58c7118 100644
 --- a/src/main/java/org/cube/converter/data/bedrock/controller/BedrockRenderController.java
@@ -117,6 +196,28 @@ index 6949359..0df30bc 100644
      private static List<String> arrayToList(JsonArray array) {
          List<String> list = new ArrayList<>();
  
+diff --git a/src/main/java/org/cube/converter/parser/bedrock/data/BedrockDataParser.java b/src/main/java/org/cube/converter/parser/bedrock/data/BedrockDataParser.java
+index c782b38..06e925f 100644
+--- a/src/main/java/org/cube/converter/parser/bedrock/data/BedrockDataParser.java
++++ b/src/main/java/org/cube/converter/parser/bedrock/data/BedrockDataParser.java
+@@ -50,6 +50,7 @@ public class BedrockDataParser {
+         final Map<String, String> geometries = objectToMap(description.getAsJsonObject("geometry"));
+         final Map<String, String> animations = objectToMap(description.getAsJsonObject("animations"));
+         final List<BedrockEntityData.RenderController> controllers = BedrockEntityData.RenderController.parse(description.getAsJsonArray("render_controllers"));
++        final List<BedrockEntityData.AnimationController> animationControllers = BedrockEntityData.AnimationController.parse(description.getAsJsonArray("animation_controllers"));
+         final BedrockEntityData.Scripts scripts;
+         if (description.has("scripts")) {
+             scripts = BedrockEntityData.Scripts.parse(description.getAsJsonObject("scripts"));
+@@ -57,7 +58,7 @@ public class BedrockDataParser {
+             scripts = BedrockEntityData.Scripts.emptyScript();
+         }
+ 
+-        return attachable ? new BedrockAttachableData(identifier, scripts, controllers, materials, animations, textures, geometries) :
+-                new BedrockEntityData(identifier, scripts, controllers, materials, animations, textures, geometries);
++        return attachable ? new BedrockAttachableData(identifier, scripts, controllers, materials, animations, textures, geometries, animationControllers) :
++                new BedrockEntityData(identifier, scripts, controllers, materials, animations, textures, geometries, animationControllers);
+     }
+ }
 diff --git a/src/test/java/org/cube/converter/parser/bedrock/controller/BedrockControllerLightingTest.java b/src/test/java/org/cube/converter/parser/bedrock/controller/BedrockControllerLightingTest.java
 new file mode 100644
 index 0000000..521b7d8
@@ -184,6 +285,50 @@ index 0000000..521b7d8
 +        assertEquals(BedrockRenderController.UvAnimation.IDENTITY, malformed);
 +    }
 +
++}
+diff --git a/src/test/java/org/cube/converter/parser/bedrock/controller/BedrockLegacyAnimationControllerTest.java b/src/test/java/org/cube/converter/parser/bedrock/controller/BedrockLegacyAnimationControllerTest.java
+new file mode 100644
+index 0000000..eb7a077
+--- /dev/null
++++ b/src/test/java/org/cube/converter/parser/bedrock/controller/BedrockLegacyAnimationControllerTest.java
+@@ -0,0 +1,38 @@
++package org.cube.converter.parser.bedrock.controller;
++
++import org.cube.converter.data.bedrock.BedrockEntityData;
++import org.cube.converter.parser.bedrock.data.impl.BedrockEntityParser;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class BedrockLegacyAnimationControllerTest {
++    @Test
++    void preservesLegacyDeclarationsInOrderIndependentlyOfModernScripts() {
++        final var entity = BedrockEntityParser.parse("""
++            {"format_version":"1.8.0","minecraft:client_entity":{"description":{
++                "identifier":"test:mob","animations":{"face":"animation.test.face"},
++                "animation_controllers":[{"first":"controller.animation.test.first"},
++                    null,{"invalid":4,"second":"controller.animation.test.second"}],
++                "scripts":{"animate":["face"]}
++            }}}
++            """);
++        assertEquals(List.of(new BedrockEntityData.AnimationController("first", "controller.animation.test.first"),
++            new BedrockEntityData.AnimationController("second", "controller.animation.test.second")), entity.getAnimationControllers());
++        assertEquals(1, entity.getScripts().animates().size());
++        assertThrows(UnsupportedOperationException.class, () -> entity.getAnimationControllers().clear());
++    }
++
++    @Test
++    void defaultsWithoutInventingImplicitControllers() {
++        final var entity = BedrockEntityParser.parse("""
++            {"minecraft:client_entity":{"description":{"identifier":"test:mob"}}}
++            """);
++        assertTrue(entity.getAnimationControllers().isEmpty());
++        assertTrue(entity.getScripts().animates().isEmpty());
++    }
 +}
 -- 
 2.55.0
