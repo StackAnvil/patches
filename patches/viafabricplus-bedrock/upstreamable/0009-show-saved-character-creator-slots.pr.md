@@ -660,3 +660,19 @@ This verifies the production request shape and service acceptance. It does not v
 After integration with the lighting patch, all 306 fixture-enabled add-on tests pass with no failures, errors, or skips. The two new tests cover palette matching across native color formats and rejection of invalid or unmatched colors. Fresh standalone package acquisition, extraction, and cache reuse also pass.
 
 The full dependency build and Prism bundle pass after replaying all 16 add-on patches. The build verifies the pinned ViaFabricPlus Jenkins artifacts.
+
+## Native free claims and Minecoin acquisition
+
+The native Store catalog puts `requiresRedeem` at item level. Its `flags` field is an array. Correct that mapping and retain paid offers with their exact integer price. The mutation builders reject unacquired items, while removal remains available for equipped pieces.
+
+The wardrobe now offers Get for zero-price claims and a price confirmation for paid offers. Before purchase, refresh catalog ownership and published metadata. Reject changed prices, product IDs, content types, and pack identities. Submit one `/transaction/virtual` request with the confirmed Minecoin amount. Poll only catalog and receipt reads until both ownership and the specific pack key arrive. Do not automatically equip after acquisition.
+
+A muted Bedrock 1.26.51.1 native capture uses an isolated profile with an empty persona cache. Its first inventory supplies 25 keys with one distinct decoded value. Native Get for Secret Handshake adds a new entitlement and key, then exposes Equip. The capture sends no appearance PUT. Separate `/transaction/redeem/xbox` calls synchronize Microsoft Store DLC. That flow remains unimplemented.
+
+A live zero-cost Shadow Boxing claim uses the production request builder and correlation-only telemetry. The service accepts it and returns an opaque string transaction ID. Production validates the response, reads catalog ownership and the matching receipt key, and decrypts the six-file pack and parses its 3.13-second animation. All saved appearances remain unchanged. These two verification claims permanently add free entitlements. No Minecoins are spent.
+
+Full asynchronous screen acquisition and paid transactions remain unverified. The captured inventory establishes the receipt key source for this account. Accounts without receipt keys still need separate evidence and implementation. Credentials, receipts, raw traffic, assets, and test probes remain private.
+
+All 311 fixture-enabled tests pass with no failures, errors, or skips. Five new tests cover confirmed prices, stale or invalid purchase metadata, product and pack identity, response validation, and recipe mutation eligibility. Fresh licensed-package extraction and cache reuse also pass. The full dependency build verifies the pinned ViaFabricPlus Jenkins artifacts, and the Prism bundle passes after replaying all 16 add-on patches.
+
+A real account probe also passes the asynchronous already-owned acquisition path and loads the claimed emote through the production account asset loader. This path sends no purchase request. The screen's transaction path still needs a live UI test. A separate Xbox redemption probe returns HTTP 401 with the account manager's general Xbox Live token. The correct redemption token audience and context remain unresolved.

@@ -112,6 +112,20 @@ The color editor uses swatches captured from Bedrock 1.26.51. Skin tone edits ch
 
 The full stack builds, and all 148 fixture-enabled add-on tests pass with no skips. A running Java client passes 33 checks for color controls, saved swatch selection, Apply availability, eye channel cycling, and returning to the wardrobe. The runtime probe uses a local recipe fixture and writes no account changes. A fresh native mouth or facial hair write capture remains pending.
 
+## Marketplace acquisition
+
+The wardrobe retains paid offers and zero-price claims alongside free and owned items. It reads `requiresRedeem` from the catalog item's top level. `flags` is an array in the captured native catalog. An unclaimed item with a redemption requirement cannot be equipped. Existing equipped pieces can still be removed.
+
+**Get** claims a zero-price offer. **Buy** shows its Minecoin price and opens a confirmation. The add-on refreshes the catalog and published item before submitting the transaction. A changed price, product, content type, or pack identity stops the request. Already owned items require no transaction.
+
+The transaction uses `POST /api/v1.0/transaction/virtual` with the offer ID, an empty Store ID, correlation telemetry, and the confirmed Minecoin amount. After acceptance, the add-on refreshes the inventory receipt and catalog until both ownership and the specific pack key arrive. It sends one transaction request and retries only the reads. Acquisition exposes Equip without changing the saved recipe. An uncertain result asks the player to refresh ownership and check their balance before another attempt.
+
+A muted native Bedrock 1.26.51.1 capture starts with an empty local persona cache. Its inventory supplies 25 content keys with one distinct decoded value. Native **Get** claims Secret Handshake and adds its pack entitlement and key. The button changes to Equip, and no appearance write occurs. Microsoft Store DLC synchronization uses the separate `/transaction/redeem/xbox` route.
+
+A separate live zero-cost Shadow Boxing claim uses the production request builder. The service accepts correlation-only telemetry and returns an opaque string transaction ID. Fresh catalog ownership and the matching receipt key allow production to decrypt the six-file emote pack and parse its 3.13-second animation. All saved appearances remain unchanged. Both claims add permanent zero-cost entitlements. Neither spends Minecoins.
+
+The live test verifies the request builder, service acceptance, response validation, ownership, receipt decoding, and pack decryption. A real account probe passes the asynchronous already-owned path and loads the claimed emote through the account asset loader. The screen transaction path and paid purchases remain unverified. Xbox Store redemption is not implemented. A general Xbox Live token receives HTTP 401 at that route. Its correct token audience and context remain unresolved. The empty-cache capture establishes receipt keys for this account. It does not establish a key source for accounts without receipt keys.
+
 ## Account character assembly
 
 The active character has an authenticated avatar at `GET /api/v1.0/profile/image/avatar`. The add-on assembles its body locally when all equipped assets and bindings are available. Recipes with unavailable receipt keys still use the GLTF model from `/api/v1.0/profile/image/ModelBinary`.
@@ -366,7 +380,7 @@ Other facing modes, manual emission, curves, and nested effect events remain inc
 
 - Resolve free assets for accounts without usable receipt keys. These recipes still depend on the service model. Resolve unavailable remote emote assets.
 - Verify the full color save path and visible picker behavior. A live service test accepts the production first iris group and returns it exactly. All six original recipes are restored. Native setter execution passes 240 cases. Metadata eligibility passes 186 factory, move, and picker cases. Palette selection accepts both native RGB and ARGB saves. Other UI implementations and palette options 7-9 remain unverified.
-- Add paid purchase and redemption flows. Synchronize classic skin selection with the native account.
+- Verify paid acquisition and the full asynchronous Get/Buy UI flow. Implement Xbox Store redemption and native account synchronization for classic skins.
 - Finish the remaining particle components, named actor events, captions, and stream concurrency. Verify dynamic emote bindings, native render suppression, and scaled world locators. Emote chat announcements exist, but native platform communication filters remain incomplete.
 - Complete native item poses, first-person playback, and equipment behavior. Remaining bindings include local charging prediction, post-use trident behavior, item-name mappings, and exact native use durations.
 - Resolve additional geometry animation alias sources and native parent-name behavior. Modern and library geometry flags derive aliases through persistence and transport. The legacy vex model still has an unresolved `rightarm` parent.
