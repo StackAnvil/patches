@@ -13,3 +13,5 @@ The bounded static panel also carries its original background texture, alpha, ni
 Keep global palette parsing in `TextFormattingDefinitions`, separate from scoreboard layout. Each connection holds an immutable result with the effective pack priority. This includes minecoin, material colors, resin, and party blue. The native reader binds `$party_blue_color` to §w at table address 1517f8420. The dependency lacks that code, so the target default is handled by the extended formatting patch.
 
 Preserve active bold and italic styles across palette color codes, including codes the dependency does not know. Entity metadata tests exercise player and custom actor names, sparse updates, blank names, independent connection palettes, and immutable emitted components. Pack storage finishes before supported entity creation; the protocol rejects replacement pack information within an existing connection.
+
+The converted-pack identity advances to version 9 after correcting equipped attachable selectors. This prevents earlier cached exports with doubled variant names from reaching the item selector or worn renderer. Cache regressions and the full 334-test core suite pass.

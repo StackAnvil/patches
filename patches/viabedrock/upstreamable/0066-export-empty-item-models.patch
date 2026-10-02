@@ -1,4 +1,4 @@
-From 59dd92b6a037358fdb776e97792152c33c03c123 Mon Sep 17 00:00:00 2001
+From 4158dd9c0434bfd3a0fb4a87404f3179c72c7522 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:22:35 +0200
 Subject: [PATCH] fix(models): export complete asset pairs and empty item
@@ -17,14 +17,22 @@ not prevent joining. Native rendering performs its own active lookup.
 Saved Geyser and CubeCraft pack audits contain no dangling sprite or
 particle bindings. Semantic tests cover empty and populated item exports,
 resolved and unresolved model pairs, and inactive versus active failures.
+
+Keep attachable variant keys relative to their item identifier. The item
+content already namespaces model paths by identifier; repeating it in
+the variant breaks both the default custom-model selector and readiness
+lookup used for equipped items. A recorded Bedrock 1.26.51.1 Hive player
+wears angel wings in the chest slot, exposing this mismatch. Semantic
+conversion tests resolve both default and folded equipment selectors to
+real geometry and matching converter readiness.
 ---
- .../api/model/entity/CustomEntity.java        |  9 ++
- .../CustomAttachableResourceRewriter.java     | 25 ++---
- .../CustomEntityResourceRewriter.java         | 27 +++---
- .../ItemModelResourceRewriter.java            | 62 +++++++++++-
- .../ItemModelResourceRewriterTest.java        | 68 +++++++++++++
- .../resourcepack/ModelResourceAssetsTest.java | 96 +++++++++++++++++++
- 6 files changed, 251 insertions(+), 36 deletions(-)
+ .../api/model/entity/CustomEntity.java        |   9 ++
+ .../CustomAttachableResourceRewriter.java     |  25 ++--
+ .../CustomEntityResourceRewriter.java         |  27 ++--
+ .../ItemModelResourceRewriter.java            |  62 ++++++++-
+ .../ItemModelResourceRewriterTest.java        |  68 ++++++++++
+ .../resourcepack/ModelResourceAssetsTest.java | 123 ++++++++++++++++++
+ 6 files changed, 278 insertions(+), 36 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriterTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
 
@@ -56,7 +64,7 @@ index aa377430..56b06826 100644
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
-index 40083952..b7a43b8e 100644
+index 40083952..218e99bb 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
 @@ -21,7 +21,6 @@ import com.viaversion.viaversion.api.minecraft.item.data.ItemModel;
@@ -92,16 +100,16 @@ index 40083952..b7a43b8e 100644
          for (Map.Entry<String, String> modelEntry : attachableDefinition.attachableData().getGeometries().entrySet()) {
              final BedrockGeometryModel bedrockGeometry = resourcePackStorage.getModels().entityModels().get(modelEntry.getValue());
 -            if (bedrockGeometry == null) {
--                continue;
--            }
--            if (!attachableDefinition.attachableData().getTextures().containsKey(modelEntry.getKey())) {
 +            final String bedrockTexturePath = attachableDefinition.attachableData().getTextures().get(modelEntry.getKey());
-+            final String modelKey = attachableDefinition.identifier() + "_" + modelEntry.getKey();
++            final String modelKey = modelEntry.getKey();
 +            final boolean hasTexture = textures.contains(bedrockTexturePath);
 +            this.recordMissingAssets(resourcePackStorage, attachableDefinition.identifier(), modelKey, modelEntry.getValue(), bedrockTexturePath, bedrockGeometry != null, hasTexture);
 +            if (bedrockGeometry == null || !hasTexture) {
                  continue;
              }
+-            if (!attachableDefinition.attachableData().getTextures().containsKey(modelEntry.getKey())) {
+-                continue;
+-            }
 -
 -            final String javaTexturePath = this.getJavaTexturePath(attachableDefinition.attachableData().getTextures().get(modelEntry.getKey()));
 +            final String javaTexturePath = this.getJavaTexturePath(bedrockTexturePath);
@@ -345,10 +353,10 @@ index 00000000..6c8d9a77
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
 new file mode 100644
-index 00000000..e1edc978
+index 00000000..b9655afe
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,123 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -389,13 +397,40 @@ index 00000000..e1edc978
 +    }
 +
 +    @Test
++    void resolvesEquippedAttachableVariantsToTheirConvertedModels() {
++        final String identifier = "example:wings";
++        final ResourcePack pack = pack(identifier, true);
++        pack.content().put("textures/omitted.png", pack.content().get("textures/present.png"));
++        final JsonObject definition = pack.content().getJson("attachables/test.json");
++        final JsonObject description = definition.getAsJsonObject("minecraft:attachable").getAsJsonObject("description");
++        description.getAsJsonObject("geometry").addProperty("folded", "geometry.test");
++        description.getAsJsonObject("textures").addProperty("folded", "textures/present");
++        pack.content().putJson("attachables/test.json", definition);
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack));
++        final Content result = convert(storage, new CustomAttachableResourceRewriter());
++        final var cases = result.getJson("assets/viabedrock/items/attachables/example/wings.json")
++                .getAsJsonObject("model").getAsJsonArray("cases");
++        assertEquals(2, cases.size());
++        for (String variant : List.of("default", "folded")) {
++            assertEquals(true, storage.getConverterData().get("ca_" + identifier + '_' + variant));
++            assertNull(ItemModelResourceRewriter.unresolvedModelAssets(storage, "attachables", identifier, variant));
++            final var selected = java.util.stream.StreamSupport.stream(cases.spliterator(), false)
++                    .map(element -> element.getAsJsonObject())
++                    .filter(model -> variant.equals(model.get("when").getAsString())).findFirst().orElseThrow();
++            final String modelPath = selected.getAsJsonObject("model").get("model").getAsString()
++                    .substring("viabedrock:".length());
++            assertNotNull(result.getJson("assets/viabedrock/models/" + modelPath + ".json"));
++        }
++    }
++
++    @Test
 +    void exportsAnEmptyVanillaAttachableWhenItsTextureIsOmitted() {
 +        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack("minecraft:armor", true)));
 +        final Content result = convert(storage, new CustomAttachableResourceRewriter());
 +        final var model = result.getJson("assets/viabedrock/items/attachables/minecraft/armor.json").getAsJsonObject("model");
 +        assertEquals("minecraft:empty", model.get("type").getAsString());
 +        assertTrue(result.getFilesDeep("assets/viabedrock/models/", ".json").isEmpty());
-+        assertNotNull(ItemModelResourceRewriter.unresolvedModelAssets(storage, "attachables", "minecraft:armor", "minecraft:armor_default"));
++        assertNotNull(ItemModelResourceRewriter.unresolvedModelAssets(storage, "attachables", "minecraft:armor", "default"));
 +    }
 +
 +    @Test
@@ -405,7 +440,7 @@ index 00000000..e1edc978
 +            final ResourcePackRewriter.Rewriter rewriter = attachable ? new CustomAttachableResourceRewriter() : new CustomEntityResourceRewriter();
 +            assertDoesNotThrow(() -> convert(storage, rewriter));
 +            final String folder = attachable ? "attachables" : "entities";
-+            final String model = attachable ? "example:actor_default" : "default_default";
++            final String model = attachable ? "default" : "default_default";
 +            assertThrows(IllegalStateException.class, () -> ItemModelResourceRewriter.requireModelAssets(storage, folder, "example:actor", model));
 +            if (!attachable) {
 +                assertDoesNotThrow(() -> ItemModelResourceRewriter.requireModelAssets(storage, folder, "example:actor", "default_resolved"));

@@ -1,4 +1,4 @@
-From b0adced526dc6ddc0ab426de20915d7db153a65d Mon Sep 17 00:00:00 2001
+From bad79e4e82dcea516d3a5526bb6b9753c38d12d7 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 02:20:53 +0200
 Subject: [PATCH] feat(controllers): preserve actor rendering controls
@@ -40,15 +40,25 @@ the containing pack SHA-256 is
 13facb13e8f0aa5ac233253e5deeca0e8c294512ca5f02bb7c38a8fd5da5d028.
 Native Bedrock 1.26.51.1 protocol 2193 renders its labels facing the camera.
 Raw assets and captures stay private; generic tests reproduce the schema.
+
+Preserve ordered render-controller part_visibility rules, including
+wildcards and repeated patterns, and attachable parent_setup expressions
+in their separate owner scope. Native equipped models depend on these
+controls for invisibility, first-person visibility and owner variables.
+Keep existing constructors while exposing immutable new declarations.
+Semantic parser regressions cover visibility precedence, scalar and array
+setup, missing controls and defensive ownership.
 ---
- .../data/bedrock/BedrockAttachableData.java   |  7 +++
- .../data/bedrock/BedrockEntityData.java       | 27 ++++++++
- .../controller/BedrockRenderController.java   |  7 ++-
- .../controller/BedrockControllerParser.java   | 33 ++++++++--
- .../bedrock/data/BedrockDataParser.java       |  5 +-
- .../BedrockControllerLightingTest.java        | 62 +++++++++++++++++++
- .../BedrockLegacyAnimationControllerTest.java | 38 ++++++++++++
- 7 files changed, 172 insertions(+), 7 deletions(-)
+ .../data/bedrock/BedrockAttachableData.java   |   7 ++
+ .../data/bedrock/BedrockEntityData.java       |  59 +++++++++-
+ .../controller/BedrockRenderController.java   |  23 +++-
+ .../controller/BedrockControllerParser.java   |  52 ++++++++-
+ .../bedrock/data/BedrockDataParser.java       |   5 +-
+ .../BedrockAttachableRenderingTest.java       | 109 ++++++++++++++++++
+ .../BedrockControllerLightingTest.java        |  62 ++++++++++
+ .../BedrockLegacyAnimationControllerTest.java |  38 ++++++
+ 8 files changed, 346 insertions(+), 9 deletions(-)
+ create mode 100644 src/test/java/org/cube/converter/parser/bedrock/controller/BedrockAttachableRenderingTest.java
  create mode 100644 src/test/java/org/cube/converter/parser/bedrock/controller/BedrockControllerLightingTest.java
  create mode 100644 src/test/java/org/cube/converter/parser/bedrock/controller/BedrockLegacyAnimationControllerTest.java
 
@@ -69,7 +79,7 @@ index d66f15d..57afc24 100644
 +    }
  }
 diff --git a/src/main/java/org/cube/converter/data/bedrock/BedrockEntityData.java b/src/main/java/org/cube/converter/data/bedrock/BedrockEntityData.java
-index 21f1685..48a5b0c 100644
+index 21f1685..c7e1a5f 100644
 --- a/src/main/java/org/cube/converter/data/bedrock/BedrockEntityData.java
 +++ b/src/main/java/org/cube/converter/data/bedrock/BedrockEntityData.java
 @@ -24,6 +24,33 @@ public class BedrockEntityData {
@@ -106,17 +116,79 @@ index 21f1685..48a5b0c 100644
  
      public record RenderController(String identifier, String condition) {
          public static List<RenderController> parse(final JsonArray array) {
+@@ -51,7 +78,16 @@ public class BedrockEntityData {
+         }
+     }
+ 
+-    public record Scripts(List<String> initialize, List<String> pre_animation, Scale scale, List<Animate> animates) {
++    public record Scripts(List<String> initialize, List<String> pre_animation, Scale scale, List<Animate> animates,
++                          List<String> parentSetup) {
++        public Scripts {
++            parentSetup = List.copyOf(parentSetup);
++        }
++
++        public Scripts(List<String> initialize, List<String> pre_animation, Scale scale, List<Animate> animates) {
++            this(initialize, pre_animation, scale, animates, List.of());
++        }
++
+         public record Scale(String scale, String scaleX, String scaleY, String scaleZ) {
+         }
+ 
+@@ -86,7 +122,26 @@ public class BedrockEntityData {
+             final Scale scale = new Scale(getOrDefault(object.get("scale"), "1"), getOrDefault(object.get("scaleX"), "1"), getOrDefault(object.get("scaleY"), "1"), getOrDefault(object.get("scaleZ"), "1"));
+             final List<Animate> animates = Animate.parse(object.getAsJsonArray("animate"));
+ 
+-            return new Scripts(initialize, pre_animation, scale, animates);
++            return new Scripts(initialize, pre_animation, scale, animates, parentSetup(object.get("parent_setup")));
++        }
++
++        private static List<String> parentSetup(final JsonElement element) {
++            if (element == null) {
++                return List.of();
++            }
++            if (element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
++                return List.of(element.getAsString());
++            }
++            if (!element.isJsonArray()) {
++                return List.of();
++            }
++            final List<String> expressions = new ArrayList<>();
++            for (final JsonElement expression : element.getAsJsonArray()) {
++                if (expression.isJsonPrimitive() && expression.getAsJsonPrimitive().isString()) {
++                    expressions.add(expression.getAsString());
++                }
++            }
++            return List.copyOf(expressions);
+         }
+ 
+         public static Scripts emptyScript() {
 diff --git a/src/main/java/org/cube/converter/data/bedrock/controller/BedrockRenderController.java b/src/main/java/org/cube/converter/data/bedrock/controller/BedrockRenderController.java
-index e76cc41..58c7118 100644
+index e76cc41..22fea0e 100644
 --- a/src/main/java/org/cube/converter/data/bedrock/controller/BedrockRenderController.java
 +++ b/src/main/java/org/cube/converter/data/bedrock/controller/BedrockRenderController.java
-@@ -13,7 +13,12 @@ import static org.cube.converter.util.GsonUtil.*;
+@@ -13,7 +13,28 @@ import static org.cube.converter.util.GsonUtil.*;
  // TODO: hurt color, overlay color, etc....
  public record BedrockRenderController(String identifier, Map<String, String> materialsMap,
                                        String geometryExpression, List<String> textureExpressions,
 -                                      List<Array> materials, List<Array> textures, List<Array> geometries) {
 +                                      List<Array> materials, List<Array> textures, List<Array> geometries,
-+                                      boolean ignoreLighting, String lightColorMultiplierExpression, UvAnimation uvAnimation) {
++                                      boolean ignoreLighting, String lightColorMultiplierExpression, UvAnimation uvAnimation,
++                                      List<BoneVisibility> partVisibility) {
++    public BedrockRenderController {
++        partVisibility = List.copyOf(partVisibility);
++    }
++
++    public BedrockRenderController(String identifier, Map<String, String> materialsMap,
++                                   String geometryExpression, List<String> textureExpressions,
++                                   List<Array> materials, List<Array> textures, List<Array> geometries,
++                                   boolean ignoreLighting, String lightColorMultiplierExpression, UvAnimation uvAnimation) {
++        this(identifier, materialsMap, geometryExpression, textureExpressions, materials, textures, geometries,
++            ignoreLighting, lightColorMultiplierExpression, uvAnimation, List.of());
++    }
++
++    public record BoneVisibility(String pattern, String expression) {
++    }
++
 +    public record UvAnimation(String offsetU, String offsetV, String scaleU, String scaleV) {
 +        public static final UvAnimation IDENTITY = new UvAnimation("0", "0", "1", "1");
 +    }
@@ -125,7 +197,7 @@ index e76cc41..58c7118 100644
          public static List<Array> parse(final JsonObject object) {
              if (object == null) {
 diff --git a/src/main/java/org/cube/converter/parser/bedrock/controller/BedrockControllerParser.java b/src/main/java/org/cube/converter/parser/bedrock/controller/BedrockControllerParser.java
-index 6949359..0df30bc 100644
+index 6949359..90c5503 100644
 --- a/src/main/java/org/cube/converter/parser/bedrock/controller/BedrockControllerParser.java
 +++ b/src/main/java/org/cube/converter/parser/bedrock/controller/BedrockControllerParser.java
 @@ -7,7 +7,7 @@ import org.cube.converter.data.bedrock.controller.BedrockRenderController;
@@ -146,31 +218,50 @@ index 6949359..0df30bc 100644
              if (object.has("materials")) {
                  for (final JsonElement element : object.getAsJsonArray("materials")) {
                      if (!element.isJsonObject()) {
-@@ -55,9 +55,12 @@ public class BedrockControllerParser {
+@@ -55,9 +55,13 @@ public class BedrockControllerParser {
                  }
              }
  
 +            final boolean ignoreLighting = object.has("ignore_lighting") && object.get("ignore_lighting").getAsBoolean();
 +            final String lightColorMultiplier = object.has("light_color_multiplier") ? object.get("light_color_multiplier").getAsString() : "1.0";
 +            final BedrockRenderController.UvAnimation uvAnimation = uvAnimation(object.get("uv_anim"));
++            final List<BedrockRenderController.BoneVisibility> partVisibility = partVisibility(object.get("part_visibility"));
              final JsonObject arrays = object.getAsJsonObject("arrays");
              if (arrays == null) {
 -                list.add(new BedrockRenderController(identifier, materialsMap, geometryExpression, textureExpressions, List.of(), List.of(), List.of()));
-+                list.add(new BedrockRenderController(identifier, materialsMap, geometryExpression, textureExpressions, List.of(), List.of(), List.of(), ignoreLighting, lightColorMultiplier, uvAnimation));
++                list.add(new BedrockRenderController(identifier, materialsMap, geometryExpression, textureExpressions, List.of(), List.of(), List.of(), ignoreLighting, lightColorMultiplier, uvAnimation, partVisibility));
                  continue;
              }
  
-@@ -65,12 +68,34 @@ public class BedrockControllerParser {
+@@ -65,12 +69,52 @@ public class BedrockControllerParser {
              final List<BedrockRenderController.Array> geometries = BedrockRenderController.Array.parse(arrays.getAsJsonObject("geometries"));
              final List<BedrockRenderController.Array> materials = BedrockRenderController.Array.parse(arrays.getAsJsonObject("materials"));
  
 -            list.add(new BedrockRenderController(identifier, materialsMap, geometryExpression, textureExpressions, materials, textures, geometries));
-+            list.add(new BedrockRenderController(identifier, materialsMap, geometryExpression, textureExpressions, materials, textures, geometries, ignoreLighting, lightColorMultiplier, uvAnimation));
++            list.add(new BedrockRenderController(identifier, materialsMap, geometryExpression, textureExpressions, materials, textures, geometries, ignoreLighting, lightColorMultiplier, uvAnimation, partVisibility));
          }
  
          return list;
      }
  
++    private static List<BedrockRenderController.BoneVisibility> partVisibility(final JsonElement element) {
++        if (element == null || !element.isJsonArray()) {
++            return List.of();
++        }
++        final List<BedrockRenderController.BoneVisibility> rules = new ArrayList<>();
++        for (final JsonElement rule : element.getAsJsonArray()) {
++            if (!rule.isJsonObject()) {
++                continue;
++            }
++            for (final var entry : rule.getAsJsonObject().entrySet()) {
++                if (entry.getValue().isJsonPrimitive()) {
++                    rules.add(new BedrockRenderController.BoneVisibility(entry.getKey(), entry.getValue().getAsString()));
++                }
++            }
++        }
++        return List.copyOf(rules);
++    }
++
 +    private static BedrockRenderController.UvAnimation uvAnimation(final JsonElement element) {
 +        if (element == null || !element.isJsonObject()) {
 +            return BedrockRenderController.UvAnimation.IDENTITY;
@@ -218,6 +309,121 @@ index c782b38..06e925f 100644
 +                new BedrockEntityData(identifier, scripts, controllers, materials, animations, textures, geometries, animationControllers);
      }
  }
+diff --git a/src/test/java/org/cube/converter/parser/bedrock/controller/BedrockAttachableRenderingTest.java b/src/test/java/org/cube/converter/parser/bedrock/controller/BedrockAttachableRenderingTest.java
+new file mode 100644
+index 0000000..5a834f5
+--- /dev/null
++++ b/src/test/java/org/cube/converter/parser/bedrock/controller/BedrockAttachableRenderingTest.java
+@@ -0,0 +1,109 @@
++package org.cube.converter.parser.bedrock.controller;
++
++import org.cube.converter.data.bedrock.BedrockEntityData;
++import org.cube.converter.data.bedrock.controller.BedrockRenderController;
++import org.cube.converter.parser.bedrock.data.impl.BedrockAttachableParser;
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class BedrockAttachableRenderingTest {
++    @Test
++    void preservesVisibilityOverrideOrderIncludingRepeatedPatterns() {
++        final var controller = BedrockControllerParser.parse("""
++            {"render_controllers":{"controller.render.worn":{
++                "part_visibility":[{"*":false},{"Wing*":"query.is_alive","body":true},
++                    null,{}, {"invalid":{},"Wing*":0},{"*":"!query.is_invisible"}],
++                "arrays":{"textures":{"Array.texture":["Texture.default"]}}
++            }}}
++            """).get(0);
++
++        assertEquals(List.of(
++            new BedrockRenderController.BoneVisibility("*", "false"),
++            new BedrockRenderController.BoneVisibility("Wing*", "query.is_alive"),
++            new BedrockRenderController.BoneVisibility("body", "true"),
++            new BedrockRenderController.BoneVisibility("Wing*", "0"),
++            new BedrockRenderController.BoneVisibility("*", "!query.is_invisible")
++        ), controller.partVisibility());
++        assertEquals(1, controller.textures().size());
++        assertThrows(UnsupportedOperationException.class, () -> controller.partVisibility().clear());
++    }
++
++    @Test
++    void retainsVisibilityWithoutArraysAndDefaultsMalformedContainers() {
++        final var visible = BedrockControllerParser.parse("""
++            {"render_controllers":{"controller.render.worn":{"part_visibility":[{"*":1}]}}}
++            """).get(0);
++        assertEquals(1, visible.partVisibility().size());
++        final var absent = BedrockControllerParser.parse("""
++            {"render_controllers":{"controller.render.worn":{}}}
++            """).get(0);
++        final var malformed = BedrockControllerParser.parse("""
++            {"render_controllers":{"controller.render.worn":{"part_visibility":{"*":true}}}}
++            """).get(0);
++        assertTrue(absent.partVisibility().isEmpty());
++        assertTrue(malformed.partVisibility().isEmpty());
++    }
++
++    @Test
++    void retainsScalarParentSetupSeparatelyFromOwnerAndAnimationScripts() {
++        final var attachable = BedrockAttachableParser.parse("""
++            {"minecraft:attachable":{"description":{"identifier":"test:worn",
++                "scripts":{"parent_setup":"variable.hide_cape = 1;",
++                    "initialize":["variable.phase = 0;"],
++                    "pre_animation":["variable.phase = query.life_time;"],"animate":["idle"]}
++            }}}
++            """);
++        assertEquals(List.of("variable.hide_cape = 1;"), attachable.getScripts().parentSetup());
++        assertEquals(1, attachable.getScripts().initialize().size());
++        assertEquals(1, attachable.getScripts().pre_animation().size());
++        assertEquals(1, attachable.getScripts().animates().size());
++    }
++
++    @Test
++    void retainsValidParentSetupNeighborsInOrderAndDefaultsAbsentScripts() {
++        final var attachable = BedrockAttachableParser.parse("""
++            {"minecraft:attachable":{"description":{"identifier":"test:worn",
++                "scripts":{"parent_setup":["variable.first = 1;",null,4,{},
++                    "variable.second = variable.first;"]}
++            }}}
++            """);
++        assertEquals(List.of("variable.first = 1;", "variable.second = variable.first;"),
++            attachable.getScripts().parentSetup());
++        assertThrows(UnsupportedOperationException.class, () -> attachable.getScripts().parentSetup().clear());
++        final var absent = BedrockAttachableParser.parse("""
++            {"minecraft:attachable":{"description":{"identifier":"test:worn"}}}
++            """);
++        final var malformed = BedrockAttachableParser.parse("""
++            {"minecraft:attachable":{"description":{"identifier":"test:worn", "scripts":{"parent_setup":false}}}}
++            """);
++        assertTrue(absent.getScripts().parentSetup().isEmpty());
++        assertTrue(malformed.getScripts().parentSetup().isEmpty());
++    }
++
++    @Test
++    void recordsDefensivelyCopyNewDeclarationsAndKeepExistingConstructors() {
++        final var visibility = new ArrayList<>(List.of(new BedrockRenderController.BoneVisibility("*", "1")));
++        final var controller = new BedrockRenderController("controller.render.worn", Map.of(), "", List.of(),
++            List.of(), List.of(), List.of(), false, "1", BedrockRenderController.UvAnimation.IDENTITY, visibility);
++        visibility.clear();
++        assertEquals(1, controller.partVisibility().size());
++
++        final var parentSetup = new ArrayList<>(List.of("variable.worn = 1;"));
++        final var scale = new BedrockEntityData.Scripts.Scale("1", "1", "1", "1");
++        final var scripts = new BedrockEntityData.Scripts(List.of(), List.of(), scale, List.of(), parentSetup);
++        parentSetup.clear();
++        assertEquals(1, scripts.parentSetup().size());
++
++        assertTrue(new BedrockEntityData.Scripts(List.of(), List.of(), scale, List.of()).parentSetup().isEmpty());
++        assertTrue(new BedrockRenderController("controller.render.worn", Map.of(), "", List.of(),
++            List.of(), List.of(), List.of(), false, "1", BedrockRenderController.UvAnimation.IDENTITY)
++            .partVisibility().isEmpty());
++    }
++}
 diff --git a/src/test/java/org/cube/converter/parser/bedrock/controller/BedrockControllerLightingTest.java b/src/test/java/org/cube/converter/parser/bedrock/controller/BedrockControllerLightingTest.java
 new file mode 100644
 index 0000000..521b7d8
