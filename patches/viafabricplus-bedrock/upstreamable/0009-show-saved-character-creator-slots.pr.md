@@ -724,10 +724,30 @@ Private native execution covers 30 timeline cases, 16 event trees, and 15 manual
 
 Tests also cover immediate births, changing capacity, velocity inheritance, lifetime triggers, recursive limits, and the extracted lava-to-smoke flow. The target lava effect now emits manual smoke particles through its timed `particle_with_velocity` events.
 
-Collision events, emitter lifetime and travel events, and level sound events remain explicit unsupported cases. Native comparisons still need to establish bound child queries, event expression context, asynchronous timing, and visible particle results. This change does not establish complete particle parity.
+Emitter lifetime and travel events, and level sound events remain explicit unsupported cases. Native comparisons still need to establish bound child queries, event expression context, asynchronous timing, and visible particle results. This change does not establish complete particle parity.
 
 All 328 fixture-enabled add-on tests pass with no failures, errors, or skips after replaying all 16 patches. Fresh licensed-package extraction and cache reuse also pass.
 
 The final actor-fallback change passes all 45 particle tests. The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
 
 After integrating concurrent actor-material and lighting changes, all 334 fixture-enabled add-on tests pass with no failures, errors, or skips. The combined stack replays all 16 patches. The full dependency build and Prism bundle also pass.
+
+## Dispatch collision events and filter splash particles by blocks
+
+The extracted water-drip definition declares three collision events that spawn manual rain-splash particles. Its splash definition requires `minecraft:particle_expire_if_not_in_blocks`. Support that component and `minecraft:particle_expire_if_in_blocks` so both definitions enter production playback.
+
+Native collision routine `FUN_1461c7460` dispatches once after its response passes. Thresholds use the incoming velocity projected onto the final contact normal. Contacts require a positive particle lifetime. Dispatch precedes contact expiration. Parser `FUN_1461c6e00` accepts a single trigger or an array and clamps `min_speed` to the native minimum of two.
+
+Preserve the native contact frame without normalizing its tangent vectors. Native getter `FUN_142167190` supplies event coordinates from particle and emitter fields. Those coordinates can differ from render positions. Retain the frame through asynchronous child requests and fixed child construction.
+
+Native block predicate `FUN_1461c3580` disables empty lists. It floors float32 particle coordinates plus the emitter origin. It compares membership with the component's inclusion flag. The emitter shares the first initialized block set between its expiration predicates. Getter `FUN_1421633b0` returns the base origin. Membership routine `FUN_142163290` compares block identities from the block source.
+
+Production obtains original block identifiers from ViaBedrock's tracked primary palette and block-state rewriter. It does not infer identifiers from translated Java blocks. Effects with nonempty filters require explicit world access. Unknown identifiers count as nonmatches. Predicate evaluation follows motion and lifetime events, as inspected in `FUN_142158a40`.
+
+Private native execution supplies 74 collision event cases, 16 coordinate cases, and 64 block expiration cases. The collision probe supplies an identity event-frame template, terrain, and source callbacks. It does not execute global startup initialization or child playback. The block probe executes the predicate, origin getter, cache flag, and membership lookup. It supplies a prepared block set and block-source identities. Native name resolution and complete scheduling remain outside those cases.
+
+A production test loads the extracted water-drip and rain-splash definitions. It follows the authored hanging period, emits three impact requests, and advances their splash particles to expiration. Additional tests cover thresholds, dispatch order, event frames, block boundaries, empty filters, and expiration events. These checks do not establish native visible particle parity. Native assets, binaries, and research fixtures remain private.
+
+After replaying all 16 patches, all 343 fixture-enabled add-on tests pass with no failures, errors, or skips.
+
+The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts. The final block-filter tests also pass against the updated native fixtures.
