@@ -1,24 +1,46 @@
-From 58015afb37fed9f5110cd7ba2385266638fa9d56 Mon Sep 17 00:00:00 2001
+From 1747b2c41c717c818b2357eddd390ae11eae1d05 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:56:50 +0200
-Subject: [PATCH] feat(entities): animate numeric looping Bedrock bones
+Subject: [PATCH] feat(entities): animate looping Bedrock bone expressions
 
-Read direct animations selected by unconditional entity scripts and apply numeric position and rotation keyframes to custom entity model parts. Sample from the entity render age so poses interpolate between ticks and reset before each draw. Leave Molang, animation controllers, and other unsupported channels untouched until their state can be evaluated correctly.
+Apply looping position and rotation channels selected by unconditional
+entity scripts to custom actor model parts. Interpolate numeric keyframes
+from actor render age and reset model pose before each draw. Evaluate
+parsed MoLang expressions with immutable camera and timing context through
+the shared core evaluator.
+
+Bind rotation_to_camera, body_y_rotation, life_time and anim_time. Keep
+unsupported query and variable channels omitted independently so a valid
+camera rotation survives an unsupported neighboring position channel.
+Script-variable playback and animation controllers remain outside scope.
+
+The saved protocol 2193 CubeCraft banner requires
+query.rotation_to_camera(1) - query.body_y_rotation. Bedrock 1.26.51.1
+function 14065a850 uses camera minus actor, atan2f(z,x) in degrees minus
+90 for yaw, and negative atan2f(y,horizontal) for pitch. It retains the
+native unwrapped yaw range. Body yaw query registration 1421e652f has
+getter 14220f630 calling the actor body-yaw virtual function. The licensed
+Windows executable SHA-256 is
+537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7.
+
+Tests exercise camera quadrants, pitch, zero distance, sparse unsupported
+channels, body-yaw subtraction, and animation time versus lifetime.
+This does not add script-variable playback or animation controllers.
 ---
- .../render/BedrockEntityAnimation.java        | 221 ++++++++++++++++++
- .../bedrock/render/BedrockEntityRenderer.java |  22 ++
+ .../render/BedrockEntityAnimation.java        | 322 ++++++++++++++++++
+ .../bedrock/render/BedrockEntityRenderer.java |  29 ++
  .../bedrock/render/BedrockGeometry.java       |  12 +-
- .../render/BedrockEntityAnimationTest.java    |  91 ++++++++
- 4 files changed, 344 insertions(+), 2 deletions(-)
+ .../render/BedrockEntityAnimationTest.java    | 147 ++++++++
+ 4 files changed, 508 insertions(+), 2 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimation.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimationTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimation.java
 new file mode 100644
-index 0000000..0bc1cc4
+index 0000000..659b80a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimation.java
-@@ -0,0 +1,221 @@
+@@ -0,0 +1,322 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -35,13 +57,31 @@ index 0000000..0bc1cc4
 +import java.util.List;
 +import java.util.Map;
 +import java.util.function.Function;
++import net.raphimc.viabedrock.api.util.MoLangEngine;
++import team.unnamed.mocha.MochaEngine;
++import team.unnamed.mocha.parser.ast.AccessExpression;
++import team.unnamed.mocha.parser.ast.BinaryExpression;
++import team.unnamed.mocha.parser.ast.CallExpression;
++import team.unnamed.mocha.parser.ast.DoubleExpression;
++import team.unnamed.mocha.parser.ast.Expression;
++import team.unnamed.mocha.parser.ast.IdentifierExpression;
++import team.unnamed.mocha.parser.ast.TernaryConditionalExpression;
++import team.unnamed.mocha.parser.ast.UnaryExpression;
++import team.unnamed.mocha.runtime.Scope;
++import team.unnamed.mocha.runtime.value.MutableObjectBinding;
++import team.unnamed.mocha.runtime.value.ObjectValue;
++import team.unnamed.mocha.runtime.value.Value;
++import java.io.IOException;
++import java.util.Set;
 +import net.minecraft.client.model.geom.ModelPart;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 +import org.cube.converter.data.bedrock.BedrockEntityData;
 +
-+/** A numeric, looping Bedrock animation. MoLang and animation controllers are intentionally excluded. */
++/** Looping bone channels with numeric keyframes and verified camera and timing MoLang queries. */
 +record BedrockEntityAnimation(float length, Map<String, Bone> bones) {
 +
++    private static final Scope BASE_SCOPE = MochaEngine.createStandard().scope();
++    private static final Set<String> QUERIES = Set.of("rotation_to_camera", "body_y_rotation", "life_time", "anim_time");
 +    private static final float DEGREES_TO_RADIANS = (float) (Math.PI / 180D);
 +
 +    static Map<String, BedrockEntityAnimation> load(final ResourcePackStorage packs) {
@@ -111,9 +151,6 @@ index 0000000..0bc1cc4
 +            }
 +            final Channel position = channels.has("position") ? Channel.parse(channels.get("position")) : null;
 +            final Channel rotation = channels.has("rotation") ? Channel.parse(channels.get("rotation")) : null;
-+            if (channels.has("position") && position == null || channels.has("rotation") && rotation == null) {
-+                return null;
-+            }
 +            if (position != null || rotation != null) {
 +                bones.put(entry.getKey(), new Bone(position, rotation));
 +                lastFrame = Math.max(lastFrame, Math.max(position == null ? 0F : position.lastFrame(), rotation == null ? 0F : rotation.lastFrame()));
@@ -129,8 +166,18 @@ index 0000000..0bc1cc4
 +        return new BedrockEntityAnimation(length, Map.copyOf(bones));
 +    }
 +
-+    void apply(final ModelPart root, final float seconds) {
-+        final float time = seconds % this.length;
++    void apply(final ModelPart root, final Frame frame) {
++        final float time = frame.seconds % this.length;
++        final Scope scope = BASE_SCOPE.copy();
++        final MutableObjectBinding queries = new MutableObjectBinding();
++        queries.set("body_y_rotation", Value.of(frame.bodyYaw));
++        queries.set("life_time", Value.of(frame.seconds));
++        queries.set("anim_time", Value.of(time));
++        queries.set("rotation_to_camera", (team.unnamed.mocha.runtime.value.Function<Object>) (_, arguments) ->
++            Value.of(arguments.length() == 1 ? frame.rotationToCamera((int) arguments.next().eval().getAsNumber()) : 0F));
++        queries.block();
++        scope.set("query", queries);
++        scope.set("q", queries);
 +        final Function<String, ModelPart> lookup = root.createPartLookup();
 +        for (var entry : this.bones.entrySet()) {
 +            final ModelPart part = lookup.apply(entry.getKey());
@@ -139,13 +186,13 @@ index 0000000..0bc1cc4
 +            }
 +            final Bone bone = entry.getValue();
 +            if (bone.position != null) {
-+                final Vec3 position = bone.position.sample(time);
++                final Vec3 position = bone.position.sample(time, scope);
 +                part.x += position.x;
 +                part.y -= position.y;
 +                part.z += position.z;
 +            }
 +            if (bone.rotation != null) {
-+                final Vec3 rotation = bone.rotation.sample(time);
++                final Vec3 rotation = bone.rotation.sample(time, scope);
 +                part.xRot += rotation.x * DEGREES_TO_RADIANS;
 +                part.yRot += rotation.y * DEGREES_TO_RADIANS;
 +                part.zRot += rotation.z * DEGREES_TO_RADIANS;
@@ -158,27 +205,6 @@ index 0000000..0bc1cc4
 +
 +    private record Vec3(float x, float y, float z) {
 +
-+        private static Vec3 parse(final JsonElement value) {
-+            if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isNumber()) {
-+                final float number = value.getAsFloat();
-+                return Float.isFinite(number) ? new Vec3(number, number, number) : null;
-+            }
-+            if (!value.isJsonArray() || value.getAsJsonArray().size() != 1 && value.getAsJsonArray().size() != 3) {
-+                return null;
-+            }
-+            final var array = value.getAsJsonArray();
-+            for (JsonElement component : array) {
-+                if (!component.isJsonPrimitive() || !component.getAsJsonPrimitive().isNumber() || !Float.isFinite(component.getAsFloat())) {
-+                    return null;
-+                }
-+            }
-+            if (array.size() == 1) {
-+                final float number = array.get(0).getAsFloat();
-+                return new Vec3(number, number, number);
-+            }
-+            return new Vec3(array.get(0).getAsFloat(), array.get(1).getAsFloat(), array.get(2).getAsFloat());
-+        }
-+
 +        private Vec3 interpolate(final Vec3 next, final float fraction) {
 +            return new Vec3(
 +                this.x + (next.x - this.x) * fraction,
@@ -189,14 +215,111 @@ index 0000000..0bc1cc4
 +
 +    }
 +
-+    private record Keyframe(float time, Vec3 value) {
++    record Frame(float seconds, float bodyYaw, double cameraOffsetX, double cameraOffsetY, double cameraOffsetZ) {
++
++        float rotationToCamera(final int axis) {
++            if (axis < 0 || axis > 1) {
++                return 0F;
++            }
++            // Target 1.26.51.1 query callback 14065a850 normalizes camera minus actor.
++            final double length = Math.sqrt(this.cameraOffsetX * this.cameraOffsetX
++                + this.cameraOffsetY * this.cameraOffsetY + this.cameraOffsetZ * this.cameraOffsetZ);
++            final double x = length < 0.0001D ? 0D : this.cameraOffsetX / length;
++            final double y = length < 0.0001D ? 0D : this.cameraOffsetY / length;
++            final double z = length < 0.0001D ? 0D : this.cameraOffsetZ / length;
++            return axis == 1 ? (float) Math.toDegrees(Math.atan2(z, x)) - 90F
++                : (float) -Math.toDegrees(Math.atan2(y, Math.sqrt(x * x + z * z)));
++        }
++
++    }
++
++    private record Component(float constant, List<Expression> expression) {
++
++        private static Component parse(final JsonElement value) {
++            if (!value.isJsonPrimitive()) {
++                return null;
++            }
++            if (value.getAsJsonPrimitive().isNumber()) {
++                final float number = value.getAsFloat();
++                return Float.isFinite(number) ? new Component(number, List.of()) : null;
++            }
++            if (!value.getAsJsonPrimitive().isString()) {
++                return null;
++            }
++            try {
++                final List<Expression> expressions = MoLangEngine.parse(value.getAsString());
++                return expressions.size() == 1 && supported(expressions.getFirst())
++                    ? new Component(0F, expressions) : null;
++            } catch (IOException invalid) {
++                return null;
++            }
++        }
++
++        private static boolean supported(final Expression expression) {
++            if (expression instanceof DoubleExpression) {
++                return true;
++            }
++            if (expression instanceof AccessExpression access && access.object() instanceof IdentifierExpression identifier) {
++                return switch (identifier.name()) {
++                    case "query", "q" -> QUERIES.contains(access.property());
++                    case "math" -> ((ObjectValue) BASE_SCOPE.get("math")).get(access.property()) != null;
++                    default -> false;
++                };
++            }
++            if (expression instanceof CallExpression call) {
++                return supported(call.function()) && call.arguments().stream().allMatch(Component::supported);
++            }
++            if (expression instanceof UnaryExpression unary) {
++                return supported(unary.expression());
++            }
++            if (expression instanceof BinaryExpression binary) {
++                return binary.op() != BinaryExpression.Op.ASSIGN && binary.op() != BinaryExpression.Op.ARROW
++                    && supported(binary.left()) && supported(binary.right());
++            }
++            if (expression instanceof TernaryConditionalExpression ternary) {
++                return supported(ternary.condition()) && supported(ternary.trueExpression()) && supported(ternary.falseExpression());
++            }
++            return false;
++        }
++
++        private float evaluate(final Scope scope) {
++            final float result = this.expression.isEmpty() ? this.constant : (float) MoLangEngine.eval(scope, this.expression).getAsNumber();
++            return Float.isFinite(result) ? result : 0F;
++        }
++
++    }
++
++    private record Vector(Component x, Component y, Component z) {
++
++        private static Vector parse(final JsonElement value) {
++            if (!value.isJsonArray()) {
++                final Component component = Component.parse(value);
++                return component == null ? null : new Vector(component, component, component);
++            }
++            final var array = value.getAsJsonArray();
++            if (array.size() != 1 && array.size() != 3) {
++                return null;
++            }
++            final Component x = Component.parse(array.get(0));
++            final Component y = Component.parse(array.get(array.size() == 1 ? 0 : 1));
++            final Component z = Component.parse(array.get(array.size() == 1 ? 0 : 2));
++            return x == null || y == null || z == null ? null : new Vector(x, y, z);
++        }
++
++        private Vec3 evaluate(final Scope scope) {
++            return new Vec3(this.x.evaluate(scope), this.y.evaluate(scope), this.z.evaluate(scope));
++        }
++
++    }
++
++    private record Keyframe(float time, Vector value) {
 +    }
 +
 +    private record Channel(List<Keyframe> keyframes) {
 +
 +        private static Channel parse(final JsonElement value) {
 +            if (!value.isJsonObject()) {
-+                final Vec3 vector = Vec3.parse(value);
++                final Vector vector = Vector.parse(value);
 +                return vector == null ? null : new Channel(List.of(new Keyframe(0F, vector)));
 +            }
 +            final List<Keyframe> frames = new ArrayList<>();
@@ -207,7 +330,7 @@ index 0000000..0bc1cc4
 +                } catch (NumberFormatException ignored) {
 +                    return null;
 +                }
-+                final Vec3 vector = Vec3.parse(entry.getValue());
++                final Vector vector = Vector.parse(entry.getValue());
 +                if (!Float.isFinite(time) || time < 0F || vector == null) {
 +                    return null;
 +                }
@@ -224,24 +347,24 @@ index 0000000..0bc1cc4
 +            return this.keyframes.getLast().time;
 +        }
 +
-+        private Vec3 sample(final float time) {
++        private Vec3 sample(final float time, final Scope scope) {
 +            Keyframe previous = this.keyframes.getFirst();
 +            for (int i = 1; i < this.keyframes.size(); i++) {
 +                final Keyframe next = this.keyframes.get(i);
 +                if (time < next.time) {
 +                    final float fraction = Math.clamp((time - previous.time) / (next.time - previous.time), 0F, 1F);
-+                    return previous.value.interpolate(next.value, fraction);
++                    return previous.value.evaluate(scope).interpolate(next.value.evaluate(scope), fraction);
 +                }
 +                previous = next;
 +            }
-+            return previous.value;
++            return previous.value.evaluate(scope);
 +        }
 +
 +    }
 +
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
-index d62181c..a7c0a01 100644
+index d62181c..9a1f334 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 @@ -59,6 +59,8 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
@@ -291,13 +414,27 @@ index d62181c..a7c0a01 100644
          state.yaw = entity.getYRot();
      }
  
-@@ -171,8 +188,13 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -152,6 +169,8 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+         if (!(renderState instanceof State state)) {
+             return;
+         }
++        state.animationFrame = new BedrockEntityAnimation.Frame(state.ageInTicks / 20F, state.yaw,
++            camera.pos.x - state.x, camera.pos.y - state.y, camera.pos.z - state.z);
+         for (RenderedModel rendered : state.models) {
+             poseStack.pushPose();
+             applyActorTransform(poseStack, state.yaw, state.scale);
+@@ -171,8 +190,18 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
  
      public static final class State extends EntityRenderState {
          private List<RenderedModel> models = List.of();
 +        private List<BedrockEntityAnimation> animations = List.of();
          private float yaw;
          private float scale = 1F;
++        private BedrockEntityAnimation.Frame animationFrame;
++
++        BedrockEntityAnimation.Frame animationFrame() {
++            return this.animationFrame;
++        }
 +
 +        List<BedrockEntityAnimation> animations() {
 +            return this.animations;
@@ -306,7 +443,7 @@ index d62181c..a7c0a01 100644
  
      private record ModelKey(String geometry, Set<String> bones) {
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
-index f14abb9..d7e9366 100644
+index f14abb9..a58fe6b 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 @@ -59,12 +59,20 @@ public final class BedrockGeometry {
@@ -325,7 +462,7 @@ index f14abb9..d7e9366 100644
 +                this.resetPose();
 +                if (state instanceof BedrockEntityRenderer.State bedrockState) {
 +                    for (BedrockEntityAnimation animation : bedrockState.animations()) {
-+                        animation.apply(this.root, state.ageInTicks / 20F);
++                        animation.apply(this.root, bedrockState.animationFrame());
 +                    }
 +                }
 +            }
@@ -334,10 +471,10 @@ index f14abb9..d7e9366 100644
  
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimationTest.java
 new file mode 100644
-index 0000000..afa1aab
+index 0000000..4df8b51
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimationTest.java
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,147 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -380,7 +517,7 @@ index 0000000..afa1aab
 +        tail.setPos(3F, 5F, 7F);
 +        final ModelPart root = new ModelPart(List.of(), Map.of("tail", tail));
 +
-+        animation.apply(root, 0.5F);
++        animation.apply(root, new BedrockEntityAnimation.Frame(0.5F, 0F, 0D, 0D, 0D));
 +        assertEquals(4F, tail.x);
 +        assertEquals(3F, tail.y);
 +        assertEquals(10F, tail.z);
@@ -388,7 +525,7 @@ index 0000000..afa1aab
 +
 +        tail.setPos(3F, 5F, 7F);
 +        tail.setRotation(0F, 0F, 0F);
-+        animation.apply(root, 2.5F);
++        animation.apply(root, new BedrockEntityAnimation.Frame(2.5F, 0F, 0D, 0D, 0D));
 +        assertEquals(4F, tail.x);
 +        assertEquals(3F, tail.y);
 +        assertEquals(10F, tail.z);
@@ -415,13 +552,69 @@ index 0000000..afa1aab
 +    }
 +
 +    @Test
-+    void rejectsExpressionsAndCustomTimeUpdates() {
-+        assertNull(BedrockEntityAnimation.parse(json("""
++    void acceptsTimingExpressionsAndRejectsCustomTimeUpdates() {
++        assertNotNull(BedrockEntityAnimation.parse(json("""
 +            {"loop": true, "bones": {"tail": {"rotation": ["query.life_time * 20", 0, 0]}}}
 +            """)));
 +        assertNull(BedrockEntityAnimation.parse(json("""
 +            {"loop": true, "anim_time_update": "query.modified_distance_moved", "bones": {"tail": {"rotation": [0, 15, 0]}}}
 +            """)));
++    }
++
++    @Test
++    void evaluatesCameraFacingRotationWithoutInventingUnsupportedPositionVariables() {
++        final BedrockEntityAnimation animation = BedrockEntityAnimation.parse(json("""
++            {"loop":true,"animation_length":1,"bones":{"full_banner":{
++              "rotation":[0,"query.rotation_to_camera(1) - query.body_y_rotation",0],
++              "position":[0,"variable.growth * -6",0]}}}
++            """));
++        assertNotNull(animation);
++        final ModelPart banner = new ModelPart(List.of(), Map.of());
++        banner.setPos(3F, 5F, 7F);
++        final ModelPart root = new ModelPart(List.of(), Map.of("full_banner", banner));
++        animation.apply(root, new BedrockEntityAnimation.Frame(2F, 30F, 1D, 0D, 1D));
++        assertEquals((float) Math.toRadians(-75D), banner.yRot, 0.00001F);
++        assertEquals(3F, banner.x);
++        assertEquals(5F, banner.y);
++        assertEquals(7F, banner.z);
++
++        banner.setRotation(0F, 0F, 0F);
++        animation.apply(root, new BedrockEntityAnimation.Frame(2F, -45F, -1D, 0D, 1D));
++        assertEquals((float) Math.toRadians(90D), banner.yRot, 0.00001F);
++    }
++
++    @Test
++    void preservesNativeCameraAxisAndAngleRange() {
++        assertEquals(0F, new BedrockEntityAnimation.Frame(0, 0, 0, 0, 1).rotationToCamera(1));
++        assertEquals(-90F, new BedrockEntityAnimation.Frame(0, 0, 1, 0, 0).rotationToCamera(1));
++        assertEquals(90F, new BedrockEntityAnimation.Frame(0, 0, -1, 0, 0).rotationToCamera(1));
++        assertEquals(-180F, new BedrockEntityAnimation.Frame(0, 0, 0, 0, -1).rotationToCamera(1));
++        assertEquals(-225F, new BedrockEntityAnimation.Frame(0, 0, -1, 0, -1).rotationToCamera(1));
++        assertEquals(-45F, new BedrockEntityAnimation.Frame(0, 0, 0, 1, 1).rotationToCamera(0));
++        assertEquals(45F, new BedrockEntityAnimation.Frame(0, 0, 0, -1, 1).rotationToCamera(0));
++        assertEquals(-90F, new BedrockEntityAnimation.Frame(0, 0, 0, 0, 0).rotationToCamera(1));
++        assertEquals(0F, new BedrockEntityAnimation.Frame(0, 0, 0, 0, 0).rotationToCamera(0), 0F);
++        assertEquals(0F, new BedrockEntityAnimation.Frame(0, 0, 1, 1, 1).rotationToCamera(2));
++    }
++
++    @Test
++    void distinguishesLoopedAnimationTimeFromActorLifetimeAndRejectsUnknownQueries() {
++        final BedrockEntityAnimation animation = BedrockEntityAnimation.parse(json("""
++            {"loop":true,"animation_length":2,"bones":{
++              "tail":{"rotation":["q.life_time * 20","query.anim_time * 10",0]},
++              "head":{"rotation":[0,"query.health",0],"position":[1,2,3]}}}
++            """));
++        assertNotNull(animation);
++        final ModelPart tail = new ModelPart(List.of(), Map.of());
++        final ModelPart head = new ModelPart(List.of(), Map.of());
++        final ModelPart root = new ModelPart(List.of(), Map.of("tail", tail, "head", head));
++        animation.apply(root, new BedrockEntityAnimation.Frame(2.5F, 0F, 0D, 0D, 1D));
++        assertEquals((float) Math.toRadians(50D), tail.xRot, 0.00001F);
++        assertEquals((float) Math.toRadians(5D), tail.yRot, 0.00001F);
++        assertEquals(0F, head.yRot);
++        assertEquals(1F, head.x);
++        assertEquals(-2F, head.y);
++        assertEquals(3F, head.z);
 +    }
 +
 +    private static JsonObject json(final String source) {
