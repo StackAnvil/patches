@@ -344,11 +344,17 @@ Sources: [Bedrock 1.26.51 Emote payload](https://github.com/Mojang/bedrock-proto
 
 Animation timelines and controller entries now resolve particle aliases through their actor library. Particle requests precede sounds at the same timestamp. Suppressed frames consume their event cursor. Each request retains the source player's Molang variables and queries, including standalone emotes.
 
-The particle runtime supports instant and steady emission with once, looping, and expression emitter lifetimes. It accepts point, custom, box, sphere, disc, and entity-bounds shapes. It supports initial speed and spin, dynamic or parametric motion, tint gradients, flipbooks, and rectangular billboards. The two admitted facing modes are `rotate_xyz` and `lookat_xyz`. PNG and TGA textures follow pack precedence. Server libraries retain particle definitions and their referenced textures.
+The particle runtime supports instant and steady emission with once, looping, and expression emitter lifetimes. It accepts point, custom, box, sphere, disc, and entity-bounds shapes. It supports initial speed and spin, dynamic or parametric motion, tint gradients, flipbooks, and rectangular billboards. All eleven facing modes use explicit billboard axes: camera rotation, camera look-at, particle direction, and the three emitter planes. PNG and TGA textures follow pack precedence. Server libraries retain particle definitions and their referenced textures.
 
 The world renderer creates bounded emitters and images. Attached emitters sample the actor and posed locator matrices together. Unbound emitters retain their initial world position and have no live actor bounds. Account changes and world cleanup invalidate pending work and release textures. Unsupported components report an asset error.
 
 Independent execution of Bedrock 1.26.51.1 supplies 200 motion cases and 492 billboard cases. Production kernels match their float32 results. A changing-rate test also follows the native steady emitter's cached rate until its next emission.
+
+Particle facing follows the target CPU quad builder. World directions use the full emitter matrix and the native normalization threshold. Emitter planes normalize each column independently and preserve shear and reflection. The vertical direction branches retain the target's special axis choices.
+
+Particle spin rotates those axes before vertex submission. Frustum bounds contain the resulting corners, including sheared planes. Nonfinite axes suppress the affected quad.
+
+Independent execution supplies 286 facing cases, 32 emitter basis cases, 144 world direction cases, and 440 spin cases. The probes execute all eleven native branches in Bedrock 1.26.51.1. They supply camera inverse-view columns, normalized particle directions, prepared emitter matrices, and imported float32 trigonometric results. Camera selection, complete frame interpolation, vertex submission, and native visible comparisons remain unverified.
 
 A muted Java client displays a 4:1 billboard from a TGA atlas. Its runtime probe checks server aliases, world extraction, unsupported component rejection, failed asset cleanup, and texture release. This probe does not compare the visible result with native Bedrock.
 

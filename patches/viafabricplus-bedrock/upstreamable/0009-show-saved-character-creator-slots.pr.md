@@ -793,3 +793,17 @@ These checks do not establish seeded random generation, native audible mixing, c
 All 365 fixture-enabled add-on tests pass with no failures, errors, or skips across 72 suites. The final particle sound and server override checks also pass after folding server configuration retention into its owning patch. All 16 patches replay. Fresh license acquisition, package extraction, and cache reuse pass with the bundled helper.
 
 The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
+
+## Render every particle facing mode
+
+Support all eleven modes in the [billboard reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/examples/particlecomponents/particle_appearance_billboard?view=minecraft-bedrock-stable). Use explicit columns for camera, direction, and emitter planes. A quaternion cannot preserve the target's reflected or sheared axes.
+
+The owned Bedrock 1.26.51.1 name table in `FUN_142160da0` maps the modes to values 1 through 11. Its CPU quad builder in `FUN_142167710` consumes prepared particle records. The package shaders receive finished vertices. The native renderer independently normalizes emitter columns before the XZ and YZ quarter turns. World directions retain the full matrix product before normalization. Zero-length emitter columns produce nonfinite axes; production suppresses those quads before Java vertex submission.
+
+Independent native instruction execution supplies 286 facing cases, 32 emitter basis cases, and 144 world direction cases. The facing probes execute all eleven branches and `FUN_14216add0`, the camera look-at helper. They cover vertical direction boundaries, coincident cameras, zero directions, scaled locators, shear, and reflection.
+
+Another 440 cases execute the native spin matrix multiplication after each facing branch. Imported float32 `cosf` and `sinf` results are supplied at the math boundaries. Production applies spin to the explicit axes and computes frustum bounds from their corner extents. Tests also verify frame snapshots and sheared corner bounds.
+
+These prepared probes supply inverse-view columns, particle state, normalized directions, emitter axes, and the runtime identity constant. They exclude camera selection, complete frame interpolation, vertex submission, and native visible output. Licensed package shaders, executables, licenses, account data, and native fixtures remain private. Production requires no external game installation or native research tool.
+
+All 371 tests pass across 73 suites with no failures, errors, or skips. This includes fresh package license acquisition, extraction, and cache reuse. All 16 patches replay. The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
