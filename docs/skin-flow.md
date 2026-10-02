@@ -398,7 +398,13 @@ Collision events now use the incoming velocity and final contact normal. Events 
 
 Independent native execution supplies 74 collision event cases, 16 event coordinate cases, and 64 block expiration cases. These cases verify component calculations and supplied world callbacks. Native name resolution, child scheduling, and visible comparisons remain separate checks.
 
-Other facing modes, emitter lifetime and travel events, and particle-triggered level sounds remain incomplete. Native checks still need to establish child scheduling and expression context. Native comparisons still need to establish render interpolation, random and variable registration, tint quantization, and visible scale. These component tests do not establish complete particle parity.
+Emitter creation, expiration, timeline, and travel events now use the bounded event graph and child loader. Creation runs once on the first update after origin sampling. Expiration runs before the next sample while existing particles can drain. Actor loss dispatches expiration before update expressions. Timelines use the previous age and current age after any loop reset.
+
+Travel distance accumulates after the first update and survives lifetime loops. Direct events include the previous distance and exclude the current distance. Each repeating declaration fires once per update when its floor quotient changes, regardless of the number of intervals crossed. Event requests retain cached emitter position and velocity.
+
+Independent execution supplies 52 schedules, 364 updates, and 288 distance predicate cases from Bedrock 1.26.51.1. Production matches event order, coordinates, velocity, and expiration state. The probes supply actor and query accessors, expression callbacks, and event receipts. They exclude automatic births, reset random registration, asset lookup, and child playback. The [Creator reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftemitter_lifetime_events?view=minecraft-bedrock-stable) describes the component schema.
+
+Other facing modes and particle-triggered level sounds remain incomplete. Native checks still need to establish child scheduling and expression context. Native comparisons still need to establish render interpolation, random and variable registration, tint quantization, and visible scale. These component tests do not establish complete particle parity.
 
 ### Missing features
 

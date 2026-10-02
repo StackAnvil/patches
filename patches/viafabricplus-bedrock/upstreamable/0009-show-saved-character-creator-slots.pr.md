@@ -710,7 +710,7 @@ All 321 fixture-enabled add-on tests pass with no failures, errors, or skips aft
 
 Support manual emission and particle creation, expiration, and timeline events. Resolve named event trees with ordered sequences and weighted random branches. Child effects support `particle`, `particle_with_velocity`, `emitter`, and `emitter_bound`. The [Creator event reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particleeffectevents) describes these forms. The [particle lifetime reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftparticle_lifetime_events) defines their triggers.
 
-Bedrock 1.26.51.1 uses the same native component callbacks for particle lifetime events and emitter lifetime events. The particle component registration points to creation callback `FUN_1461c4e40`, expiration callback `FUN_1461c4f20`, and timeline callback `FUN_1461c5000`. Timeline intervals include the previous age and exclude the new age. Event times retain the native float conversion to nanoseconds.
+The Bedrock 1.26.51.1 particle component registration points to creation callback `FUN_1461c4e40`, expiration callback `FUN_1461c4f20`, and timeline callback `FUN_1461c5000`. Emitter events use separate callbacks, described below. Timeline intervals include the previous age and exclude the new age. Event times retain the native float conversion to nanoseconds.
 
 Native graph dispatcher `FUN_142164cb0` chooses its random branch before it executes the sequence. It executes that branch after the sequence. Both inspected constructors omit leaf actions when a node contains `sequence` or `randomize`. Preserve those rules for JSON assets and decoded compiled assets.
 
@@ -724,7 +724,7 @@ Private native execution covers 30 timeline cases, 16 event trees, and 15 manual
 
 Tests also cover immediate births, changing capacity, velocity inheritance, lifetime triggers, recursive limits, and the extracted lava-to-smoke flow. The target lava effect now emits manual smoke particles through its timed `particle_with_velocity` events.
 
-Emitter lifetime and travel events, and level sound events remain explicit unsupported cases. Native comparisons still need to establish bound child queries, event expression context, asynchronous timing, and visible particle results. This change does not establish complete particle parity.
+Level sound events remain explicit unsupported cases. Native comparisons still need to establish bound child queries, event expression context, asynchronous timing, and visible particle results. This change does not establish complete particle parity.
 
 All 328 fixture-enabled add-on tests pass with no failures, errors, or skips after replaying all 16 patches. Fresh licensed-package extraction and cache reuse also pass.
 
@@ -751,3 +751,23 @@ A production test loads the extracted water-drip and rain-splash definitions. It
 After replaying all 16 patches, all 343 fixture-enabled add-on tests pass with no failures, errors, or skips.
 
 The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts. The final block-filter tests also pass against the updated native fixtures.
+
+## Play emitter lifecycle and travel events
+
+Support the five fields in the [emitter lifetime events reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftemitter_lifetime_events?view=minecraft-bedrock-stable). Dispatch their named events through the existing bounded event graph and child asset loader.
+
+Bedrock 1.26.51.1 uses `FUN_1462a3690` for creation, `FUN_1462a3710` for expiration, `FUN_1462a3790` for timelines, and `FUN_1462a3870` for travel. The emitter update calls creation once on its first update, after births and origin sampling. Lifetime loop resets do not repeat that event. Expiration runs once before the next origin sample; existing particles can continue draining. Actor loss dispatches expiration before activation and update expressions. Cycle expiration precedes its creation expression.
+
+Timeline events run only during active updates of a live emitter. Their interval includes the previous age and excludes the current age after any loop reset. Event requests retain the emitter's cached world position and velocity. Those caches begin at zero, as inspected in constructor `FUN_14216ba90`.
+
+Travel accumulates float32 displacement after the first update. Loop resets preserve that distance. Direct thresholds use the same half-open interval as timelines. Each repeating declaration fires once per update when its floor quotient changes, even when movement crosses several intervals. Preserve native integer conversion for zero, negative, and very small intervals.
+
+Parser `FUN_1462a15d0` retains JSON member enumeration order for timeline and direct distance maps. Enumerator `FUN_14e01ece0` walks the native tree in order. Production uses lexical key order, consistent with [JsonCpp's key comparator and member enumerator](https://github.com/open-source-parsers/jsoncpp/blob/master/src/lib_json/json_value.cpp). This ordering follows source and decompilation inspection; the schedule probes supply prepared vectors rather than execute JSON parsing. Array declarations preserve authored order. Limit each map or array to 256 entries and reject nonfinite or excessive distances.
+
+Independent execution supplies 52 schedules, 364 native updates, and 288 distance predicate cases. The schedule probe executes the native update, event callbacks, cached origin and velocity, expiry, and reset. It supplies actor, resource, and query accessors, translation matrices, expression callbacks, and named-event receipts. Automatic births are disabled, and reset random registration is skipped. These cases do not establish child scheduling, complete Molang context, asset lookup, or visible parity. Binaries, assets, probes, and fixtures remain private.
+
+Production tests compare event order, source coordinates, inherited velocity, and expiration state against those native results. Additional checks cover malformed definitions, map order, expiration before loop initialization, and particle drainage.
+
+All 347 fixture-enabled add-on tests pass after replaying the 16 patches, with no failures, errors, or skips. This includes 58 particle tests, fresh licensed-package extraction, and cache reuse.
+
+The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
