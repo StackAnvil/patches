@@ -117,9 +117,20 @@ public final class ReplaySelfTest {
         for (int i = 0; i < scene.size(); i++) require(Arrays.equals(scene.get(i).payload(), emitted.get(i)));
         require(Arrays.equals(reply, snapshot));
 
+        ScenePlayback cold = new ScenePlayback(scene.subList(0, 3), 0, 0);
+        List<byte[]> coldOutput = new ArrayList<>();
+        require(!cold.advance(10, coldOutput::add) && coldOutput.size() == 1);
+        long initialized = java.util.concurrent.TimeUnit.SECONDS.toNanos(20);
+        require(!cold.advance(initialized, coldOutput::add) && coldOutput.size() == 1);
+        request(cold, 0, offsets.subList(0, 1));
+        require(!cold.advance(initialized, coldOutput::add) && coldOutput.size() == 2);
+        require(cold.advance(initialized + 10, coldOutput::add) && coldOutput.size() == 3);
+        for (int i = 0; i < coldOutput.size(); i++) require(Arrays.equals(scene.get(i).payload(), coldOutput.get(i)));
+
         ScenePlayback timeout = new ScenePlayback(scene, 0, 0);
         timeout.advance(10, ignored -> { });
-        try { timeout.advance(java.util.concurrent.TimeUnit.SECONDS.toNanos(15) + 10, ignored -> { }); throw new AssertionError("Replay waited without a deadline"); }
+        require(!timeout.advance(java.util.concurrent.TimeUnit.SECONDS.toNanos(45) + 9, ignored -> { }));
+        try { timeout.advance(java.util.concurrent.TimeUnit.SECONDS.toNanos(45) + 10, ignored -> { }); throw new AssertionError("Replay waited without a deadline"); }
         catch (ScenePlayback.RequestTimeout expected) { }
 
         ScenePlayback changed = new ScenePlayback(List.of(scene.getFirst(),

@@ -15,7 +15,8 @@ import java.util.function.Consumer;
 
 /** Keeps recorded payload order while pacing subchunk replies against the local client's requests. */
 final class ScenePlayback {
-    private static final long REQUEST_TIMEOUT = TimeUnit.SECONDS.toNanos(15);
+    // Cold native clients can take more than 15 seconds to initialize their first matching requests.
+    private static final long REQUEST_TIMEOUT = TimeUnit.SECONDS.toNanos(45);
     private record Position(int dimension, int x, int y, int z) { }
     private record Frame(PacketJournal.Entry entry, Set<Position> subchunks) { }
     static final class RequestTimeout extends IllegalStateException {
