@@ -21,3 +21,7 @@ Three semantic tests cover wire decoding, sparse updates, unchanged-model
 refreshes, and controller conditions. Zero and negative scale values stay
 intact. This change does not add client `scripts.scale` or camera animation
 queries. Raw captures and executable probes remain private.
+
+Evaluated actor models now retain immutable UV offset and scale expressions. UV-only changes refresh the model snapshot. Camera-dependent expressions reach the native renderer without protocol-side evaluation.
+
+The target Bedrock 1.26.51.1 controller parser and ENTITY vertex shader establish identity defaults and `UV * scale + offset`. Target protocol is 2193. The licensed executable SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`. Saved pack assets and native exports stay private. A semantic snapshot test evaluates retained lifetime expressions after replacement and checks UV-only model updates.

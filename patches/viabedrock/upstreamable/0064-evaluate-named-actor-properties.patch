@@ -1,4 +1,4 @@
-From d5bcd79b4927d76eef9b058deb153da175587ece Mon Sep 17 00:00:00 2001
+From ad6e7670d77e69ae17b0a462519f9d9cee76c5ad Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:22:35 +0200
 Subject: [PATCH] feat(entities): evaluate named actor properties and
@@ -42,21 +42,33 @@ Client scripts.scale and camera-driven animations remain separate work.
 Semantic tests decode the FLOAT wire value, retain it across unrelated
 metadata updates, exercise equal-model refreshes, and select controllers
 using query.model_scale.
+
+Carry immutable controller UV offset/scale expression metadata in evaluated
+models and include it in equality-based model updates. Protocol workers
+preserve camera-dependent expressions for the native client's draw
+context instead of evaluating them against unavailable camera state.
+Native Bedrock 1.26.51.1 (protocol 2193) controller parser 141cabf60
+initializes offset to zero and scale to one; ENTITY vertex DXIL applies
+normalized UV times scale plus offset. The licensed executable SHA-256 is
+537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7.
+Model-selection tests evaluate retained lifetime expressions after a
+snapshot replacement and check that UV-only changes refresh the model.
+Native exports and saved server assets remain private.
 ---
- .../api/model/entity/CustomEntity.java        |  59 +++++-
+ .../api/model/entity/CustomEntity.java        |  60 +++++-
  .../viabedrock/api/model/entity/Entity.java   |  21 ++
  .../viabedrock/api/util/MoLangEngine.java     | 191 +++++++++++++++++-
- .../CustomEntityMaterialSelectionTest.java    |  41 ++++
+ .../CustomEntityMaterialSelectionTest.java    |  65 ++++++
  .../CustomEntityModelSelectionTest.java       |   2 +-
  .../api/model/entity/EntityScaleTest.java     | 157 ++++++++++++++
  .../viabedrock/api/util/MoLangEngineTest.java |  81 ++++++++
- 7 files changed, 542 insertions(+), 10 deletions(-)
+ 7 files changed, 567 insertions(+), 10 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityMaterialSelectionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/EntityScaleTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
-index 53394efe..515137ba 100644
+index 53394efe..aa377430 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
 @@ -73,6 +73,7 @@ public class CustomEntity extends Entity {
@@ -150,7 +162,7 @@ index 53394efe..515137ba 100644
                      final String textureName = this.inverseTextureMap.get(textureValue);
                      if (geometryName != null && textureName != null) {
 -                        newModels.add(new EvaluatedModel(geometryName + "_" + textureName, geometryValue, textureValue));
-+                        newModels.add(new EvaluatedModel(geometryName + "_" + textureName, geometryValue, textureValue, materials, renderController.ignoreLighting(), lightColorMultiplier));
++                        newModels.add(new EvaluatedModel(geometryName + "_" + textureName, geometryValue, textureValue, materials, renderController.ignoreLighting(), lightColorMultiplier, renderController.uvAnimation()));
                      }
                  }
              } catch (final Throwable e) {
@@ -174,7 +186,7 @@ index 53394efe..515137ba 100644
          final MutableObjectBinding arrayBinding = new MutableObjectBinding();
          for (BedrockRenderController.Array array : arrays) {
              if (array.name().toLowerCase(Locale.ROOT).startsWith("array.")) {
-@@ -307,7 +336,21 @@ public class CustomEntity extends Entity {
+@@ -307,7 +336,22 @@ public class CustomEntity extends Entity {
          return arrayBinding;
      }
  
@@ -190,7 +202,8 @@ index 53394efe..515137ba 100644
 +    }
 +
 +    public record EvaluatedModel(String key, String geometryValue, String textureValue,
-+                                 Map<String, String> materials, boolean ignoreLighting, float lightColorMultiplier) {
++                                 Map<String, String> materials, boolean ignoreLighting, float lightColorMultiplier,
++                                 BedrockRenderController.UvAnimation uvAnimation) {
 +        public EvaluatedModel {
 +            materials = Collections.unmodifiableMap(new LinkedHashMap<>(materials));
 +        }
@@ -468,12 +481,13 @@ index 8f4c4f89..1a50382f 100644
      private MoLangEngine() {
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityMaterialSelectionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityMaterialSelectionTest.java
 new file mode 100644
-index 00000000..7b9fd877
+index 00000000..eba04ed5
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityMaterialSelectionTest.java
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,65 @@
 +package net.raphimc.viabedrock.api.model.entity;
 +
++import java.util.ArrayList;
 +import java.util.List;
 +import org.cube.converter.parser.bedrock.controller.BedrockControllerParser;
 +import org.junit.jupiter.api.Test;
@@ -506,15 +520,38 @@ index 00000000..7b9fd877
 +        assertEquals("entity_alphatest", selected.get("*"));
 +        assertEquals("entity_emissive_alpha", selected.get("Light*"));
 +        assertThrows(UnsupportedOperationException.class, () -> selected.put("other", "entity"));
-+        final var model = new CustomEntity.EvaluatedModel("actor", "geometry", "texture", selected, true, 0.7F);
++        final var model = new CustomEntity.EvaluatedModel("actor", "geometry", "texture", selected, true, 0.7F, controller.uvAnimation());
 +        assertTrue(model.ignoreLighting());
 +        assertEquals(0.7F, model.lightColorMultiplier());
-+        assertNotEquals(model, new CustomEntity.EvaluatedModel("actor", "geometry", "texture", selected, false, 0.7F));
++        assertNotEquals(model, new CustomEntity.EvaluatedModel("actor", "geometry", "texture", selected, false, 0.7F, controller.uvAnimation()));
++    }
++
++    @Test
++    void uvExpressionsRemainImmutableAndParticipateInModelChanges() throws Exception {
++        final var controller = BedrockControllerParser.parse("""
++            {"render_controllers":{"controller.render.actor":{
++                "uv_anim":{"offset":["query.life_time * 0.125",-0.2],"scale":[2,1]}
++            }}}
++            """).get(0);
++        final var initial = new CustomEntity.EvaluatedModel("actor", "geometry", "texture", java.util.Map.of(),
++            false, 1F, controller.uvAnimation());
++        final var identity = new CustomEntity.EvaluatedModel("actor", "geometry", "texture", java.util.Map.of(),
++            false, 1F, org.cube.converter.data.bedrock.controller.BedrockRenderController.UvAnimation.IDENTITY);
++        final var scope = Scope.create();
++        final var query = new MutableObjectBinding();
++        query.set("life_time", Value.of(8));
++        scope.set("query", query);
++        assertEquals(1D, net.raphimc.viabedrock.api.util.MoLangEngine.eval(scope, initial.uvAnimation().offsetU()).getAsNumber());
++        assertEquals(-0.2D, net.raphimc.viabedrock.api.util.MoLangEngine.eval(scope, initial.uvAnimation().offsetV()).getAsNumber());
++        final var current = new ArrayList<>(List.of(initial));
++        assertTrue(CustomEntity.replaceModels(current, List.of(identity)));
++        assertFalse(CustomEntity.replaceModels(current, List.of(identity)));
++        assertEquals(2D, net.raphimc.viabedrock.api.util.MoLangEngine.eval(scope, initial.uvAnimation().scaleU()).getAsNumber());
 +    }
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityModelSelectionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityModelSelectionTest.java
-index 2ae7687e..0ca12871 100644
+index 2ae7687e..9e1e5586 100644
 --- a/src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityModelSelectionTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityModelSelectionTest.java
 @@ -17,7 +17,7 @@ final class CustomEntityModelSelectionTest {
@@ -522,7 +559,7 @@ index 2ae7687e..0ca12871 100644
      @Test
      void removesPreviouslySelectedModelWhenNoControllerMatches() {
 -        final CustomEntity.EvaluatedModel model = new CustomEntity.EvaluatedModel("default", "body", "skin");
-+        final CustomEntity.EvaluatedModel model = new CustomEntity.EvaluatedModel("default", "body", "skin", java.util.Map.of(), false, 1F);
++        final CustomEntity.EvaluatedModel model = new CustomEntity.EvaluatedModel("default", "body", "skin", java.util.Map.of(), false, 1F, org.cube.converter.data.bedrock.controller.BedrockRenderController.UvAnimation.IDENTITY);
          final List<CustomEntity.EvaluatedModel> current = new ArrayList<>(List.of(model));
  
          assertTrue(CustomEntity.replaceModels(current, List.of()));

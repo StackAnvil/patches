@@ -39,3 +39,9 @@ Validation: material tests cover inherited emission, culling, removal, replaceme
 Explicit east and west UV faces now use the same model-space conversion as box UVs. The saved Bedrock 1.26.51.1 CubeCraft banner declares a west-only plane and uses a 90-degree bone rotation plus its camera expression. Its source and Java carrier yaw are both zero. The previous explicit-face path produced winding and normals with a camera dot product near -0.992 at three saved actor positions. The corrected path produces +0.992 with unchanged rotations and culling. This addresses the missing plane without changing its one-sided material.
 
 Three semantic tests cover equivalent box and explicit lateral vertices and UVs, asymmetric east and west surface positions, and transformed one-sided winding across eight camera directions and four actor yaws. All 13 focused owner renderer and material tests pass. Actual banner pixels still require a new offline capture. Client script variables and the cube's galaxy UV animation remain outside this correction.
+
+Controller UV transforms use the target Bedrock 1.26.51.1 ENTITY vertex
+formula, UV times scale plus offset, with immutable per-draw matrices.
+The native UVAnimation default is (0, 0, 1, 1). USE_UV_ANIM is supported
+for the verified ordinary and emissive alpha-test families; unknown
+shader combinations still use the existing material fallback.

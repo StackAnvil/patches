@@ -1,9 +1,10 @@
-From 6bd5abd239e3848187a9486714a9bd1915af769b Mon Sep 17 00:00:00 2001
+From f65ee43fc2b5b7e6123ee2b29b9e47a7f7902a4c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:56:50 +0200
-Subject: [PATCH] feat(entities): animate looping Bedrock bone expressions
+Subject: [PATCH] feat(entities): animate Bedrock actor bones and controller
+ UVs
 
-Apply looping position and rotation channels selected by unconditional
+Apply repeating and held position, rotation and scale channels selected by unconditional
 entity scripts to custom actor model parts. Interpolate numeric keyframes
 from actor render age and reset model pose before each draw. Evaluate
 parsed MoLang expressions with immutable camera and timing context through
@@ -26,21 +27,91 @@ Windows executable SHA-256 is
 Tests exercise camera quadrants, pitch, zero distance, sparse unsupported
 channels, body-yaw subtraction, and animation time versus lifetime.
 This does not add script-variable playback or animation controllers.
+
+Support loop:"hold_on_last_frame", including static poses without an
+animation length, and clamp animation time at the final frame. Multiply
+bone scale into its base pose. The saved target protocol 2193 Hive logo
+uses held root position (0,32.5,-16.25) and uniform scale 2; omitting that
+pose hides its banner. Native Bedrock 1.26.51.1 state blend 141e6fe70
+produces base scale times interpolated animation scale: base (2,1,1),
+old (2,3,4), new (4,5,6), weight .5 gives (6,4,5). Resolve animation
+bones with the converter's actual bone-name map so a native bone named
+root cannot collide with Java's reserved synthetic root lookup.
+
+Compile retained controller UV expressions and evaluate them against the
+actual submitted camera and actor lifetime. Preserve supported offset
+and scale components independently with native defaults zero and one.
+Native controller parser 141cabf60 initializes those defaults and ENTITY
+vertex DXIL computes normalized UV times scale plus offset. Cache bounded
+immutable per-draw render types so queued draws retain their own UV state.
+Apply this path only to verified USE_UV_ANIM alpha-test families; unknown
+shader effects and animation-controller state remain outside scope.
+
+Numerical tests cover held endpoints versus repeat wrapping, static and
+animated multiplicative scale, real root names, parser-to-snapshot-to-draw
+UV evaluation, camera/lifetime changes and independent unsupported inputs.
+A private GPU oracle runs the actual GLSL on a checker texture for signed
+and zero UV scales, offsets and four ordinary/emissive lit/unlit variants.
+Native shader exports and licensed server assets remain private.
 ---
- .../render/BedrockEntityAnimation.java        | 322 ++++++++++++++++++
- .../bedrock/render/BedrockEntityRenderer.java |  29 ++
- .../bedrock/render/BedrockGeometry.java       |  12 +-
- .../render/BedrockEntityAnimationTest.java    | 147 ++++++++
- 4 files changed, 508 insertions(+), 2 deletions(-)
+ .../render/BedrockActorUvAnimation.java       |  34 ++
+ .../render/BedrockEntityAnimation.java        | 339 ++++++++++++++++++
+ .../bedrock/render/BedrockEntityRenderer.java |  65 +++-
+ .../bedrock/render/BedrockGeometry.java       |  15 +-
+ .../render/BedrockActorUvAnimationTest.java   |  51 +++
+ .../render/BedrockEntityAnimationTest.java    | 201 +++++++++++
+ 6 files changed, 695 insertions(+), 10 deletions(-)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimation.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvAnimationTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimationTest.java
 
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvAnimation.java
+new file mode 100644
+index 0000000..a494418
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvAnimation.java
+@@ -0,0 +1,34 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viaversion.libs.gson.JsonPrimitive;
++import java.util.List;
++import java.util.Set;
++import org.cube.converter.data.bedrock.controller.BedrockRenderController;
++import team.unnamed.mocha.runtime.Scope;
++
++/** Compiled controller expressions evaluated against the actual submitted actor camera. */
++record BedrockActorUvAnimation(BedrockEntityAnimation.Component offsetU, BedrockEntityAnimation.Component offsetV,
++                              BedrockEntityAnimation.Component scaleU, BedrockEntityAnimation.Component scaleV) {
++    private static final Set<String> QUERIES = Set.of("rotation_to_camera", "body_y_rotation", "life_time");
++
++    static BedrockActorUvAnimation compile(final BedrockRenderController.UvAnimation animation) {
++        return new BedrockActorUvAnimation(component(animation.offsetU(), 0F), component(animation.offsetV(), 0F),
++            component(animation.scaleU(), 1F), component(animation.scaleV(), 1F));
++    }
++
++    private static BedrockEntityAnimation.Component component(final String expression, final float fallback) {
++        final var component = BedrockEntityAnimation.Component.parse(new JsonPrimitive(expression), QUERIES);
++        return component == null ? new BedrockEntityAnimation.Component(fallback, List.of()) : component;
++    }
++
++    BedrockActorUvTransform evaluate(final BedrockEntityAnimation.Frame frame) {
++        final Scope scope = frame.scope(0F);
++        return new BedrockActorUvTransform(this.offsetU.evaluate(scope, 0F), this.offsetV.evaluate(scope, 0F),
++            this.scaleU.evaluate(scope, 1F), this.scaleV.evaluate(scope, 1F));
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimation.java
 new file mode 100644
-index 0000000..659b80a
+index 0000000..ea4f3c8
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimation.java
-@@ -0,0 +1,322 @@
+@@ -0,0 +1,339 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -77,8 +148,8 @@ index 0000000..659b80a
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 +import org.cube.converter.data.bedrock.BedrockEntityData;
 +
-+/** Looping bone channels with numeric keyframes and verified camera and timing MoLang queries. */
-+record BedrockEntityAnimation(float length, Map<String, Bone> bones) {
++/** Repeating and held bone channels with verified camera and timing MoLang queries. */
++record BedrockEntityAnimation(float length, boolean holdLastFrame, Map<String, Bone> bones) {
 +
 +    private static final Scope BASE_SCOPE = MochaEngine.createStandard().scope();
 +    private static final Set<String> QUERIES = Set.of("rotation_to_camera", "body_y_rotation", "life_time", "anim_time");
@@ -128,7 +199,11 @@ index 0000000..659b80a
 +    }
 +
 +    static BedrockEntityAnimation parse(final JsonObject json) {
-+        if (!json.has("loop") || !json.get("loop").getAsBoolean()
++        final JsonElement loop = json.get("loop");
++        final boolean hold = loop != null && loop.isJsonPrimitive() && loop.getAsJsonPrimitive().isString()
++            && loop.getAsString().equals("hold_on_last_frame");
++        final boolean repeating = loop != null && loop.isJsonPrimitive() && loop.getAsJsonPrimitive().isBoolean() && loop.getAsBoolean();
++        if ((!hold && !repeating)
 +            || json.has("anim_time_update") || json.has("blend_weight") || json.has("override_previous_animation")
 +            || json.has("start_delay") || json.has("loop_delay")) {
 +            return null;
@@ -145,40 +220,33 @@ index 0000000..659b80a
 +            }
 +            final JsonObject channels = entry.getValue().getAsJsonObject();
 +            for (String channel : channels.keySet()) {
-+                if (!channel.equals("position") && !channel.equals("rotation")) {
++                if (!channel.equals("position") && !channel.equals("rotation") && !channel.equals("scale")) {
 +                    return null;
 +                }
 +            }
 +            final Channel position = channels.has("position") ? Channel.parse(channels.get("position")) : null;
 +            final Channel rotation = channels.has("rotation") ? Channel.parse(channels.get("rotation")) : null;
-+            if (position != null || rotation != null) {
-+                bones.put(entry.getKey(), new Bone(position, rotation));
-+                lastFrame = Math.max(lastFrame, Math.max(position == null ? 0F : position.lastFrame(), rotation == null ? 0F : rotation.lastFrame()));
++            final Channel scale = channels.has("scale") ? Channel.parse(channels.get("scale")) : null;
++            if (position != null || rotation != null || scale != null) {
++                bones.put(entry.getKey(), new Bone(position, rotation, scale));
++                lastFrame = Math.max(lastFrame, Math.max(scale == null ? 0F : scale.lastFrame(),
++                    Math.max(position == null ? 0F : position.lastFrame(), rotation == null ? 0F : rotation.lastFrame())));
 +            }
 +        }
 +        if (bones.isEmpty()) {
 +            return null;
 +        }
-+        final float length = json.has("animation_length") ? json.get("animation_length").getAsFloat() : lastFrame > 0F ? lastFrame : 1F;
-+        if (!Float.isFinite(length) || length <= 0F || length < lastFrame) {
++        final float defaultLength = lastFrame > 0F || hold ? lastFrame : 1F;
++        final float length = json.has("animation_length") ? json.get("animation_length").getAsFloat() : defaultLength;
++        if (!Float.isFinite(length) || length < 0F || (!hold && length == 0F) || length < lastFrame) {
 +            return null;
 +        }
-+        return new BedrockEntityAnimation(length, Map.copyOf(bones));
++        return new BedrockEntityAnimation(length, hold, Map.copyOf(bones));
 +    }
 +
-+    void apply(final ModelPart root, final Frame frame) {
-+        final float time = frame.seconds % this.length;
-+        final Scope scope = BASE_SCOPE.copy();
-+        final MutableObjectBinding queries = new MutableObjectBinding();
-+        queries.set("body_y_rotation", Value.of(frame.bodyYaw));
-+        queries.set("life_time", Value.of(frame.seconds));
-+        queries.set("anim_time", Value.of(time));
-+        queries.set("rotation_to_camera", (team.unnamed.mocha.runtime.value.Function<Object>) (_, arguments) ->
-+            Value.of(arguments.length() == 1 ? frame.rotationToCamera((int) arguments.next().eval().getAsNumber()) : 0F));
-+        queries.block();
-+        scope.set("query", queries);
-+        scope.set("q", queries);
-+        final Function<String, ModelPart> lookup = root.createPartLookup();
++    void apply(final Function<String, ModelPart> lookup, final Frame frame) {
++        final float time = this.holdLastFrame ? Math.clamp(frame.seconds, 0F, this.length) : frame.seconds % this.length;
++        final Scope scope = frame.scope(time);
 +        for (var entry : this.bones.entrySet()) {
 +            final ModelPart part = lookup.apply(entry.getKey());
 +            if (part == null) {
@@ -186,21 +254,27 @@ index 0000000..659b80a
 +            }
 +            final Bone bone = entry.getValue();
 +            if (bone.position != null) {
-+                final Vec3 position = bone.position.sample(time, scope);
++                final Vec3 position = bone.position.sample(time, scope, 0F);
 +                part.x += position.x;
 +                part.y -= position.y;
 +                part.z += position.z;
 +            }
 +            if (bone.rotation != null) {
-+                final Vec3 rotation = bone.rotation.sample(time, scope);
++                final Vec3 rotation = bone.rotation.sample(time, scope, 0F);
 +                part.xRot += rotation.x * DEGREES_TO_RADIANS;
 +                part.yRot += rotation.y * DEGREES_TO_RADIANS;
 +                part.zRot += rotation.z * DEGREES_TO_RADIANS;
 +            }
++            if (bone.scale != null) {
++                final Vec3 scale = bone.scale.sample(time, scope, 1F);
++                part.xScale *= scale.x;
++                part.yScale *= scale.y;
++                part.zScale *= scale.z;
++            }
 +        }
 +    }
 +
-+    private record Bone(Channel position, Channel rotation) {
++    private record Bone(Channel position, Channel rotation, Channel scale) {
 +    }
 +
 +    private record Vec3(float x, float y, float z) {
@@ -216,6 +290,20 @@ index 0000000..659b80a
 +    }
 +
 +    record Frame(float seconds, float bodyYaw, double cameraOffsetX, double cameraOffsetY, double cameraOffsetZ) {
++
++        Scope scope(final float animationTime) {
++            final Scope scope = BASE_SCOPE.copy();
++            final MutableObjectBinding queries = new MutableObjectBinding();
++            queries.set("body_y_rotation", Value.of(this.bodyYaw));
++            queries.set("life_time", Value.of(this.seconds));
++            queries.set("anim_time", Value.of(animationTime));
++            queries.set("rotation_to_camera", (team.unnamed.mocha.runtime.value.Function<Object>) (_, arguments) ->
++                Value.of(arguments.length() == 1 ? this.rotationToCamera((int) arguments.next().eval().getAsNumber()) : 0F));
++            queries.block();
++            scope.set("query", queries);
++            scope.set("q", queries);
++            return scope;
++        }
 +
 +        float rotationToCamera(final int axis) {
 +            if (axis < 0 || axis > 1) {
@@ -233,9 +321,9 @@ index 0000000..659b80a
 +
 +    }
 +
-+    private record Component(float constant, List<Expression> expression) {
++    record Component(float constant, List<Expression> expression) {
 +
-+        private static Component parse(final JsonElement value) {
++        static Component parse(final JsonElement value, final Set<String> queries) {
 +            if (!value.isJsonPrimitive()) {
 +                return null;
 +            }
@@ -248,43 +336,43 @@ index 0000000..659b80a
 +            }
 +            try {
 +                final List<Expression> expressions = MoLangEngine.parse(value.getAsString());
-+                return expressions.size() == 1 && supported(expressions.getFirst())
++                return expressions.size() == 1 && supported(expressions.getFirst(), queries)
 +                    ? new Component(0F, expressions) : null;
 +            } catch (IOException invalid) {
 +                return null;
 +            }
 +        }
 +
-+        private static boolean supported(final Expression expression) {
++        private static boolean supported(final Expression expression, final Set<String> queries) {
 +            if (expression instanceof DoubleExpression) {
 +                return true;
 +            }
 +            if (expression instanceof AccessExpression access && access.object() instanceof IdentifierExpression identifier) {
 +                return switch (identifier.name()) {
-+                    case "query", "q" -> QUERIES.contains(access.property());
++                    case "query", "q" -> queries.contains(access.property());
 +                    case "math" -> ((ObjectValue) BASE_SCOPE.get("math")).get(access.property()) != null;
 +                    default -> false;
 +                };
 +            }
 +            if (expression instanceof CallExpression call) {
-+                return supported(call.function()) && call.arguments().stream().allMatch(Component::supported);
++                return supported(call.function(), queries) && call.arguments().stream().allMatch(argument -> supported(argument, queries));
 +            }
 +            if (expression instanceof UnaryExpression unary) {
-+                return supported(unary.expression());
++                return supported(unary.expression(), queries);
 +            }
 +            if (expression instanceof BinaryExpression binary) {
 +                return binary.op() != BinaryExpression.Op.ASSIGN && binary.op() != BinaryExpression.Op.ARROW
-+                    && supported(binary.left()) && supported(binary.right());
++                    && supported(binary.left(), queries) && supported(binary.right(), queries);
 +            }
 +            if (expression instanceof TernaryConditionalExpression ternary) {
-+                return supported(ternary.condition()) && supported(ternary.trueExpression()) && supported(ternary.falseExpression());
++                return supported(ternary.condition(), queries) && supported(ternary.trueExpression(), queries) && supported(ternary.falseExpression(), queries);
 +            }
 +            return false;
 +        }
 +
-+        private float evaluate(final Scope scope) {
++        float evaluate(final Scope scope, final float fallback) {
 +            final float result = this.expression.isEmpty() ? this.constant : (float) MoLangEngine.eval(scope, this.expression).getAsNumber();
-+            return Float.isFinite(result) ? result : 0F;
++            return Float.isFinite(result) ? result : fallback;
 +        }
 +
 +    }
@@ -293,21 +381,21 @@ index 0000000..659b80a
 +
 +        private static Vector parse(final JsonElement value) {
 +            if (!value.isJsonArray()) {
-+                final Component component = Component.parse(value);
++                final Component component = Component.parse(value, QUERIES);
 +                return component == null ? null : new Vector(component, component, component);
 +            }
 +            final var array = value.getAsJsonArray();
 +            if (array.size() != 1 && array.size() != 3) {
 +                return null;
 +            }
-+            final Component x = Component.parse(array.get(0));
-+            final Component y = Component.parse(array.get(array.size() == 1 ? 0 : 1));
-+            final Component z = Component.parse(array.get(array.size() == 1 ? 0 : 2));
++            final Component x = Component.parse(array.get(0), QUERIES);
++            final Component y = Component.parse(array.get(array.size() == 1 ? 0 : 1), QUERIES);
++            final Component z = Component.parse(array.get(array.size() == 1 ? 0 : 2), QUERIES);
 +            return x == null || y == null || z == null ? null : new Vector(x, y, z);
 +        }
 +
-+        private Vec3 evaluate(final Scope scope) {
-+            return new Vec3(this.x.evaluate(scope), this.y.evaluate(scope), this.z.evaluate(scope));
++        private Vec3 evaluate(final Scope scope, final float fallback) {
++            return new Vec3(this.x.evaluate(scope, fallback), this.y.evaluate(scope, fallback), this.z.evaluate(scope, fallback));
 +        }
 +
 +    }
@@ -347,27 +435,42 @@ index 0000000..659b80a
 +            return this.keyframes.getLast().time;
 +        }
 +
-+        private Vec3 sample(final float time, final Scope scope) {
++        private Vec3 sample(final float time, final Scope scope, final float fallback) {
 +            Keyframe previous = this.keyframes.getFirst();
 +            for (int i = 1; i < this.keyframes.size(); i++) {
 +                final Keyframe next = this.keyframes.get(i);
 +                if (time < next.time) {
 +                    final float fraction = Math.clamp((time - previous.time) / (next.time - previous.time), 0F, 1F);
-+                    return previous.value.evaluate(scope).interpolate(next.value.evaluate(scope), fraction);
++                    return previous.value.evaluate(scope, fallback).interpolate(next.value.evaluate(scope, fallback), fraction);
 +                }
 +                previous = next;
 +            }
-+            return previous.value.evaluate(scope);
++            return previous.value.evaluate(scope, fallback);
 +        }
 +
 +    }
 +
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
-index 7cf321f..f64cb66 100644
+index 01ac0dd..e80e703 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
-@@ -59,6 +59,8 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -47,18 +47,22 @@ import net.raphimc.viabedrock.api.model.entity.CustomEntity;
+ import net.raphimc.viabedrock.api.util.StringUtil;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+ import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++import org.cube.converter.data.bedrock.controller.BedrockRenderController;
+ 
+ /** Renders ViaBedrock custom actors while leaving ordinary interactions invisible. */
+ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, EntityRenderState> {
+ 
+     private final Map<ModelKey, Model<EntityRenderState>> models = new HashMap<>();
++    private final Map<BedrockRenderController.UvAnimation, BedrockActorUvAnimation> uvAnimations = new HashMap<>();
+     private final Map<MaterialKey, RenderType> renderTypes = new LinkedHashMap<>(16, 0.75F, true) {
+         @Override
+         protected boolean removeEldestEntry(final Map.Entry<MaterialKey, RenderType> eldest) {
+-            // Animated multipliers must not retain a render type for every frame.
++            // Animated lighting and UV values must not retain a render type for every frame.
              return this.size() > 256;
          }
      };
@@ -376,7 +479,7 @@ index 7cf321f..f64cb66 100644
      private ResourcePackStorage currentPacks;
      private BedrockActorMaterialDefinitions materialDefinitions;
  
-@@ -88,12 +90,15 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -88,12 +92,16 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
          }
          state.models = List.of();
          state.scale = 1F;
@@ -387,15 +490,17 @@ index 7cf321f..f64cb66 100644
              this.materialDefinitions = null;
              this.models.clear();
              this.renderTypes.clear();
++            this.uvAnimations.clear();
 +            this.selectedAnimations.clear();
 +            this.animationLibrary = null;
              return;
          }
          final RenderData renderData = CustomEntityRenderStore.get(entity.getUUID());
-@@ -106,9 +111,21 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -106,9 +114,22 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
              this.materialDefinitions = BedrockActorMaterialDefinitions.load(packs);
              this.models.clear();
              this.renderTypes.clear();
++            this.uvAnimations.clear();
 +            this.selectedAnimations.clear();
 +            this.animationLibrary = null;
          }
@@ -414,7 +519,37 @@ index 7cf321f..f64cb66 100644
          state.yaw = entity.getYRot();
      }
  
-@@ -152,6 +169,8 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -135,27 +156,47 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+                 final Model<EntityRenderState> model = this.models.computeIfAbsent(modelKey, _ -> BedrockGeometry.entityModel(geometry, material.getValue()));
+                 final var alphaTest = this.materialDefinitions.alphaTest(material.getKey());
+                 final RenderType type;
++                final MaterialKey key;
++                final BedrockActorUvAnimation uv;
+                 if (alphaTest.isPresent()) {
+-                    final MaterialKey key = new MaterialKey(texture, alphaTest.get().cull(), evaluated.ignoreLighting(), alphaTest.get().emissive(), evaluated.lightColorMultiplier());
+-                    type = this.renderTypes.computeIfAbsent(key, _ -> BedrockActorRenderTypes.create(texture, key.cull(), key.ignoreLighting(), key.emissive(), key.multiplier(), BedrockActorUvTransform.IDENTITY));
++                    key = new MaterialKey(texture, alphaTest.get().cull(), evaluated.ignoreLighting(), alphaTest.get().emissive(), evaluated.lightColorMultiplier(), BedrockActorUvTransform.IDENTITY);
++                    type = this.renderType(key);
++                    uv = alphaTest.get().uvAnimation() ? this.uvAnimations.computeIfAbsent(evaluated.uvAnimation(), BedrockActorUvAnimation::compile) : null;
+                 } else {
++                    key = null;
++                    uv = null;
+                     type = RenderTypes.entityTranslucent(texture);
+                 }
+-                resolved.add(new RenderedModel(model, type));
++                resolved.add(new RenderedModel(model, type, key, uv));
+             }
+         }
+         return List.copyOf(resolved);
+     }
+ 
++    private RenderType renderType(final MaterialKey key) {
++        return this.renderTypes.computeIfAbsent(key, _ -> BedrockActorRenderTypes.create(key.texture(), key.cull(),
++            key.ignoreLighting(), key.emissive(), key.multiplier(), key.uv()));
++    }
++
+     @Override
+     public void submit(final EntityRenderState renderState, final PoseStack poseStack, final SubmitNodeCollector nodes, final CameraRenderState camera) {
          if (!(renderState instanceof State state)) {
              return;
          }
@@ -423,7 +558,20 @@ index 7cf321f..f64cb66 100644
          for (RenderedModel rendered : state.models) {
              poseStack.pushPose();
              applyActorTransform(poseStack, state.yaw, state.scale);
-@@ -171,8 +190,18 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+-            nodes.submitModel(rendered.model, state, poseStack, rendered.renderType, state.lightCoords, OverlayTexture.NO_OVERLAY, state.outlineColor);
++            final RenderType type;
++            if (rendered.uv != null) {
++                final MaterialKey key = rendered.material;
++                type = this.renderType(new MaterialKey(key.texture(), key.cull(), key.ignoreLighting(), key.emissive(),
++                    key.multiplier(), rendered.uv.evaluate(state.animationFrame)));
++            } else {
++                type = rendered.renderType;
++            }
++            nodes.submitModel(rendered.model, state, poseStack, type, state.lightCoords, OverlayTexture.NO_OVERLAY, state.outlineColor);
+             poseStack.popPose();
+         }
+         super.submit(renderState, poseStack, nodes, camera);
+@@ -171,17 +212,27 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
  
      public static final class State extends EntityRenderState {
          private List<RenderedModel> models = List.of();
@@ -442,11 +590,22 @@ index 7cf321f..f64cb66 100644
      }
  
      private record ModelKey(String geometry, Set<String> bones) {
+     }
+ 
+-    private record MaterialKey(Identifier texture, boolean cull, boolean ignoreLighting, boolean emissive, float multiplier) {
++    private record MaterialKey(Identifier texture, boolean cull, boolean ignoreLighting, boolean emissive, float multiplier, BedrockActorUvTransform uv) {
+     }
+ 
+-    private record RenderedModel(Model<EntityRenderState> model, RenderType renderType) {
++    private record RenderedModel(Model<EntityRenderState> model, RenderType renderType, MaterialKey material, BedrockActorUvAnimation uv) {
+     }
+ 
+ }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
-index f14abb9..a58fe6b 100644
+index 792885b..6f98c47 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
-@@ -59,12 +59,20 @@ public final class BedrockGeometry {
+@@ -59,12 +59,21 @@ public final class BedrockGeometry {
      }
  
      public static Model<EntityRenderState> entityModel(final BedrockGeometryModel geometry) {
@@ -456,25 +615,84 @@ index f14abb9..a58fe6b 100644
      }
  
      public static Model<EntityRenderState> entityModel(final BedrockGeometryModel geometry, final Set<String> bones) {
-         return new Model<>(root(geometry, false, bones::contains), RenderTypes::entityTranslucent) {
+-        return new Model<>(root(geometry, false, bones::contains), RenderTypes::entityTranslucent) {
++        final Map<String, ModelPart> parts = new HashMap<>();
++        return new Model<>(root(geometry, false, Map.of(), parts, null, bones::contains), RenderTypes::entityTranslucent) {
 +            @Override
 +            public void setupAnim(final EntityRenderState state) {
 +                this.resetPose();
 +                if (state instanceof BedrockEntityRenderer.State bedrockState) {
 +                    for (BedrockEntityAnimation animation : bedrockState.animations()) {
-+                        animation.apply(this.root, bedrockState.animationFrame());
++                        animation.apply(parts::get, bedrockState.animationFrame());
 +                    }
 +                }
 +            }
          };
      }
  
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvAnimationTest.java
+new file mode 100644
+index 0000000..0b352ea
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvAnimationTest.java
+@@ -0,0 +1,51 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import java.util.Map;
++import net.raphimc.viabedrock.api.model.entity.CustomEntity;
++import org.cube.converter.data.bedrock.controller.BedrockRenderController;
++import org.cube.converter.parser.bedrock.controller.BedrockControllerParser;
++import org.joml.Matrix4f;
++import org.joml.Vector4f;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++final class BedrockActorUvAnimationTest {
++    @Test
++    void evaluatesControllerSnapshotAgainstEachSubmittedCameraAndLifetime() {
++        final var controller = BedrockControllerParser.parse("""
++            {"render_controllers":{"controller.render.actor":{"uv_anim":{
++              "offset":["(-query.rotation_to_camera(1) + 180) / 360 + query.life_time * 0.125",
++                        "query.rotation_to_camera(0) / 180"],"scale":[-2,0.5]}}}}
++            """).getFirst();
++        final var snapshot = new CustomEntity.EvaluatedModel("actor", "geometry", "texture", Map.of(), false, 1F, controller.uvAnimation());
++        final var animation = BedrockActorUvAnimation.compile(snapshot.uvAnimation());
++        final var first = animation.evaluate(new BedrockEntityAnimation.Frame(2F, 0F, 0D, 1D, 1D));
++        assertEquals(0.75F, first.offsetU());
++        assertEquals(-0.25F, first.offsetV());
++        final var uv = first.apply(new Matrix4f()).transform(new Vector4f(0.25F, 0.5F, 0F, 1F));
++        assertEquals(0.25F, uv.x);
++        assertEquals(0F, uv.y);
++        final var second = animation.evaluate(new BedrockEntityAnimation.Frame(4F, 0F, 1D, 0D, 0D));
++        assertEquals(1.25F, second.offsetU());
++        assertEquals(0F, second.offsetV(), 0F);
++    }
++
++    @Test
++    void retainsSupportedComponentsAndNativeDefaultsIndependently() {
++        final var definition = new BedrockRenderController.UvAnimation("query.life_time * 0.125", "variable.unknown", "query.health", "-2");
++        final var actual = BedrockActorUvAnimation.compile(definition).evaluate(new BedrockEntityAnimation.Frame(4F, 0F, 0D, 0D, 1D));
++        assertEquals(new BedrockActorUvTransform(0.5F, 0F, 1F, -2F), actual);
++        assertEquals(BedrockActorUvTransform.IDENTITY,
++            BedrockActorUvAnimation.compile(BedrockRenderController.UvAnimation.IDENTITY)
++                .evaluate(new BedrockEntityAnimation.Frame(9F, 0F, 0D, 0D, 1D)));
++        final var nonfinite = new BedrockRenderController.UvAnimation("10000000000000000000000000000000000000000", "0", "10000000000000000000000000000000000000000", "query.anim_time");
++        assertEquals(BedrockActorUvTransform.IDENTITY, BedrockActorUvAnimation.compile(nonfinite)
++            .evaluate(new BedrockEntityAnimation.Frame(9F, 0F, 0D, 0D, 1D)));
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimationTest.java
 new file mode 100644
-index 0000000..4df8b51
+index 0000000..b98a268
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimationTest.java
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,201 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -517,7 +735,7 @@ index 0000000..4df8b51
 +        tail.setPos(3F, 5F, 7F);
 +        final ModelPart root = new ModelPart(List.of(), Map.of("tail", tail));
 +
-+        animation.apply(root, new BedrockEntityAnimation.Frame(0.5F, 0F, 0D, 0D, 0D));
++        animation.apply(root.createPartLookup(), new BedrockEntityAnimation.Frame(0.5F, 0F, 0D, 0D, 0D));
 +        assertEquals(4F, tail.x);
 +        assertEquals(3F, tail.y);
 +        assertEquals(10F, tail.z);
@@ -525,7 +743,7 @@ index 0000000..4df8b51
 +
 +        tail.setPos(3F, 5F, 7F);
 +        tail.setRotation(0F, 0F, 0F);
-+        animation.apply(root, new BedrockEntityAnimation.Frame(2.5F, 0F, 0D, 0D, 0D));
++        animation.apply(root.createPartLookup(), new BedrockEntityAnimation.Frame(2.5F, 0F, 0D, 0D, 0D));
 +        assertEquals(4F, tail.x);
 +        assertEquals(3F, tail.y);
 +        assertEquals(10F, tail.z);
@@ -572,14 +790,14 @@ index 0000000..4df8b51
 +        final ModelPart banner = new ModelPart(List.of(), Map.of());
 +        banner.setPos(3F, 5F, 7F);
 +        final ModelPart root = new ModelPart(List.of(), Map.of("full_banner", banner));
-+        animation.apply(root, new BedrockEntityAnimation.Frame(2F, 30F, 1D, 0D, 1D));
++        animation.apply(root.createPartLookup(), new BedrockEntityAnimation.Frame(2F, 30F, 1D, 0D, 1D));
 +        assertEquals((float) Math.toRadians(-75D), banner.yRot, 0.00001F);
 +        assertEquals(3F, banner.x);
 +        assertEquals(5F, banner.y);
 +        assertEquals(7F, banner.z);
 +
 +        banner.setRotation(0F, 0F, 0F);
-+        animation.apply(root, new BedrockEntityAnimation.Frame(2F, -45F, -1D, 0D, 1D));
++        animation.apply(root.createPartLookup(), new BedrockEntityAnimation.Frame(2F, -45F, -1D, 0D, 1D));
 +        assertEquals((float) Math.toRadians(90D), banner.yRot, 0.00001F);
 +    }
 +
@@ -608,13 +826,67 @@ index 0000000..4df8b51
 +        final ModelPart tail = new ModelPart(List.of(), Map.of());
 +        final ModelPart head = new ModelPart(List.of(), Map.of());
 +        final ModelPart root = new ModelPart(List.of(), Map.of("tail", tail, "head", head));
-+        animation.apply(root, new BedrockEntityAnimation.Frame(2.5F, 0F, 0D, 0D, 1D));
++        animation.apply(root.createPartLookup(), new BedrockEntityAnimation.Frame(2.5F, 0F, 0D, 0D, 1D));
 +        assertEquals((float) Math.toRadians(50D), tail.xRot, 0.00001F);
 +        assertEquals((float) Math.toRadians(5D), tail.yRot, 0.00001F);
 +        assertEquals(0F, head.yRot);
 +        assertEquals(1F, head.x);
 +        assertEquals(-2F, head.y);
 +        assertEquals(3F, head.z);
++    }
++
++    @Test
++    void holdsStaticPositionAndMultipliesScaleWithoutAnAnimationLength() {
++        final var animation = BedrockEntityAnimation.parse(json("""
++            {"loop":"hold_on_last_frame","bones":{"root":{"position":[0,32.5,-16.25],"scale":2}}}
++            """));
++        assertNotNull(animation);
++        final ModelPart part = new ModelPart(List.of(), Map.of());
++        part.setPos(1F, 2F, 3F);
++        part.xScale = 2F;
++        animation.apply(Map.of("root", part)::get, new BedrockEntityAnimation.Frame(600F, 0F, 0D, 0D, 1D));
++        assertEquals(1F, part.x);
++        assertEquals(-30.5F, part.y);
++        assertEquals(-13.25F, part.z);
++        assertEquals(4F, part.xScale);
++        assertEquals(2F, part.yScale);
++        assertEquals(2F, part.zScale);
++    }
++
++    @Test
++    void clampsHeldChannelsAndWrapsRepeatingChannelsAtTheEndpoint() {
++        final String channels = "\"animation_length\":2,\"bones\":{\"root\":{\"scale\":{\"0\":[1,2,3],\"2\":[3,4,5]},\"position\":[0,\"query.anim_time\",0]}}";
++        final var held = BedrockEntityAnimation.parse(json("{\"loop\":\"hold_on_last_frame\"," + channels + "}"));
++        final var repeating = BedrockEntityAnimation.parse(json("{\"loop\":true," + channels + "}"));
++        assertNotNull(held);
++        assertNotNull(repeating);
++        final ModelPart heldPart = new ModelPart(List.of(), Map.of());
++        final ModelPart repeatedPart = new ModelPart(List.of(), Map.of());
++        held.apply(Map.of("root", heldPart)::get, new BedrockEntityAnimation.Frame(2.5F, 0F, 0D, 0D, 1D));
++        repeating.apply(Map.of("root", repeatedPart)::get, new BedrockEntityAnimation.Frame(2.5F, 0F, 0D, 0D, 1D));
++        assertEquals(3F, heldPart.xScale);
++        assertEquals(4F, heldPart.yScale);
++        assertEquals(5F, heldPart.zScale);
++        assertEquals(-2F, heldPart.y);
++        assertEquals(1.5F, repeatedPart.xScale);
++        assertEquals(2.5F, repeatedPart.yScale);
++        assertEquals(3.5F, repeatedPart.zScale);
++        assertEquals(-0.5F, repeatedPart.y);
++    }
++
++    @Test
++    void evaluatesScaleExpressionsAndRetainsUnitScaleWithUnsupportedNeighbors() {
++        final var animation = BedrockEntityAnimation.parse(json("""
++            {"loop":"hold_on_last_frame","bones":{"root":{"scale":[1,"1 + query.life_time * 0.5",-2],
++              "rotation":[0,"variable.unsupported",0]}}}
++            """));
++        assertNotNull(animation);
++        final ModelPart part = new ModelPart(List.of(), Map.of());
++        animation.apply(Map.of("root", part)::get, new BedrockEntityAnimation.Frame(2F, 0F, 0D, 0D, 1D));
++        assertEquals(1F, part.xScale);
++        assertEquals(2F, part.yScale);
++        assertEquals(-2F, part.zScale);
++        assertEquals(0F, part.yRot);
 +    }
 +
 +    private static JsonObject json(final String source) {

@@ -1,4 +1,4 @@
-From a8db6172dff6301a91bc80a636b8d9f7763b9411 Mon Sep 17 00:00:00 2001
+From fd9f83f72b46ccfe8f134d3471d455653ae2015b Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:07 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -130,20 +130,30 @@ asymmetric surface positions, and transformed one-sided winding across
 eight camera directions and four actor yaws. Native assets and probes
 remain private. This does not add client script variables or galaxy UV
 animation.
+
+Apply controller UV scale and offset through an immutable texture matrix
+per draw. Native Bedrock 1.26.51.1 ENTITY vertex DXIL reads UVAnimation
+(offset U/V, scale U/V) and computes UV times scale plus offset; the
+material uniform default is (0, 0, 1, 1). Signed and zero scales remain
+valid. Treat verified USE_UV_ANIM as orthogonal to the supported ordinary
+and emissive alpha-test families, while retaining unsupported shader
+defines as fallback material families. Numerical tests preserve existing
+texture transforms and verify signed scale, offset and native defaults.
 ---
  build.gradle.kts                              |   6 +
  .../friends/FriendWorldSkinProvider.java      |   8 +
- .../access/IBedrockActorRenderType.java       |  10 +
+ .../access/IBedrockActorRenderType.java       |  14 ++
  .../render/MixinAbstractClientPlayer.java     |  38 +++
  .../render/MixinBedrockActorPipelines.java    |  25 ++
- .../render/MixinBedrockActorRenderType.java   |  38 +++
+ .../render/MixinBedrockActorRenderType.java   |  47 ++++
  .../features/render/MixinCustomEntity.java    |  59 +++++
  .../render/MixinEntityRenderDispatcher.java   |  93 +++++++
  .../render/MixinMinecraftSkinLifecycle.java   |  46 ++++
  .../render/MixinPlayerSkinWidget.java         |  28 +++
- .../BedrockActorMaterialDefinitions.java      | 132 ++++++++++
+ .../BedrockActorMaterialDefinitions.java      | 134 ++++++++++
  .../bedrock/render/BedrockActorMaterials.java |  56 +++++
- .../render/BedrockActorRenderTypes.java       |  50 ++++
+ .../render/BedrockActorRenderTypes.java       |  51 ++++
+ .../render/BedrockActorUvTransform.java       |  18 ++
  .../bedrock/render/BedrockEntityRenderer.java | 187 ++++++++++++++
  .../bedrock/render/BedrockGeometry.java       | 215 ++++++++++++++++
  .../bedrock/render/BedrockPlayerRenderer.java |  33 +++
@@ -155,13 +165,14 @@ animation.
  .../shaders/core/bedrock_actor.vsh            |  47 ++++
  .../viafabricplus-bedrock.accesswidener       |   3 +
  .../viafabricplus-bedrock.mixins.json         |   7 +
- .../BedrockActorMaterialDefinitionsTest.java  | 115 +++++++++
+ .../BedrockActorMaterialDefinitionsTest.java  | 129 ++++++++++
  .../render/BedrockActorMaterialsTest.java     |  48 ++++
+ .../render/BedrockActorUvTransformTest.java   |  27 ++
  .../bedrock/render/BedrockCubeFacesTest.java  | 127 ++++++++++
  .../render/BedrockEntityRendererTest.java     |  50 ++++
  .../bedrock/render/BedrockSkinQueueTest.java  |  83 ++++++
  .../render/CustomEntityRenderStoreTest.java   |  36 +++
- 30 files changed, 1917 insertions(+), 1 deletion(-)
+ 32 files changed, 1992 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractClientPlayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorPipelines.java
@@ -173,6 +184,7 @@ animation.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterials.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvTransform.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
@@ -183,6 +195,7 @@ animation.
  create mode 100644 src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.vsh
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialsTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvTransformTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCubeFacesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRendererTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinQueueTest.java
@@ -237,10 +250,10 @@ index a81e5ca..79efc1d 100644
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
 new file mode 100644
-index 0000000..77b4a94
+index 0000000..cf85397
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
-@@ -0,0 +1,10 @@
+@@ -0,0 +1,14 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -248,8 +261,12 @@ index 0000000..77b4a94
 + */
 +package com.viaversion.viafabricplus.bedrock.injection.access;
 +
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorUvTransform;
++
 +public interface IBedrockActorRenderType {
 +    void bedrock$lightColorMultiplier(float multiplier);
++
++    void bedrock$uvTransform(BedrockActorUvTransform transform);
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractClientPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractClientPlayer.java
 new file mode 100644
@@ -328,10 +345,10 @@ index 0000000..2005a31
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorRenderType.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorRenderType.java
 new file mode 100644
-index 0000000..18faec1
+index 0000000..99dbe1f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorRenderType.java
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,47 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -343,6 +360,7 @@ index 0000000..18faec1
 +import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 +import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 +import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockActorRenderType;
++import com.viaversion.viafabricplus.bedrock.render.BedrockActorUvTransform;
 +import net.minecraft.client.renderer.DynamicGpuData;
 +import net.minecraft.client.renderer.rendertype.RenderType;
 +import org.joml.Matrix4f;
@@ -357,6 +375,14 @@ index 0000000..18faec1
 +    @Unique
 +    private float bedrock$multiplier = 1F;
 +
++    @Unique
++    private BedrockActorUvTransform bedrock$uv = BedrockActorUvTransform.IDENTITY;
++
++    @Override
++    public void bedrock$uvTransform(final BedrockActorUvTransform transform) {
++        this.bedrock$uv = transform;
++    }
++
 +    @Override
 +    public void bedrock$lightColorMultiplier(final float multiplier) {
 +        this.bedrock$multiplier = multiplier;
@@ -364,10 +390,10 @@ index 0000000..18faec1
 +
 +    @WrapOperation(method = "writeDynamicTransforms", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/DynamicGpuData;writeTransform(Lorg/joml/Matrix4f;Lorg/joml/Matrix4f;)Lcom/mojang/renderpearl/api/buffers/GpuBufferSlice;"))
 +    private GpuBufferSlice actorMultiplier(final DynamicGpuData data, final Matrix4f modelView, final Matrix4f texture, final Operation<GpuBufferSlice> original) {
-+        if (this.bedrock$multiplier == 1F) {
++        if (this.bedrock$multiplier == 1F && this.bedrock$uv.equals(BedrockActorUvTransform.IDENTITY)) {
 +            return original.call(data, modelView, texture);
 +        }
-+        return data.writeTransform(modelView, new Vector4f(this.bedrock$multiplier, this.bedrock$multiplier, this.bedrock$multiplier, 1F), new Vector3f(), texture);
++        return data.writeTransform(modelView, new Vector4f(this.bedrock$multiplier, this.bedrock$multiplier, this.bedrock$multiplier, 1F), new Vector3f(), this.bedrock$uv.apply(texture));
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinCustomEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinCustomEntity.java
@@ -622,10 +648,10 @@ index 0000000..582c708
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
 new file mode 100644
-index 0000000..7cdc964
+index 0000000..a971628
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,134 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -689,15 +715,17 @@ index 0000000..7cdc964
 +        if (!this.definitions.containsKey(name)) return Optional.empty();
 +        return this.resolved.computeIfAbsent(name, identifier -> {
 +            final Effective effective = this.resolve(identifier, new HashSet<>());
++            final Set<String> shaderDefines = new HashSet<>(effective == null ? Set.of() : effective.defines);
++            shaderDefines.remove("USE_UV_ANIM");
 +            if (effective == null || !effective.verifiedFields
 +                || !"shaders/entity.vertex".equals(effective.vertexShader)
 +                || !"shaders/entity.fragment".equals(effective.fragmentShader)
-+                || !(effective.defines.equals(Set.of("USE_OVERLAY", "ALPHA_TEST"))
-+                    || effective.defines.equals(Set.of("USE_OVERLAY", "ALPHA_TEST", "USE_EMISSIVE")))
++                || !(shaderDefines.equals(Set.of("USE_OVERLAY", "ALPHA_TEST"))
++                    || shaderDefines.equals(Set.of("USE_OVERLAY", "ALPHA_TEST", "USE_EMISSIVE")))
 +                || !Set.of("DisableCulling").containsAll(effective.states)) {
 +                return Optional.empty();
 +            }
-+            return Optional.of(new AlphaTest(!effective.states.contains("DisableCulling"), effective.defines.contains("USE_EMISSIVE")));
++            return Optional.of(new AlphaTest(!effective.states.contains("DisableCulling"), effective.defines.contains("USE_EMISSIVE"), effective.defines.contains("USE_UV_ANIM")));
 +        });
 +    }
 +
@@ -753,7 +781,7 @@ index 0000000..7cdc964
 +        return result;
 +    }
 +
-+    public record AlphaTest(boolean cull, boolean emissive) {}
++    public record AlphaTest(boolean cull, boolean emissive, boolean uvAnimation) {}
 +    private record Definition(String parent, JsonObject fields) {}
 +    private record Effective(String vertexShader, String fragmentShader, Set<String> defines,
 +                             Set<String> states, boolean verifiedFields) {}
@@ -822,10 +850,10 @@ index 0000000..8e46c00
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
 new file mode 100644
-index 0000000..4793175
+index 0000000..a4b3a02
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,51 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -868,17 +896,42 @@ index 0000000..4793175
 +        return builder.build();
 +    }
 +
-+    public static RenderType create(final Identifier texture, final boolean cull, final boolean ignoreLighting, final boolean emissive, final float multiplier) {
++    public static RenderType create(final Identifier texture, final boolean cull, final boolean ignoreLighting, final boolean emissive, final float multiplier, final BedrockActorUvTransform uv) {
 +        final RenderPipeline pipeline = PIPELINES.get((emissive ? 4 : 0) + (ignoreLighting ? 2 : 0) + (cull ? 1 : 0));
 +        final RenderType type = RenderType.create("bedrock_actor", RenderSetup.builder(pipeline)
 +            .withTexture("Sampler0", texture).useLightmap().useOverlay().createRenderSetup());
 +        ((IBedrockActorRenderType) type).bedrock$lightColorMultiplier(multiplier);
++        ((IBedrockActorRenderType) type).bedrock$uvTransform(uv);
 +        return type;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvTransform.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvTransform.java
+new file mode 100644
+index 0000000..695cb91
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvTransform.java
+@@ -0,0 +1,18 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import org.joml.Matrix4f;
++import org.joml.Matrix4fc;
++
++/** Immutable native normalized-UV scale and offset for one submitted draw. */
++public record BedrockActorUvTransform(float offsetU, float offsetV, float scaleU, float scaleV) {
++    public static final BedrockActorUvTransform IDENTITY = new BedrockActorUvTransform(0F, 0F, 1F, 1F);
++
++    public Matrix4f apply(final Matrix4fc texture) {
++        return new Matrix4f().translation(this.offsetU, this.offsetV, 0F).scale(this.scaleU, this.scaleV, 1F).mul(texture);
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 new file mode 100644
-index 0000000..7cf321f
+index 0000000..01ac0dd
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 @@ -0,0 +1,187 @@
@@ -1021,7 +1074,7 @@ index 0000000..7cf321f
 +                final RenderType type;
 +                if (alphaTest.isPresent()) {
 +                    final MaterialKey key = new MaterialKey(texture, alphaTest.get().cull(), evaluated.ignoreLighting(), alphaTest.get().emissive(), evaluated.lightColorMultiplier());
-+                    type = this.renderTypes.computeIfAbsent(key, _ -> BedrockActorRenderTypes.create(texture, key.cull(), key.ignoreLighting(), key.emissive(), key.multiplier()));
++                    type = this.renderTypes.computeIfAbsent(key, _ -> BedrockActorRenderTypes.create(texture, key.cull(), key.ignoreLighting(), key.emissive(), key.multiplier(), BedrockActorUvTransform.IDENTITY));
 +                } else {
 +                    type = RenderTypes.entityTranslucent(texture);
 +                }
@@ -1744,7 +1797,7 @@ index 0000000..06ddcd8
 +}
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.vsh b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.vsh
 new file mode 100644
-index 0000000..f399129
+index 0000000..70b8c74
 --- /dev/null
 +++ b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.vsh
 @@ -0,0 +1,47 @@
@@ -1793,7 +1846,7 @@ index 0000000..f399129
 +    lightMapColor = sample_lightmap(Sampler2, UV2);
 +#endif
 +    overlayColor = texelFetch(Sampler1, UV1, 0);
-+    texCoord0 = UV0;
++    texCoord0 = (TextureMat * vec4(UV0, 0.0, 1.0)).xy;
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.accesswidener b/src/main/resources/viafabricplus-bedrock.accesswidener
 index 35145bc..91ad0d7 100644
@@ -1826,10 +1879,10 @@ index 17da109..85ecea8 100644
      "features.movement.MixinEntityFluidInteraction_CurrentAccumulator",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
 new file mode 100644
-index 0000000..ba81419
+index 0000000..e0a6d7b
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,129 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1914,9 +1967,23 @@ index 0000000..ba81419
 +             "uv:entity_alphatest":{"+defines":["USE_UV_ANIM"]},
 +             "malformed:entity_alphatest":{"defines":false}}
 +            """);
-+        for (String name : List.of("shader", "blend", "depth", "uv", "malformed", "missing")) {
++        for (String name : List.of("shader", "blend", "depth", "malformed", "missing")) {
 +            assertTrue(materials.alphaTest(name).isEmpty());
 +        }
++    }
++
++    @Test
++    void recognizesUvAnimationOnlyAlongsideVerifiedShaderEffects() {
++        final var materials = read("""
++            {"moving:entity_alphatest":{"+defines":["USE_UV_ANIM"]},
++             "emissive:entity_emissive_alpha_one_sided":{"+defines":["USE_UV_ANIM"]},
++             "unsupported:moving":{"+defines":["USE_MASK"]}}
++            """);
++        assertTrue(materials.alphaTest("moving").orElseThrow().uvAnimation());
++        assertTrue(materials.alphaTest("emissive").orElseThrow().uvAnimation());
++        assertTrue(materials.alphaTest("emissive").orElseThrow().emissive());
++        assertFalse(materials.alphaTest("entity_alphatest").orElseThrow().uvAnimation());
++        assertTrue(materials.alphaTest("unsupported").isEmpty());
 +    }
 +
 +    @Test
@@ -1997,6 +2064,39 @@ index 0000000..865c89a
 +        assertTrue(light.hasChild("cube_0"));
 +        assertEquals(-6F, light.y);
 +        assertEquals((float) Math.PI / 6F, body.zRot, 0.000001F);
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvTransformTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvTransformTest.java
+new file mode 100644
+index 0000000..e46a9de
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvTransformTest.java
+@@ -0,0 +1,27 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import org.joml.Matrix4f;
++import org.joml.Vector4f;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockActorUvTransformTest {
++    @Test
++    void appliesNativeScaleThenOffsetWithoutMutatingExistingTransforms() {
++        final Matrix4f existing = new Matrix4f().translation(0.1F, 0.2F, 0F);
++        final Matrix4f original = new Matrix4f(existing);
++        final var transform = new BedrockActorUvTransform(-0.25F, 0.75F, -2F, 0F);
++        final var result = transform.apply(existing).transform(new Vector4f(0.3F, 0.4F, 0F, 1F));
++        assertEquals(-1.05F, result.x, 1E-6F);
++        assertEquals(0.75F, result.y, 1E-6F);
++        assertEquals(original, existing);
++        assertEquals(new Vector4f(0.3F, 0.4F, 0F, 1F),
++            BedrockActorUvTransform.IDENTITY.apply(new Matrix4f()).transform(new Vector4f(0.3F, 0.4F, 0F, 1F)));
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCubeFacesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCubeFacesTest.java
