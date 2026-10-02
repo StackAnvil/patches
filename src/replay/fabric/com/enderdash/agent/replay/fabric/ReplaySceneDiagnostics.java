@@ -65,6 +65,7 @@ final class ReplaySceneDiagnostics {
                     Class<?> attribute = Class.forName("net.minecraft.world.attribute.EnvironmentAttribute");
                     Object skyFactor = Class.forName("net.minecraft.world.attribute.EnvironmentAttributes").getField("SKY_LIGHT_FACTOR").get(null);
                     state.put("skyLightFactor", probe.getClass().getMethod("getValue", attribute, float.class).invoke(probe, skyFactor, 0F));
+                    nativeLightmap(renderer, state);
                     Object foot = world.getClass().getMethod("getBlockState", blockPosition).invoke(world, position);
                     Object below = world.getClass().getMethod("getBlockState", blockPosition).invoke(world, call(position, "below"));
                     state.put("footIsAir", call(foot, "isAir"));
@@ -84,6 +85,26 @@ final class ReplaySceneDiagnostics {
 
     private static Object call(Object target, String name) throws ReflectiveOperationException {
         return target.getClass().getMethod(name).invoke(target);
+    }
+
+    private static void nativeLightmap(Object renderer, Map<String, Object> state) throws ReflectiveOperationException {
+        Class<?> bridge;
+        try {
+            bridge = Class.forName("com.viaversion.viafabricplus.bedrock.injection.access.IBedrockLightmapState");
+        } catch (ClassNotFoundException ignored) {
+            state.put("nativeLightmap", false);
+            return;
+        }
+        Object frame = call(renderer, "gameRenderState");
+        Object lightmap = frame.getClass().getField("lightmapRenderState").get(frame);
+        Object parameters = bridge.getMethod("viaFabricPlusBedrock$lightmap").invoke(lightmap);
+        state.put("nativeLightmap", parameters != null);
+        if (parameters == null) return;
+        state.put("nativeSkyLightFactor", call(parameters, "skyFactor"));
+        state.put("nativeGammaFactor", call(parameters, "gammaFactor"));
+        state.put("nativeDarknessPulse", call(parameters, "darknessPulse"));
+        state.put("nativeNightVision", call(parameters, "nightVision"));
+        state.put("nativeSunriseColor", new Gson().toJsonTree(call(parameters, "skyColor")));
     }
 
     private static List<Object> vector(Object vector) throws ReflectiveOperationException {

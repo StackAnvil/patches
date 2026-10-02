@@ -13,4 +13,8 @@ Numerical propagation tests reproduce those measurements. The target results do 
 
 All 315 saved Hive columns contain 17,078 half slabs and 11,795 double slabs. A counterfactual spawn region changes 85 sky-light cells and 46 block-light cells in its center chunk. It resolves every captured vanilla state. One double slab changes sky light from 10 to 0 and block light from 14 to 0. The player cell remains sky 15 and block 4. Raw server outputs and captured world data remain private.
 
-Validation: 274 core tests pass with no failures, errors, or skips. Both main and test Checkstyle tasks pass. Differential tests retain coverage of incremental propagation across chunk and section boundaries.
+Waterlogged stairs, fences, chains, and lanterns filter one skylight level. Their dry states transmit 15. Waterlogged leaves and half slabs retain filtering one. Custom blocks with filters zero, eight, and fifteen use the greater of their filter and water’s one-level filter. The target server measured these combinations in closed shafts and tunnels at clear noon. Script API queries include time and weather adjustment.
+
+Light snapshots now retain native secondary water for each position, including custom carriers without a Java waterlogged variant. Water addition and removal invalidate cached light. Replacement columns discard both state and water snapshots. Palette data and render states retain their original values. Block-light propagation already loses at least one level per step, so secondary water requires no extra block-light loss.
+
+Validation: 276 core tests pass with no failures, errors, or skips using the StackAnvil CubeConverter publication. Both main and test Checkstyle tasks pass. Numerical tests cover wet and dry states, native filter combinations, water removal, and immutable palette snapshots. Differential tests retain coverage across chunk and section boundaries.

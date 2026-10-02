@@ -70,7 +70,7 @@ Rendering checks compare installed skin dimensions and pixel hashes against pack
 
 These assertions cover asset installation and model resolution. They cannot prove every animation frame, shader effect, or camera view matches the official client. Inspect the saved screenshot and add a focused regression for those behaviors.
 
-Private `camera-audit.jsonl` observations include frame time, world clocks, player light levels, gamma, and the effective skylight brightness factor. They also cover scenes that omit the local-player skin. Match world time and camera position when comparing lighting. A running world clock continues into night after the recorded scene ends.
+Private `camera-audit.jsonl` observations include frame time, world clocks, player light levels, gamma, and Java’s skylight factor. When the native lightmap is active, the audit also records its actual render-state sky factor, gamma, darkness pulse, night vision, and sunrise color. They also cover scenes that omit the local-player skin. Match world time and camera position when comparing lighting. A running world clock continues into night after the recorded scene ends.
 
 Use `--client proxy --transport-only` to check the separate Java → ViaProxy route. The proxy route does not exercise the add-on's native appearance renderer. `--transport-only` preserves rendering failures in the report while allowing a transport check to finish.
 
@@ -88,7 +88,11 @@ Custom light filters use the runtime network components. The Hive recording expo
 
 Native Bedrock 1.26.51.1 server measurements distinguish slab states. Single slabs reduce skylight, while double slabs block it. Stairs transmit skylight regardless of their upper or lower orientation. The light engine uses these native results rather than Java face-occlusion rules. The saved Hive world contains 17,078 half slabs and 11,795 double slabs.
 
-Lighting still uses Java brightness and sunset curves. The native gamma shader uses a different transform, but its slider mapping remains unverified. These fixes do not establish pixel-identical exposure, ambient occlusion, or custom world lighting.
+Water filtering also follows the native measurements. Waterlogged stairs, fences, and chains filter one skylight level. Secondary water uses the greater of water’s filter and the primary block’s filter. Light snapshots retain water by position, including custom carriers whose Java states cannot hold water. Fluid rendering remains a separate limitation.
+
+The Bedrock lightmap uses formulas recovered from the licensed Windows 1.26.51.1 executable with PistonDecompiler and local Ghidra analysis. Its Overworld day angle, sunrise tint, weather response, block-light color, Nether brightness offset, and per-channel brightness correction differ from Java’s renderer. The native caller applies two small ambient bias stages. Its brightness slider reads `gfx_gamma` directly, with a default of 0.5. The separate fullscreen gamma calibration does not define this slider.
+
+The lightmap applies only to an active Bedrock connection in supported vanilla dimensions. Ordinary Java connections retain Java lighting. Native shader binaries, decompiler output, and licensed assets remain private. This port does not establish pixel-identical ambient occlusion, Vibrant Visuals, ray tracing, or custom world lighting. The End retains Java’s lightmap until its animated native brightness input is verified.
 
 ## Limits
 

@@ -1,0 +1,761 @@
+From ada5d8842ad5bee05c7a0da4defa21e29598be52 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 01:54:45 +0200
+Subject: [PATCH] feat(render): reproduce the native Bedrock classic lightmap
+
+Java 26.3 applies a different gamma transform and derives Nether ambient
+light after its brightness curve. Render actual Bedrock Overworld and
+Nether connections with a dedicated reloadable lightmap pipeline instead.
+Keep immutable inputs in the render state, update when inputs change,
+and close the native uniform buffer with its owning Java lightmap.
+
+Port the scalar image builder and verified producers from the official
+Bedrock 1.26.51.1 executable (SHA-256
+537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7):
+146619c50 supplies block RGB, per-channel quartic gamma and byte truncation;
+142313be0 supplies the native 16-float table with Nether's clamped +0.1;
+1423122e0, 14230e620 and 146235f20 supply daylight, weather and sunrise;
+14692cd30 supplies Nether's white sky and fixed full sky factor;
+1448018f0 fixes both ambient bias stages on and the white boost off.
+The ordinary contribution fixes the previous boss value to zero, so its
+boss RGB branch stays absent instead of importing Java boss behavior.
+
+Use the direct native-compatible gamma range and the native NV/conduit
+duration curve. Darkness consumes Java's effect blend lifecycle, whose
+exact native fade timing remains unverified. The End retains Java's
+pipeline until its animated native sky input is established. Enhanced
+lighting and resource-pack lighting overrides are outside this port.
+
+Validate eight targeted input/uniform tests and the actual fragment shader
+through Mesa EGL against an independent native float32 oracle. All 11,520
+pixels across 45 scenarios match the reference bytes exactly.
+---
+ .../access/IBedrockLightmapState.java         | 14 ++++
+ .../access/IBedrockLightmapWeather.java       | 11 +++
+ .../features/render/MixinBedrockLightmap.java | 43 +++++++++++
+ .../render/MixinBedrockLightmapExtractor.java | 36 +++++++++
+ .../render/MixinBedrockLightmapPipelines.java | 26 +++++++
+ .../render/MixinBedrockLightmapState.java     | 28 +++++++
+ .../render/MixinBedrockLightmapWeather.java   | 31 ++++++++
+ .../light/BedrockLightmapExtractor.java       | 54 +++++++++++++
+ .../render/light/BedrockLightmapMath.java     | 74 ++++++++++++++++++
+ .../light/BedrockLightmapParameters.java      | 60 +++++++++++++++
+ .../render/light/BedrockLightmapRenderer.java | 55 +++++++++++++
+ .../shaders/core/bedrock_lightmap.fsh         | 49 ++++++++++++
+ .../viafabricplus-bedrock.mixins.json         |  5 ++
+ .../render/light/BedrockLightmapMathTest.java | 77 +++++++++++++++++++
+ .../light/BedrockLightmapParametersTest.java  | 38 +++++++++
+ 15 files changed, 601 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockLightmapState.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockLightmapWeather.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmap.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmapExtractor.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmapPipelines.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmapState.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmapWeather.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapExtractor.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapMath.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapParameters.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapRenderer.java
+ create mode 100644 src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_lightmap.fsh
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapMathTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapParametersTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockLightmapState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockLightmapState.java
+new file mode 100644
+index 0000000..8614bbc
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockLightmapState.java
+@@ -0,0 +1,14 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.access;
++
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockLightmapParameters;
++import org.jetbrains.annotations.Nullable;
++
++public interface IBedrockLightmapState {
++    @Nullable BedrockLightmapParameters viaFabricPlusBedrock$lightmap();
++    void viaFabricPlusBedrock$lightmap(@Nullable BedrockLightmapParameters parameters);
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockLightmapWeather.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockLightmapWeather.java
+new file mode 100644
+index 0000000..4ef4980
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockLightmapWeather.java
+@@ -0,0 +1,11 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.access;
++
++public interface IBedrockLightmapWeather {
++    float viaFabricPlusBedrock$thunder();
++    int viaFabricPlusBedrock$skyFlash();
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmap.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmap.java
+new file mode 100644
+index 0000000..434c767
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmap.java
+@@ -0,0 +1,43 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.mojang.renderpearl.api.textures.GpuTextureView;
++import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockLightmapState;
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockLightmapRenderer;
++import net.minecraft.client.renderer.Lightmap;
++import net.minecraft.client.renderer.state.LightmapRenderState;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.Unique;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(Lightmap.class)
++public abstract class MixinBedrockLightmap {
++    @Shadow public abstract GpuTextureView getTextureView();
++    @Unique private BedrockLightmapRenderer viaFabricPlusBedrock$renderer;
++
++    @Inject(method = "render", at = @At("HEAD"), cancellable = true)
++    private void renderNative(final LightmapRenderState state, final CallbackInfo ci) {
++        final var parameters = ((IBedrockLightmapState) state).viaFabricPlusBedrock$lightmap();
++        if (parameters == null) return;
++        if (state.needsUpdate) {
++            if (this.viaFabricPlusBedrock$renderer == null) this.viaFabricPlusBedrock$renderer = new BedrockLightmapRenderer();
++            this.viaFabricPlusBedrock$renderer.render(this.getTextureView(), parameters);
++        }
++        ci.cancel();
++    }
++
++    @Inject(method = "close", at = @At("TAIL"))
++    private void closeNative(final CallbackInfo ci) {
++        if (this.viaFabricPlusBedrock$renderer != null) {
++            this.viaFabricPlusBedrock$renderer.close();
++            this.viaFabricPlusBedrock$renderer = null;
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmapExtractor.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmapExtractor.java
+new file mode 100644
+index 0000000..e55c47f
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmapExtractor.java
+@@ -0,0 +1,36 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockLightmapState;
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockLightmapExtractor;
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockLightmapParameters;
++import java.util.Objects;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.renderer.LightmapRenderStateExtractor;
++import net.minecraft.client.renderer.state.LightmapRenderState;
++import org.spongepowered.asm.mixin.Final;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.Unique;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(LightmapRenderStateExtractor.class)
++public abstract class MixinBedrockLightmapExtractor {
++    @Shadow @Final private Minecraft minecraft;
++    @Unique private BedrockLightmapParameters viaFabricPlusBedrock$lastParameters;
++
++    @Inject(method = "extract", at = @At("TAIL"))
++    private void extractNative(final LightmapRenderState state, final float partialTick, final CallbackInfo ci) {
++        final var parameters = BedrockLightmapExtractor.extract(this.minecraft, partialTick);
++        // Native snapshots can change between ticks, including gamma changes and the darkness pulse.
++        state.needsUpdate |= !Objects.equals(parameters, this.viaFabricPlusBedrock$lastParameters);
++        this.viaFabricPlusBedrock$lastParameters = parameters;
++        ((IBedrockLightmapState) state).viaFabricPlusBedrock$lightmap(parameters);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmapPipelines.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmapPipelines.java
+new file mode 100644
+index 0000000..4e6ec4d
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmapPipelines.java
+@@ -0,0 +1,26 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.llamalad7.mixinextras.injector.ModifyReturnValue;
++import com.mojang.renderpearl.api.pipeline.RenderPipeline;
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockLightmapRenderer;
++import net.minecraft.client.renderer.RenderPipelines;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++import java.util.ArrayList;
++import java.util.List;
++
++@Mixin(RenderPipelines.class)
++public abstract class MixinBedrockLightmapPipelines {
++    @ModifyReturnValue(method = "requiredPipelines", at = @At("RETURN"))
++    private static List<RenderPipeline> includeNative(final List<RenderPipeline> pipelines) {
++        final var result = new ArrayList<>(pipelines);
++        result.add(BedrockLightmapRenderer.PIPELINE);
++        return result;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmapState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmapState.java
+new file mode 100644
+index 0000000..d677578
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmapState.java
+@@ -0,0 +1,28 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockLightmapState;
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockLightmapParameters;
++import net.minecraft.client.renderer.state.LightmapRenderState;
++import org.jetbrains.annotations.Nullable;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Unique;
++
++@Mixin(LightmapRenderState.class)
++public abstract class MixinBedrockLightmapState implements IBedrockLightmapState {
++    @Unique private @Nullable BedrockLightmapParameters viaFabricPlusBedrock$parameters;
++
++    @Override
++    public @Nullable BedrockLightmapParameters viaFabricPlusBedrock$lightmap() {
++        return this.viaFabricPlusBedrock$parameters;
++    }
++
++    @Override
++    public void viaFabricPlusBedrock$lightmap(final @Nullable BedrockLightmapParameters parameters) {
++        this.viaFabricPlusBedrock$parameters = parameters;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmapWeather.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmapWeather.java
+new file mode 100644
+index 0000000..4d635c6
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockLightmapWeather.java
+@@ -0,0 +1,31 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockLightmapWeather;
++import net.minecraft.client.multiplayer.ClientLevel;
++import net.minecraft.world.level.Level;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++
++@Mixin(ClientLevel.class)
++public abstract class MixinBedrockLightmapWeather extends Level implements IBedrockLightmapWeather {
++    @Shadow private int skyFlashTime;
++
++    private MixinBedrockLightmapWeather() {
++        super(null, null, null, null, false, false, 0L, 0);
++    }
++
++    @Override
++    public float viaFabricPlusBedrock$thunder() {
++        return this.thunderLevel;
++    }
++
++    @Override
++    public int viaFabricPlusBedrock$skyFlash() {
++        return this.skyFlashTime;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapExtractor.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapExtractor.java
+new file mode 100644
+index 0000000..d0b508b
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapExtractor.java
+@@ -0,0 +1,54 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.light;
++
++import com.viaversion.viafabricplus.ViaFabricPlus;
++import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockLightmapWeather;
++import net.minecraft.client.Minecraft;
++import net.minecraft.world.effect.MobEffectInstance;
++import net.minecraft.world.effect.MobEffects;
++import net.raphimc.viabedrock.protocol.data.enums.Dimension;
++import net.raphimc.viabedrock.api.BedrockProtocolVersion;
++import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
++import net.raphimc.viabedrock.protocol.storage.GameSessionStorage;
++import org.jetbrains.annotations.Nullable;
++
++public final class BedrockLightmapExtractor {
++    private BedrockLightmapExtractor() {
++    }
++
++    public static @Nullable BedrockLightmapParameters extract(final Minecraft minecraft, final float partialTick) {
++        final var level = minecraft.level;
++        final var player = minecraft.player;
++        final var connection = ViaFabricPlus.api().userConnection();
++        if (level == null || player == null || connection == null
++            || !connection.getProtocolInfo().serverProtocolVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST)
++            || !connection.has(ChunkTracker.class) || !connection.has(GameSessionStorage.class)) return null;
++        final Dimension dimension = connection.get(ChunkTracker.class).getDimension();
++        // The End uses a separate animated sky producer, rather than this classic daylight calculation.
++        if (dimension != Dimension.OVERWORLD && dimension != Dimension.NETHER) return null;
++        final boolean nether = dimension == Dimension.NETHER;
++        final var weather = (IBedrockLightmapWeather) level;
++        // Native sky contribution extraction samples its dimension at partial tick 1.
++        final var sky = BedrockLightmapMath.sky(nether, level.getOverworldClockTime(), level.getRainLevel(1F), weather.viaFabricPlusBedrock$thunder());
++        final float darkness = player.getEffectBlendFactor(MobEffects.DARKNESS, partialTick)
++            * minecraft.options.darknessEffectScale().get().floatValue();
++        final float gamma = Math.max(minecraft.options.gamma().get().floatValue() - darkness, 0F);
++        final MobEffectInstance nightVision = player.getEffect(MobEffects.NIGHT_VISION);
++        final MobEffectInstance conduit = player.getEffect(MobEffects.CONDUIT_POWER);
++        final int duration = longestDuration(nightVision, conduit);
++        final float vision = nightVision != null || conduit != null ? BedrockLightmapMath.nightVision(duration) : 0F;
++        return new BedrockLightmapParameters(BedrockLightmapMath.levels(nether), sky.color(),
++            sky.factor(), gamma, BedrockLightmapMath.darknessPulse(level.getLevelData().getGameTime(), partialTick, darkness),
++            vision, !nether && !minecraft.options.hideLightningFlash().get() && weather.viaFabricPlusBedrock$skyFlash() > 0);
++    }
++
++    private static int longestDuration(final @Nullable MobEffectInstance first, final @Nullable MobEffectInstance second) {
++        final int a = first != null ? first.getDuration() : 0;
++        final int b = second != null ? second.getDuration() : 0;
++        return a == -1 || b == -1 ? -1 : Math.max(a, b);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapMath.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapMath.java
+new file mode 100644
+index 0000000..76d5b1a
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapMath.java
+@@ -0,0 +1,74 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.light;
++
++import net.minecraft.util.Mth;
++
++/** Inputs to the classic Bedrock 1.26.51 light-image builder. */
++public final class BedrockLightmapMath {
++    private static final float[] BRIGHTNESS = {
++        0F, 0.017543857917189598F, 0.03703703731298447F, 0.05882352590560913F,
++        0.0833333283662796F, 0.1111111268401146F, 0.1428571194410324F, 0.1794871985912323F,
++        0.2222222536802292F, 0.2727273106575012F, 0.3333333432674408F, 0.4074074327945709F,
++        0.5000000596046448F, 0.6190476417541504F, 0.7777777314186096F, 1F
++    };
++    private static final BedrockLightmapParameters.Color WHITE = new BedrockLightmapParameters.Color(1F, 1F, 1F, 1F);
++    private static final BedrockLightmapParameters.Color NO_SUNRISE = new BedrockLightmapParameters.Color(0F, 0F, 0F, 0F);
++    private static final BedrockLightmapParameters.Levels OVERWORLD_LEVELS = new BedrockLightmapParameters.Levels(BRIGHTNESS);
++    private static final BedrockLightmapParameters.Levels NETHER_LEVELS = netherLevels();
++
++    private BedrockLightmapMath() {
++    }
++
++    public static BedrockLightmapParameters.Levels levels(final boolean nether) {
++        return nether ? NETHER_LEVELS : OVERWORLD_LEVELS;
++    }
++
++    private static BedrockLightmapParameters.Levels netherLevels() {
++        final float[] levels = BRIGHTNESS.clone();
++        for (int index = 0; index < levels.length; index++) levels[index] = Mth.clamp(levels[index] + 0.1F, 0F, 1F);
++        return new BedrockLightmapParameters.Levels(levels);
++    }
++
++    public static Sky sky(final boolean nether, final long time, final float rain, final float thunder) {
++        if (nether) return new Sky(WHITE, 1F);
++        final float angle = overworldAngle(time, 1F);
++        return new Sky(sunrise(angle), skyFactor(angle, rain, thunder));
++    }
++
++    public record Sky(BedrockLightmapParameters.Color color, float factor) {
++    }
++
++    public static float overworldAngle(final long time, final float partialTick) {
++        float fraction = ((time % 24000L) + partialTick) / 24000F - 0.25F;
++        if (fraction < 0F) fraction += 1F;
++        if (fraction > 1F) fraction -= 1F;
++        final float eased = 1F - (Mth.cos(fraction * (float) Math.PI) + 1F) * 0.5F;
++        return fraction + (eased - fraction) / 3F;
++    }
++
++    public static float skyFactor(final float angle, final float rain, final float thunder) {
++        final float daylight = 1F - Mth.clamp(1F - ((float) Math.cos(angle * ((float) Math.PI * 2F)) * 2F + 0.2F), 0F, 1F);
++        return 0.2F + 0.8F * (daylight * (1F - 0.3125F * thunder) * (1F - 0.3125F * rain));
++    }
++
++    public static BedrockLightmapParameters.Color sunrise(final float angle) {
++        final float cosine = Mth.cos(angle * ((float) Math.PI * 2F));
++        if (Math.abs(cosine) > 0.4F) return NO_SUNRISE;
++        final float progress = cosine / 0.4F * 0.5F + 0.5F;
++        final float alpha = 1F - (1F - Mth.sin(progress * (float) Math.PI)) * 0.99F;
++        return new BedrockLightmapParameters.Color(progress * 0.3F + 0.7F, progress * progress * 0.7F + 0.2F, 0.2F, alpha * alpha);
++    }
++
++    public static float nightVision(final int duration) {
++        if (duration == -1 || duration > 200) return 1F;
++        return Mth.sin((duration - 1F) * (float) Math.PI * 0.2F) * 0.3F + 0.7F;
++    }
++
++    public static float darknessPulse(final long worldTick, final float partialTick, final float intensity) {
++        return Math.max((float) Math.cos((worldTick - partialTick) * 0.07853981852531433F) * 0.45F * intensity, 0F);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapParameters.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapParameters.java
+new file mode 100644
+index 0000000..f7257da
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapParameters.java
+@@ -0,0 +1,60 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.light;
++
++import com.mojang.blaze3d.buffers.Std140Builder;
++import com.mojang.blaze3d.buffers.Std140SizeCalculator;
++
++import java.nio.ByteBuffer;
++import java.util.Arrays;
++
++/** A render-thread snapshot of the native light-image builder inputs. */
++public record BedrockLightmapParameters(
++    Levels levels, Color skyColor, float skyFactor, float gammaFactor, float darknessPulse,
++    float nightVision, boolean neutralSky
++) {
++    public static final int UNIFORM_SIZE = new Std140SizeCalculator()
++        .putVec4().putVec4().putVec4().putVec4().putVec4()
++        .putVec4().putVec4().get();
++
++    public void write(final ByteBuffer buffer) {
++        final Std140Builder builder = Std140Builder.intoBuffer(buffer);
++        putColor(builder, this.skyColor);
++        for (int index = 0; index < 16; index++) builder.putFloat(this.levels.at(index));
++        builder.putFloat(this.skyFactor).putFloat(this.gammaFactor).putFloat(this.darknessPulse).putFloat(this.nightVision);
++        builder.putFloat(this.neutralSky ? 1F : 0F).putFloat(0F).putFloat(0F).putFloat(0F);
++    }
++
++    private static void putColor(final Std140Builder builder, final Color color) {
++        builder.putFloat(color.red).putFloat(color.green).putFloat(color.blue).putFloat(color.alpha);
++    }
++
++    public record Color(float red, float green, float blue, float alpha) {
++    }
++
++    public static final class Levels {
++        private final float[] values;
++
++        public Levels(final float[] values) {
++            if (values.length != 16) throw new IllegalArgumentException("Lightmap requires 16 brightness levels");
++            this.values = values.clone();
++        }
++
++        public float at(final int level) {
++            return this.values[level];
++        }
++
++        @Override
++        public boolean equals(final Object other) {
++            return other instanceof Levels levels && Arrays.equals(this.values, levels.values);
++        }
++
++        @Override
++        public int hashCode() {
++            return Arrays.hashCode(this.values);
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapRenderer.java
+new file mode 100644
+index 0000000..87d80cf
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapRenderer.java
+@@ -0,0 +1,55 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.light;
++
++import com.mojang.blaze3d.systems.RenderSystem;
++import com.mojang.renderpearl.api.buffers.GpuBuffer;
++import com.mojang.renderpearl.api.commands.RenderPass;
++import com.mojang.renderpearl.api.pipeline.BindGroupLayout;
++import com.mojang.renderpearl.api.pipeline.ColorTargetState;
++import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
++import com.mojang.renderpearl.api.pipeline.RenderPipeline;
++import com.mojang.renderpearl.api.pipeline.UniformType;
++import com.mojang.renderpearl.api.textures.GpuTextureView;
++import net.minecraft.client.renderer.BindGroupLayouts;
++import net.minecraft.client.renderer.MappableRingBuffer;
++import net.minecraft.resources.Identifier;
++
++import java.util.Optional;
++
++public final class BedrockLightmapRenderer implements AutoCloseable {
++    public static final RenderPipeline PIPELINE = RenderPipeline.builder()
++        .withLocation(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "pipeline/bedrock_lightmap"))
++        .withVertexShader("core/screenquad")
++        .withFragmentShader(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "core/bedrock_lightmap"))
++        .withBindGroupLayout(BindGroupLayouts.GLOBALS)
++        .withBindGroupLayout(BindGroupLayout.builder().withUniform("BedrockLightmapInfo", UniformType.UNIFORM_BUFFER).build())
++        .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
++        .withColorTargetState(ColorTargetState.DEFAULT)
++        .build();
++
++    private final MappableRingBuffer uniforms = new MappableRingBuffer(() -> "Bedrock lightmap UBO",
++        GpuBuffer.USAGE_UNIFORM | GpuBuffer.USAGE_MAP_WRITE, BedrockLightmapParameters.UNIFORM_SIZE);
++
++    public void render(final GpuTextureView texture, final BedrockLightmapParameters parameters) {
++        try (final var mapped = this.uniforms.currentBuffer().map(false, true)) {
++            parameters.write(mapped.data());
++        }
++        final var encoder = RenderSystem.getDevice().createCommandEncoder();
++        try (final RenderPass pass = encoder.createRenderPass(() -> "Update Bedrock light", texture, Optional.empty())) {
++            pass.setPipeline(RenderSystem.getCompiledPipeline(PIPELINE));
++            RenderSystem.bindDefaultUniforms(pass);
++            pass.setUniform("BedrockLightmapInfo", this.uniforms.currentBuffer());
++            pass.draw(3, 1, 0, 0);
++        }
++        this.uniforms.rotate();
++    }
++
++    @Override
++    public void close() {
++        this.uniforms.close();
++    }
++}
+diff --git a/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_lightmap.fsh b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_lightmap.fsh
+new file mode 100644
+index 0000000..2a2ae69
+--- /dev/null
++++ b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_lightmap.fsh
+@@ -0,0 +1,49 @@
++#version 330
++#extension GL_ARB_separate_shader_objects : require
++
++layout(std140) uniform BedrockLightmapInfo {
++    vec4 SkyColor;
++    vec4 LightLevels[4];
++    vec4 Factors; // sky factor, gamma factor, darkness pulse, night vision
++    vec4 State; // lightning flash, padding
++} lightmapInfo;
++
++layout(location = 0) in vec2 texCoord;
++layout(location = 0) out vec4 fragColor;
++
++float brightness(int level) {
++    return lightmapInfo.LightLevels[level / 4][level % 4];
++}
++
++void main() {
++    int blockLevel = clamp(int(floor(texCoord.x * 16.0)), 0, 15);
++    int skyLevel = clamp(int(floor(texCoord.y * 16.0)), 0, 15);
++    float block = brightness(blockLevel) * 1.6;
++    vec3 blockColor = vec3(block,
++        ((block * 0.6 + 0.4) * 0.6 + 0.4) * block,
++        (block * block * 0.6 + 0.4) * block);
++    float sky = brightness(skyLevel);
++    float skyFactor = lightmapInfo.Factors.x;
++    vec3 skyColor = vec3(sky);
++    if (lightmapInfo.State.x == 0.0) {
++        float tint = lightmapInfo.SkyColor.a * 0.3;
++        skyColor = lightmapInfo.SkyColor.rgb * sky * tint
++            + vec3((1.0 - tint) * (skyFactor * 0.95 + 0.05) * sky);
++    }
++    skyColor.rg *= skyFactor * 0.65 + 0.35;
++    vec3 color = (blockColor + skyColor) * 0.96 + vec3(0.03);
++    float vision = lightmapInfo.Factors.w;
++    if (vision > 0.0) {
++        float maximum = max(max(color.r, color.g), color.b);
++        color = color * (vision / maximum) + color * (1.0 - vision);
++    }
++    color = clamp(color - vec3(lightmapInfo.Factors.z), 0.0, 1.0);
++    vec3 inverse = vec3(1.0) - color;
++    vec3 gamma = vec3(1.0) - inverse * inverse * inverse * inverse;
++    float gammaFactor = lightmapInfo.Factors.y;
++    color = gamma * gammaFactor + color * (1.0 - gammaFactor);
++    color = color * 0.96 + vec3(0.03);
++    // Native image construction truncates channels to bytes before upload.
++    color = floor(clamp(color, 0.0, 1.0) * 255.0) / 255.0;
++    fragColor = vec4(color, 1.0);
++}
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index 6de31b5..3ebffff 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -54,6 +54,11 @@
+     "features.misc.MixinInventoryScreen",
+     "features.misc.MixinMinecraft",
+     "features.render.MixinAbstractClientPlayer",
++    "features.render.MixinBedrockLightmapWeather",
++    "features.render.MixinBedrockLightmapState",
++    "features.render.MixinBedrockLightmapExtractor",
++    "features.render.MixinBedrockLightmap",
++    "features.render.MixinBedrockLightmapPipelines",
+     "features.render.MixinCustomEntity",
+     "features.render.MixinBedrockPlayerActorState",
+     "features.render.MixinEntityRenderDispatcher",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapMathTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapMathTest.java
+new file mode 100644
+index 0000000..8e35ca1
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapMathTest.java
+@@ -0,0 +1,77 @@
++package com.viaversion.viafabricplus.bedrock.render.light;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockLightmapMathTest {
++    @Test
++    void netherAddsItsNativeAmbientOffsetBeforeClamping() {
++        final var overworld = BedrockLightmapMath.levels(false);
++        final var nether = BedrockLightmapMath.levels(true);
++        assertEquals(0F, overworld.at(0));
++        assertEquals(0.1F, nether.at(0));
++        assertEquals(0.6000001F, nether.at(12));
++        assertEquals(1F, nether.at(15));
++        for (int level = 0; level < 15; level++) assertTrue(nether.at(level) > overworld.at(level));
++    }
++
++    @Test
++    void skyUsesIndependentWeatherChannelsAndANativeNightFloor() {
++        assertEquals(1F, BedrockLightmapMath.skyFactor(0F, 0F, 0F));
++        assertEquals(0.75F, BedrockLightmapMath.skyFactor(0F, 1F, 0F));
++        assertEquals(0.578125F, BedrockLightmapMath.skyFactor(0F, 1F, 1F));
++        assertEquals(0.2F, BedrockLightmapMath.skyFactor(0.5F, 1F, 1F));
++        assertEquals(0.2F, BedrockLightmapMath.skyFactor(0.5F, 0F, 0F));
++    }
++
++    @Test
++    void netherSkyContributionKeepsItsNativeWhiteColorAndFullFactor() {
++        final var expected = new BedrockLightmapMath.Sky(new BedrockLightmapParameters.Color(1F, 1F, 1F, 1F), 1F);
++        for (long time : new long[] {0L, 6000L, 12000L, 18000L}) {
++            assertEquals(expected, BedrockLightmapMath.sky(true, time, 0F, 0F));
++            assertEquals(expected, BedrockLightmapMath.sky(true, time, 1F, 1F));
++        }
++    }
++
++    @Test
++    void fractionalInputsMatchNativeFloatCosineReferenceVectors() {
++        assertEquals(0.7268046736717224F, BedrockLightmapMath.skyFactor(0.125F, 0.73F, 0.47F), 0.0000001F);
++        assertEquals(0.7414843440055847F, BedrockLightmapMath.skyFactor(0.16185066F, 0.81F, 0.3F), 0.0000001F);
++        assertEquals(0.4152044653892517F, BedrockLightmapMath.skyFactor(0.234561F, 0.21F, 0.86F), 0.0000001F);
++        assertEquals(0.18035398423671722F, BedrockLightmapMath.darknessPulse(13L, 0.4F, 0.73F), 0.0000001F);
++        assertEquals(0.056559834629297256F, BedrockLightmapMath.darknessPulse(11137L, 0.87F, 0.42F), 0.0000001F);
++    }
++
++    @Test
++    void sunriseAlphaAppearsOnlyAroundTheHorizon() {
++        assertEquals(0F, BedrockLightmapMath.sunrise(0F).alpha());
++        assertEquals(0F, BedrockLightmapMath.sunrise(0.5F).alpha());
++        final var horizon = BedrockLightmapMath.sunrise(0.25F);
++        assertEquals(0.85F, horizon.red(), 0.0001F);
++        assertEquals(0.375F, horizon.green(), 0.0001F);
++        assertEquals(0.2F, horizon.blue());
++        assertEquals(1F, horizon.alpha(), 0.0001F);
++    }
++
++    @Test
++    void dayAngleWrapsAndRepeatsWithoutUsingJavaEnvironmentAttributes() {
++        for (int time = 0; time < 24000; time += 137) {
++            assertEquals(BedrockLightmapMath.overworldAngle(time, 1F), BedrockLightmapMath.overworldAngle(time + 24000L, 1F));
++            assertTrue(BedrockLightmapMath.overworldAngle(time, 1F) >= 0F);
++            assertTrue(BedrockLightmapMath.overworldAngle(time, 1F) <= 1F);
++        }
++        assertEquals(0F, BedrockLightmapMath.overworldAngle(6000L, 0F));
++        assertEquals(0.5F, BedrockLightmapMath.overworldAngle(18000L, 0F), 0.0001F);
++    }
++
++    @Test
++    void effectsKeepNativeInfiniteDurationAndWorldClockSemantics() {
++        assertEquals(1F, BedrockLightmapMath.nightVision(-1));
++        assertEquals(1F, BedrockLightmapMath.nightVision(201));
++        assertEquals(0.7F, BedrockLightmapMath.nightVision(1));
++        assertEquals(0.45F, BedrockLightmapMath.darknessPulse(0L, 0F, 1F));
++        assertEquals(0F, BedrockLightmapMath.darknessPulse(40L, 0F, 1F));
++        assertEquals(0F, BedrockLightmapMath.darknessPulse(0L, 0F, 0F));
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapParametersTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapParametersTest.java
+new file mode 100644
+index 0000000..841e19f
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockLightmapParametersTest.java
+@@ -0,0 +1,38 @@
++package com.viaversion.viafabricplus.bedrock.render.light;
++
++import org.junit.jupiter.api.Test;
++
++import java.nio.ByteBuffer;
++import java.nio.ByteOrder;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockLightmapParametersTest {
++    @Test
++    void uniformSnapshotOwnsItsTableAndPacksWithoutChangingChannelOrder() {
++        final float[] levels = new float[16];
++        for (int index = 0; index < 16; index++) levels[index] = index / 15F;
++        final var parameters = new BedrockLightmapParameters(new BedrockLightmapParameters.Levels(levels),
++            new BedrockLightmapParameters.Color(0.7F, 0.2F, 0.1F, 0.8F), 0.9F, 0.6F, 0.3F, 0.4F, true);
++        final var sameInputs = new BedrockLightmapParameters(new BedrockLightmapParameters.Levels(levels.clone()),
++            parameters.skyColor(), parameters.skyFactor(), parameters.gammaFactor(), parameters.darknessPulse(), parameters.nightVision(), parameters.neutralSky());
++        assertEquals(parameters, sameInputs);
++        assertNotEquals(parameters, new BedrockLightmapParameters(parameters.levels(), parameters.skyColor(),
++            parameters.skyFactor(), parameters.gammaFactor(), parameters.darknessPulse() + 0.01F, parameters.nightVision(), parameters.neutralSky()));
++        levels[12] = 0F;
++        final ByteBuffer buffer = ByteBuffer.allocateDirect(BedrockLightmapParameters.UNIFORM_SIZE).order(ByteOrder.nativeOrder());
++        parameters.write(buffer);
++        assertEquals(112, BedrockLightmapParameters.UNIFORM_SIZE);
++        assertEquals(0.7F, buffer.getFloat(0));
++        assertEquals(0.8F, buffer.getFloat(12));
++        for (int index = 0; index < 16; index++) assertEquals(index / 15F, buffer.getFloat(16 + index * Float.BYTES));
++        assertEquals(0.9F, buffer.getFloat(80));
++        assertEquals(0.6F, buffer.getFloat(84));
++        assertEquals(0.3F, buffer.getFloat(88));
++        assertEquals(0.4F, buffer.getFloat(92));
++        assertEquals(1F, buffer.getFloat(96));
++        assertEquals(0F, buffer.getFloat(100));
++        assertEquals(0F, buffer.getFloat(104));
++        assertEquals(0F, buffer.getFloat(108));
++    }
++}
+-- 
+2.55.0
