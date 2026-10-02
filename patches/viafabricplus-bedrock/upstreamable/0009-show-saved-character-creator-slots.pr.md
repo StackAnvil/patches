@@ -838,3 +838,22 @@ Production tests compare all seven query values exactly as float32. Additional t
 All 376 fixture-enabled tests pass across 74 suites with no failures, errors, or skips. This includes all 73 particle tests. Fresh license acquisition, extraction, and cache reuse pass. All 16 patches replay.
 
 The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
+
+
+## Preserve child binding offsets
+
+The actor-present branch in native leaf dispatcher `FUN_142164cb0` passes the parent's base origin to `FUN_142166990`. The bound factory constructs at identity and writes that origin as binding metadata. The actor fallback branch in `FUN_14215b3c0` adds this offset to translation. A resolved locator supplies its complete matrix and ignores the offset.
+
+Production now retains the offset separately from the actor and locator matrices. Each child replaces the offset with its parent's base origin. Nested children therefore do not accumulate ancestor offsets. The copied attachment retains the same bounds and query bindings. Root attachment matrices keep their existing behavior.
+
+Independent execution supplies 48 combined native cases. The full leaf dispatcher, factory wrappers, binding setter, initialization gate, and context refresh execute. Resolved actors reach the initialization callback with the child actor context before the source expression. Ordinary requests and requests without bindings use the event frame. Invalid handles retain the source expression without child initialization.
+
+Removed actors and missing actor components follow a separate registry path. They use the parent's base origin for construction, retain its previous binding metadata, and suppress child initialization. Production still needs a Java registry-only actor/locator adapter for this path. The new placement fix covers resolved actors and does not claim that missing path.
+
+The probe supplies resource lookup, constructor allocation and fields, binding getters, weak registry resolution, level access, variable access, expression callbacks, and string copying. Actor component lookup executes against prepared ECS tables. Actual Molang evaluation, asynchronous loading, complete emitter updates, and visible native playback remain outside these cases.
+
+The 192 native matrix comparisons now exercise the production binding offset adapter directly. Earlier tests added the offset before constructing the attachment. A new child/grandchild regression verifies offset replacement, actor fallback placement, rotation-only matrices, and scaled locator behavior. Native executables, assets, probes, and fixtures remain private.
+
+All 377 fixture-enabled tests pass across 74 suites with no failures, errors, or skips. This includes all 74 particle tests. Fresh license acquisition, extraction, and cache reuse pass. All 16 patches replay.
+
+The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.

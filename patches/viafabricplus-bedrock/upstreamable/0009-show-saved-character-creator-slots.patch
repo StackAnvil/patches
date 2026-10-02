@@ -1,4 +1,4 @@
-From b505e6516bfd6aa63b4bbcf8e8894ed37c7bf1d8 Mon Sep 17 00:00:00 2001
+From 5cc3b9939a5443184fcce5e13a8bcf26f75e3419 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -963,6 +963,21 @@ actor resolution, level access, variable storage, expression callbacks and
 motion-component lookup. These cases establish query bindings and context
 fields; live/offscreen actor updates, scheduling and visible playback still
 need comparisons. Sample player queries during emotes as well as base poses.
+
+The native actor-present child dispatcher passes the parent's base origin
+as binding metadata while constructing the child at identity. Apply that
+offset only to actor fallback translation, not resolved locators. Replace
+the binding offset for each generation instead of accumulating ancestors.
+
+Execute the full dispatcher, binding setter, initialization gate and query
+refresh in 48 prepared cases, including absent, present, removed and
+missing-component actors. The latter two retain registry bindings and
+suppress child initialization; that registry-only Java adapter remains
+incomplete. Resource/constructor fields, binding getters, weak registry
+resolution, expression callbacks and variable access are supplied boundaries.
+Rework the 192 matrix comparisons to exercise the production offset adapter
+and add a child/grandchild placement regression. Scheduling and native
+visible comparisons remain separate work.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   54 +
@@ -1003,18 +1018,18 @@ need comparisons. Sample player queries during emotes as well as base poses.
  .../appearance/BedrockMolangParser.java       |  193 +
  .../appearance/BedrockOwnedSkinPacks.java     |  156 +
  .../appearance/BedrockPackageHelper.java      |  121 +
- .../appearance/BedrockParticleAttachment.java |  103 +
+ .../appearance/BedrockParticleAttachment.java |  127 +
  .../appearance/BedrockParticleBlocks.java     |   67 +
  .../appearance/BedrockParticleCollision.java  |  210 +
  .../appearance/BedrockParticleCurves.java     |  173 +
  .../appearance/BedrockParticleDefinition.java |  261 +
- .../appearance/BedrockParticleEffect.java     |  618 ++
+ .../appearance/BedrockParticleEffect.java     |  619 ++
  .../appearance/BedrockParticleEvents.java     |  155 +
  .../appearance/BedrockParticleFacing.java     |  151 +
  .../appearance/BedrockParticleLayouts.java    |  413 +
  .../appearance/BedrockParticleLifetime.java   |  100 +
  .../BedrockParticleLifetimeEvents.java        |   64 +
- .../appearance/BedrockParticlePlayback.java   |  323 +
+ .../appearance/BedrockParticlePlayback.java   |  328 +
  .../appearance/BedrockParticleQueries.java    |   37 +
  .../appearance/BedrockParticleShape.java      |  165 +
  .../appearance/BedrockParticleSpace.java      |   43 +
@@ -1099,13 +1114,13 @@ need comparisons. Sample player queries during emotes as well as base poses.
  .../appearance/BedrockParticleCurvesTest.java |  119 +
  .../BedrockParticleDefinitionTest.java        |  190 +
  .../appearance/BedrockParticleEffectTest.java |  218 +
- .../appearance/BedrockParticleEventsTest.java |  246 +
+ .../appearance/BedrockParticleEventsTest.java |  286 +
  .../appearance/BedrockParticleFacingTest.java |  153 +
  .../BedrockParticleLifetimeTest.java          |  146 +
  .../BedrockParticleQueriesTest.java           |   99 +
  .../appearance/BedrockParticleShapeTest.java  |  160 +
  .../appearance/BedrockParticleSoundTest.java  |  149 +
- .../appearance/BedrockParticleSpaceTest.java  |  158 +
+ .../appearance/BedrockParticleSpaceTest.java  |  160 +
  .../BedrockPersonaAnimationAtlasTest.java     |  109 +
  .../BedrockPersonaAssemblerTest.java          |  246 +
  .../appearance/BedrockPersonaAssetsTest.java  |  362 +
@@ -1124,7 +1139,7 @@ need comparisons. Sample player queries during emotes as well as base poses.
  .../render/BedrockModelLocatorsTest.java      |  112 +
  .../render/BedrockPlayerActorStateTest.java   |  124 +
  .../render/BedrockPlayerModelTest.java        |  100 +
- 160 files changed, 36796 insertions(+), 92 deletions(-)
+ 160 files changed, 36868 insertions(+), 92 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -17331,10 +17346,10 @@ index 0000000..b8ffba8
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleAttachment.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleAttachment.java
 new file mode 100644
-index 0000000..d5c80b5
+index 0000000..d4b6cd0
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleAttachment.java
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,127 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -17354,6 +17369,7 @@ index 0000000..d5c80b5
 +    private final Matrix rotating, fixed, locator;
 +    private final AABB bounds;
 +    private final Map<String, Object> queries;
++    private final Vec3 offset;
 +
 +    public BedrockParticleAttachment(final Vec3 position, final float yaw, final Matrix4fc locator, final AABB bounds,
 +                                    final Map<String, Object> queries) {
@@ -17362,6 +17378,21 @@ index 0000000..d5c80b5
 +        this.locator = locator == null ? null : new Matrix(locator.get(new float[16]));
 +        this.bounds = bounds;
 +        this.queries = Map.copyOf(queries);
++        this.offset = Vec3.ZERO;
++    }
++
++    private BedrockParticleAttachment(final BedrockParticleAttachment attachment, final Vec3 offset) {
++        this.rotating = attachment.rotating;
++        this.fixed = attachment.fixed;
++        this.locator = attachment.locator;
++        this.bounds = attachment.bounds;
++        this.queries = attachment.queries;
++        this.offset = offset;
++    }
++
++    /** Replaces the native binding offset; a resolved locator ignores it. */
++    BedrockParticleAttachment withOffset(final Vec3 offset) {
++        return new BedrockParticleAttachment(this, offset);
 +    }
 +
 +    AABB bounds() { return this.bounds; }
@@ -17372,7 +17403,7 @@ index 0000000..d5c80b5
 +        // The native locator branch retains all axes regardless of the rotation flag.
 +        if (this.hasLocator(position)) return this.locator;
 +        final Matrix actor = rotation ? this.rotating : this.fixed;
-+        return position ? actor : actor.withoutTranslation();
++        return position ? actor.offset(this.offset) : actor.withoutTranslation();
 +    }
 +
 +    /** Column-major float products retain the target's scalar operation order. */
@@ -17390,6 +17421,14 @@ index 0000000..d5c80b5
 +        static Matrix translation(final Vec3 position) {
 +            return new Matrix(new float[] {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0,
 +                    (float) position.x, (float) position.y, (float) position.z, 1});
++        }
++
++        Matrix offset(final Vec3 offset) {
++            final float[] translated = this.values.clone();
++            translated[12] += (float) offset.x;
++            translated[13] += (float) offset.y;
++            translated[14] += (float) offset.z;
++            return new Matrix(translated);
 +        }
 +
 +        static Matrix actor(final Vec3 position, final float yaw) {
@@ -18175,10 +18214,10 @@ index 0000000..bebb9e5
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffect.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffect.java
 new file mode 100644
-index 0000000..78813c4
+index 0000000..ab338cb
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffect.java
-@@ -0,0 +1,618 @@
+@@ -0,0 +1,619 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -18353,6 +18392,7 @@ index 0000000..78813c4
 +
 +        boolean alive() { return !this.clock.expired() || !this.particles.isEmpty(); }
 +        int size() { return this.particles.size(); }
++        net.minecraft.world.phys.Vec3 baseOrigin() { return this.baseOrigin; }
 +
 +        void advance(final long nanos, final int available, final BedrockParticleAttachment attachment,
 +                     final BedrockParticleCollision.Terrain terrain) {
@@ -19712,10 +19752,10 @@ index 0000000..99dc06a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePlayback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePlayback.java
 new file mode 100644
-index 0000000..8d4c306
+index 0000000..9d39c50
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePlayback.java
-@@ -0,0 +1,323 @@
+@@ -0,0 +1,328 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -19845,8 +19885,13 @@ index 0000000..8d4c306
 +        final boolean bound = spawn.kind() == BedrockParticleEvents.Kind.EMITTER_BOUND
 +                && parent.attachment != null && parent.attachment.get() != null;
 +        final var transform = request.emitterTransform(bound);
++        final Vec3 offset = parent.emitter.baseOrigin();
++        final Supplier<BedrockParticleAttachment> attachment = bound ? () -> {
++            final var sampled = parent.attachment.get();
++            return sampled == null ? null : sampled.withOffset(offset);
++        } : null;
 +        schedule(new Key(parent.key.resources, spawn.effect()), new BedrockMolang(), spawn.initialization(), transform,
-+                bound ? parent.attachment : null, parent.depth + 1, manual ? request : null, parent);
++                attachment, parent.depth + 1, manual ? request : null, parent);
 +    }
 +
 +    private static void load(final Key key, final long generation, final CompletableFuture<Loaded> result) {
@@ -34705,10 +34750,10 @@ index 0000000..ccf511c
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEventsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEventsTest.java
 new file mode 100644
-index 0000000..d130799
+index 0000000..896350d
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEventsTest.java
-@@ -0,0 +1,246 @@
+@@ -0,0 +1,286 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import com.google.gson.JsonObject;
@@ -34830,6 +34875,46 @@ index 0000000..d130799
 +            final var emitter = BedrockParticleEffect.read(manual()).emitter(new BedrockMolang(), new Random(1), manual.emitterTransform(false));
 +            assertTrue(emitter.emit(manual.position(), manual.velocity(), 10));
 +            assertEquals(new Vector3f(4, 5, 6), emitter.visuals().getFirst().position());
++        }
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_PARTICLE_REFERENCE", matches = ".+")
++    void usesNativeActorChildBindingOffsetsWithoutAccumulatingAncestorOffsets() throws Exception {
++        final var document = BedrockParticleEffectTest.burst();
++        components(document).add("minecraft:emitter_local_space", json("{\"position\":true,\"rotation\":true}"));
++        components(document).add("minecraft:emitter_shape_point", json("{\"offset\":[1,2,3]}"));
++        final var effect = BedrockParticleEffect.read(document);
++        final Vec3 actorPosition = new Vec3(10.25, -2.5, 7.75);
++        final var locator = new org.joml.Matrix4f().translation(10, 20, 30).scale(2, 3, -4);
++        for (final var entry : fixture("native-child-actor-context-result.json").getAsJsonArray("cases")) {
++            final var row = entry.getAsJsonObject();
++            // Registry-only fallback has no Java actor/locator adapter yet.
++            if (!row.get("valid_handle").getAsBoolean() || !row.get("kind").getAsString().equals("emitter_bound")
++                    || !row.get("binding").getAsString().equals("actor")) continue;
++            final var parent = row.getAsJsonArray("parent_base_origin");
++            final Vec3 parentOrigin = new Vec3(parent.get(0).getAsFloat(), parent.get(1).getAsFloat(), parent.get(2).getAsFloat());
++            final var metadata = row.getAsJsonArray("binding_offset");
++            assertEquals(new Vec3(metadata.get(0).getAsFloat(), metadata.get(1).getAsFloat(), metadata.get(2).getAsFloat()), parentOrigin);
++            final var spawn = new BedrockParticleEvents.Spawn("test:child", BedrockParticleEvents.Kind.EMITTER_BOUND, null);
++            final var request = new BedrockParticleEvents.Request(spawn, matrix(row.getAsJsonArray("event_matrix")), new Vector3f());
++            assertArrayEquals(matrix(row.getAsJsonArray("constructor_matrix")).values(), request.emitterTransform(true).values());
++            for (final boolean found : List.of(false, true)) {
++                final var attachment = new BedrockParticleAttachment(actorPosition, 180, found ? locator : null, null, java.util.Map.of())
++                        .withOffset(new Vec3(100, 200, 300)).withOffset(parentOrigin);
++                final var emitter = effect.emitter(new BedrockMolang(), new Random(1), request.emitterTransform(true));
++                emitter.advance(0, 10, attachment, (x, y, z) -> List.of());
++                final var expected = found ? new Vector3f(12, 26, 18)
++                        : new Vector3f((float) actorPosition.x + (float) parentOrigin.x + 1,
++                                (float) actorPosition.y + (float) parentOrigin.y + 2,
++                                (float) actorPosition.z + (float) parentOrigin.z + 3);
++                assertEquals(expected, emitter.visuals().getFirst().position());
++                assertArrayEquals(attachment.matrix(false, true).values(), attachment.withOffset(Vec3.ZERO).matrix(false, true).values());
++                final var grandchild = effect.emitter(new BedrockMolang(), new Random(2), request.emitterTransform(true));
++                grandchild.advance(0, 10, attachment.withOffset(emitter.baseOrigin()), (x, y, z) -> List.of());
++                assertEquals(found ? new Vector3f(12, 26, 18) : new Vector3f(11.25F, -0.5F, 10.75F),
++                        grandchild.visuals().getFirst().position());
++            }
 +        }
 +    }
 +
@@ -35694,10 +35779,10 @@ index 0000000..f072d95
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleSpaceTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleSpaceTest.java
 new file mode 100644
-index 0000000..9a6b1e0
+index 0000000..4fbdf01
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleSpaceTest.java
-@@ -0,0 +1,158 @@
+@@ -0,0 +1,160 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -35724,10 +35809,12 @@ index 0000000..9a6b1e0
 +        for (final var row : cases) {
 +            final var expected = row.getAsJsonObject();
 +            final var config = expected.getAsJsonObject("config");
-+            final Vector3f position = vector(config.getAsJsonArray("actor_position")).add(vector(config.getAsJsonArray("offset")));
++            final Vector3f position = vector(config.getAsJsonArray("actor_position"));
++            final Vector3f offset = vector(config.getAsJsonArray("offset"));
 +            final var attachment = new BedrockParticleAttachment(new Vec3(position.x, position.y, position.z),
 +                    config.get("yaw").getAsFloat(), config.get("locator_found").getAsBoolean()
-+                    ? new Matrix4f().set(values(config.getAsJsonArray("locator_matrix"))) : null, null, java.util.Map.of());
++                    ? new Matrix4f().set(values(config.getAsJsonArray("locator_matrix"))) : null, null, java.util.Map.of())
++                    .withOffset(new Vec3(offset.x, offset.y, offset.z));
 +            final boolean includePosition = config.get("position").getAsBoolean();
 +            assertEquals(expected.get("found").getAsBoolean(), attachment.hasLocator(includePosition));
 +            assertArrayEquals(values(expected.getAsJsonArray("matrix")),
