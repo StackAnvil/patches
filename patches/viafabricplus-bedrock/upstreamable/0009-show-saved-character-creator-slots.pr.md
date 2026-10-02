@@ -1028,3 +1028,9 @@ Applying the first swatch through the real screen saves its ARGB color. An indep
 
 The fixture suite passes 403 tests across 81 suites with no failures, errors, or skips. All 16 patches replay, and the dependency build and Prism bundle pass. Widget placement uses the Minecraft rectangle API's size-before-position order, verified through live bounds. This verifies the tested skin palette flow; other palettes, outfits, world rendering, and complete Dressing Room parity still need broader verification. Credentials, account recipes, captures, assets, and probes remain private.
 Cape box UV expansion retains native east and west face labels. The shared model consumer now converts both box and explicit layouts consistently, so the old producer swap would convert lateral faces twice. Top and bottom orientation rules remain separate. The unchanged licensed native cape oracle passes all four persona heights, checking mesh positions, normals, texture coordinates, and atlas pixels. All six focused cape and face-layout tests pass with no skipped cases.
+
+Cape atlas expansion preserves all six native face labels. The general
+renderer handles the model coordinate reflection for both box and explicit
+UVs. Preserve upper-face reversal of both UV axes and lower-face reversal
+of V. The unchanged captured native oracle passes for all four persona
+heights, including positions, normals, texture coordinates and atlas pixels.
