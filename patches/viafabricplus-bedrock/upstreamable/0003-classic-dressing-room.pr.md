@@ -61,3 +61,13 @@ Independent execution of Bedrock 1.26.51.1 verifies 512 flag-reader and alias-pr
 Integration tests cover modern pack and library imports, conflicting aliases, unrelated models, direct imports, older saved options, and transport. The licensed player graph consumes all nine flag cases through the resolved-model API. Native visual, first-person, and inheritance edge comparisons remain pending. Executable files, fixtures, and probes remain private.
 
 The replayed full stack builds. All 191 fixture-enabled add-on tests pass with no skips. This change makes no account writes.
+
+## Native cape eligibility boundary
+
+Bedrock 1.26.51.1's classic pack loader consults `cape` only when its pack-access callback succeeds and the origin byte is 2 or 8. Independent execution of that native branch passes all 24 combinations of the supplied callback result and origin bytes 0 through 11. This check verifies the branch; it does not reproduce the callback or establish bundled/manual cape precedence.
+
+A private local test pack loads its three skins in the native client. Its declared blue cape does not appear in the preview. The test changes no saved character recipe. Cleanup removes only the verified test pack and confirms that all six native profiles match the original snapshot.
+
+The current [LeviLamina pack-access declaration](https://github.com/LiteLDev/LeviLamina/blob/main/src/mc/resources/PackAccessStrategy.h) identifies this virtual slot as `isTrusted`. Its [origin enum](https://github.com/LiteLDev/LeviLamina/blob/main/src/mc/deps/core/resource/PackOrigin.h) names 2 Package and 8 PremiumCache. Older SDK enum names differ, so the inspected target build's numeric branch is the evidence for this version.
+
+The importer still omits a classic skin's bundled cape. Adding support requires preserving trusted package/account provenance through loading, then implementing preview, persistence, and transport with native selection precedence. Reading every local pack's `cape` field would contradict the observed gate. Manual PNG cape support already exists. The executable, native branch harness, test pack, and captures remain private.

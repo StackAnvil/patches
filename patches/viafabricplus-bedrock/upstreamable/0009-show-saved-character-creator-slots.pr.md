@@ -1093,6 +1093,26 @@ All six emote tests pass with both licensed fixture directories supplied, withou
 
 The rebuilt production client exercises its public world sampler on the Minecraft thread with Hover's licensed asset. Four supplied actor lifetimes match the authored root motion while emote elapsed time stays near two seconds. Moving the probe actor cancels playback. A fresh production account load confirms the original active recipe. This probe sends no account write. The dependency build, Prism bundle, and north-star patch check pass.
 
+### Initial character selection and matching world check
+
+Opening Change emotes in a world created a fresh screen with slot 1 selected, even when the account's active character was slot 5. On the first successful wardrobe load, select the valid active slot. Refresh keeps an existing selection. An account without a valid active slot keeps the initial selection.
+
+The rebuilt JAR passes a clean client restart. The real screen initially selects active slot 5. Mouse input selects slot 2, and Refresh preserves slot 2 after the account load completes. Opening another fresh screen selects slot 5 again. An independent production account load verifies that the active recipe remains unchanged. These checks perform no appearance writes.
+
+Java also joins a separate native Bedrock 1.26.51.1 server through NetherNet HTTP, using protocol 2193. The server reports PlayerSpawned. The production world renderer installs the saved persona geometry and one animated face surface. The menu shows green eyes while the observed world view has a different face appearance. A controlled comparison must establish whether texture sampling, geometry, animation phase, or another rendering difference causes it. This observation does not establish native world parity.
+
+All 18 patches replay. The dependency build, Prism bundle, and north-star patch check pass. Client probes, licensed assets, screenshots, account data, and local server files remain private.
+
+### Remaining scope after these checks
+
+- **Faces and tints:** Production assembly consumes animated faces and tint masks. Native execution and fixture checks cover the implemented blend paths. The world/menu face difference and broader visible checks across facial combinations remain open.
+- **Persona assembly:** Licensed package acquisition, extraction, versioned caching, and local assembly work for the tested default and free-leg recipes. Exhaustive free-piece coverage, additional layering combinations, accounts without usable receipt keys, and unavailable remote products remain open.
+- **Animation:** Strip timing, blinking, multiple sources, timelines, delays, actor queries, rotations, and effect machinery have implementation and targeted checks. Native world phase and receive comparisons remain open. World emote effects currently resolve aliases through the installed actor graph, which is absent for ordinary persona skins; that path still needs implementation and verification.
+- **Dressing Room:** Saved characters, tested palettes, limb side/default edits, catalog previews, zero-price acquisition, and owned classic-pack browsing/downloads have checks. Remaining palette combinations, paid purchase/redemption behavior, native cloud synchronization, and broader interaction checks remain open. No paid transaction was tested here.
+- **Classic formats:** Geometry inheritance and animation flag conversion have targeted tests and native execution evidence. Trusted bundled cape import remains missing. Native inheritance edges, first-person behavior, equipment interaction, and visible motion comparisons remain open.
+
+This is progress on the six-part parity goal. It is not a full-parity result.
+
 These checks verify query forwarding and authored motion evaluation. They do not compare native multiplayer phase or the full entity renderer. Native preview clock, effect aliases, offscreen actor context, and broader visual parity remain open. Assets, executable instructions, account data, and runtime probes stay private.
 
 ### Interactive owned classic-pack downloads
