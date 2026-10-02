@@ -39,3 +39,7 @@ Closing and reopening returned all 64 unused paper. After one cursor trade, clos
 All four build targets passed. The add-on suite reported 477 tests, including 97 skips, with no failures. This patch does not complete the other inventory screens or broader protocol and appearance parity work.
 
 This change extends the inventory work covered by [ViaBedrock #276](https://github.com/ViaVersionAddons/ViaBedrock/pull/276).
+
+## Shared input lifecycle
+
+`InputContainer` now owns acknowledged input and cursor returns. Merchant and workstation screens use the same close queue and inventory placement logic. Each screen declares its physical input slots. The merchant keeps its separate offer, stock, and bulk-trade state. The full test suite covers the existing merchant behavior after this extraction.

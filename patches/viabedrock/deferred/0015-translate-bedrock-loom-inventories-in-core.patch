@@ -1,0 +1,1398 @@
+From 4ac5d0c3adf7eb2eaf38cb1ecba58b01abb55c5d Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 00:31:48 +0200
+Subject: [PATCH] feat(inventory): translate Bedrock loom inventories in core
+
+Use the standard Java loom screen and advertised banner-pattern tag order
+so ordinary Java clients can craft banners through ViaProxy. Preserve
+native banner metadata and layers when constructing the result and map
+its colors and patterns to Java item components. Pattern materials remain
+in the loom. Quick-moving results waits for each authoritative response.
+
+Bedrock 1.26.51.1 build 51061372, protocol 2193, native captures establish
+physical slots 9/10/11/50, named containers 41/42/43/44, CraftLoom plus
+CraftResults actions, consumption of the banner and dye, and placement of
+CreatedOutput slot 50 into the cursor. Native hh and cre crafts succeed.
+Close returns inputs and the cursor before sending ContainerClose using
+the shared acknowledged input-container lifecycle.
+---
+ .../model/container/block/LoomContainer.java  | 219 ++++++++++++++++++
+ .../model/container/block/LoomPatterns.java   |  89 +++++++
+ .../generated/bedrock/CustomBlockTags.java    |   2 +
+ .../protocol/packet/InventoryPackets.java     |   1 +
+ .../protocol/rewriter/ItemDataRewriter.java   |  26 +++
+ .../viabedrock/data/custom/block_tags.json    |   3 +
+ .../assets/viabedrock/data/java/tags.nbt      | Bin 20287 -> 19725 bytes
+ .../container/block/LoomPatternsTest.java     | 177 ++++++++++++++
+ 8 files changed, 517 insertions(+)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/LoomContainer.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/LoomPatterns.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/block/LoomPatternsTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/LoomContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/LoomContainer.java
+new file mode 100644
+index 00000000..7997c3e2
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/container/block/LoomContainer.java
+@@ -0,0 +1,219 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.container.block;
++
++import com.viaversion.nbt.tag.IntArrayTag;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
++import net.raphimc.viabedrock.api.model.container.Container;
++import net.raphimc.viabedrock.api.model.container.InputContainer;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.TextProcessingEventOrigin;
++import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
++import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
++import net.raphimc.viabedrock.protocol.data.generated.java.RegistryKeys;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.FullContainerName;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestSlotInfo;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import net.raphimc.viabedrock.protocol.storage.InventoryRequestStorage;
++import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import java.util.List;
++
++public final class LoomContainer extends InputContainer {
++
++    private String selectedPattern;
++    private Integer pendingResult;
++    private boolean repeatQuickMove;
++    private int resultRevision;
++
++    public LoomContainer(final UserConnection user, final byte containerId, final TextComponent title,
++                         final BlockPosition position) {
++        super(user, containerId, ContainerType.LOOM, title, position, 4, CustomBlockTags.LOOM);
++    }
++
++    @Override
++    protected int[] inputSlots() {
++        return new int[]{9, 10, 11};
++    }
++
++    @Override
++    public FullContainerName getFullContainerName(final int slot) {
++        final ContainerEnumName name = switch (slot) {
++            case 9 -> ContainerEnumName.LoomInputContainer;
++            case 10 -> ContainerEnumName.LoomDyeContainer;
++            case 11 -> ContainerEnumName.LoomMaterialContainer;
++            case 50 -> ContainerEnumName.LoomResultPreviewContainer;
++            default -> throw new IllegalArgumentException("Invalid loom slot: " + slot);
++        };
++        return new FullContainerName(name, null);
++    }
++
++    @Override
++    public int javaSlot(final int slot) {
++        return slot >= 9 && slot <= 11 ? slot - 9 : slot == 50 ? 3 : -1;
++    }
++
++    @Override
++    public int bedrockSlot(final int slot) {
++        return slot >= 0 && slot <= 2 ? slot + 9 : slot == 3 ? 50 : -1;
++    }
++
++    @Override
++    protected int itemIndex(final int slot) {
++        return this.javaSlot(slot);
++    }
++
++    private String identifier(final BedrockItem item) {
++        return this.user.get(ItemRewriter.class).getItems().inverse().get(item.identifier());
++    }
++
++    @Override
++    protected void onSlotChanged(final int slot, final BedrockItem previous, final BedrockItem item) {
++        if (slot < 3) {
++            if (slot == 2 && previous.isDifferent(item)) {
++                this.selectedPattern = item.isEmpty() ? null : LoomPatterns.material(this.identifier(item));
++            }
++            this.refreshOutput();
++        }
++    }
++
++    private void refreshOutput() {
++        this.items[3] = "minecraft:banner".equals(this.identifier(this.items[0])) && !this.items[1].isEmpty()
++                ? LoomPatterns.result(this.items[0], LoomPatterns.dye(this.identifier(this.items[1]), this.items[1].data()), this.selectedPattern)
++                : BedrockItem.empty();
++    }
++
++    @Override
++    public boolean handleButtonClick(final int button) {
++        if (this.isClosing()) {
++            return false;
++        }
++        final var registry = BedrockProtocol.MAPPINGS.getJavaRegistries().getCompoundTag(RegistryKeys.BANNER_PATTERN);
++        final var tags = BedrockProtocol.MAPPINGS.getJavaTags().getCompoundTag(RegistryKeys.BANNER_PATTERN);
++        final String requested = LoomPatterns.button(button, registry,
++                tags.get("minecraft:no_item_required") instanceof IntArrayTag choices ? choices : null,
++                BedrockProtocol.MAPPINGS.getBedrockToJavaBannerPatterns().inverse());
++        if (requested == null || !this.items[2].isEmpty()) {
++            return false;
++        }
++        this.selectedPattern = requested;
++        this.refreshOutput();
++        PacketFactory.sendJavaContainerSetContent(this.user, this);
++        return true;
++    }
++
++    @Override
++    protected List<QuickMoveRange> quickMoveRanges(final short javaSlot, final SlotRef source) {
++        final var inventory = this.user.get(InventoryTracker.class).getInventoryContainer();
++        if (source.container() != inventory) {
++            return super.quickMoveRanges(javaSlot, source);
++        }
++        final BedrockItem item = source.container().getItem(source.bedrockSlot());
++        final String identifier = this.identifier(item);
++        final int input = "minecraft:banner".equals(identifier) ? 0
++                : LoomPatterns.dye(identifier, item.data()) != null ? 1
++                : LoomPatterns.material(identifier) != null ? 2 : -1;
++        if (input >= 0) {
++            return List.of(new QuickMoveRange(this, input, input + 1, false));
++        }
++        return source.bedrockSlot() < 9 ? List.of(new QuickMoveRange(inventory, 9, inventory.size(), false))
++                : List.of(new QuickMoveRange(inventory, 0, 9, false));
++    }
++
++    @Override
++    public boolean handleClick(final int revision, final short slot, final byte button, final ContainerInput action) {
++        if (this.isClosing()) {
++            return false;
++        }
++        if (slot != 3) {
++            return super.handleClick(revision, slot, button, action);
++        }
++        if (this.pendingResult != null || action != ContainerInput.PICKUP && action != ContainerInput.QUICK_MOVE
++                || action == ContainerInput.PICKUP && button != 0) {
++            return false;
++        }
++        this.refreshOutput();
++        final BedrockItem result = this.items[3];
++        if (result.isEmpty() || this.items[0].netId() == null || this.items[1].netId() == null) {
++            return false;
++        }
++        final var inventory = this.user.get(InventoryTracker.class);
++        final boolean quickMove = action == ContainerInput.QUICK_MOVE;
++        final Container target = quickMove ? inventory.getInventoryContainer() : inventory.getHudContainer();
++        final int max = this.user.get(ItemRewriter.class).maxStackSize(result);
++        final int destination = quickMove ? this.destination(target, result, max) : 0;
++        if (destination < 0) {
++            return false;
++        }
++        final BedrockItem current = target.getItem(destination);
++        if (!current.isEmpty() && (current.isDifferent(result) || current.netId() == null || current.amount() >= max)) {
++            return false;
++        }
++        final var requests = this.user.get(InventoryRequestTracker.class);
++        final int requestId = requests.nextRequestId();
++        final ItemStackRequestInfo request = new ItemStackRequestInfo(requestId, resultActions(this.selectedPattern, this.items[0], this.items[1], this.items[3], requestId,
++                target.requestSlotInfo(destination, current.isEmpty() ? 0 : current.netId())), List.of(), TextProcessingEventOrigin.unknown);
++        requests.addRequest(new InventoryRequestStorage(request, revision, inventory.getHudContainer().copy(),
++                quickMove ? List.of(this.copy(), target.copy()) : List.of(this.copy())));
++        this.pendingResult = requestId;
++        this.repeatQuickMove = quickMove;
++        this.resultRevision = revision;
++        this.setItem(9, this.itemAfterRemovingAmount(this.items[0], 1));
++        this.setItem(10, this.itemAfterRemovingAmount(this.items[1], 1));
++        final BedrockItem placed = current.isEmpty() ? result.copy() : current.copy();
++        placed.setAmount(current.amount() + 1);
++        target.setItem(destination, placed);
++        PacketFactory.sendBedrockInventoryRequest(this.user, new ItemStackRequestInfo[]{request});
++        return true;
++    }
++
++    static List<ItemStackRequestAction> resultActions(final String pattern, final BedrockItem banner, final BedrockItem dye,
++                                                    final BedrockItem result, final int requestId,
++                                                    final ItemStackRequestSlotInfo destination) {
++        return List.of(new ItemStackRequestAction.CraftLoomAction(pattern, 1),
++                new ItemStackRequestAction.CraftResultsDeprecatedAction(List.of(result.copy()), 1),
++                new ItemStackRequestAction.ConsumeAction(1, new ItemStackRequestSlotInfo(
++                        new FullContainerName(ContainerEnumName.LoomInputContainer, null), (byte) 9, banner.netId())),
++                new ItemStackRequestAction.ConsumeAction(1, new ItemStackRequestSlotInfo(
++                        new FullContainerName(ContainerEnumName.LoomDyeContainer, null), (byte) 10, dye.netId())),
++                new ItemStackRequestAction.PlaceAction(1,
++                        new ItemStackRequestSlotInfo(new FullContainerName(ContainerEnumName.CreatedOutputContainer, null), (byte) 50, requestId), destination));
++    }
++
++    @Override
++    public boolean handleResponse(final int requestId, final boolean success) {
++        super.handleResponse(requestId, success);
++        if (this.pendingResult != null && this.pendingResult == requestId) {
++            this.pendingResult = null;
++            this.refreshOutput();
++            if (success && this.repeatQuickMove && !this.isClosing()) {
++                this.user.get(InventoryRequestTracker.class).queueClick(this, this.resultRevision, (short) 3, (byte) 0, ContainerInput.QUICK_MOVE);
++            }
++        }
++        return false;
++    }
++
++    private int destination(final Container inventory, final BedrockItem result, final int maximum) {
++        for (final boolean merge : new boolean[]{true, false}) {
++            for (int slot = 0; slot < inventory.size(); slot++) {
++                final BedrockItem item = inventory.getItem(slot);
++                if (merge ? !item.isEmpty() && !item.isDifferent(result) && item.netId() != null && item.amount() < maximum : item.isEmpty()) {
++                    return slot;
++                }
++            }
++        }
++        return -1;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/LoomPatterns.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/LoomPatterns.java
+new file mode 100644
+index 00000000..3be018b2
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/container/block/LoomPatterns.java
+@@ -0,0 +1,89 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.container.block;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.IntArrayTag;
++import com.viaversion.nbt.tag.ListTag;
++import net.raphimc.viabedrock.protocol.data.enums.DyeColor;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import java.util.List;
++import java.util.Locale;
++import java.util.Map;
++
++/** Resolves loom choices from Java's advertised registry and preserves native banner data. */
++final class LoomPatterns {
++
++    private static final Map<String, String> MATERIALS = Map.ofEntries(
++            Map.entry("minecraft:flower_banner_pattern", "flo"),
++            Map.entry("minecraft:creeper_banner_pattern", "cre"),
++            Map.entry("minecraft:skull_banner_pattern", "sku"),
++            Map.entry("minecraft:mojang_banner_pattern", "moj"),
++            Map.entry("minecraft:field_masoned_banner_pattern", "bri"),
++            Map.entry("minecraft:bordure_indented_banner_pattern", "cbo"),
++            Map.entry("minecraft:piglin_banner_pattern", "pig"),
++            Map.entry("minecraft:globe_banner_pattern", "glb"),
++            Map.entry("minecraft:flow_banner_pattern", "flw"),
++            Map.entry("minecraft:guster_banner_pattern", "gus"));
++
++    private LoomPatterns() {
++    }
++
++    static String material(final String identifier) {
++        return MATERIALS.get(identifier);
++    }
++
++    static String button(final int button, final CompoundTag registry, final IntArrayTag choices,
++                         final Map<String, String> javaToBedrock) {
++        if (choices == null || button < 0 || button >= choices.getValue().length) {
++            return null;
++        }
++        final int id = choices.getValue()[button];
++        final List<String> identifiers = registry.keySet().stream().toList();
++        return id < 0 || id >= identifiers.size() ? null : javaToBedrock.get(identifiers.get(id));
++    }
++
++    static DyeColor dye(final String identifier, final int metadata) {
++        if ("minecraft:dye".equals(identifier)) {
++            return DyeColor.getByBedrockId(metadata);
++        }
++        if (identifier == null || !identifier.startsWith("minecraft:") || !identifier.endsWith("_dye")) {
++            return null;
++        }
++        final String color = identifier.substring(10, identifier.length() - 4);
++        for (final DyeColor dye : DyeColor.values()) {
++            if (dye.name().toLowerCase(Locale.ROOT).equals(color)) {
++                return dye;
++            }
++        }
++        return null;
++    }
++
++    static BedrockItem result(final BedrockItem banner, final DyeColor color, final String pattern) {
++        if (banner.isEmpty() || color == null || pattern == null) {
++            return BedrockItem.empty();
++        }
++        final CompoundTag tag = banner.tag() == null ? new CompoundTag() : banner.tag().copy();
++        final ListTag<CompoundTag> existing = tag.getListTag("Patterns", CompoundTag.class);
++        if (tag.getInt("Type", 0) == 1 || tag.contains("Patterns") && existing == null
++                || existing != null && existing.size() >= 6) {
++            return BedrockItem.empty();
++        }
++        final ListTag<CompoundTag> patterns = existing == null ? new ListTag<>(CompoundTag.class) : existing;
++        final CompoundTag layer = new CompoundTag();
++        layer.putString("Pattern", pattern);
++        layer.putInt("Color", color.bedrockId());
++        patterns.add(layer);
++        tag.put("Patterns", patterns);
++        tag.putInt("Type", 0);
++        final BedrockItem result = banner.copy();
++        result.setAmount(1);
++        result.setNetId(null);
++        result.setTag(tag);
++        return result;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/data/generated/bedrock/CustomBlockTags.java b/src/main/java/net/raphimc/viabedrock/protocol/data/generated/bedrock/CustomBlockTags.java
+index a3b933c2..6ef8f93d 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/data/generated/bedrock/CustomBlockTags.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/data/generated/bedrock/CustomBlockTags.java
+@@ -42,6 +42,7 @@ public class CustomBlockTags {
+     public static final String JUKEBOX = "jukebox";
+     public static final String LECTERN = "lectern";
+     public static final String LODESTONE = "lodestone";
++    public static final String LOOM = "loom";
+     public static final String MOB_SPAWNER = "mob_spawner";
+     public static final String MOVING_BLOCK = "moving_block";
+     public static final String NETHER_REACTOR = "nether_reactor";
+@@ -63,4 +64,5 @@ public class CustomBlockTags {
+     public static final String VAULT = "vault";
+     public static final String WATER = "water";
+     public static final String WORKBENCH = "workbench";
++
+ }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+index 5efade1f..63452ea1 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+@@ -339,6 +339,7 @@ public final class InventoryPackets {
+                         container =
+                                         new SmithingContainer(
+                                                 wrapper.user(), containerId, title, position);
++                        case LOOM -> container = new LoomContainer(wrapper.user(), containerId, title, position);
+                         case STONECUTTER ->
+                         container =
+                                         new StonecutterContainer(
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
+index 2635bd6f..8376ecda 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
+@@ -25,6 +25,9 @@ import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
+ import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
+ import com.viaversion.viaversion.api.minecraft.item.Item;
+ import com.viaversion.viaversion.api.minecraft.item.data.BlockStateProperties;
++import com.viaversion.viaversion.api.minecraft.item.data.BannerPatternLayer;
++import net.raphimc.viabedrock.protocol.data.enums.DyeColor;
++import net.raphimc.viabedrock.protocol.data.generated.java.RegistryKeys;
+ import com.viaversion.viaversion.api.minecraft.item.data.DyedColor;
+ import com.viaversion.viaversion.api.minecraft.item.data.Enchantments;
+ import com.viaversion.viaversion.api.minecraft.item.data.EnumTypes;
+@@ -178,10 +181,33 @@ public final class ItemDataRewriter {
+         return new WrittenBook(title, bedrockTag.getString("author", ""), generation, javaPages, true);
+     }
+ 
++    public static BannerPatternLayer[] bannerPatterns(final CompoundTag tag, final CompoundTag registry,
++                                                     final Map<String, String> mappings) {
++        final ListTag<CompoundTag> patterns = tag.getListTag("Patterns", CompoundTag.class);
++        if (patterns == null) {
++            return new BannerPatternLayer[0];
++        }
++        final List<BannerPatternLayer> result = new ArrayList<>();
++        for (final CompoundTag layer : patterns) {
++            final String name = mappings.get(layer.getString("Pattern", ""));
++            final DyeColor color = DyeColor.getByBedrockId(layer.getInt("Color", DyeColor.BLACK.bedrockId()));
++            final int id = name == null ? -1 : registryIndex(registry, name);
++            if (id >= 0 && color != null) {
++                result.add(new BannerPatternLayer(Holder.of(id), color.javaId()));
++            }
++        }
++        return result.toArray(BannerPatternLayer[]::new);
++    }
++
+     // BedrockTag can be null
+     public static void handleItem(final UserConnection user, final String identifier, final BedrockItem bedrockItem, final CompoundTag bedrockTag, final Item javaItem) {
+ 
+         if (bedrockTag != null) {
++            if (identifier.equals("minecraft:banner")) {
++                javaItem.dataContainer().set(StructuredDataKey.BANNER_PATTERNS,
++                        bannerPatterns(bedrockTag, BedrockProtocol.MAPPINGS.getJavaRegistries().getCompoundTag(RegistryKeys.BANNER_PATTERN),
++                                BedrockProtocol.MAPPINGS.getBedrockToJavaBannerPatterns()));
++            }
+ 
+             if (DYED_LEATHER_ARMOR_ITEMS.contains(identifier)
+                     && bedrockTag.get("customColor") instanceof IntTag color) {
+diff --git a/src/main/resources/assets/viabedrock/data/custom/block_tags.json b/src/main/resources/assets/viabedrock/data/custom/block_tags.json
+index a02f9294..fa60824c 100644
+--- a/src/main/resources/assets/viabedrock/data/custom/block_tags.json
++++ b/src/main/resources/assets/viabedrock/data/custom/block_tags.json
+@@ -156,6 +156,9 @@
+   "lodestone": [
+     "minecraft:lodestone"
+   ],
++  "loom": [
++    "minecraft:loom"
++  ],
+   "mob_spawner": [
+     "minecraft:mob_spawner"
+   ],
+diff --git a/src/main/resources/assets/viabedrock/data/java/tags.nbt b/src/main/resources/assets/viabedrock/data/java/tags.nbt
+index 29828056cdc5c6e0fb468645c9289877b50c970d..6a090e50043451eb4f3bf9549a3bc1f33575574d 100644
+GIT binary patch
+literal 19725
+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
+VLD)kV(fC2|{{d$}pc-MG0RU2vAQb=r
+
+literal 20287
+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
+W)`mUEGol(_ss9JeFmlylo&f-|c%jGu
+
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/block/LoomPatternsTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/block/LoomPatternsTest.java
+new file mode 100644
+index 00000000..ab6bc3cb
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/container/block/LoomPatternsTest.java
+@@ -0,0 +1,177 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.container.block;
++
++import com.viaversion.nbt.io.NBTIO;
++import com.viaversion.nbt.limiter.TagLimiter;
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.IntArrayTag;
++import com.viaversion.nbt.tag.ListTag;
++import net.raphimc.viabedrock.protocol.data.enums.DyeColor;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.FullContainerName;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestSlotInfo;
++import net.raphimc.viabedrock.protocol.rewriter.ItemDataRewriter;
++import org.junit.jupiter.api.Test;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import java.io.DataInputStream;
++import java.io.InputStreamReader;
++import java.nio.charset.StandardCharsets;
++import java.util.HashSet;
++import java.util.zip.GZIPInputStream;
++import java.util.Map;
++import static org.junit.jupiter.api.Assertions.*;
++
++class LoomPatternsTest {
++
++    @Test
++    void selectsFromAdvertisedTagOrderInsteadOfRegistryOrdinal() {
++        final CompoundTag registry = new CompoundTag();
++        registry.put("probe:first", new CompoundTag());
++        registry.put("probe:second", new CompoundTag());
++        registry.put("probe:third", new CompoundTag());
++        final var choices = new IntArrayTag(new int[]{2, 0});
++        final var mappings = Map.of("probe:first", "a", "probe:second", "b", "probe:third", "c");
++        assertEquals(mappings.get("probe:third"), LoomPatterns.button(0, registry, choices, mappings));
++        assertEquals(mappings.get("probe:first"), LoomPatterns.button(1, registry, choices, mappings));
++        assertNull(LoomPatterns.button(-1, registry, choices, mappings));
++        assertNull(LoomPatterns.button(2, registry, choices, mappings));
++        assertNull(LoomPatterns.button(0, registry, new IntArrayTag(new int[]{4}), mappings));
++    }
++
++    @Test
++    void addsColoredLayerWithoutMutatingInputOrDiscardingItsMetadata() {
++        final CompoundTag tag = new CompoundTag();
++        tag.putString("custom", "retained");
++        final ListTag<CompoundTag> layers = new ListTag<>(CompoundTag.class);
++        final CompoundTag old = new CompoundTag();
++        old.putString("Pattern", "hh");
++        old.putInt("Color", DyeColor.RED.bedrockId());
++        layers.add(old);
++        tag.put("Patterns", layers);
++        final BedrockItem banner = new BedrockItem(24, (short) 15, (byte) 8, tag);
++        banner.setNetId(123);
++        final var result = LoomPatterns.result(banner, DyeColor.BLUE, "cre");
++        assertEquals(1, result.amount());
++        assertEquals(banner.data(), result.data());
++        assertNull(result.netId());
++        assertEquals(tag.getString("custom"), result.tag().getString("custom"));
++        final var converted = ItemDataRewriter.bannerPatterns(result.tag(), registry(), Map.of("hh", "probe:first", "cre", "probe:second"));
++        assertEquals(2, converted.length);
++        assertEquals(0, converted[0].pattern().id());
++        assertEquals(DyeColor.RED.javaId(), converted[0].dyeColor());
++        assertEquals(1, converted[1].pattern().id());
++        assertEquals(DyeColor.BLUE.javaId(), converted[1].dyeColor());
++        assertEquals(1, layers.size());
++        assertEquals(8, banner.amount());
++        assertEquals(123, banner.netId());
++    }
++
++    @Test
++    void stopsAtSixLayersAndRejectsMalformedOrOminousInputs() {
++        BedrockItem banner = new BedrockItem(24);
++        for (int i = 0; i < 6; i++) {
++            banner = LoomPatterns.result(banner, DyeColor.RED, "hh");
++            assertFalse(banner.isEmpty());
++        }
++        assertTrue(LoomPatterns.result(banner, DyeColor.RED, "hh").isEmpty());
++        final var tag = new CompoundTag();
++        tag.putInt("Patterns", 3);
++        banner.setTag(tag);
++        assertTrue(LoomPatterns.result(banner, DyeColor.RED, "hh").isEmpty());
++        tag.remove("Patterns");
++        tag.putInt("Type", 1);
++        assertTrue(LoomPatterns.result(banner, DyeColor.RED, "hh").isEmpty());
++        assertTrue(LoomPatterns.result(BedrockItem.empty(), DyeColor.RED, "hh").isEmpty());
++    }
++
++    @Test
++    void craftConsumesInputsAndPlacesCreatedOutputWithoutConsumingTheMaterial() {
++        final var banner = new BedrockItem(24);
++        banner.setNetId(101);
++        final var dye = new BedrockItem(25);
++        dye.setNetId(102);
++        final var result = LoomPatterns.result(banner, DyeColor.RED, "cre");
++        final var destination = new ItemStackRequestSlotInfo(new FullContainerName(ContainerEnumName.CursorContainer, null), (byte) 0, 0);
++        final var actions = LoomContainer.resultActions("cre", banner, dye, result, -7, destination);
++        assertEquals(5, actions.size());
++        assertEquals(1, assertInstanceOf(ItemStackRequestAction.CraftLoomAction.class, actions.get(0)).timesCrafted());
++        assertEquals(result, assertInstanceOf(ItemStackRequestAction.CraftResultsDeprecatedAction.class, actions.get(1)).resultItems().get(0));
++        final var consumeBanner = assertInstanceOf(ItemStackRequestAction.ConsumeAction.class, actions.get(2));
++        assertEquals(101, consumeBanner.item().stackNetworkId());
++        assertEquals(9, consumeBanner.item().slot());
++        final var consumeDye = assertInstanceOf(ItemStackRequestAction.ConsumeAction.class, actions.get(3));
++        assertEquals(102, consumeDye.item().stackNetworkId());
++        assertEquals(10, consumeDye.item().slot());
++        final var place = assertInstanceOf(ItemStackRequestAction.PlaceAction.class, actions.get(4));
++        assertEquals(ContainerEnumName.CreatedOutputContainer, place.source().container().name());
++        assertEquals(-7, place.source().stackNetworkId());
++        assertEquals(50, place.source().slot());
++        assertEquals(destination, place.destination());
++    }
++
++    @Test
++    void legacyAndNamedDyesUseTheSameNativeColorOrder() {
++        for (final DyeColor color : DyeColor.values()) {
++            assertEquals(color, LoomPatterns.dye("minecraft:" + color.name().toLowerCase(java.util.Locale.ROOT) + "_dye", 0));
++            assertEquals(color, LoomPatterns.dye("minecraft:dye", color.bedrockId()));
++        }
++        assertNull(LoomPatterns.dye("minecraft:diamond", 0));
++        assertNull(LoomPatterns.dye("minecraft:dye", 16));
++    }
++
++    @Test
++    void advertisedPatternTagsMatchMaterialAndResultRegistries() throws Exception {
++        final CompoundTag registry = this.asset("registries.nbt").getCompoundTag("minecraft:banner_pattern");
++        final CompoundTag tags = this.asset("tags.nbt").getCompoundTag("minecraft:banner_pattern");
++        final var identifiers = registry.keySet().stream().toList();
++        final var special = new HashSet<Integer>();
++        try (var stream = getClass().getResourceAsStream("/assets/viabedrock/data/custom/banner_pattern_mappings.json")) {
++            assertNotNull(stream);
++            final var mappings = JsonParser.parseReader(new InputStreamReader(stream, StandardCharsets.UTF_8)).getAsJsonObject();
++            for (final String tag : tags.keySet()) {
++                final String prefix = "minecraft:pattern_item/";
++                if (!tag.startsWith(prefix)) {
++                    continue;
++                }
++                final int[] choices = ((IntArrayTag) tags.get(tag)).getValue();
++                assertEquals(1, choices.length);
++                final int choice = choices[0];
++                assertTrue(choice >= 0 && choice < identifiers.size());
++                final String pattern = LoomPatterns.material("minecraft:" + tag.substring(prefix.length()) + "_banner_pattern");
++                assertNotNull(pattern);
++                assertEquals(mappings.get(pattern).getAsString(), identifiers.get(choice));
++                assertTrue(special.add(choice));
++            }
++        }
++        final var covered = new HashSet<>(special);
++        final int base = identifiers.indexOf("minecraft:base");
++        assertTrue(base >= 0);
++        covered.add(base);
++        for (final int choice : ((IntArrayTag) tags.get("minecraft:no_item_required")).getValue()) {
++            assertTrue(choice >= 0 && choice < identifiers.size());
++            assertTrue(covered.add(choice));
++        }
++        assertEquals(identifiers.size(), covered.size());
++    }
++
++    private CompoundTag asset(final String name) throws Exception {
++        try (var stream = getClass().getResourceAsStream("/assets/viabedrock/data/java/" + name)) {
++            assertNotNull(stream);
++            return NBTIO.readTag(new DataInputStream(new GZIPInputStream(stream)), TagLimiter.noop(), true, CompoundTag.class);
++        }
++    }
++
++    private static CompoundTag registry() {
++        final var registry = new CompoundTag();
++        registry.put("probe:first", new CompoundTag());
++        registry.put("probe:second", new CompoundTag());
++        return registry;
++    }
++
++}
+-- 
+2.55.0

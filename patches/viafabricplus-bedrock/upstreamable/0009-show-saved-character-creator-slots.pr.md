@@ -264,7 +264,7 @@ Independent execution verifies 364 combinations of carried and active stack vali
 
 The replayed full stack builds, and all 188 fixture-enabled add-on tests pass with no skips. A running Java client passes 1,324 checks, including 364 specialized native cases. Actual spyglass, goat-horn, and brush stacks reach authored animation tracks through the production pose bindings and world model. Mixed-hand cases verify separate active-use and carried-item inputs. Earlier food, trident, and crossbow runtime checks also pass. The probe uses untracked players and makes no account writes or tracked player changes.
 
-The extracted base player graph does not reference these three variables. These checks establish authored track bindings. Complete native item poses remain incomplete. Post-use trident brandishing, local charging prediction, item-name mappings, exact native durations, first-person playback, and native visual comparisons remain pending.
+The extracted base player graph does not reference these three variables. These checks establish authored track bindings. Complete native item poses remain incomplete. Local charging prediction, item-name mappings, exact native durations, first-person playback, and native visual comparisons remain pending.
 
 Source: the generated [native use-animation enum](https://github.com/LiteLDev/LeviLamina/blob/main/src/mc/deps/shared_types/legacy/item/UseAnimation.h) names Spyglass, GoatHorn, and Brush. Activation and stack-selection evidence comes from independent execution of Bedrock 1.26.51.1.
 
@@ -1164,3 +1164,9 @@ The focused run reports 31 tests: 30 pass and one optional redemption capture co
 The clean production client starts a real balance request, then opens the shop confirmation before that request finishes. Its completed wallet reports zero Minecoins while the confirmation remains open. Cancelling returns to the same completed counter. An independent backend read matches it. These checks perform no payment or appearance write. The cape format tests use synthetic fixtures; they do not establish visible native cape parity.
 
 After the concurrent equipment patches reached main, all 19 patches replay. The integrated dependency build also passes.
+
+## Player trident category check
+
+Bedrock 1.26.51.1 actor update `FUN_142069380` clears timed player poses when remaining use ticks reach zero. Its separate target-dependent trident branch excludes the Player category. The target checks bit zero at actor offset `0x210`. The player lookup `FUN_14117a6d0` uses the same category check. The generated [ActorCategory definition](https://github.com/LiteLDev/LeviLamina/blob/main/src/mc/world/actor/ActorCategory.h) names bit zero Player.
+
+Independent execution covers 96 combinations of category, item identity predicate, target metadata presence and value, and remaining ticks. Player cases clear brandishing at zero or negative remaining ticks. Non-player cases can retain brandishing with a matching item and nonzero target. The harness supplies the item predicate and executes the native category and metadata branches. The retained non-player pose is outside the current player binding. The existing player reset requires no production change. Local charging prediction and the other documented item gaps remain open.
