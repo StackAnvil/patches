@@ -1,4 +1,4 @@
-From 3b1a51cc933061919a5690e692ecbe0408188991 Mon Sep 17 00:00:00 2001
+From fdd84c1ad0ed191e219bdee934e83a3dcc87f5dd Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1142,6 +1142,23 @@ Default is selected for Right, leaving the left leg visible on return
 to the Dressing Room. Its local recipe cache still records both legs;
 this observation does not establish native persistence or cloud sync.
 The Java account operation explicitly saves and verifies its recipe.
+
+Native Bedrock 1.26.51.1 Dressing Room previews play locked Sneaking and
+unowned Robot Dance without a purchase or recipe save. Robot Dance sends
+GetPublishedItem for its Store product, then downloads personabinary from
+an official CDN. The existing current-account receipt decodes that archive
+and its 7.5-second animation. Allow catalog emote previews and received
+emotes from the full current emote catalog, while retaining separate
+ownership checks for equipping. Validate product, persona type, pack UUID,
+and archive identity before using receipt keys. No receipt, asset, key,
+third-party service, or native-install path is embedded in the add-on.
+Resolve remote UUIDs absent from the current Dressing Room page through
+PlayFab Catalog/Search by the pack UUID tag. Native-session requests and
+automated current-account requests confirm the target master-player token
+returns the product while the title-player token returns an empty result.
+Reject mismatched and ambiguous search results, then refresh published
+metadata and decode with current receipt keys. Bound pending downloads to
+eight and cached emotes to 128 while retaining current wheel assets.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   68 +
@@ -1170,12 +1187,12 @@ The Java account operation explicitly saves and verifies its recipe.
  .../appearance/BedrockClassicSkinPack.java    |   80 +-
  .../appearance/BedrockEmitterEvents.java      |   74 +
  .../appearance/BedrockEmoteMessages.java      |  124 +
- .../appearance/BedrockEmotePlayback.java      |  456 ++
- .../bedrock/appearance/BedrockEmotes.java     |  101 +
+ .../appearance/BedrockEmotePlayback.java      |  471 ++
+ .../bedrock/appearance/BedrockEmotes.java     |  167 +
  .../appearance/BedrockItemAnimation.java      |  138 +
  .../appearance/BedrockLevelSounds.java        |  164 +
  .../bedrock/appearance/BedrockLimbSide.java   |   67 +
- .../appearance/BedrockMarketplaceAssets.java  |  311 +
+ .../appearance/BedrockMarketplaceAssets.java  |  330 +
  .../BedrockMarketplaceTransactions.java       |  214 +
  .../bedrock/appearance/BedrockMolang.java     |  421 ++
  .../appearance/BedrockMolangColor.java        |   40 +
@@ -1242,7 +1259,7 @@ The Java account operation explicitly saves and verifies its recipe.
  .../render/BedrockPlayerAnimationState.java   |   16 +
  .../bedrock/render/BedrockPlayerModel.java    |   43 +
  .../bedrock/render/BedrockPlayerSkins.java    |  413 +-
- .../screen/BedrockCharacterSlotsScreen.java   | 1379 ++++
+ .../screen/BedrockCharacterSlotsScreen.java   | 1380 ++++
  .../screen/BedrockClassicSkinPackScreen.java  |    2 +-
  .../screen/BedrockDressingRoomScreen.java     |   49 +-
  .../screen/BedrockEmotePreviewScreen.java     |  163 +
@@ -1268,7 +1285,7 @@ The Java account operation explicitly saves and verifies its recipe.
  .../BedrockControllerSoundTest.java           |  150 +
  .../appearance/BedrockEmitterEventsTest.java  |  181 +
  .../appearance/BedrockEmoteMessagesTest.java  |   94 +
- .../bedrock/appearance/BedrockEmotesTest.java |  141 +
+ .../bedrock/appearance/BedrockEmotesTest.java |  226 +
  .../appearance/BedrockItemAnimationTest.java  |  297 +
  .../appearance/BedrockLimbSelectionTest.java  |  225 +
  .../appearance/BedrockLimbSideTest.java       |   89 +
@@ -1314,7 +1331,7 @@ The Java account operation explicitly saves and verifies its recipe.
  .../render/BedrockModelLocatorsTest.java      |  112 +
  .../render/BedrockPlayerActorStateTest.java   |  195 +
  .../render/BedrockPlayerModelTest.java        |  100 +
- 171 files changed, 38418 insertions(+), 92 deletions(-)
+ 171 files changed, 38604 insertions(+), 92 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -14978,10 +14995,10 @@ index 0000000..1e1b478
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java
 new file mode 100644
-index 0000000..f8883bb
+index 0000000..1d40653
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java
-@@ -0,0 +1,456 @@
+@@ -0,0 +1,471 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -15013,12 +15030,13 @@ index 0000000..f8883bb
 +import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 +
 +import java.util.HashMap;
++import java.util.LinkedHashMap;
 +import java.util.List;
 +import java.util.Map;
 +import java.util.UUID;
 +import java.util.concurrent.CompletableFuture;
 +
-+/** Minecraft-thread emote state. Account entitlements authorize each animation download. */
++/** Minecraft-thread emote state. Downloads use native catalog and receipt data. */
 +public final class BedrockEmotePlayback {
 +    public static final KeyMapping KEY =
 +            new KeyMapping(
@@ -15027,7 +15045,7 @@ index 0000000..f8883bb
 +                    KeyMapping.Category.MULTIPLAYER);
 +    private static final Map<UUID, Playing> PLAYING = new HashMap<>();
 +    private static final Map<UUID, BedrockCharacterProfiles.WardrobeItem> ITEMS = new HashMap<>();
-+    private static final Map<UUID, CompletableFuture<BedrockEmotes.Emote>> ASSETS = new HashMap<>();
++    private static final Map<UUID, CompletableFuture<BedrockEmotes.Emote>> ASSETS = new LinkedHashMap<>();
 +    private static final Map<UUID, List<UUID>> AVAILABLE = new HashMap<>();
 +    private static final Map<UUID, Long> REQUESTS = new HashMap<>();
 +    private static final Map<UUID, BedrockEmoteMessages.Repeat> ANNOUNCEMENTS = new HashMap<>();
@@ -15136,9 +15154,7 @@ index 0000000..f8883bb
 +                                                    }
 +                                                    ITEMS.clear();
 +                                                    for (final var item : result.items()) {
-+                                                        if (!item.owned()
-+                                                                && !BedrockEmotes.isBuiltin(
-+                                                                        item.packId())) continue;
++                                                        if (!"persona_emote".equals(item.type())) continue;
 +                                                        try {
 +                                                            ITEMS.put(
 +                                                                    UUID.fromString(item.packId()),
@@ -15193,10 +15209,26 @@ index 0000000..f8883bb
 +            return future;
 +        }
 +        final var item = ITEMS.get(id);
-+        if (item == null || account == null)
++        if (account == null)
 +            return CompletableFuture.failedFuture(
 +                    new IllegalStateException("This emote has no available account asset"));
-+        final var future = BedrockEmotes.load(account, item);
++        if (ASSETS.values().stream().filter(future -> !future.isDone()).count() >= 8)
++            return CompletableFuture.failedFuture(
++                    new IllegalStateException("Too many Bedrock emote downloads are pending"));
++        if (ASSETS.size() >= 128) {
++            final var entries = ASSETS.entrySet().iterator();
++            while (entries.hasNext()) {
++                final var entry = entries.next();
++                if (entry.getValue().isDone() && java.util.stream.IntStream.range(0, 4)
++                        .noneMatch(index -> entry.getKey().equals(wheelId(index)))) {
++                    entries.remove();
++                    break;
++                }
++            }
++            if (ASSETS.size() >= 128) return CompletableFuture.failedFuture(
++                    new IllegalStateException("Too many Bedrock emote downloads are pending"));
++        }
++        final var future = item == null ? BedrockEmotes.loadRemote(account, id) : BedrockEmotes.load(account, item);
 +        ASSETS.put(id, future);
 +        return future;
 +    }
@@ -15440,10 +15472,10 @@ index 0000000..f8883bb
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotes.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotes.java
 new file mode 100644
-index 0000000..b6f4717
+index 0000000..689f14e
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotes.java
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,167 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -15451,17 +15483,17 @@ index 0000000..b6f4717
 + */
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
++import com.google.gson.JsonObject;
 +import com.google.gson.JsonParser;
 +
 +import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
 +
 +import java.io.IOException;
 +import java.nio.charset.StandardCharsets;
-+import java.util.List;
 +import java.util.UUID;
 +import java.util.concurrent.CompletableFuture;
 +
-+/** Loads animation data only after the current account receipt authorizes its pack. */
++/** Loads native emote previews using the selected account's catalog and receipt. */
 +public final class BedrockEmotes {
 +    private BedrockEmotes() {}
 +
@@ -15470,23 +15502,89 @@ index 0000000..b6f4717
 +        return CompletableFuture.supplyAsync(
 +                () -> {
 +                    try {
++                        if (!"persona_emote".equals(item.type()))
++                            throw new IOException("Choose a Bedrock emote");
 +                        if (isBuiltin(item.packId()))
 +                            return read(BedrockBuiltinAssets.load(account).piece(item.packId()));
-+                        if (!item.owned() || !"persona_emote".equals(item.type()))
-+                            throw new IOException("Choose an owned emote");
-+                        final var packs =
-+                                BedrockPersonaAssets.load(
-+                                        account,
-+                                        List.of(BedrockPersonaAssets.Reference.from(item)));
-+                        final var pack = packs.get(item.packId());
-+                        if (pack == null)
-+                            throw new IOException("This emote has no asset entitlement");
-+                        return read(pack);
++                        return loadPublished(account, item.id(), item.packId());
 +                    } catch (Exception e) {
-+                        throw new IllegalStateException(
-+                                "Could not load the owned Bedrock emote", e);
++                        throw new IllegalStateException("Could not load the Bedrock emote", e);
 +                    }
 +                });
++    }
++
++    static CompletableFuture<Emote> loadRemote(final BedrockAuthManager account, final UUID id) {
++        if (isBuiltin(id.toString())) return loadBuiltin(account, id);
++        return CompletableFuture.supplyAsync(
++                () -> {
++                    try {
++                        final String product =
++                                catalogProduct(
++                                        BedrockMarketplaceAssets.searchPack(account, id), id);
++                        return loadPublished(account, product, id.toString());
++                    } catch (Exception failure) {
++                        throw new IllegalStateException(
++                                "Could not load the remote Bedrock emote", failure);
++                    }
++                });
++    }
++
++    private static Emote loadPublished(
++            final BedrockAuthManager account, final String product, final String pack)
++            throws Exception {
++        final var published = BedrockMarketplaceAssets.published(account, product);
++        validateCatalog(published, product, pack);
++        // Native previews include locked and paid emotes. They use the account's existing receipt
++        // keys without acquiring an entitlement or saving a recipe.
++        return read(
++                BedrockMarketplaceAssets.decode(
++                        BedrockMarketplaceAssets.download(published, "personabinary"),
++                        pack,
++                        BedrockMarketplaceAssets.accountKeys(account).values()));
++    }
++
++    static String catalogProduct(final JsonObject response, final UUID pack) throws IOException {
++        try {
++            final var items = response.getAsJsonObject("data").getAsJsonArray("Items");
++            if (items.size() > 2)
++                throw new IOException("The emote search exceeded its result limit");
++            String product = null;
++            for (final var entry : items) {
++                final var item = entry.getAsJsonObject();
++                final String candidate = item.get("Id").getAsString();
++                validateCatalog(item, candidate, pack.toString());
++                if (product != null && !product.equals(candidate))
++                    throw new IOException("The emote search returned ambiguous products");
++                product = candidate;
++            }
++            if (product == null)
++                throw new IOException("This emote is not available in the catalog");
++            return product;
++        } catch (RuntimeException invalid) {
++            throw new IOException("Invalid Bedrock emote search response", invalid);
++        }
++    }
++
++    static void validateCatalog(final JsonObject item, final String product, final String pack)
++            throws IOException {
++        try {
++            if (!UUID.fromString(product).toString().equals(item.get("Id").getAsString())
++                    || !"PersonaDurable".equals(item.get("ContentType").getAsString()))
++                throw new IOException("The catalog returned a different emote product");
++            final var properties = item.getAsJsonObject("DisplayProperties");
++            if (!"persona_emote".equals(properties.get("pieceType").getAsString()))
++                throw new IOException("The catalog product is not an emote");
++            for (final var entry : properties.getAsJsonArray("packIdentity")) {
++                final var identity = entry.getAsJsonObject();
++                if ("persona_piece".equals(identity.get("type").getAsString())
++                        && UUID.fromString(pack)
++                                .toString()
++                                .equals(identity.get("uuid").getAsString())) return;
++            }
++            throw new IOException("The catalog returned a different emote pack");
++        } catch (RuntimeException invalid) {
++            throw new IOException("Invalid Bedrock emote catalog metadata", invalid);
++        }
 +    }
 +
 +    public static boolean isBuiltin(final String id) {
@@ -15934,10 +16032,10 @@ index 0000000..b3b9cb0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMarketplaceAssets.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMarketplaceAssets.java
 new file mode 100644
-index 0000000..2d4b898
+index 0000000..b887250
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMarketplaceAssets.java
-@@ -0,0 +1,311 @@
+@@ -0,0 +1,330 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -16030,6 +16128,25 @@ index 0000000..2d4b898
 +                                        .POST(HttpRequest.BodyPublishers.ofString(body.toString())),
 +                                MAX_JSON_BYTES));
 +        return response.getAsJsonObject("data").getAsJsonObject("Item");
++    }
++
++    static JsonObject searchPack(final BedrockAuthManager account, final UUID pack)
++            throws Exception {
++        final JsonObject body = new JsonObject();
++        body.addProperty("Top", 2);
++        body.addProperty(
++                "Filter", "tags/any(t:t eq '" + pack + "') and contentType eq 'PersonaDurable'");
++        // The target catalog search is visible through the master player token. The title-player
++        // token used by GetPublishedItem returns an empty search, even for an existing product.
++        return json(
++                request(
++                        HttpRequest.newBuilder(CATALOG.resolve("Search"))
++                                .header(
++                                        "X-EntityToken",
++                                        account.getPlayFabMasterToken().getUpToDate().getToken())
++                                .header("Content-Type", "application/json")
++                                .POST(HttpRequest.BodyPublishers.ofString(body.toString())),
++                        MAX_JSON_BYTES));
 +    }
 +
 +    static byte[] download(final JsonObject item, final String type) throws Exception {
@@ -26594,10 +26711,10 @@ index 61a2b73..52af9c6 100644
  
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
 new file mode 100644
-index 0000000..91a91c6
+index 0000000..2a8275d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
-@@ -0,0 +1,1379 @@
+@@ -0,0 +1,1380 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -27478,7 +27595,8 @@ index 0000000..91a91c6
 +                && !sizeSlot.arm().equals(index == 0 ? "slim" : "wide");
 +        }
 +        this.previewEmote.visible = this.view == View.WARDROBE && this.category == Category.EMOTES;
-+        this.previewEmote.active = this.items != null && !this.items.isEmpty() && (this.items.get(this.selectedItem).owned() || BedrockEmotes.isBuiltin(this.items.get(this.selectedItem).packId()));
++        this.previewEmote.active = this.items != null && !this.items.isEmpty()
++            && "persona_emote".equals(this.items.get(this.selectedItem).type());
 +        this.previousItem.visible = this.view == View.WARDROBE;
 +        this.nextItem.visible = this.view == View.WARDROBE;
 +        this.useSlot.visible = this.view == View.SLOTS;
@@ -28099,7 +28217,7 @@ index 8acdbce..028b359 100644
          this.modelButton.setMessage(Component.translatable(appearance.effectiveSlim()
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockEmotePreviewScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockEmotePreviewScreen.java
 new file mode 100644
-index 0000000..d13ead4
+index 0000000..b68d0e5
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockEmotePreviewScreen.java
 @@ -0,0 +1,163 @@
@@ -28125,7 +28243,7 @@ index 0000000..d13ead4
 +
 +import java.io.IOException;
 +
-+/** Plays an owned emote on the account's active character without changing its recipe. */
++/** Plays a catalog emote on the account's active character without changing its recipe. */
 +public final class BedrockEmotePreviewScreen extends VFPScreen {
 +    private final BedrockCharacterProfiles.WardrobeItem item;
 +    private BedrockPlayerSkins.Preview preview;
@@ -28214,7 +28332,7 @@ index 0000000..d13ead4
 +        this.failed = true;
 +        ViaFabricPlusBedrock.impl()
 +                .logger()
-+                .warn("Could not prepare the owned emote preview", error);
++                .warn("Could not prepare the Bedrock emote preview", error);
 +    }
 +
 +    private void play() {
@@ -33207,13 +33325,16 @@ index 0000000..ff33158
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotesTest.java
 new file mode 100644
-index 0000000..3757e28
+index 0000000..b6f3121
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotesTest.java
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,226 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonObject;
 +
 +import org.junit.jupiter.api.Test;
 +import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -33227,6 +33348,88 @@ index 0000000..3757e28
 +import java.util.UUID;
 +
 +final class BedrockEmotesTest {
++    @Test
++    void resolvesRemotePackIdentityAndRejectsAmbiguousOrMismatchedSearches() throws Exception {
++        final UUID pack = UUID.randomUUID();
++        final String product = UUID.randomUUID().toString();
++        final var item = new JsonObject();
++        item.addProperty("Id", product);
++        item.addProperty("ContentType", "PersonaDurable");
++        final var properties = new JsonObject();
++        properties.addProperty("pieceType", "persona_emote");
++        final var identity = new JsonObject();
++        identity.addProperty("type", "persona_piece");
++        identity.addProperty("uuid", pack.toString());
++        final var identities = new JsonArray();
++        identities.add(identity);
++        properties.add("packIdentity", identities);
++        item.add("DisplayProperties", properties);
++        final var items = new JsonArray();
++        final var data = new JsonObject();
++        data.add("Items", items);
++        final var response = new JsonObject();
++        response.add("data", data);
++        assertThrows(IOException.class, () -> BedrockEmotes.catalogProduct(response, pack));
++        items.add(item);
++        assertEquals(
++                UUID.fromString(product),
++                UUID.fromString(BedrockEmotes.catalogProduct(response, pack)));
++        assertThrows(
++                IOException.class, () -> BedrockEmotes.catalogProduct(response, UUID.randomUUID()));
++        items.add(item.deepCopy());
++        assertEquals(
++                UUID.fromString(product),
++                UUID.fromString(BedrockEmotes.catalogProduct(response, pack)));
++        items.get(1).getAsJsonObject().addProperty("Id", UUID.randomUUID().toString());
++        assertThrows(IOException.class, () -> BedrockEmotes.catalogProduct(response, pack));
++        items.remove(1);
++        properties.addProperty("pieceType", "persona_skin");
++        assertThrows(IOException.class, () -> BedrockEmotes.catalogProduct(response, pack));
++        properties.addProperty("pieceType", "persona_emote");
++        items.add(item.deepCopy());
++        items.add(item.deepCopy());
++        assertThrows(IOException.class, () -> BedrockEmotes.catalogProduct(response, pack));
++        response.remove("data");
++        assertThrows(IOException.class, () -> BedrockEmotes.catalogProduct(response, pack));
++    }
++
++    @Test
++    void validatesPreviewIdentityAndTypeWithoutRequiringPurchase() throws Exception {
++        final String product = UUID.randomUUID().toString(), pack = UUID.randomUUID().toString();
++        final var item = new JsonObject();
++        item.addProperty("Id", product);
++        item.addProperty("ContentType", "PersonaDurable");
++        final var properties = new JsonObject();
++        properties.addProperty("pieceType", "persona_emote");
++        final var identity = new JsonObject();
++        identity.addProperty("type", "persona_piece");
++        identity.addProperty("uuid", pack);
++        final var identities = new JsonArray();
++        identities.add(identity);
++        properties.add("packIdentity", identities);
++        item.add("DisplayProperties", properties);
++        for (final int price : new int[] {0, 660}) {
++            properties.addProperty("price", price);
++            BedrockEmotes.validateCatalog(item, product, pack);
++        }
++        assertThrows(
++                IOException.class,
++                () -> BedrockEmotes.validateCatalog(item, UUID.randomUUID().toString(), pack));
++        assertThrows(
++                IOException.class,
++                () -> BedrockEmotes.validateCatalog(item, product, UUID.randomUUID().toString()));
++        properties.addProperty("pieceType", "persona_skin");
++        assertThrows(IOException.class, () -> BedrockEmotes.validateCatalog(item, product, pack));
++        properties.addProperty("pieceType", "persona_emote");
++        identity.addProperty("type", "skin_pack");
++        assertThrows(IOException.class, () -> BedrockEmotes.validateCatalog(item, product, pack));
++        identity.addProperty("type", "persona_piece");
++        item.addProperty("ContentType", "MarketplaceDurableCatalog_V1.2");
++        assertThrows(IOException.class, () -> BedrockEmotes.validateCatalog(item, product, pack));
++        item.remove("DisplayProperties");
++        assertThrows(IOException.class, () -> BedrockEmotes.validateCatalog(item, product, pack));
++    }
++
 +    @Test
 +    void resolvesTheReferencedAnimationAndPreservesTheWireIdentity() throws Exception {
 +        final UUID id = UUID.randomUUID();

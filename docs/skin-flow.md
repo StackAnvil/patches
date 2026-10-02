@@ -476,7 +476,7 @@ Native checks still need to establish live frame timing and complete expression 
 
 ### Missing features
 
-- Resolve free assets for accounts without usable receipt keys. These recipes still depend on the service model. Resolve unavailable remote emote assets.
+- Resolve free assets for accounts without usable receipt keys. These recipes still depend on the service model. Verify remote emote reception in native multiplayer. Emotes now resolve through the current catalog or an official UUID lookup. Missing catalog entries and unavailable receipt keys still prevent loading.
 - Verify the asynchronous Java color save flow and palette options 7-9. The native picker previews Light Blue and creates four eye channels on save. A live service test accepts the production first iris group with exact readback. Native setter execution passes 240 cases. Metadata eligibility passes 186 factory, move, and picker cases. Palette selection accepts native RGB and ARGB saves.
 - Verify paid acquisition, the Get/Buy screen flow, and interactive Store synchronization. Synchronize classic skin selection with the native account.
 - Finish the remaining particle components, named actor events, captions, and stream concurrency. Verify dynamic emote bindings, native render suppression, and scaled world locators. Emote chat announcements exist, but native platform communication filters remain incomplete.

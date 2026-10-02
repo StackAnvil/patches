@@ -1060,3 +1060,17 @@ Targeted tests cover arms and legs, free and owned source flags, tint preservati
 Live UI validation saves Coin Stacks for Both, resets Right while a locked offer is selected, then resets Both at 640 by 480. Independent HTTPS reads verify `/f`, then `/fl`, then the exact original recipe. Every step preserves the other five profiles. Default disables itself after the selected side is clear. Its widget fits inside the 320 by 240 GUI. The original locally saved appearance is restored after the test.
 
 The full fixture run reports 451 tests across 90 suites, with no failures or errors and three skipped capture comparisons. Those three comparisons pass in a separate targeted run with their fixtures supplied. All 17 patches replay. The dependency build, pinned ViaFabricPlus verification, Prism bundle, and north-star patch check pass. This verifies the new limb controls and one free outfit; full skin and Dressing Room parity remains incomplete.
+
+### Catalog emote previews and remote UUID lookup
+
+Native Bedrock 1.26.51.1 previews locked Sneaking and unowned Robot Dance from the Emotes catalog. Robot Dance requests `Catalog/GetPublishedItem`, then downloads `personabinary` from an official CDN. The current account receipt decodes its 7.5-second animation. These actions send no purchase, redemption, or appearance write. Independent reads confirm that all six cloud recipes and six native local recipes remain unchanged.
+
+Java now enables previews for catalog emotes, including locked and paid offers. Equipping retains its separate ownership checks. Received emotes can use the full current catalog. If a received UUID is absent, the loader searches the official PlayFab catalog by its pack UUID tag.
+
+The UUID search requires the account manager's master-player token. Native-session requests and automated add-on account requests resolve Robot Dance with that token. The title-player token returns empty search results for the same product. The loader validates the product, persona type, pack UUID, and archive identity. It rejects ambiguous products and refreshes published metadata before downloading. Pending downloads and cached assets have fixed limits.
+
+All 14 focused tests pass with native asset fixtures enabled and no skipped cases. The tests cover search identity, duplicate and ambiguous results, invalid metadata, shared receipt keys, and existing free and owned asset assembly. The full stack and bundle build. Assets, receipts, account data, and captures remain private.
+
+The rebuilt production client also exercises the missing-catalog-entry route with Robot Dance. It resolves the product, downloads the archive, and samples 450 frames. The item remains unowned and cannot equip. All saved slot profiles match their prior values. Real UI input selects the paid offer and opens its active-character preview. A recording verifies changing poses, completion reset, Replay, and Stop. A fresh HTTPS read confirms all six original cloud recipes afterward.
+
+This change does not establish complete emote parity. Assets absent from the official catalog or incompatible with available receipt keys remain unavailable. Dynamic actor queries, effect aliases, communication filters, and native world timing still need verification.
