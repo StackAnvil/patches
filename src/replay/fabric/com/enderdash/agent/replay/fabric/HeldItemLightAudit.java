@@ -85,9 +85,16 @@ public final class HeldItemLightAudit {
     }
 
     private static Object field(Object value, String name) throws ReflectiveOperationException {
-        Field field = value.getClass().getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(value);
+        for (Class<?> type = value.getClass(); type != null; type = type.getSuperclass()) {
+            try {
+                Field field = type.getDeclaredField(name);
+                field.setAccessible(true);
+                return field.get(value);
+            } catch (NoSuchFieldException inherited) {
+                // GUI item states inherit their display context from the base state.
+            }
+        }
+        throw new NoSuchFieldException(value.getClass().getName() + '.' + name);
     }
 
     private static Object call(Object value, String name) throws ReflectiveOperationException {

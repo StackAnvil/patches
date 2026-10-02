@@ -4,13 +4,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 
-/** Observes isolated replays and selects supplied local-avatar scenes for third-person checks. */
+/** Checks supplied local avatars, then restores the first-person reference view. */
 public final class ReplayCamera {
     private static boolean checked;
     private static UUID identity;
     private static Path directory;
     private static int localEntityId = Integer.MIN_VALUE;
     private static boolean ready;
+    private static volatile boolean localAvatarSubmitted;
 
     private ReplayCamera() { }
 
@@ -29,8 +30,8 @@ public final class ReplayCamera {
             if (!matches) return;
             Object options = minecraft.getClass().getField("options").get(minecraft);
             Class<?> camera = Class.forName("net.minecraft.client.CameraType");
-            Object front = camera.getField("THIRD_PERSON_FRONT").get(null);
-            options.getClass().getMethod("setCameraType", camera).invoke(options, front);
+            Object view = camera.getField(localAvatarSubmitted ? "FIRST_PERSON" : "THIRD_PERSON_FRONT").get(null);
+            options.getClass().getMethod("setCameraType", camera).invoke(options, view);
             if (!ready) {
                 ready = true;
                 RenderAudit.thirdPersonScene();
@@ -45,7 +46,10 @@ public final class ReplayCamera {
         if (localEntityId == Integer.MIN_VALUE || !renderer.getClass().getName().equals("com.viaversion.viafabricplus.bedrock.render.BedrockPlayerRenderer")) return;
         try {
             if (state.getClass().getField("id").getInt(state) == localEntityId) {
-                if (ready) RenderAudit.playerFrame();
+                if (ready) {
+                    RenderAudit.playerFrame();
+                    localAvatarSubmitted = true;
+                }
             } else RenderAudit.otherPlayerFrame();
         } catch (ReflectiveOperationException error) {
             throw new IllegalStateException("Could not audit the replay's native player submission", error);
