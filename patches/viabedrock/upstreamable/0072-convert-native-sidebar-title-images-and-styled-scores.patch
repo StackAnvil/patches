@@ -1,4 +1,4 @@
-From 3c930aa48db9c937752ae50887c2c71171a386c7 Mon Sep 17 00:00:00 2001
+From 2e0f7bb943c83b44babb4f33be8b46bd566ec650 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 12:06:00 +0200
 Subject: [PATCH] feat(scoreboard): convert native sidebar title images and
@@ -11,25 +11,47 @@ Send objective CHANGE packets for repeated display titles without replacing scor
 Saved protocol 2193 CubeCraft resources declare a 66 by 21 title image and 10-pixel player rows. The native Java 26.3 BlankFormat codec is registry zero with a unit payload. Targeted tests cover wire fields, pack priority, bounded UI parsing, image conversion, and disk cache rollover; captured resources remain private.
 
 Read the bounded static sidebar parent image layout and texture nine-slice metadata. Carry authored alpha, content padding, and bottom-left row offsets into the converted resources. The saved CubeCraft protocol2193 pack declares Black_sb with 6 by 6 base size, two-pixel borders, .5 alpha, padding3/5 and row offsets2/-1. Preserve source pixels and reject unsupported transforms or expressions instead of activating an incorrect custom panel. Semantic conversion tests cover declared layout and fallback.
+
+Read all 13 named material/coin/party variables alongside ordinary color variables from the target effective server UI globals. Bedrock 1.26.51.1/protocol2193 writer1403f9760 binds material_gold_color to the p table at1517f83c0 and party_blue_color to w at1517f8420. The saved Hive pack declares material gold as [.541,.824,.173], and the official Scallywag reference renders it green; ignoring named keys left Java gold. Keep immutable pack palettes in a neutral TextFormattingDefinitions shared by sidebar and player-name conversion. Preserve active styles across color codes not known by the dependency.
 ---
+ .../api/model/entity/PlayerEntity.java        |   2 +-
  .../model/scoreboard/ScoreboardObjective.java |  22 +-
- .../definition/ScoreboardUiDefinitions.java   | 477 ++++++++++++++++++
+ .../definition/ScoreboardUiDefinitions.java   | 427 ++++++++++++++++++
+ .../definition/TextFormattingDefinitions.java | 109 +++++
  .../http/ConvertedResourcePackCache.java      |  22 +-
- .../raphimc/viabedrock/api/util/TextUtil.java |  15 +-
+ .../raphimc/viabedrock/api/util/TextUtil.java |  30 +-
  .../protocol/packet/HudPackets.java           |  38 +-
  .../rewriter/ResourcePackRewriter.java        |   2 +
  .../ScoreboardUiResourceRewriter.java         | 120 +++++
- .../protocol/storage/ResourcePackStorage.java |   6 +
+ .../protocol/storage/ResourcePackStorage.java |  12 +
  .../ScoreboardPresentationTest.java           |  72 +++
- .../ScoreboardUiDefinitionsTest.java          | 376 ++++++++++++++
+ .../ScoreboardUiDefinitionsTest.java          | 330 ++++++++++++++
+ .../TextFormattingDefinitionsTest.java        | 119 +++++
  .../http/ConvertedResourcePackCacheTest.java  |  32 ++
+ .../api/util/TextPaletteFormattingTest.java   |  39 ++
  .../protocol/packet/HudPacketsTest.java       |  39 ++
- 12 files changed, 1205 insertions(+), 16 deletions(-)
+ 16 files changed, 1395 insertions(+), 20 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextFormattingDefinitions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ScoreboardUiResourceRewriter.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/scoreboard/ScoreboardPresentationTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitionsTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextFormattingDefinitionsTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/util/TextPaletteFormattingTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java
+index 989b8140..82b9eb73 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java
+@@ -72,7 +72,7 @@ public class PlayerEntity extends LivingEntity {
+         setPlayerTeam.write(Types.STRING, "vb_" + this.javaId); // team name
+         setPlayerTeam.write(Types.BYTE, (byte) PlayerTeamMethod.CHANGE.ordinal()); // mode
+         setPlayerTeam.write(Types.TAG, TextUtil.stringToNbt("vb_" + this.javaId)); // display name
+-        setPlayerTeam.write(Types.TAG, TextUtil.stringToNbt(name)); // prefix
++        setPlayerTeam.write(Types.TAG, TextUtil.stringToNbt(name, this.user)); // prefix
+         setPlayerTeam.write(Types.TAG, TextUtil.stringToNbt("")); // suffix
+         setPlayerTeam.write(Types.VAR_INT, TeamVisibility.ALWAYS.ordinal()); // name tag visibility
+         setPlayerTeam.write(Types.VAR_INT, TeamCollisionRule.NEVER.ordinal()); // collision rule
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/scoreboard/ScoreboardObjective.java b/src/main/java/net/raphimc/viabedrock/api/model/scoreboard/ScoreboardObjective.java
 index 34b0825b..cd527ea3 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/scoreboard/ScoreboardObjective.java
@@ -91,10 +113,10 @@ index 34b0825b..cd527ea3 100644
      private void removeEntry0(final UserConnection user, final ScoreboardEntry entry) {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java
 new file mode 100644
-index 00000000..a8bf8bc8
+index 00000000..e0790543
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java
-@@ -0,0 +1,477 @@
+@@ -0,0 +1,427 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -152,57 +174,7 @@ index 00000000..a8bf8bc8
 +            }
 +        }
 +        this.images = Collections.unmodifiableMap(found);
-+        this.formattingColors = readFormattingColors(storage);
-+    }
-+
-+    public Map<Character, Integer> formattingColors() {
-+        return this.formattingColors;
-+    }
-+
-+    private static Map<Character, Integer> readFormattingColors(final ResourcePackStorage storage) {
-+        final Map<Character, Integer> colors = new HashMap<>();
-+        final Set<Character> seen = new HashSet<>();
-+        for (final ResourcePack pack : storage.getPackStackTopToBottom()) {
-+            if (!storage.isServerPack(pack) || !pack.content().contains("ui/_global_variables.json")
-+                    || pack.content().get("ui/_global_variables.json").length > 262144) {
-+                continue;
-+            }
-+            try {
-+                final JsonObject variables = pack.content().getJson("ui/_global_variables.json");
-+                for (final char code : "0123456789abcdef".toCharArray()) {
-+                    final String key = "$" + code + "_color_format";
-+                    if (!variables.has(key) || !seen.add(code)) {
-+                        continue;
-+                    }
-+                    final Integer color = rgb(variables.get(key));
-+                    if (color != null) {
-+                        colors.put(code, color);
-+                    }
-+                }
-+            } catch (final RuntimeException ignored) {
-+                // Dynamic variables and malformed files are outside this static subset.
-+            }
-+        }
-+        return Map.copyOf(colors);
-+    }
-+
-+    private static Integer rgb(final JsonElement value) {
-+        if (!value.isJsonArray() || value.getAsJsonArray().size() < 3) {
-+            return null;
-+        }
-+        int rgb = 0;
-+        for (int i = 0; i < 3; i++) {
-+            final JsonElement channel = value.getAsJsonArray().get(i);
-+            if (!channel.isJsonPrimitive() || !channel.getAsJsonPrimitive().isNumber()) {
-+                return null;
-+            }
-+            final float n = channel.getAsFloat();
-+            if (!Float.isFinite(n) || n < 0F || n > 1F) {
-+                return null;
-+            }
-+            rgb = rgb << 8 | Math.round(n * 255F);
-+        }
-+        return rgb;
++        this.formattingColors = storage.getTextFormatting().colors();
 +    }
 +
 +    public Collection<SidebarImage> images() {
@@ -572,6 +544,121 @@ index 00000000..a8bf8bc8
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextFormattingDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextFormattingDefinitions.java
+new file mode 100644
+index 00000000..72539af5
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/TextFormattingDefinitions.java
+@@ -0,0 +1,109 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.api.resourcepack.definition;
++
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.Map;
++import java.util.Set;
++
++/** Static formatting-color overrides from the effective server UI globals. */
++public final class TextFormattingDefinitions {
++
++    private static final Map<Character, String> COLOR_VARIABLES = colorVariables();
++    private final Map<Character, Integer> colors;
++
++    public TextFormattingDefinitions(final ResourcePackStorage storage) {
++        final Map<Character, Integer> colors = new HashMap<>();
++        final Set<Character> seen = new HashSet<>();
++        for (final ResourcePack pack : storage.getPackStackTopToBottom()) {
++            if (!storage.isServerPack(pack) || !pack.content().contains("ui/_global_variables.json")
++                    || pack.content().get("ui/_global_variables.json").length > 262144) {
++                continue;
++            }
++            try {
++                final JsonObject variables = pack.content().getJson("ui/_global_variables.json");
++                for (final var entry : COLOR_VARIABLES.entrySet()) {
++                    final char code = entry.getKey();
++                    if (!variables.has(entry.getValue()) || !seen.add(code)) {
++                        continue;
++                    }
++                    final Integer color = rgb(variables.get(entry.getValue()));
++                    if (color != null) {
++                        colors.put(code, color);
++                    }
++                }
++            } catch (final RuntimeException ignored) {
++                // Dynamic variables and malformed files are outside this static subset.
++            }
++        }
++        this.colors = Map.copyOf(colors);
++    }
++
++    public Map<Character, Integer> colors() {
++        return this.colors;
++    }
++
++    private static Map<Character, String> colorVariables() {
++        final Map<Character, String> variables = new HashMap<>();
++        for (final char code : "0123456789abcdef".toCharArray()) {
++            variables.put(code, "$" + code + "_color_format");
++        }
++        // Bedrock 1.26.51.1's UI globals reader writes these named variables
++        // into the same formatting table as the ordinary color codes.
++        variables.put('g', "$coin_color");
++        variables.put('h', "$material_quartz_color");
++        variables.put('i', "$material_iron_color");
++        variables.put('j', "$material_netherite_color");
++        variables.put('m', "$material_redstone_color");
++        variables.put('n', "$material_copper_color");
++        variables.put('p', "$material_gold_color");
++        variables.put('q', "$material_emerald_color");
++        variables.put('s', "$material_diamond_color");
++        variables.put('t', "$material_lapis_color");
++        variables.put('u', "$material_amethyst_color");
++        variables.put('v', "$material_resin_color");
++        variables.put('w', "$party_blue_color");
++        return Map.copyOf(variables);
++    }
++
++    private static Integer rgb(final JsonElement value) {
++        if (!value.isJsonArray() || value.getAsJsonArray().size() < 3) {
++            return null;
++        }
++        int rgb = 0;
++        for (int i = 0; i < 3; i++) {
++            final JsonElement channel = value.getAsJsonArray().get(i);
++            if (!channel.isJsonPrimitive() || !channel.getAsJsonPrimitive().isNumber()) {
++                return null;
++            }
++            final float n = channel.getAsFloat();
++            if (!Float.isFinite(n) || n < 0F || n > 1F) {
++                return null;
++            }
++            rgb = rgb << 8 | Math.round(n * 255F);
++        }
++        return rgb;
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 index 73d0d4d4..987e7a36 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
@@ -639,10 +726,22 @@ index 73d0d4d4..987e7a36 100644
              final var visual = entry.getValue();
              identity.append('\n').append(entry.getKey()).append(':').append(visual.bedrockState()).append(':').append(visual.modelJson());
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/TextUtil.java b/src/main/java/net/raphimc/viabedrock/api/util/TextUtil.java
-index 20a57fb8..55b07337 100644
+index 20a57fb8..8698f81c 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/util/TextUtil.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/TextUtil.java
-@@ -32,6 +32,7 @@ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+@@ -21,6 +21,7 @@ import com.viaversion.nbt.tag.CompoundTag;
+ import com.viaversion.nbt.tag.ListTag;
+ import com.viaversion.nbt.tag.StringTag;
+ import com.viaversion.nbt.tag.Tag;
++import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.libs.gson.JsonElement;
+ import com.viaversion.viaversion.libs.mcstructs.text.Style;
+ import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
+@@ -29,9 +30,11 @@ import com.viaversion.viaversion.libs.mcstructs.text.serializer.LegacyStringDese
+ import com.viaversion.viaversion.libs.mcstructs.text.utils.TextUtils;
+ import net.lenni0451.mcstructs_bedrock.text.BedrockTextFormatting;
+ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
  
  import java.util.EnumSet;
  import java.util.List;
@@ -650,12 +749,17 @@ index 20a57fb8..55b07337 100644
  import java.util.Optional;
  import java.util.Set;
  import java.util.concurrent.atomic.AtomicBoolean;
-@@ -75,12 +76,24 @@ public final class TextUtil {
+@@ -75,12 +78,29 @@ public final class TextUtil {
          return textComponentToNbt(stringToTextComponent(text));
      }
  
 +    public static Tag stringToNbt(final String text, final Map<Character, Integer> colors) {
 +        return textComponentToNbt(stringToTextComponent(text, colors));
++    }
++
++    public static Tag stringToNbt(final String text, final UserConnection user) {
++        final ResourcePackStorage packs = user.get(ResourcePackStorage.class);
++        return stringToNbt(text, packs == null ? Map.of() : packs.getTextFormatting().colors());
 +    }
 +
      public static Tag textComponentToNbt(final TextComponent textComponent) {
@@ -672,12 +776,39 @@ index 20a57fb8..55b07337 100644
 +            final Integer color = colors.get(Character.toLowerCase(c));
 +            return color == null ? BEDROCK_FORMATTING_RESOLVER.apply(c) : new TextFormatting(color);
 +        };
-+        final TextComponent textComponent = LegacyStringDeserializer.parse(appendFormattingCodesAfterColorCode(text), TextFormatting.COLOR_CHAR, ResetTrackingStyle::new, resolver);
++        final TextComponent textComponent = LegacyStringDeserializer.parse(appendFormattingCodesAfterColorCode(text, resolver), TextFormatting.COLOR_CHAR, ResetTrackingStyle::new, resolver);
          final AtomicBoolean wasReset = new AtomicBoolean(false);
          TextUtils.iterateAll(textComponent, c -> {
              final Style style = c.getStyle();
+@@ -120,7 +140,7 @@ public final class TextUtil {
+     /**
+      * Preprocesses bedrock text to fix the java client resetting the formatting after a color code
+      */
+-    private static String appendFormattingCodesAfterColorCode(final String s) {
++    private static String appendFormattingCodesAfterColorCode(final String s, final Function<Character, TextFormatting> resolver) {
+         final char[] chars = s.toCharArray();
+         final Set<BedrockTextFormatting> styles = EnumSet.noneOf(BedrockTextFormatting.class);
+         final StringBuilder out = new StringBuilder();
+@@ -134,13 +154,15 @@ public final class TextUtil {
+                     final char code = chars[i++];
+                     out.append(code);
+                     final BedrockTextFormatting formatting = BedrockTextFormatting.getByCode(code);
+-                    if (formatting == null) {
++                    final TextFormatting resolved = resolver.apply(code);
++                    final boolean customColor = resolved != null && resolved.isColor();
++                    if (formatting == null && !customColor) {
+                         continue;
+                     }
+ 
+                     if (BedrockTextFormatting.RESET.equals(formatting)) {
+                         styles.clear();
+-                    } else if (formatting.isColor()) {
++                    } else if (customColor || formatting.isColor()) {
+                         for (BedrockTextFormatting style : styles) {
+                             out.append(style.asString());
+                         }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
-index a8564eaf..1b372273 100644
+index a8564eaf..c5ea5cee 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
 @@ -17,6 +17,7 @@
@@ -734,7 +865,7 @@ index a8564eaf..1b372273 100644
 +
 +            final ResourcePackStorage resourcePacks = wrapper.user().get(ResourcePackStorage.class);
 +            scoreboardTracker.getObjective(objectiveName).setFormattingColors(wrapper.user(),
-+                    displaySlot.equals("sidebar") ? resourcePacks.getScoreboardUi().formattingColors() : Map.of());
++                    displaySlot.equals("sidebar") ? resourcePacks.getTextFormatting().colors() : Map.of());
 +            final String translatedTitle = resourcePacks.getTexts().translate(displayName);
 +            final Tag title = displaySlot.equals("sidebar")
 +                    ? resourcePacks.getScoreboardUi().titleComponent(displayName, translatedTitle)
@@ -894,29 +1025,35 @@ index 00000000..e93d0be1
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
-index 66931e7d..ec8485cd 100644
+index 66931e7d..73b65bde 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
-@@ -40,6 +40,7 @@ public class ResourcePackStorage implements StorableObject {
+@@ -40,6 +40,8 @@ public class ResourcePackStorage implements StorableObject {
      private final Map<String, Object> converterData = new ConcurrentHashMap<>();
  
      private final TextDefinitions texts;
++    private final TextFormattingDefinitions textFormatting;
 +    private final ScoreboardUiDefinitions scoreboardUi;
      private final BlockDefinitions blocks;
      private final ItemDefinitions items;
      private final AttachableDefinitions attachables;
-@@ -86,6 +87,7 @@ public class ResourcePackStorage implements StorableObject {
+@@ -86,6 +88,8 @@ public class ResourcePackStorage implements StorableObject {
          }
  
          this.texts = new TextDefinitions(this);
++        this.textFormatting = new TextFormattingDefinitions(this);
 +        this.scoreboardUi = new ScoreboardUiDefinitions(this);
          this.blocks = new BlockDefinitions(this);
          this.items = new ItemDefinitions(this);
          this.attachables = new AttachableDefinitions(this);
-@@ -147,6 +149,10 @@ public class ResourcePackStorage implements StorableObject {
+@@ -147,6 +151,14 @@ public class ResourcePackStorage implements StorableObject {
          return this.converterData;
      }
  
++    public TextFormattingDefinitions getTextFormatting() {
++        return this.textFormatting;
++    }
++
 +    public ScoreboardUiDefinitions getScoreboardUi() {
 +        return this.scoreboardUi;
 +    }
@@ -1004,10 +1141,10 @@ index 00000000..9d0d60d1
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitionsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitionsTest.java
 new file mode 100644
-index 00000000..3b493a9b
+index 00000000..6bb9b0c8
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitionsTest.java
-@@ -0,0 +1,376 @@
+@@ -0,0 +1,330 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1033,7 +1170,6 @@ index 00000000..3b493a9b
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 +import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
 +import net.raphimc.viabedrock.protocol.rewriter.resourcepack.ScoreboardUiResourceRewriter;
-+import net.raphimc.viabedrock.api.util.TextUtil;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 +import org.junit.jupiter.api.Test;
 +
@@ -1271,51 +1407,6 @@ index 00000000..3b493a9b
 +        return panel.getAsJsonArray("controls").get(1).getAsJsonObject().getAsJsonObject("image");
 +    }
 +
-+    @Test
-+    void serverUiFormattingUsesEffectiveRgbOverridesWithoutRecoloringWorldText() {
-+        final var lower = pack(panel("lower", "textures/ui/sample", 40, 12), -1);
-+        final var higher = pack(panel("higher", "textures/ui/sample", 40, 12), -1);
-+        final var lowVariables = new JsonObject();
-+        lowVariables.add("$9_color_format", rgb(1, 0, 0));
-+        lowVariables.add("$a_color_format", rgb(0, 1, 0));
-+        lowVariables.add("$b_color_format", rgb(0.5, 0.1, 1));
-+        lower.content().putJson("ui/_global_variables.json", lowVariables);
-+        final var highVariables = new JsonObject();
-+        highVariables.add("$9_color_format", rgb(0.22745098, 0.662745098, 1));
-+        higher.content().putJson("ui/_global_variables.json", highVariables);
-+        final var colors = new ResourcePackStorage(List.of(higher, lower)).getScoreboardUi().formattingColors();
-+        assertEquals(0x3AA9FF, colors.get('9'));
-+        assertEquals(0x00FF00, colors.get('a'));
-+        assertEquals(0x801AFF, colors.get('b'));
-+        assertEquals(0x3AA9FF, TextUtil.stringToTextComponent("§9Blue", colors).getStyle().getColor().getRgbValue());
-+        assertEquals(0x5555FF, TextUtil.stringToTextComponent("§9Blue").getStyle().getColor().getRgbValue());
-+        assertTrue(TextUtil.stringToTextComponent("§l§9Blue", colors).getStyle().isBold());
-+        assertThrows(UnsupportedOperationException.class, () -> colors.put('b', 0));
-+    }
-+
-+    @Test
-+    void unsupportedHigherUiColorsDoNotReviveLowerDefinitions() {
-+        final var lower = pack(panel("lower", "textures/ui/sample", 40, 12), -1);
-+        final var higher = pack(panel("higher", "textures/ui/sample", 40, 12), -1);
-+        final var lowVariables = new JsonObject();
-+        lowVariables.add("$9_color_format", rgb(1, 0, 0));
-+        lower.content().putJson("ui/_global_variables.json", lowVariables);
-+        for (final var invalid : List.of(new JsonPrimitive("$dynamic_color"), rgb(-1, 0, 0), rgb(0, 2, 0), rgb(0, 0, Double.POSITIVE_INFINITY))) {
-+            final var highVariables = new JsonObject();
-+            highVariables.add("$9_color_format", invalid);
-+            higher.content().putJson("ui/_global_variables.json", highVariables);
-+            assertFalse(new ResourcePackStorage(List.of(higher, lower)).getScoreboardUi().formattingColors().containsKey('9'));
-+        }
-+    }
-+
-+    private static JsonArray rgb(final double red, final double green, final double blue) {
-+        final var rgb = new JsonArray();
-+        rgb.add(red);
-+        rgb.add(green);
-+        rgb.add(blue);
-+        return rgb;
-+    }
-+
 +    private static JsonObject panel(final String title, final String texture, final int width, final int height) {
 +        final JsonObject label = control("label", "label", title, true);
 +        label.addProperty("text", "#objective_sidebar_name");
@@ -1384,6 +1475,131 @@ index 00000000..3b493a9b
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextFormattingDefinitionsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextFormattingDefinitionsTest.java
+new file mode 100644
+index 00000000..6f0ed29b
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/TextFormattingDefinitionsTest.java
+@@ -0,0 +1,119 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.api.resourcepack.definition;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonPrimitive;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.api.util.TextUtil;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class TextFormattingDefinitionsTest {
++
++    @Test
++    void effectiveColorsUsePackPriorityAndNearestRgbWithoutChangingDefaultFormatting() {
++        final var lower = new JsonObject();
++        lower.add("$9_color_format", rgb(1, 0, 0));
++        lower.add("$a_color_format", rgb(0, 1, 0));
++        lower.add("$b_color_format", rgb(0.5, 0.1, 1));
++        final var higher = new JsonObject();
++        higher.add("$9_color_format", rgb(0.22745098, 0.662745098, 1));
++        final var colors = new ResourcePackStorage(List.of(pack(higher), pack(lower))).getTextFormatting().colors();
++        assertEquals(0x3AA9FF, colors.get('9'));
++        assertEquals(0x00FF00, colors.get('a'));
++        assertEquals(0x801AFF, colors.get('b'));
++        assertEquals(0x3AA9FF, TextUtil.stringToTextComponent("§9Blue", colors).getStyle().getColor().getRgbValue());
++        assertEquals(0x5555FF, TextUtil.stringToTextComponent("§9Blue").getStyle().getColor().getRgbValue());
++        assertTrue(TextUtil.stringToTextComponent("§l§9Blue", colors).getStyle().isBold());
++        assertThrows(UnsupportedOperationException.class, () -> colors.put('b', 0));
++    }
++
++    @Test
++    void nativeNamedColorsBindToTheirMaterialCodesAndIgnoreExtraChannels() {
++        final String[] names = {"coin", "material_quartz", "material_iron", "material_netherite", "material_redstone",
++            "material_copper", "material_gold", "material_emerald", "material_diamond", "material_lapis",
++            "material_amethyst", "material_resin", "party_blue"};
++        final String allCodes = "ghijmnpqstuvw";
++        final var variables = new JsonObject();
++        for (int i = 0; i < names.length; i++) {
++            final var color = rgb(i / 255D, (i + 17) / 255D, (i + 33) / 255D);
++            color.add("$ignored_alpha");
++            variables.add("$" + names[i] + "_color", color);
++        }
++        final var colors = new ResourcePackStorage(List.of(pack(variables))).getTextFormatting().colors();
++        assertEquals(names.length, colors.size());
++        for (int i = 0; i < names.length; i++) {
++            assertEquals(i << 16 | i + 17 << 8 | i + 33, colors.get(allCodes.charAt(i)));
++        }
++    }
++
++    @Test
++    void materialOverrideChangesBothLowercaseAndUppercaseLegacyCodes() {
++        final var lower = new JsonObject();
++        lower.add("$material_gold_color", rgb(1, 0, 0));
++        lower.add("$material_emerald_color", rgb(0, 0, 1));
++        final var higher = new JsonObject();
++        higher.add("$material_gold_color", rgb(0.541, 0.824, 0.173));
++        final var colors = new ResourcePackStorage(List.of(pack(higher), pack(lower))).getTextFormatting().colors();
++        assertEquals(0x8AD22C, colors.get('p'));
++        assertEquals(0x0000FF, colors.get('q'));
++        assertEquals(0x8AD22C, TextUtil.stringToTextComponent("§pMaterial", colors).getStyle().getColor().getRgbValue());
++        assertEquals(0x8AD22C, TextUtil.stringToTextComponent("§PMaterial", colors).getStyle().getColor().getRgbValue());
++        assertEquals(0xDEB12D, TextUtil.stringToTextComponent("§pMaterial").getStyle().getColor().getRgbValue());
++    }
++
++    @Test
++    void unsupportedHigherColorsDoNotReviveLowerDefinitions() {
++        final var lower = new JsonObject();
++        lower.add("$9_color_format", rgb(1, 0, 0));
++        lower.add("$material_gold_color", rgb(1, 0, 0));
++        for (final var invalid : List.of(new JsonPrimitive("$dynamic_color"), rgb(-1, 0, 0), rgb(0, 2, 0),
++                rgb(0, 0, Double.POSITIVE_INFINITY), rgb(Double.NaN, 0, 0), new JsonArray())) {
++            final var higher = new JsonObject();
++            higher.add("$9_color_format", invalid);
++            higher.add("$material_gold_color", invalid);
++            final var colors = new ResourcePackStorage(List.of(pack(higher), pack(lower))).getTextFormatting().colors();
++            assertFalse(colors.containsKey('9'));
++            assertFalse(colors.containsKey('p'));
++        }
++    }
++
++    private static JsonArray rgb(final double red, final double green, final double blue) {
++        final var rgb = new JsonArray();
++        rgb.add(red);
++        rgb.add(green);
++        rgb.add(blue);
++        return rgb;
++    }
++
++    private static ResourcePack pack(final JsonObject variables) {
++        final var content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":[1,0,0],\"name\":\"test\"}}");
++        content.putJson("ui/_global_variables.json", variables);
++        return new ResourcePack(content);
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 index 52eece5d..ba64fe26 100644
 --- a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
@@ -1427,6 +1643,51 @@ index 52eece5d..ba64fe26 100644
      @Test
      void effectivePackOrderChangesCacheIdentity() {
          final ResourcePack first = pack(UUID.randomUUID(), new byte[]{1});
+diff --git a/src/test/java/net/raphimc/viabedrock/api/util/TextPaletteFormattingTest.java b/src/test/java/net/raphimc/viabedrock/api/util/TextPaletteFormattingTest.java
+new file mode 100644
+index 00000000..c1e6311f
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/util/TextPaletteFormattingTest.java
+@@ -0,0 +1,39 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.util;
++
++import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
++import com.viaversion.viaversion.libs.mcstructs.text.utils.TextUtils;
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class TextPaletteFormattingTest {
++
++    @Test
++    void retainsStylesAcrossTargetPaletteCodesMissingFromTheFormattingLibrary() {
++        final TextComponent component = TextUtil.stringToTextComponent("§l§oA§wB§rC", Map.of('w', 0x3366CC));
++        final List<TextComponent> parts = new ArrayList<>();
++        TextUtils.iterateAll(component, part -> {
++            if (!part.asSingleString().isEmpty()) {
++                parts.add(part);
++            }
++        });
++        assertEquals(3, parts.size());
++        assertEquals(0x3366CC, parts.get(1).getStyle().getColor().getRgbValue());
++        assertTrue(parts.get(1).getStyle().isBold());
++        assertTrue(parts.get(1).getStyle().isItalic());
++        assertFalse(parts.get(parts.size() - 1).getStyle().isBold());
++        assertFalse(parts.get(parts.size() - 1).getStyle().isItalic());
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/HudPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/HudPacketsTest.java
 index dfd42cd1..8199a3e7 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/packet/HudPacketsTest.java

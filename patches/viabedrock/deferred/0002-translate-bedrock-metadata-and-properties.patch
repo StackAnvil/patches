@@ -1,4 +1,4 @@
-From 76b9bdf2bc4b41e1ee816c9c820c21bc39be2084 Mon Sep 17 00:00:00 2001
+From b8ea631c36f9ad5dbf5fa0e5cac253e89cb4f987 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 00:27:08 +0200
 Subject: [PATCH] feat(entities): translate Bedrock metadata and properties
@@ -48,6 +48,8 @@ and team-name fallback. Tests cover both metadata orders, sparse clearing
 and restoring, an absent ordinary NAME, and default player names.
 
 Expose immutable retained scaled actor bounds and publish Interaction dimensions after sparse scale or dimension updates. Target Bedrock 1.26.51.1 functions 141a1c130, 141e15010 and 14289a870 retain unscaled metadata53/54, multiply by actor scale, and clamp collapsed AABBs to .005 blocks. Reject missing or invalid bounds instead of guessing a name height. Tests cover ordering, sparse dimensions, scaling, collapse, and unrelated Java actor types.
+
+Format native NAME components through the finalized immutable per-connection pack palette. This shares the effective UI material overrides with player team prefixes and sidebar text. The target Hive material_gold_color override and official native green Scallywag establish that default gold must not overwrite the server palette. Preserve LF, reset styles, blank-name clearing, sparse updates and independent emitted components. No renderer reads mutable network palette state, and supported pack storage is finalized before actors are created.
 ---
  .../viabedrock/api/model/entity/Entity.java   |  56 ++
  .../api/model/entity/LivingEntity.java        |   7 +-
@@ -66,7 +68,8 @@ Expose immutable retained scaled actor bounds and publish Interaction dimensions
  .../model/entity/EntityPropertyListTest.java  |  79 +++
  .../rewriter/EntityBodyVisibilityTest.java    | 253 ++++++++
  .../rewriter/EntityMetadataRewriterTest.java  | 151 +++++
- 17 files changed, 1457 insertions(+), 64 deletions(-)
+ .../rewriter/EntityNameFormattingTest.java    | 146 +++++
+ 18 files changed, 1603 insertions(+), 64 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityProperty.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyList.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/EntityPropertyTracker.java
@@ -75,6 +78,7 @@ Expose immutable retained scaled actor bounds and publish Interaction dimensions
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyListTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityBodyVisibilityTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityNameFormattingTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 index 15d58193..1c93cf2a 100644
@@ -592,7 +596,7 @@ index 48767edb..545c61a9 100644
                  entityTracker.applyEntityLink(link);
              }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
-index ed40425a..56348251 100644
+index ed40425a..a3dcc980 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
 @@ -17,55 +17,86 @@
@@ -665,7 +669,7 @@ index ed40425a..56348251 100644
 -                if (bedrockFlags.contains(ActorFlags.SWIMMING)) {
 -                    javaBitMask |= (1 << 4);
 +                final String name = entityData.value();
-+                final Tag javaName = name.isEmpty() ? null : TextUtil.stringToNbt(name);
++                final Tag javaName = name.isEmpty() ? null : TextUtil.stringToNbt(name, user);
 +                javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME), VersionedTypes.V26_3.entityDataTypes().optionalComponentType, javaName));
 +                updateNameVisibility(entity, javaEntityData);
 +            }
@@ -2062,6 +2066,158 @@ index 00000000..951e98e2
 +                new EntityData(ActorDataIds.CUSTOM_DISPLAY.getValue(), EntityDataTypesBedrock.BYTE, (byte) 1));
 +        assertEquals(142, EntityMetadataRewriter.minecartDisplayBlockState(minecart, id -> id + 100));
 +        assertEquals(0, EntityMetadataRewriter.minecartDisplayBlockState(minecart, id -> -1));
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityNameFormattingTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityNameFormattingTest.java
+new file mode 100644
+index 00000000..25183917
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityNameFormattingTest.java
+@@ -0,0 +1,146 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter;
++
++import com.viaversion.nbt.tag.Tag;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
++import com.viaversion.viaversion.libs.mcstructs.text.utils.TextUtils;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.api.model.entity.PlayerEntity;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
++import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Field;
++import java.lang.reflect.Proxy;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class EntityNameFormattingTest {
++
++    private static final List<String> FIELDS = List.of(EntityDataFields.CUSTOM_NAME, EntityDataFields.CUSTOM_NAME_VISIBLE);
++    private final Map<Field, Object> oldMappings = new HashMap<>();
++
++    @BeforeAll
++    static void initializeTypes() throws Exception {
++        Class.forName("com.viaversion.viaversion.api.minecraft.data.StructuredDataKey");
++    }
++
++    @BeforeEach
++    void installMappings() throws Exception {
++        this.replaceMapping("bedrockEntityDataTypes", Map.of());
++        this.replaceMapping("javaEntityDataFields", Map.of(EntityTypes26_3.PLAYER, FIELDS, EntityTypes26_3.INTERACTION, FIELDS));
++    }
++
++    @AfterEach
++    void restoreMappings() throws Exception {
++        for (var entry : this.oldMappings.entrySet()) {
++            entry.getKey().set(BedrockProtocol.MAPPINGS, entry.getValue());
++        }
++    }
++
++    @Test
++    void emitsPaletteRgbForPlayerAndCustomActorNamesWithStylesAndLineBreaks() {
++        final ResourcePackStorage packs = palette(0.541, 0.824, 0.173);
++        for (boolean player : new boolean[]{false, true}) {
++            final Entity actor = actor(player, packs);
++            final TextComponent component = component(updateName(actor, "§l§aA\n§pB§rC"));
++            assertEquals(1, component.asUnformattedString().codePoints().filter(c -> c == '\n').count());
++            final List<TextComponent> parts = parts(component);
++            assertEquals(3, parts.size());
++            assertEquals(0x55FF55, parts.get(0).getStyle().getColor().getRgbValue());
++            assertEquals(0x8AD22C, parts.get(1).getStyle().getColor().getRgbValue());
++            assertTrue(parts.get(0).getStyle().isBold());
++            assertTrue(parts.get(1).getStyle().isBold());
++            assertFalse(parts.get(parts.size() - 1).getStyle().isBold());
++        }
++    }
++
++    @Test
++    void formatsSparseNamesAndKeepsConnectionsAndPreviouslyEmittedComponentsIndependent() {
++        final Entity green = actor(false, palette(0.541, 0.824, 0.173));
++        final Entity other = actor(true, palette(0.2, 0.4, 0.8));
++        final Tag first = updateName(green, "§pA");
++        assertEquals(0x8AD22C, component(first).getStyle().getColor().getRgbValue());
++        assertEquals(0x3366CC, component(updateName(other, "§pA")).getStyle().getColor().getRgbValue());
++        final List<EntityData> sparse = new ArrayList<>();
++        green.updateEntityData(new EntityData[]{new EntityData(81, EntityDataTypesBedrock.BYTE, (byte) 1)}, sparse);
++        assertTrue(sparse.stream().noneMatch(data -> data.id() == FIELDS.indexOf(EntityDataFields.CUSTOM_NAME)));
++        assertEquals(0x8AD22C, component(updateName(green, "§pB")).getStyle().getColor().getRgbValue());
++        assertEquals(0x8AD22C, component(first).getStyle().getColor().getRgbValue());
++        assertNull(updateName(green, ""));
++        assertEquals(0xDEB12D, component(updateName(actor(false, null), "§pA")).getStyle().getColor().getRgbValue());
++    }
++
++    private static ResourcePackStorage palette(final double r, final double g, final double b) {
++        final InMemoryContent content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":[1,0,0],\"name\":\"test\"}}");
++        final JsonArray rgb = new JsonArray();
++        rgb.add(r);
++        rgb.add(g);
++        rgb.add(b);
++        final JsonObject variables = new JsonObject();
++        variables.add("$material_gold_color", rgb);
++        content.putJson("ui/_global_variables.json", variables);
++        return new ResourcePackStorage(List.of(new ResourcePack(content)));
++    }
++
++    private static Entity actor(final boolean player, final ResourcePackStorage packs) {
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, args) -> method.getName().equals("get")
++                        && args[0] == ResourcePackStorage.class ? packs : null);
++        return player ? new PlayerEntity(user, 2, 3, UUID.randomUUID(), new PlayerAbilities(1, (byte) 0, (byte) 0))
++                : new Entity(user, 1, 2, "example:actor", 3, UUID.randomUUID(), EntityTypes26_3.INTERACTION);
++    }
++
++    private static Tag updateName(final Entity actor, final String name) {
++        final List<EntityData> data = new ArrayList<>();
++        actor.updateEntityData(new EntityData[]{new EntityData(4, EntityDataTypesBedrock.STRING, name)}, data);
++        return data.stream().filter(value -> value.id() == FIELDS.indexOf(EntityDataFields.CUSTOM_NAME))
++                .findFirst().orElseThrow().value();
++    }
++
++    private static TextComponent component(final Tag tag) {
++        return ProtocolConstants.JAVA_TEXT_COMPONENT_SERIALIZER.deserializeNbtTree(tag);
++    }
++
++    private static List<TextComponent> parts(final TextComponent component) {
++        final List<TextComponent> parts = new ArrayList<>();
++        TextUtils.iterateAll(component, part -> {
++            if (!part.asSingleString().isEmpty()) {
++                parts.add(part);
++            }
++        });
++        return parts;
++    }
++
++    private void replaceMapping(final String name, final Object value) throws Exception {
++        final Field field = BedrockProtocol.MAPPINGS.getClass().getDeclaredField(name);
++        field.setAccessible(true);
++        this.oldMappings.put(field, field.get(BedrockProtocol.MAPPINGS));
++        field.set(BedrockProtocol.MAPPINGS, value);
 +    }
 +
 +}
