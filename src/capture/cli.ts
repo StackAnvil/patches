@@ -8,8 +8,10 @@ import { promisify } from "node:util";
 import { Effect } from "effect";
 import { root } from "../model.ts";
 import { displayEnv } from "../lab/display.ts";
+import { captureUiEnvironment } from "./ui-environment.ts";
 
 const execute = promisify(execFile);
+const uiEnvironment = captureUiEnvironment(() => displayEnv(), process.env);
 const captureRoot = join(root, ".stackanvil", "captures");
 const currentPath = join(captureRoot, "current.json");
 const caDirectory = join(captureRoot, "ca");
@@ -326,7 +328,7 @@ async function stopGame(): Promise<void> {
 }
 
 async function compileUi(): Promise<void> {
-  if (!(await displayEnv())?.DISPLAY && !process.env.DISPLAY) throw new Error("Set DISPLAY to the game's X display.");
+  if (!(await uiEnvironment()).DISPLAY) throw new Error("Set DISPLAY to the game's X display.");
   await mkdir(join(root, ".stackanvil", "tools"), { recursive: true });
   if (!existsSync(nativeBinary) || statSync(nativeBinary).mtimeMs < statSync(nativeSource).mtimeMs) {
     await run("cc", ["-O2", "-Wall", "-Wextra", "-o", nativeBinary, nativeSource, "-lX11", "-lXtst"]);
@@ -335,7 +337,7 @@ async function compileUi(): Promise<void> {
 
 async function windows(): Promise<WindowInfo[]> {
   await compileUi();
-  return JSON.parse(await run(nativeBinary, ["list"], root, await displayEnv() ?? process.env)) as WindowInfo[];
+  return JSON.parse(await run(nativeBinary, ["list"], root, await uiEnvironment())) as WindowInfo[];
 }
 
 async function chosenWindow(id?: string, client: Client = "bedrock"): Promise<WindowInfo> {
@@ -360,7 +362,7 @@ async function screenshot(name: string, windowId?: string, client?: Client, outp
   const imagePath = join(directory, `${name}.png`);
   const ppmPath = join(directory, `${name}.ppm`);
   try {
-    await run(nativeBinary, ["screenshot", window.id, ppmPath], root, await displayEnv() ?? process.env);
+    await run(nativeBinary, ["screenshot", window.id, ppmPath], root, await uiEnvironment());
     await run("ffmpeg", ["-loglevel", "error", "-y", "-i", ppmPath, imagePath]);
   } finally {
     await rm(ppmPath, { force: true });
@@ -376,7 +378,7 @@ async function pixel(x: number, y: number, windowId?: string, client?: Client): 
   const window = await chosenWindow(windowId, client);
   const localX = Math.floor(x * (window.width - 1));
   const localY = Math.floor(y * (window.height - 1));
-  return run(nativeBinary, ["pixel", window.id, String(localX), String(localY)], root, await displayEnv() ?? process.env);
+  return run(nativeBinary, ["pixel", window.id, String(localX), String(localY)], root, await uiEnvironment());
 }
 
 async function click(x: number, y: number, windowId?: string, client?: Client, allowFocus = false,
@@ -387,9 +389,9 @@ async function click(x: number, y: number, windowId?: string, client?: Client, a
   const window = await chosenWindow(windowId, client);
   const localX = Math.floor(x * (window.width - 1));
   const localY = Math.floor(y * (window.height - 1));
-  const isolated = await displayEnv();
+  const env = await uiEnvironment();
+  const isolated = env.STACKANVIL_UI_ISOLATED === "1";
   if (!isolated && !allowFocus) throw new Error("Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.");
-  const env = isolated ?? process.env;
   await run(nativeBinary, ["focus", window.id], root, env);
   if (!isolated && process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes("gnome")) {
     if (button !== "left" || durationMs !== undefined || doubleClick) {
@@ -407,9 +409,9 @@ async function key(name: string, windowId?: string, client?: Client, allowFocus 
   durationMs?: number, doubleTap = false): Promise<void> {
   if (!/^[A-Za-z0-9_+]{1,32}$/.test(name)) throw new Error("Use a key name such as Escape, Return, Tab, or Control+b.");
   const window = await chosenWindow(windowId, client);
-  const isolated = await displayEnv();
+  const env = await uiEnvironment();
+  const isolated = env.STACKANVIL_UI_ISOLATED === "1";
   if (!isolated && !allowFocus) throw new Error("Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.");
-  const env = isolated ?? process.env;
   await run(nativeBinary, ["focus", window.id], root, env);
   if (!isolated && process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes("gnome")) {
     if (doubleTap) throw new Error("Double key presses require the private display on GNOME Wayland.");
@@ -426,12 +428,12 @@ async function buttonHold(button: "left" | "right", durationMs: number, windowId
   allowFocus = false): Promise<void> {
   if (!Number.isInteger(durationMs) || durationMs < 1 || durationMs > 10_000) throw new Error("Button hold must be 1 to 10000 ms.");
   const window = await chosenWindow(windowId, client);
-  const isolated = await displayEnv();
+  const env = await uiEnvironment();
+  const isolated = env.STACKANVIL_UI_ISOLATED === "1";
   if (!isolated && !allowFocus) throw new Error("Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.");
   if (!isolated && process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes("gnome")) {
     throw new Error("Button holds require the private display on GNOME Wayland.");
   }
-  const env = isolated ?? process.env;
   await run(nativeBinary, ["focus", window.id], root, env);
   await run(nativeBinary, ["button-hold", window.id, button, String(durationMs)], root, env);
 }
@@ -439,9 +441,10 @@ async function buttonHold(button: "left" | "right", durationMs: number, windowId
 async function typeText(value: string, windowId?: string, client?: Client, allowFocus = false): Promise<void> {
   if (!/^[a-z0-9 .-]{1,120}$/.test(value)) throw new Error("Text must contain 1 to 120 lowercase ASCII letters, digits, spaces, periods, or hyphens.");
   const window = await chosenWindow(windowId, client);
-  const isolated = await displayEnv();
+  const env = await uiEnvironment();
+  const isolated = env.STACKANVIL_UI_ISOLATED === "1";
   if (!isolated && !allowFocus) throw new Error("Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.");
-  await run(nativeBinary, ["type", window.id, value], root, isolated ?? process.env);
+  await run(nativeBinary, ["type", window.id, value], root, env);
 }
 
 async function scenario(file: string, windowId?: string, client: Client = "bedrock", allowFocus = false): Promise<void> {
