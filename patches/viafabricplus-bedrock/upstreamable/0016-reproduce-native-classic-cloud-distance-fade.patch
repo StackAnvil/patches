@@ -1,0 +1,421 @@
+From f3ced4873a70085feb1a2e9991b0b731b38e4852 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 16:27:48 +0200
+Subject: [PATCH] fix(render): reproduce native classic cloud distance fade
+
+Java 26.3 keeps clouds visible across a separate 2048-block cloud range,
+which leaves distant clouds in Hive and CubeCraft views where the official
+Bedrock client has already faded them out.
+
+Reproduce Bedrock 1.26.51.1 Clouds.material vertex alpha:
+clamp(1 - max(distance / D - 0.9, 0), 0, 1). The official executable
+(SHA-256 537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7)
+and material (99cc015e2668a381f759a1aa3571b30926c52ac0724451a2938dbfdf62363818)
+establish per-vertex spherical distance and unchanged fragment RGBA.
+A hardware observation of native gameplay cloud draw 144714d90 confirms
+configured ten chunks produce camera range 176, margin distance 160,
+and final cloud distance 160. Do not subtract the native extra chunk
+again from Java's effective terrain range.
+
+Use dedicated Fancy pipelines, including all OIT stages, with existing
+geometry, colors, bindings and render state. Preserve the depth-bounds
+stage and avoid applying Java's fragment fade a second time. Activate
+through accepted Bedrock rendering context only, for dry ordinary
+Overworld air with Fancy clouds and at least five effective chunks.
+Keep weather, effects, boss fog, Fast clouds and unverified low-distance
+branches on the existing path. Cloud height and dimension semantics do
+not change without versioned evidence.
+
+Five targeted regressions verify scope and render-state preservation.
+The actual authored vertex shader matches an independent native fade
+reference for 20160 GPU vertices, including OIT depth bounds.
+---
+ .../features/render/MixinBedrockCloudFog.java | 22 ++++++++
+ .../render/MixinBedrockCloudPipelines.java    | 26 ++++++++++
+ .../render/MixinBedrockCloudRenderer.java     | 24 +++++++++
+ .../bedrock/render/light/BedrockCloudFog.java | 39 ++++++++++++++
+ .../render/light/BedrockCloudPipelines.java   | 51 +++++++++++++++++++
+ .../shaders/core/bedrock_clouds.fsh           | 20 ++++++++
+ .../shaders/core/bedrock_clouds.vsh           | 42 +++++++++++++++
+ .../viafabricplus-bedrock.mixins.json         |  3 ++
+ .../render/light/BedrockCloudFogTest.java     | 35 +++++++++++++
+ .../light/BedrockCloudPipelinesTest.java      | 39 ++++++++++++++
+ 10 files changed, 301 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCloudFog.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCloudPipelines.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCloudRenderer.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockCloudFog.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockCloudPipelines.java
+ create mode 100644 src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_clouds.fsh
+ create mode 100644 src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_clouds.vsh
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockCloudFogTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockCloudPipelinesTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCloudFog.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCloudFog.java
+new file mode 100644
+index 0000000..1b32029
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCloudFog.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
++import com.llamalad7.mixinextras.sugar.Local;
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockCloudFog;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.renderer.fog.environment.AtmosphericFogEnvironment;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++@Mixin(AtmosphericFogEnvironment.class)
++public abstract class MixinBedrockCloudFog {
++    @ModifyExpressionValue(method = "setupFog", at = @At(value = "INVOKE", target = "Ljava/lang/Math;min(FF)F", ordinal = 2))
++    private float nativeCloudDistance(final float javaDistance, @Local(argsOnly = true) final float terrainDistance) {
++        return BedrockCloudFog.active(Minecraft.getInstance()) ? terrainDistance : javaDistance;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCloudPipelines.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCloudPipelines.java
+new file mode 100644
+index 0000000..4ccc92b
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCloudPipelines.java
+@@ -0,0 +1,26 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.llamalad7.mixinextras.injector.ModifyReturnValue;
++import com.mojang.renderpearl.api.pipeline.RenderPipeline;
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockCloudPipelines;
++import net.minecraft.client.renderer.RenderPipelines;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++import java.util.ArrayList;
++import java.util.List;
++
++@Mixin(RenderPipelines.class)
++public abstract class MixinBedrockCloudPipelines {
++    @ModifyReturnValue(method = "requiredPipelines", at = @At("RETURN"))
++    private static List<RenderPipeline> includeNativeClouds(final List<RenderPipeline> pipelines) {
++        final var result = new ArrayList<>(pipelines);
++        result.addAll(BedrockCloudPipelines.PIPELINES);
++        return result;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCloudRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCloudRenderer.java
+new file mode 100644
+index 0000000..7a4e6d0
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCloudRenderer.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.mojang.renderpearl.api.pipeline.RenderPipeline;
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockCloudFog;
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockCloudPipelines;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.renderer.CloudRenderer;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.ModifyArg;
++
++@Mixin(CloudRenderer.class)
++public abstract class MixinBedrockCloudRenderer {
++    @ModifyArg(method = "render(Lcom/mojang/renderpearl/api/commands/RenderPass;Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;)V",
++        at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;getCompiledPipeline(Lcom/mojang/renderpearl/api/pipeline/RenderPipeline;)Lcom/mojang/renderpearl/api/pipeline/CompiledRenderPipeline;"))
++    private RenderPipeline nativeCloudPipeline(final RenderPipeline pipeline) {
++        return BedrockCloudPipelines.select(pipeline, BedrockCloudFog.active(Minecraft.getInstance()));
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockCloudFog.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockCloudFog.java
+new file mode 100644
+index 0000000..6710c51
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockCloudFog.java
+@@ -0,0 +1,39 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.light;
++
++import net.minecraft.client.CloudStatus;
++import net.minecraft.client.Minecraft;
++import net.minecraft.world.effect.MobEffects;
++import net.minecraft.world.entity.LivingEntity;
++import net.minecraft.world.level.material.FogType;
++import net.raphimc.viabedrock.protocol.data.enums.Dimension;
++import org.jetbrains.annotations.Nullable;
++
++/** Verified classic cloud fog scope for Bedrock 1.26.51.1. */
++public final class BedrockCloudFog {
++    private BedrockCloudFog() {
++    }
++
++    public static boolean active(final Minecraft minecraft) {
++        final Dimension dimension = BedrockLightmapExtractor.dimension(minecraft);
++        if (dimension == null) return false;
++        final var camera = minecraft.gameRenderer.mainCamera();
++        final boolean obscured = camera.entity() instanceof LivingEntity living
++            && (living.hasEffect(MobEffects.BLINDNESS) || living.hasEffect(MobEffects.DARKNESS));
++        return supported(dimension, minecraft.options.getCloudStatus(), camera.getFluidInCamera(),
++            minecraft.level.getRainLevel(1F), minecraft.level.getThunderLevel(1F), obscured,
++            minecraft.gui.hud.getBossOverlay().shouldCreateWorldFog(), minecraft.options.getEffectiveRenderDistance());
++    }
++
++    static boolean supported(final @Nullable Dimension dimension, final CloudStatus clouds, final FogType fluid,
++                             final float rain, final float thunder, final boolean obscured,
++                             final boolean bossFog, final int effectiveChunks) {
++        // Native world captures establish D = effective terrain blocks above the low-range margin branches.
++        return dimension == Dimension.OVERWORLD && clouds == CloudStatus.FANCY && fluid == FogType.NONE
++            && rain <= 0F && thunder <= 0F && !obscured && !bossFog && effectiveChunks >= 5;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockCloudPipelines.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockCloudPipelines.java
+new file mode 100644
+index 0000000..60edaa6
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockCloudPipelines.java
+@@ -0,0 +1,51 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.light;
++
++import com.mojang.renderpearl.api.pipeline.ColorTargetState;
++import com.mojang.renderpearl.api.pipeline.RenderPipeline;
++import com.mojang.renderpearl.api.vertex.VertexFormat;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Optional;
++import net.minecraft.client.renderer.RenderPipelines;
++import net.minecraft.resources.Identifier;
++
++public final class BedrockCloudPipelines {
++    private static final Map<RenderPipeline, RenderPipeline> VARIANTS = variants();
++    public static final List<RenderPipeline> PIPELINES = List.copyOf(VARIANTS.values());
++
++    private BedrockCloudPipelines() {
++    }
++
++    public static RenderPipeline select(final RenderPipeline pipeline, final boolean nativeContext) {
++        return nativeContext ? VARIANTS.getOrDefault(pipeline, pipeline) : pipeline;
++    }
++
++    private static Map<RenderPipeline, RenderPipeline> variants() {
++        final List<RenderPipeline> originals = List.of(RenderPipelines.CLOUDS,
++            RenderPipelines.OIT_CLOUDS.depthBoundsPipeline(), RenderPipelines.OIT_CLOUDS.transmittancePipeline(),
++            RenderPipelines.OIT_CLOUDS.accumulatePipeline());
++        final Map<RenderPipeline, RenderPipeline> variants = new LinkedHashMap<>();
++        for (final RenderPipeline original : originals) variants.put(original, copy(original));
++        return Map.copyOf(variants);
++    }
++
++    static RenderPipeline copy(final RenderPipeline original) {
++        final ColorTargetState[] colors = original.getColorTargetStates().toArray(ColorTargetState[]::new);
++        final RenderPipeline.Snippet snippet = new RenderPipeline.Snippet(original.getShaders(),
++            Optional.of(original.getShaderDefines()), Optional.of(original.getBindGroupLayouts()), colors, colors.length,
++            Optional.ofNullable(original.getDepthStencilState()), Optional.of(original.getPolygonMode()),
++            Optional.of(original.isCull()), original.getVertexFormatBindings().toArray(VertexFormat[]::new),
++            Optional.of(original.getPrimitiveTopology()), original.pushConstantSize());
++        return RenderPipeline.builder(snippet)
++            .withLocation(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "pipeline/clouds/" + original.getLocation().getPath()))
++            .withVertexShader(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "core/bedrock_clouds"))
++            .withFragmentShader(Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "core/bedrock_clouds"))
++            .build();
++    }
++}
+diff --git a/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_clouds.fsh b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_clouds.fsh
+new file mode 100644
+index 0000000..17a7698
+--- /dev/null
++++ b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_clouds.fsh
+@@ -0,0 +1,20 @@
++#version 330
++#extension GL_ARB_separate_shader_objects : require
++
++#include <minecraft:oit.glsl>
++layout(location = 1) in vec4 vertexColor;
++#ifndef OIT_ALPHA_ONLY
++layout(location = 0) out vec4 fragColor;
++#endif
++
++void main() {
++    #ifdef OIT_ALPHA_ONLY
++    executeAlphaOnlyPhase(gl_FragCoord.z, vertexColor.a);
++    #else
++        #ifdef OIT_ACCUMULATE
++        fragColor = sampleColorForAccumulation(vertexColor);
++        #else
++        fragColor = vertexColor;
++        #endif
++    #endif
++}
+diff --git a/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_clouds.vsh b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_clouds.vsh
+new file mode 100644
+index 0000000..d41b705
+--- /dev/null
++++ b/src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_clouds.vsh
+@@ -0,0 +1,42 @@
++#version 330
++#extension GL_ARB_separate_shader_objects : require
++
++#include <minecraft:fog.glsl>
++#include <minecraft:dynamictransforms.glsl>
++#include <minecraft:projection.glsl>
++
++layout(std140) uniform CloudInfo {
++    vec4 CloudColor;
++    vec3 CloudOffset;
++    vec3 CellSize;
++};
++uniform isamplerBuffer CloudFaces;
++layout(location = 0) out float vertexDistance;
++layout(location = 1) out vec4 vertexColor;
++
++vec3 corner(int index) {
++    return vec3((0xF03CC3 >> index) & 1, (0x6666F0 >> index) & 1, (0xC3F066 >> index) & 1);
++}
++
++float faceLight(int direction) {
++    if (direction == 0) return 0.7;
++    if (direction == 1) return 1.0;
++    return direction < 4 ? 0.8 : 0.9;
++}
++
++void main() {
++    int quad = (gl_VertexIndex / 4) * 3;
++    int flags = texelFetch(CloudFaces, quad + 2).r;
++    int direction = flags & 7;
++    int vertex = gl_VertexIndex % 4;
++    if ((flags & 16) != 0) vertex = 3 - vertex;
++    int cellX = (texelFetch(CloudFaces, quad).r << 1) | ((flags >> 7) & 1);
++    int cellZ = (texelFetch(CloudFaces, quad + 1).r << 1) | ((flags >> 6) & 1);
++    vec3 position = (corner(direction * 4 + vertex) + vec3(cellX, 0, cellZ)) * CellSize + CloudOffset;
++    gl_Position = ProjMat * ModelViewMat * vec4(position, 1.0);
++    vertexDistance = length(position);
++    vertexColor = CloudColor * vec4(vec3(faceLight((flags & 32) != 0 ? 1 : direction)), 1.0);
++    #ifndef OIT_DEPTH_BOUNDS
++    vertexColor.a *= clamp(1.0 - max(vertexDistance / FogCloudsEnd - 0.9, 0.0), 0.0, 1.0);
++    #endif
++}
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index 9058948..1503207 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -56,6 +56,9 @@
+     "features.render.MixinAbstractClientPlayer",
+     "features.render.MixinBedrockActorPipelines",
+     "features.render.MixinBedrockActorRenderType",
++    "features.render.MixinBedrockCloudFog",
++    "features.render.MixinBedrockCloudPipelines",
++    "features.render.MixinBedrockCloudRenderer",
+     "features.render.MixinBedrockNameTags",
+     "features.render.MixinBedrockNameTagMetadata",
+     "features.render.MixinBedrockNameTagRenderer",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockCloudFogTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockCloudFogTest.java
+new file mode 100644
+index 0000000..da49734
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockCloudFogTest.java
+@@ -0,0 +1,35 @@
++package com.viaversion.viafabricplus.bedrock.render.light;
++
++import net.minecraft.client.CloudStatus;
++import net.minecraft.world.level.material.FogType;
++import net.raphimc.viabedrock.protocol.data.enums.Dimension;
++import org.junit.jupiter.api.Test;
++
++import static com.viaversion.viafabricplus.bedrock.render.light.BedrockCloudFog.supported;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class BedrockCloudFogTest {
++    @Test
++    void restrictsNativeCloudFogToVerifiedOrdinaryAtmosphere() {
++        assertTrue(supported(Dimension.OVERWORLD, CloudStatus.FANCY, FogType.NONE, 0F, 0F, false, false, 10));
++        assertTrue(supported(Dimension.OVERWORLD, CloudStatus.FANCY, FogType.NONE, 0F, 0F, false, false, 5));
++        assertFalse(supported(Dimension.OVERWORLD, CloudStatus.FANCY, FogType.NONE, 0F, 0F, false, false, 4));
++        assertFalse(supported(null, CloudStatus.FANCY, FogType.NONE, 0F, 0F, false, false, 10));
++        for (final Dimension dimension : new Dimension[]{Dimension.NETHER, Dimension.END}) {
++            assertFalse(supported(dimension, CloudStatus.FANCY, FogType.NONE, 0F, 0F, false, false, 10));
++        }
++        for (final CloudStatus clouds : new CloudStatus[]{CloudStatus.FAST, CloudStatus.OFF}) {
++            assertFalse(supported(Dimension.OVERWORLD, clouds, FogType.NONE, 0F, 0F, false, false, 10));
++        }
++        for (final FogType fluid : new FogType[]{FogType.WATER, FogType.LAVA, FogType.POWDER_SNOW}) {
++            assertFalse(supported(Dimension.OVERWORLD, CloudStatus.FANCY, fluid, 0F, 0F, false, false, 10));
++        }
++        assertFalse(supported(Dimension.OVERWORLD, CloudStatus.FANCY, FogType.NONE, 0.1F, 0F, false, false, 10));
++        assertFalse(supported(Dimension.OVERWORLD, CloudStatus.FANCY, FogType.NONE, 0F, 0.1F, false, false, 10));
++        assertFalse(supported(Dimension.OVERWORLD, CloudStatus.FANCY, FogType.NONE, Float.NaN, 0F, false, false, 10));
++        assertFalse(supported(Dimension.OVERWORLD, CloudStatus.FANCY, FogType.NONE, 0F, 0F, true, false, 10));
++        assertFalse(supported(Dimension.OVERWORLD, CloudStatus.FANCY, FogType.NONE, 0F, 0F, false, true, 10));
++    }
++
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockCloudPipelinesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockCloudPipelinesTest.java
+new file mode 100644
+index 0000000..d02cd53
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/light/BedrockCloudPipelinesTest.java
+@@ -0,0 +1,39 @@
++package com.viaversion.viafabricplus.bedrock.render.light;
++
++import com.mojang.renderpearl.api.pipeline.RenderPipeline;
++import java.util.HashSet;
++import java.util.stream.Stream;
++import net.minecraft.client.renderer.RenderPipelines;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.MethodSource;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNotSame;
++import static org.junit.jupiter.api.Assertions.assertSame;
++
++class BedrockCloudPipelinesTest {
++    @ParameterizedTest
++    @MethodSource("cloudPipelines")
++    void preservesRenderStateAndLeavesUnsupportedContextUnchanged(final RenderPipeline original) {
++        final RenderPipeline nativePipeline = BedrockCloudPipelines.select(original, true);
++        assertNotSame(original, nativePipeline);
++        assertSame(original, BedrockCloudPipelines.select(original, false));
++        assertEquals(original.getShaderDefines(), nativePipeline.getShaderDefines());
++        // The public builder stores layouts as a set; shader bindings are resolved by uniform name.
++        assertEquals(new HashSet<>(original.getBindGroupLayouts()), new HashSet<>(nativePipeline.getBindGroupLayouts()));
++        assertEquals(original.getColorTargetStates(), nativePipeline.getColorTargetStates());
++        assertEquals(original.getDepthStencilState(), nativePipeline.getDepthStencilState());
++        assertEquals(original.getPolygonMode(), nativePipeline.getPolygonMode());
++        assertEquals(original.isCull(), nativePipeline.isCull());
++        assertEquals(original.getVertexFormatBindings(), nativePipeline.getVertexFormatBindings());
++        assertEquals(original.getPrimitiveTopology(), nativePipeline.getPrimitiveTopology());
++        assertEquals(original.pushConstantSize(), nativePipeline.pushConstantSize());
++        assertSame(RenderPipelines.FLAT_CLOUDS, BedrockCloudPipelines.select(RenderPipelines.FLAT_CLOUDS, true));
++        assertEquals(4, BedrockCloudPipelines.PIPELINES.size());
++    }
++
++    private static Stream<RenderPipeline> cloudPipelines() {
++        return Stream.of(RenderPipelines.CLOUDS, RenderPipelines.OIT_CLOUDS.depthBoundsPipeline(),
++            RenderPipelines.OIT_CLOUDS.transmittancePipeline(), RenderPipelines.OIT_CLOUDS.accumulatePipeline());
++    }
++}
+-- 
+2.55.0
