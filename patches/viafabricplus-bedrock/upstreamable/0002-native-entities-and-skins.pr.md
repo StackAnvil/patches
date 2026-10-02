@@ -76,3 +76,10 @@ Materials with `USE_MASK` or `Blending` in their defines now keep the verified a
 Native bridge `148ca7690` has a closed 22-entry define map. Caller `144b0d890` selects the baseline Actor shader for the galaxy's effective flags. Its `Change_Color` and `MaskedMultitexture` features remain Off. The installed `Actor.material.bin` SHA-256 is `8720b71a8e7b6c4d5e9c12b6a8293734919030559d1e3ca0ad452f532f3ae9e6`. Unmodified Lazurite 0.11 resolves `AlphaTest` at byte 2394534. The Fancy On SM65 fragment SHA-256 is `cb8cdc8e1f30077c97148ef36dad8b00c8491fbafb7b9d91c48b9a5b4da7e88d`. This shader samples one base texture, without masked overwrite. Its vertex shader applies the controller UV scale and offset. The saved galaxy texture is fully opaque, so its result does not depend on half-alpha equality. Native exports and assets remain private.
 
 Validation: semantic material tests cover inherited no-op defines, UV removal, culling, emission, the distinct color-mask effect, unknown effects and blending states. Fresh visual comparison remains pending.
+
+Explicit upper and lower UV faces now use the same model Y reflection as
+box UV faces. Exact Bedrock 1.26.51.1/protocol 2193 parser addresses and
+native normal tables are recorded in the commit body. Tests cover all six
+surface positions and normals, asymmetric vertical bounds, and one-sided
+zero-height planes beneath rotated, scaled roots. UV corner orientation
+remains unchanged.

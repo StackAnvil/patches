@@ -1,4 +1,4 @@
-From 25b7c95202d05bc4e9dc45bc972d9fed5c7baff9 Mon Sep 17 00:00:00 2001
+From f41a5f8bfd1e0352a0ef31dea85c412154bf03f2 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:07 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -210,6 +210,24 @@ and disassembly stay private.
 Semantic tests cover no-op define inheritance, culling, emission, UV
 removal, the distinct color-mask effect, unknown effects, and blending
 render states. No material identifier selects this compatibility behavior.
+
+Map explicit upper and lower UV faces through the same Y-coordinate
+reflection as box UV faces. Target Bedrock 1.26.51.1, protocol 2193,
+geometry parser 1460fdbf0 binds the explicit up key to native face 1 at
+146101c83 and down to face 0 at 146101d2b through face parser 14610e390.
+The target canonical normals at 14e7d0280 and integer steps at 14e7d6188
+assign face 1 positive Y and face 0 negative Y. Inverted Java model Y
+therefore requires the opposite Java face for both UV representations.
+The licensed executable SHA-256 is
+537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7.
+
+The recorded Hive logo uses one-sided zero-thickness upper/lower border
+planes beneath a rotated, scaled root. The previous explicit mapping
+reversed their normals and culled the intended visible upper plane.
+Preserve the existing UV corner orientation independently of this surface
+selection fix. Tests compare all six box/explicit surface positions and
+normals, upper/lower asymmetric bounds, and zero-height winding under
+parent rotation and both bone/actor scale.
 ---
  build.gradle.kts                              |   6 +
  .../friends/FriendWorldSkinProvider.java      |   8 +
@@ -241,13 +259,13 @@ render states. No material identifier selects this compatibility behavior.
  .../BedrockActorMaterialDefinitionsTest.java  | 147 +++++++++++
  .../render/BedrockActorMaterialsTest.java     |  48 ++++
  .../render/BedrockActorUvTransformTest.java   |  27 ++
- .../bedrock/render/BedrockCubeFacesTest.java  | 127 ++++++++++
+ .../bedrock/render/BedrockCubeFacesTest.java  | 182 ++++++++++++++
  .../render/BedrockEntityRendererTest.java     |  50 ++++
  .../bedrock/render/BedrockNameTagsTest.java   |  73 ++++++
  .../render/BedrockPlayerMaterialsTest.java    |  42 ++++
  .../bedrock/render/BedrockSkinQueueTest.java  |  83 ++++++
  .../render/CustomEntityRenderStoreTest.java   |  36 +++
- 36 files changed, 2260 insertions(+), 1 deletion(-)
+ 36 files changed, 2315 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractClientPlayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorPipelines.java
@@ -1275,7 +1293,7 @@ index 0000000..0311c92
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 new file mode 100644
-index 0000000..1f62280
+index 0000000..08fef85
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 @@ -0,0 +1,215 @@
@@ -1431,7 +1449,7 @@ index 0000000..1f62280
 +        final UVMap uv = cube.getUvMap();
 +        final Set<Direction> faces = EnumSet.noneOf(Direction.class);
 +        for (Direction direction : Direction.values()) {
-+            if (uv.getUvMap().containsKey(sourceFace(uv, direction))) {
++            if (uv.getUvMap().containsKey(sourceFace(direction))) {
 +                faces.add(direction);
 +            }
 +        }
@@ -1456,7 +1474,7 @@ index 0000000..1f62280
 +                        vertices[i] = opposite;
 +                    }
 +                }
-+                final Float[] face = uv.getUvMap().get(sourceFace(uv, direction));
++                final Float[] face = uv.getUvMap().get(sourceFace(direction));
 +                final boolean rotate = uv.getUvType() == UVType.BOX && (direction == Direction.DOWN || direction == Direction.UP);
 +                cube.polygons[index++] = new ModelPart.Polygon(vertices,
 +                    rotate ? face[2] : face[0], rotate ? face[3] : face[1],
@@ -1466,10 +1484,10 @@ index 0000000..1f62280
 +        }
 +    }
 +
-+    private static org.cube.converter.util.element.Direction sourceFace(final UVMap uv, final Direction direction) {
++    private static org.cube.converter.util.element.Direction sourceFace(final Direction direction) {
 +        final Direction source = switch (direction) {
-+            case DOWN -> uv.getUvType() == UVType.BOX ? Direction.UP : Direction.DOWN;
-+            case UP -> uv.getUvType() == UVType.BOX ? Direction.DOWN : Direction.UP;
++            case DOWN -> Direction.UP;
++            case UP -> Direction.DOWN;
 +            case WEST -> Direction.EAST;
 +            case EAST -> Direction.WEST;
 +            default -> direction;
@@ -2345,10 +2363,10 @@ index 0000000..e46a9de
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCubeFacesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCubeFacesTest.java
 new file mode 100644
-index 0000000..85fcb6c
+index 0000000..9648644
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCubeFacesTest.java
-@@ -0,0 +1,127 @@
+@@ -0,0 +1,182 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2378,7 +2396,7 @@ index 0000000..85fcb6c
 +final class BedrockCubeFacesTest {
 +
 +    @Test
-+    void equivalentLateralBoxAndExplicitUvsKeepTheSameVerticesAndTextureCoordinates() throws Exception {
++    void equivalentBoxAndExplicitFacesKeepTheSameSurfacesAndLateralTextureCoordinates() throws Exception {
 +        final JsonObject explicit = new JsonObject();
 +        final UVMap box = UVMap.fromBoxUV(new Position3V(5, 6, 7), new Float[] {2F, 3F}, false);
 +        box.getUvMap().forEach((direction, bounds) -> {
@@ -2389,12 +2407,20 @@ index 0000000..85fcb6c
 +        });
 +        final var boxed = cube(model(vector(2, 3)));
 +        final var perFace = cube(model(explicit));
-+        for (int index = 2; index < boxed.polygons.length; index++) {
++        for (int index = 0; index < boxed.polygons.length; index++) {
 +            final var expected = boxed.polygons[index];
 +            final var actual = perFace.polygons[index];
 +            assertEquals(expected.normal(), actual.normal());
 +            for (int vertex = 0; vertex < 4; vertex++) {
-+                assertEquals(expected.vertices()[vertex], actual.vertices()[vertex]);
++                final var expectedVertex = expected.vertices()[vertex];
++                final var actualVertex = actual.vertices()[vertex];
++                assertEquals(expectedVertex.x(), actualVertex.x());
++                assertEquals(expectedVertex.y(), actualVertex.y());
++                assertEquals(expectedVertex.z(), actualVertex.z());
++                if (index >= 2) {
++                    assertEquals(expectedVertex.u(), actualVertex.u());
++                    assertEquals(expectedVertex.v(), actualVertex.v());
++                }
 +            }
 +        }
 +    }
@@ -2415,6 +2441,53 @@ index 0000000..85fcb6c
 +            }
 +            assertEquals(2F / 64F, Arrays.stream(polygon.vertices()).map(ModelPart.Vertex::u).min(Float::compare).orElseThrow());
 +            assertEquals(9F / 64F, Arrays.stream(polygon.vertices()).map(ModelPart.Vertex::u).max(Float::compare).orElseThrow());
++        }
++    }
++
++    @Test
++    void explicitUpAndDownSelectNativeTopAndBottomSurfaces() throws Exception {
++        for (String direction : List.of("up", "down")) {
++            final JsonObject uv = new JsonObject();
++            final JsonObject face = new JsonObject();
++            face.add("uv", vector(2, 3));
++            face.add("uv_size", vector(-5, -7));
++            uv.add(direction, face);
++            final var polygon = cube(model(uv)).polygons[0];
++            final float expectedY = direction.equals("up") ? -9F : -3F;
++            assertEquals(direction.equals("up") ? -1F : 1F, polygon.normal().y());
++            for (var vertex : polygon.vertices()) {
++                assertEquals(expectedY, vertex.y());
++            }
++        }
++    }
++
++    @Test
++    void zeroThicknessHorizontalFacesRetainNativeWindingAfterParentRotationAndScale() throws Exception {
++        for (String direction : List.of("up", "down")) {
++            final var geometry = BedrockGeometryModel.fromJson("""
++                {"minecraft:geometry":[{"description":{"identifier":"geometry.plane","texture_width":64,"texture_height":64},
++                "bones":[{"name":"root","pivot":[4,17,5],"rotation":[-15,0,0]},
++                {"name":"border","parent":"root","pivot":[0,0,0],"cubes":[{"origin":[-8,3,-7],"size":[16,0,24],
++                "uv":{"%s":{"uv":[21,11],"uv_size":[-5,-6]}}}]}]}]}
++                """.formatted(direction)).getFirst();
++            final var model = BedrockGeometry.entityModel(geometry);
++            final ModelPart root = model.root().getChild("root");
++            root.xScale = root.yScale = root.zScale = 2F;
++            final PoseStack poses = new PoseStack();
++            BedrockEntityRenderer.applyActorTransform(poses, -90F, 1.7F);
++            final float sign = direction.equals("up") ? 1F : -1F;
++            final Vector3f expected = new Vector3f((float) -Math.sin(Math.toRadians(15)) * sign,
++                    (float) Math.cos(Math.toRadians(15)) * sign, 0);
++            model.root().visit(poses, (pose, path, index, cube) -> {
++                for (var polygon : cube.polygons) {
++                    final Vector3f a = vertex(polygon, 0, pose);
++                    final Vector3f b = vertex(polygon, 1, pose);
++                    final Vector3f c = vertex(polygon, 2, pose);
++                    final Vector3f winding = b.sub(a).cross(c.sub(a)).normalize();
++                    assertTrue(winding.dot(expected) > 0.999F);
++                    assertTrue(pose.normal().transform(new Vector3f(polygon.normal())).normalize().dot(expected) > 0.999F);
++                }
++            });
 +        }
 +    }
 +
