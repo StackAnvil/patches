@@ -1009,3 +1009,17 @@ Independent execution covers 53 clock update cases, including zero delta, actor 
 After a fresh native launch, an uninterrupted 40-second editor sample tracks real time closely. During a 125-second arm recording, 12,264 direct context samples advance at 0.99994 times real time without rewinds. Six video windows measure about 7.00 to 7.02 arm frames per second. Their drip-pixel rates agree with the sampled clock. Debugger pauses occur before these measurements. Temporary breakpoints are removed, the recording is stopped, and the unsaved arm preview is canceled.
 
 These results support the current seven-fps strip rate for this preview. The earlier slowdown remains unresolved. Long-running previews, native frame gates, other outfits, and world rendering still need verification. Full skin and Dressing Room parity remains incomplete. Account data, native instructions, recordings, and probes stay private.
+
+### Live skin palette and input verification
+
+The active nine-piece Alex recipe uses the zero-price Brawny base. Its native catalog entry requires redemption, while its metadata permits tint overrides. The native 1.26.51.1 client exposes its skin palette. Java previously hid that control because the color loader treated immediate equipment eligibility as asset availability. Use the shared catalog reference factory, as model assembly already does. Loading color metadata does not redeem or purchase an item.
+
+A private production probe returns no skin target before the fix and `SKIN` afterward. The saved recipe remains unchanged. The restarted client also resolves `SKIN` from the corrected loader.
+
+Real mouse input found another gap. Minecraft 26.3 defines the left mouse button as 1, while the manual wardrobe and palette handlers compared it with zero. Wardrobe tiles now use the named constant. Palette swatches use native button widgets with keyboard navigation, focus, tooltips, and narration. Their rows adapt to the GUI height and reserve space for color status above the footer. Remove the outdated hint that excludes animated details from saved characters.
+
+Live Java tests select a swatch with the mouse, move focus right, and select the next swatch with Enter. The selected index and focused widget both become 1. A right click leaves that selection unchanged. The last skin swatch selects index 32 and enables Apply without saving. At a 640 by 480 window, all 33 swatches fit in the 320 by 240 GUI. Their bounds and status space remain above the footer. Screenshots also verify the 1280 by 694 layout.
+
+Applying the first swatch through the real screen saves its ARGB color. An independent HTTPS readback verifies that only the active recipe's skin color changes; the other five profiles remain unchanged. A guarded restore rereads the profile hashes before writing, then verifies all six original recipes. The restored active recipe keeps its original RGB color. The locally saved appearance is also restored.
+
+The fixture suite passes 403 tests across 81 suites with no failures, errors, or skips. All 16 patches replay, and the dependency build and Prism bundle pass. Widget placement uses the Minecraft rectangle API's size-before-position order, verified through live bounds. This verifies the tested skin palette flow; other palettes, outfits, world rendering, and complete Dressing Room parity still need broader verification. Credentials, account recipes, captures, assets, and probes remain private.
