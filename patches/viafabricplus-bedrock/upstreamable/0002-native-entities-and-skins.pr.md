@@ -83,3 +83,7 @@ native normal tables are recorded in the commit body. Tests cover all six
 surface positions and normals, asymmetric vertical bounds, and one-sided
 zero-height planes beneath rotated, scaled roots. UV corner orientation
 remains unchanged.
+
+Apply native rider anchors before Java positions mounted actors. Bedrock 1.26.51.1 protocol 2193 source packets place two mounted player eyes at vehicle position plus vector metadata 56 rotated by negative vehicle yaw, within 1e-7 world units. The adapter converts the native vehicle/passenger origins and accounts for Java's passenger attachment once. Immutable actor UUID bindings preserve delayed link resolution and sparse metadata; missing or invalid vectors use the Java fallback. Dismount and removal clear the published anchor.
+
+Three rider tests pass in the owning patch and full stack. The full-stack focused run also passes the unchanged native cape oracle at all four atlas heights, all five face cases, renderer origin tests and multiline nametags: 17 tests, zero failures, errors or skips. This corrects the add-on's native connection path. Ordinary Java clients behind ViaProxy retain Java attachment placement when native metadata is not exposed to the client. A new aligned scene capture is still needed to verify the visual result.

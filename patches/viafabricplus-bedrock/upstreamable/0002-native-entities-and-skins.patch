@@ -1,4 +1,4 @@
-From f41a5f8bfd1e0352a0ef31dea85c412154bf03f2 Mon Sep 17 00:00:00 2001
+From 5c0f0d76033661ace0623e51a1331e419317901d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:07 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -228,6 +228,12 @@ Preserve the existing UV corner orientation independently of this surface
 selection fix. Tests compare all six box/explicit surface positions and
 normals, upper/lower asymmetric bounds, and zero-height winding under
 parent rotation and both bone/actor scale.
+
+Apply optional native rider anchors to the Java passenger attachment path. The licensed Bedrock 1.26.51.1 protocol 2193 Hive recording independently places two mounted player eyes at vehicle position plus vector metadata 56 rotated by negative vehicle yaw, within 1e-7 world units. The anchor includes the native player eye offset and ignores vehicle pitch. Preserve absent/invalid vector fallback and explicit zero anchors.
+
+Publish immutable passenger/vehicle UUID bindings, vectors and eye offsets on the connection thread after metadata or resolved mount changes. Match both current Java actors before applying the snapshot, and clear it on dismount or removal. Adapt native vehicle origins to Java origins and return the passenger attachment once, allowing Java positionRider to subtract it once. This places the body, nametag and attached surfaces at the same corrected world position. Numeric tests use independently captured coordinates, sparse metadata, delayed mounts, invalid vectors and stale identities.
+
+This path requires the add-on's native connection state. Java clients behind ViaProxy retain their ordinary attachment placement when native metadata is not exposed to the client; no approximate vehicle or server-specific offset is introduced.
 ---
  build.gradle.kts                              |   6 +
  .../friends/FriendWorldSkinProvider.java      |   8 +
@@ -236,6 +242,8 @@ parent rotation and both bone/actor scale.
  .../render/MixinBedrockActorPipelines.java    |  25 ++
  .../render/MixinBedrockActorRenderType.java   |  47 ++++
  .../features/render/MixinBedrockNameTags.java |  36 +++
+ .../render/MixinBedrockRidingMetadata.java    |  38 +++
+ .../render/MixinBedrockRidingPosition.java    |  27 ++
  .../features/render/MixinCustomEntity.java    |  59 +++++
  .../render/MixinEntityRenderDispatcher.java   |  93 +++++++
  .../render/MixinMinecraftSkinLifecycle.java   |  46 ++++
@@ -249,13 +257,14 @@ parent rotation and both bone/actor scale.
  .../bedrock/render/BedrockNameTags.java       |  48 ++++
  .../bedrock/render/BedrockPlayerRenderer.java |  53 ++++
  .../bedrock/render/BedrockPlayerSkins.java    | 236 ++++++++++++++++++
+ .../bedrock/render/BedrockRidingAnchors.java  |  71 ++++++
  .../bedrock/render/BedrockSkinQueue.java      |  40 +++
  .../render/CustomEntityRenderStore.java       |  54 ++++
  .../bedrock/visual/BedrockPlayerImages.java   |   2 +-
  .../shaders/core/bedrock_actor.fsh            |  46 ++++
  .../shaders/core/bedrock_actor.vsh            |  47 ++++
  .../viafabricplus-bedrock.accesswidener       |   3 +
- .../viafabricplus-bedrock.mixins.json         |   8 +
+ .../viafabricplus-bedrock.mixins.json         |  10 +
  .../BedrockActorMaterialDefinitionsTest.java  | 147 +++++++++++
  .../render/BedrockActorMaterialsTest.java     |  48 ++++
  .../render/BedrockActorUvTransformTest.java   |  27 ++
@@ -263,14 +272,17 @@ parent rotation and both bone/actor scale.
  .../render/BedrockEntityRendererTest.java     |  50 ++++
  .../bedrock/render/BedrockNameTagsTest.java   |  73 ++++++
  .../render/BedrockPlayerMaterialsTest.java    |  42 ++++
+ .../render/BedrockRidingAnchorsTest.java      | 130 ++++++++++
  .../bedrock/render/BedrockSkinQueueTest.java  |  83 ++++++
  .../render/CustomEntityRenderStoreTest.java   |  36 +++
- 36 files changed, 2315 insertions(+), 1 deletion(-)
+ 40 files changed, 2583 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractClientPlayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorPipelines.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRidingMetadata.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRidingPosition.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinCustomEntity.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftSkinLifecycle.java
@@ -284,6 +296,7 @@ parent rotation and both bone/actor scale.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTags.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockRidingAnchors.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinQueue.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStore.java
  create mode 100644 src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.fsh
@@ -295,6 +308,7 @@ parent rotation and both bone/actor scale.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRendererTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerMaterialsTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockRidingAnchorsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinQueueTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStoreTest.java
 
@@ -533,6 +547,83 @@ index 0000000..33dd08b
 +                original.call(poses, attachment, line.baseline(), line.text(), seeThrough, light, camera);
 +            }
 +        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRidingMetadata.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRidingMetadata.java
+new file mode 100644
+index 0000000..a9be26e
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRidingMetadata.java
+@@ -0,0 +1,38 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.viaversion.viafabricplus.bedrock.render.BedrockRidingAnchors;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
++import java.util.List;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import org.spongepowered.asm.mixin.Final;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(value = Entity.class, remap = false)
++public abstract class MixinBedrockRidingMetadata {
++    @Shadow @Final protected UserConnection user;
++
++    @Inject(method = "updateEntityData([Lcom/viaversion/viaversion/api/minecraft/entitydata/EntityData;Ljava/util/List;)V", at = @At("TAIL"))
++    private void publishRiderMetadata(final EntityData[] metadata, final List<EntityData> javaMetadata, final CallbackInfo ci) {
++        BedrockRidingAnchors.update(this.user, (Entity) (Object) this);
++    }
++
++    @Inject(method = "setMountEntityRuntimeId", at = @At("TAIL"))
++    private void publishMount(final long runtimeId, final CallbackInfo ci) {
++        BedrockRidingAnchors.update(this.user, (Entity) (Object) this);
++    }
++
++    @Inject(method = "remove", at = @At("HEAD"))
++    private void removeRider(final CallbackInfo ci) {
++        BedrockRidingAnchors.remove(this.user, (Entity) (Object) this);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRidingPosition.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRidingPosition.java
+new file mode 100644
+index 0000000..ee3a1d9
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRidingPosition.java
+@@ -0,0 +1,27 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.viaversion.viafabricplus.ViaFabricPlus;
++import com.viaversion.viafabricplus.bedrock.render.BedrockRidingAnchors;
++import net.minecraft.world.entity.Entity;
++import net.minecraft.world.phys.Vec3;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
++
++@Mixin(Entity.class)
++public abstract class MixinBedrockRidingPosition {
++    @Inject(method = "getPassengerRidingPosition", at = @At("HEAD"), cancellable = true)
++    private void nativePassengerAnchor(final Entity passenger, final CallbackInfoReturnable<Vec3> cir) {
++        final Entity vehicle = (Entity) (Object) this;
++        final Vec3 position = BedrockRidingAnchors.ridingPosition(ViaFabricPlus.api().userConnection(),
++                passenger.getId(), passenger.getUUID(), vehicle.getUUID(), vehicle.position(), vehicle.getYRot(),
++                passenger.getVehicleAttachmentPoint(vehicle));
++        if (position != null) cir.setReturnValue(position);
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinCustomEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinCustomEntity.java
@@ -1867,6 +1958,83 @@ index 0000000..cf63d31
 +    }
 +
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockRidingAnchors.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockRidingAnchors.java
+new file mode 100644
+index 0000000..ad046ca
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockRidingAnchors.java
+@@ -0,0 +1,71 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viaversion.api.connection.StorableObject;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import java.util.Map;
++import java.util.UUID;
++import java.util.concurrent.ConcurrentHashMap;
++import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++
++/** Immutable native passenger anchors published by the connection thread. */
++public final class BedrockRidingAnchors implements StorableObject {
++    private final Map<Integer, Anchor> anchors = new ConcurrentHashMap<>();
++
++    private BedrockRidingAnchors() {}
++
++    public static void update(final UserConnection connection, final Entity passenger) {
++        BedrockRidingAnchors store = connection.get(BedrockRidingAnchors.class);
++        final EntityTracker tracker = connection.get(EntityTracker.class);
++        final Entity vehicle = tracker == null ? null : tracker.getEntityByRid(passenger.mountEntityRuntimeId());
++        final Position3f seat = passenger.riderSeatPosition().orElse(null);
++        if (vehicle == null || seat == null) {
++            remove(connection, passenger);
++            return;
++        }
++        if (store == null) {
++            store = new BedrockRidingAnchors();
++            connection.put(store);
++        }
++        store.anchors.put(passenger.javaId(), new Anchor(passenger.javaUuid(), vehicle.javaUuid(),
++                new Vec3(seat.x(), seat.y(), seat.z()), passenger.eyeOffset(), vehicle.eyeOffset()));
++    }
++
++    public static void remove(final UserConnection connection, final Entity passenger) {
++        final BedrockRidingAnchors store = connection.get(BedrockRidingAnchors.class);
++        if (store != null) store.anchors.computeIfPresent(passenger.javaId(),
++                (_, anchor) -> anchor.passenger().equals(passenger.javaUuid()) ? null : anchor);
++    }
++
++    /** Returns the Java vehicle attachment point; positionRider subtracts the passenger attachment. */
++    public static Vec3 ridingPosition(final UserConnection connection, final int passengerId,
++                                     final UUID passengerUuid, final UUID vehicleUuid,
++                                     final Vec3 vehiclePosition, final float vehicleYaw,
++                                     final Vec3 passengerAttachment) {
++        if (connection == null) return null;
++        final BedrockRidingAnchors store = connection.get(BedrockRidingAnchors.class);
++        final Anchor anchor = store == null ? null : store.anchors.get(passengerId);
++        if (anchor == null || !anchor.passenger().equals(passengerUuid) || !anchor.vehicle().equals(vehicleUuid))
++            return null;
++        return anchor.position(vehiclePosition, vehicleYaw, passengerAttachment);
++    }
++
++    private record Anchor(UUID passenger, UUID vehicle, Vec3 seat, float passengerEyeOffset, float vehicleEyeOffset) {
++        Vec3 position(final Vec3 vehiclePosition, final float vehicleYaw, final Vec3 passengerAttachment) {
++            final double radians = Math.toRadians(-vehicleYaw);
++            final double cos = Math.cos(radians);
++            final double sin = Math.sin(radians);
++            final Vec3 offset = new Vec3(this.seat.x * cos + this.seat.z * sin, this.seat.y,
++                    this.seat.z * cos - this.seat.x * sin);
++            return vehiclePosition.add(offset).add(0, this.vehicleEyeOffset - this.passengerEyeOffset, 0)
++                    .add(passengerAttachment);
++        }
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinQueue.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinQueue.java
 new file mode 100644
 index 0000000..fc3f57c
@@ -2103,10 +2271,10 @@ index 35145bc..91ad0d7 100644
 +accessible field net/minecraft/client/renderer/RenderPipelines ENTITY_SNIPPET Lcom/mojang/renderpearl/api/pipeline/RenderPipeline$Snippet;
 +accessible method net/minecraft/client/renderer/rendertype/RenderType create (Ljava/lang/String;Lnet/minecraft/client/renderer/rendertype/RenderSetup;)Lnet/minecraft/client/renderer/rendertype/RenderType;
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 17da109..7ea49db 100644
+index 17da109..0cea790 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -45,6 +45,14 @@
+@@ -45,6 +45,16 @@
      "features.misc.MixinClientSuggestionProvider",
      "features.misc.MixinInventoryScreen",
      "features.misc.MixinMinecraft",
@@ -2115,6 +2283,8 @@ index 17da109..7ea49db 100644
 +    "features.render.MixinBedrockActorRenderType",
 +    "features.render.MixinBedrockNameTags",
 +    "features.render.MixinCustomEntity",
++    "features.render.MixinBedrockRidingMetadata",
++    "features.render.MixinBedrockRidingPosition",
 +    "features.render.MixinEntityRenderDispatcher",
 +    "features.render.MixinMinecraftSkinLifecycle",
 +    "features.render.MixinPlayerSkinWidget",
@@ -2730,6 +2900,142 @@ index 0000000..195df27
 +        }
 +        assertSame(BedrockActorRenderTypes.selectPipeline(false, true, false, false),
 +            BedrockActorRenderTypes.selectPipeline(false, true, false, true));
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockRidingAnchorsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockRidingAnchorsTest.java
+new file mode 100644
+index 0000000..fc3e87d
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockRidingAnchorsTest.java
+@@ -0,0 +1,130 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
++import java.lang.reflect.Proxy;
++import java.util.HashMap;
++import java.util.Map;
++import java.util.UUID;
++import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++final class BedrockRidingAnchorsTest {
++    @Test
++    void matchesNativeEyeAnchorsAndCancelsJavaPassengerAttachmentOnce() {
++        final Fixture fixture = new Fixture();
++        fixture.mount();
++        fixture.seat(new Position3f(0F, 1.72F, -0.1F));
++        final Vec3 attachment = new Vec3(0.2, 0.6, -0.3);
++        // Independently recorded source actor and passenger coordinates, with different vehicle yaw.
++        final double[][] pairs = {
++            {-3.9279013, 40.00001, 5.882186, 179.22815, -3.9265542, 41.72001, 5.982177},
++            {-5.3660965, 40.00001, 5.1736393, -145.44173, -5.422821, 41.72001, 5.2559943}
++        };
++        for (double[] pair : pairs) {
++            final Vec3 sourceEye = new Vec3(pair[4], pair[5], pair[6]);
++            final Vec3 attachmentPoint = fixture.position(new Vec3(pair[0], pair[1], pair[2]), (float) pair[3], attachment);
++            final Vec3 feet = attachmentPoint.subtract(attachment);
++            assertPosition(sourceEye.add(0, -fixture.passenger.eyeOffset(), 0), feet, 0.000001);
++        }
++    }
++
++    @Test
++    void waitsForResolvedMountAndKeepsSparseSeatUpdatesImmutable() {
++        final Fixture fixture = new Fixture();
++        fixture.seat(new Position3f(2F, 3F, 4F));
++        assertNull(fixture.position());
++        fixture.mount();
++        assertPosition(new Vec3(2, 3 - fixture.passenger.eyeOffset(), 4), fixture.position(), 0.000001);
++        fixture.passenger.entityData().put(ActorDataIds.RESERVED_056,
++                new EntityData(56, EntityDataTypesBedrock.POSITION_3F, new Position3f(5F, 6F, 7F)));
++        // Network state changes do not mutate an already-published render snapshot.
++        assertPosition(new Vec3(2, 3 - fixture.passenger.eyeOffset(), 4), fixture.position(), 0.000001);
++        BedrockRidingAnchors.update(fixture.user, fixture.passenger);
++        assertPosition(new Vec3(5, 6 - fixture.passenger.eyeOffset(), 7), fixture.position(), 0.000001);
++        BedrockRidingAnchors.update(fixture.user, fixture.passenger);
++        assertPosition(new Vec3(5, 6 - fixture.passenger.eyeOffset(), 7), fixture.position(), 0.000001);
++    }
++
++    @Test
++    void fallsBackForAbsentInvalidOrStaleAnchorsAndClearsDismounts() {
++        final Fixture fixture = new Fixture();
++        fixture.mount();
++        assertNull(fixture.position());
++        fixture.seat(Position3f.ZERO);
++        assertPosition(new Vec3(0, -fixture.passenger.eyeOffset(), 0), fixture.position(), 0.000001);
++        assertNull(BedrockRidingAnchors.ridingPosition(fixture.user, fixture.passenger.javaId(),
++                UUID.randomUUID(), fixture.vehicle.javaUuid(), Vec3.ZERO, 0, Vec3.ZERO));
++        assertNull(BedrockRidingAnchors.ridingPosition(fixture.user, fixture.passenger.javaId(),
++                fixture.passenger.javaUuid(), UUID.randomUUID(), Vec3.ZERO, 0, Vec3.ZERO));
++        assertNull(BedrockRidingAnchors.ridingPosition(null, fixture.passenger.javaId(),
++                fixture.passenger.javaUuid(), fixture.vehicle.javaUuid(), Vec3.ZERO, 0, Vec3.ZERO));
++        fixture.seat(new Position3f(0, Float.POSITIVE_INFINITY, 0));
++        assertNull(fixture.position());
++        fixture.seat(Position3f.ZERO);
++        fixture.passenger.setMountEntityRuntimeId(-1);
++        BedrockRidingAnchors.update(fixture.user, fixture.passenger);
++        assertNull(fixture.position());
++        fixture.mount();
++        BedrockRidingAnchors.remove(fixture.user, fixture.passenger);
++        assertNull(fixture.position());
++    }
++
++    private static void assertPosition(final Vec3 expected, final Vec3 actual, final double tolerance) {
++        assertEquals(expected.x, actual.x, tolerance);
++        assertEquals(expected.y, actual.y, tolerance);
++        assertEquals(expected.z, actual.z, tolerance);
++    }
++
++    private static final class Fixture {
++        final Map<Class<?>, Object> stores = new HashMap<>();
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (_, method, args) -> switch (method.getName()) {
++                    case "get" -> this.stores.get(args[0]);
++                    case "put" -> this.stores.put(args[0].getClass(), args[0]);
++                    default -> null;
++                });
++        final EntityTracker tracker = new EntityTracker(this.user);
++        final Entity vehicle = new Entity(this.user, 1, 1, "minecraft:pig", 10, UUID.randomUUID(), EntityTypes26_3.PIG);
++        final Entity passenger = new Entity(this.user, 2, 2, "minecraft:player", 20, UUID.randomUUID(), EntityTypes26_3.PLAYER) {
++            @Override public float eyeOffset() { return 1.62F; }
++        };
++
++        Fixture() {
++            this.stores.put(EntityTracker.class, this.tracker);
++            this.tracker.addEntity(this.vehicle, false);
++            this.tracker.addEntity(this.passenger, false);
++        }
++
++        void mount() {
++            this.passenger.setMountEntityRuntimeId(this.vehicle.runtimeId());
++            BedrockRidingAnchors.update(this.user, this.passenger);
++        }
++
++        void seat(final Position3f position) {
++            this.passenger.entityData().put(ActorDataIds.RESERVED_056,
++                    new EntityData(56, EntityDataTypesBedrock.POSITION_3F, position));
++            BedrockRidingAnchors.update(this.user, this.passenger);
++        }
++
++        Vec3 position() { return this.position(Vec3.ZERO, 0F, Vec3.ZERO); }
++        Vec3 position(final Vec3 vehiclePosition, final float yaw, final Vec3 attachment) {
++            return BedrockRidingAnchors.ridingPosition(this.user, this.passenger.javaId(),
++                    this.passenger.javaUuid(), this.vehicle.javaUuid(), vehiclePosition, yaw, attachment);
++        }
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinQueueTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinQueueTest.java
