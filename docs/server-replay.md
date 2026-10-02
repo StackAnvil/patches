@@ -74,6 +74,8 @@ launcher and game in the same namespace. Use a fresh private Wine prefix so it
 cannot reuse a wineserver from the host. Verify the actual game and wineserver
 namespace before Join. Native replay always stops at the main menu for manual
 connection; inspect the local address and port before connecting.
+Native runs allow five minutes for connection. The requested scene duration
+starts when the recorder creates its packet journal.
 
 The bundled launcher fetches a package license at each start. A restricted TLS
 bridge can provide its verified Microsoft licensing endpoints while game traffic

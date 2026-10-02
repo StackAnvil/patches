@@ -340,11 +340,18 @@ async function main(): Promise<void> {
       : await launchJava(directory, bind, client, recorder, assetAccount ? resolve(assetAccount) : undefined);
     gamePid = game.pid;
     console.log(`Private ${mode} session: ${directory}`);
-    const until = Date.now() + seconds * 1000;
+    // Give verified manual setup its own bound without shortening the recorded scene.
+    let waitingForNativeConnection = client === "native";
+    let until = Date.now() + (waitingForNativeConnection ? 300_000 : seconds * 1000);
     let accepted = false;
     let packReadyAt: number | undefined;
     let lastPackClick = 0;
     while (!stopped && Date.now() < until && alive(gamePid) && (!child || alive(child.pid))) {
+      if (waitingForNativeConnection && existsSync(join(directory, "packets.sbr"))) {
+        waitingForNativeConnection = false;
+        until = Date.now() + seconds * 1000;
+        console.log(`Native connection observed; capturing the full ${seconds}-second scene.`);
+      }
       const log = await logText(game.log);
       if (client === "native" && /Native connection failed:|Native capture failed:|StackAnvil native capture connection closed/.test(await logText(proxyLog))) break;
       if (/Mixin transformation .* failed|Client disconnected with reason:|handlerAdded\(\) has thrown|(?:Unreported|Reported) exception thrown!|A fatal error has been detected by the Java Runtime Environment/.test(log)) break;
