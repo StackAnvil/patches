@@ -655,7 +655,9 @@ The captured target account uses both six-digit RGB and eight-digit ARGB colors.
 
 A muted native 1.26.51 capture opens the equipped eye picker without a saved tint group. The native preview is missing, so Equip stays disabled and the native UI sends no color write. A separate live HTTPS test uses the production request builder and captured native catalog. The service accepts the first iris group and returns its four channels exactly. The test preserves the other profiles, then restores all six original recipes with exact readback.
 
-This verifies the production request shape and service acceptance. It does not verify the full asynchronous save path, native UI save, or visible rendering. Credentials, account snapshots, flows, screenshots, and the live test harness remain private.
+This verifies the production request shape and service acceptance. The full asynchronous Java save path remains unverified. Credentials, account snapshots, flows, screenshots, and the live test harness remain private.
+
+A later native capture restarts with populated assets and no saved eye tint group. The character preview appears, and the visible iris picker previews Light Blue. Equip applies the selection locally. The client sends its appearance PUT during shutdown, then service readback contains `['#ff86baea', '#0', '#0', '#0']` for Standard Eyes. Native serialization also updates the recipe version, supplies `cs_arm`, reorders pieces, and replaces an unresolved piece. The captured request matches service readback. All other profiles remain unchanged, and the test restores all six original recipes exactly. This establishes native first-color persistence and its ARGB format.
 
 After integration with the lighting patch, all 306 fixture-enabled add-on tests pass with no failures, errors, or skips. The two new tests cover palette matching across native color formats and rejection of invalid or unmatched colors. Fresh standalone package acquisition, extraction, and cache reuse also pass.
 
@@ -667,7 +669,7 @@ The native Store catalog puts `requiresRedeem` at item level. Its `flags` field 
 
 The wardrobe now offers Get for zero-price claims and a price confirmation for paid offers. Before purchase, refresh catalog ownership and published metadata. Reject changed prices, product IDs, content types, and pack identities. Submit one `/transaction/virtual` request with the confirmed Minecoin amount. Poll only catalog and receipt reads until both ownership and the specific pack key arrive. Do not automatically equip after acquisition.
 
-A muted Bedrock 1.26.51.1 native capture uses an isolated profile with an empty persona cache. Its first inventory supplies 25 keys with one distinct decoded value. Native Get for Secret Handshake adds a new entitlement and key, then exposes Equip. The capture sends no appearance PUT. Separate `/transaction/redeem/xbox` calls synchronize Microsoft Store DLC. That flow remains unimplemented.
+A muted Bedrock 1.26.51.1 native capture uses an isolated profile with an empty persona cache. Its first inventory supplies 25 keys with one distinct decoded value. Native Get for Secret Handshake adds a new entitlement and key, then exposes Equip. The capture sends no appearance PUT. Separate `/transaction/redeem/xbox` calls synchronize Microsoft Store DLC. Its implementation follows below.
 
 A live zero-cost Shadow Boxing claim uses the production request builder and correlation-only telemetry. The service accepts it and returns an opaque string transaction ID. Production validates the response, reads catalog ownership and the matching receipt key, and decrypts the six-file pack and parses its 3.13-second animation. All saved appearances remain unchanged. These two verification claims permanently add free entitlements. No Minecoins are spent.
 
@@ -675,4 +677,16 @@ Full asynchronous screen acquisition and paid transactions remain unverified. Th
 
 All 311 fixture-enabled tests pass with no failures, errors, or skips. Five new tests cover confirmed prices, stale or invalid purchase metadata, product and pack identity, response validation, and recipe mutation eligibility. Fresh licensed-package extraction and cache reuse also pass. The full dependency build verifies the pinned ViaFabricPlus Jenkins artifacts, and the Prism bundle passes after replaying all 16 add-on patches.
 
-A real account probe also passes the asynchronous already-owned acquisition path and loads the claimed emote through the production account asset loader. This path sends no purchase request. The screen's transaction path still needs a live UI test. A separate Xbox redemption probe returns HTTP 401 with the account manager's general Xbox Live token. The correct redemption token audience and context remain unresolved.
+A real account probe also passes the asynchronous already-owned acquisition path and loads the claimed emote through the production account asset loader. This path sends no purchase request. The screen's transaction path still needs a live UI test. A separate Xbox redemption probe returns HTTP 401 with the account manager's general Xbox Live token. The PlayFab-scoped token resolves this rejection, as verified below.
+
+## Microsoft Store redemption authentication and refresh
+
+Character Creator and owned classic packs now synchronize purchases before refreshing their catalogs. Use the selected account's XUID and PlayFab-scoped Xbox token through MinecraftAuth. The native request nests them under `Redemption.MarketplaceData.userId` and `xboxAuthentication.XboxToken`. Production requires no local native installation or captured credentials.
+
+Microsoft's [Store redemption reference](https://learn.microsoft.com/en-us/rest/api/playfab/economy/inventory/redeem-microsoft-store-inventory-items?view=playfab-rest) requires the PlayFab token audience. [MinecraftAuth's Bedrock manager](https://github.com/RaphiMC/MinecraftAuth/blob/main/src/main/java/net/raphimc/minecraftauth/bedrock/BedrockAuthManager.java) provides a dedicated holder for it. The general Xbox Live token receives HTTP 401 from the native Minecraft redemption endpoint. The PlayFab token receives HTTP 200 with correlation-only telemetry.
+
+Parse successful and failed offer arrays and opaque transaction IDs. Existing synchronized purchases can succeed without a new transaction ID. Preserve partial results and refresh the current receipt before loading ownership. Screens continue loading their catalogs if synchronization fails. Retain existing rows and recipes during refresh, disable dependent mutations, and reject stale account or screen results.
+
+A live asynchronous production probe synchronizes ten offers with no failures and no new transactions. It preserves every saved appearance and existing receipt key. Subsequent production catalog loads return two owned classic packs and the persona emotes, including the earlier acquired Shadow Boxing item. Interactive screen behavior and paid acquisition remain unverified.
+
+All 316 fixture-enabled add-on tests pass with no failures, errors, or skips. Five new cases cover the redemption payload, invalid credentials, partial results, malformed results, and a private native request/response fixture. Fresh licensed-package extraction and cache reuse also pass. Captures, credentials, receipts, account snapshots, and probes stay private.

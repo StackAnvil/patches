@@ -1,4 +1,4 @@
-From de59dc7f81b5446b8056e94a72ab3c3cbde8827f Mon Sep 17 00:00:00 2001
+From 13cebfd540e7fcb7a0cb32a167de21066a073820 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -827,6 +827,26 @@ pack. Transaction IDs are opaque strings. All saved appearances remain
 unchanged. Paid transactions, full asynchronous UI acquisition, Xbox Store
 redemption, and accounts without receipt keys remain unverified. Captures,
 credentials, receipts, assets and probe code stay private.
+
+Synchronize Microsoft Store purchases through transaction/redeem/xbox
+before refreshing persona and owned classic catalogs. Use the selected
+account's PlayFab-scoped Xbox XSTS token and XUID. The general Xbox Live
+token receives HTTP 401; the PlayFab audience is documented by Microsoft's
+Store redemption API and accepted by the native Minecraft endpoint.
+Validate successful, failed and transaction lists, preserve partial results,
+and read the fresh inventory receipt after synchronization. Catalog loading
+continues on synchronization failure. Retain visible recipes and pack rows;
+disable dependent writes during refresh and discard results after account
+or screen changes.
+
+Native Bedrock 1.26.51.1 captures establish MarketplaceData.userId and
+xboxAuthentication.XboxToken in the Redemption request. A live production
+asynchronous probe synchronizes ten offers with zero failures and zero new
+transactions, preserves every appearance and existing receipt key, and
+reloads two owned classic packs and the persona catalog. No installed native
+client or captured credential is required by production. Visible screen
+verification, paid acquisition and receipt-less accounts remain separate
+work. Raw captures, tokens and probes stay private.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   54 +
@@ -859,7 +879,7 @@ credentials, receipts, assets and probe code stay private.
  .../appearance/BedrockItemAnimation.java      |  138 +
  .../bedrock/appearance/BedrockLimbSide.java   |   67 +
  .../appearance/BedrockMarketplaceAssets.java  |  311 +
- .../BedrockMarketplaceTransactions.java       |  135 +
+ .../BedrockMarketplaceTransactions.java       |  214 +
  .../bedrock/appearance/BedrockMolang.java     |  399 +
  .../bedrock/appearance/BedrockMolangMath.java |  235 +
  .../appearance/BedrockMolangParser.java       |  193 +
@@ -915,15 +935,15 @@ credentials, receipts, assets and probe code stay private.
  .../render/BedrockPlayerAnimationState.java   |   16 +
  .../bedrock/render/BedrockPlayerModel.java    |   43 +
  .../bedrock/render/BedrockPlayerSkins.java    |  395 +-
- .../screen/BedrockCharacterSlotsScreen.java   | 1300 ++++
+ .../screen/BedrockCharacterSlotsScreen.java   | 1324 ++++
  .../screen/BedrockClassicSkinPackScreen.java  |    2 +-
  .../screen/BedrockDressingRoomScreen.java     |   49 +-
  .../screen/BedrockEmotePreviewScreen.java     |  163 +
  .../screen/BedrockEmoteWheelScreen.java       |  124 +
- .../screen/BedrockOwnedSkinPacksScreen.java   |  266 +
+ .../screen/BedrockOwnedSkinPacksScreen.java   |  292 +
  .../bedrock/settings/BedrockSettings.java     |    6 +
  .../character-presets.json                    |  632 ++
- .../viafabricplus-bedrock/lang/en_us.json     |  100 +-
+ .../viafabricplus-bedrock/lang/en_us.json     |  103 +-
  .../licenses/brarchive-extractor.txt          |   21 +
  .../licenses/vgmstream.txt                    |   23 +
  .../persona-package.json                      |    7 +
@@ -944,7 +964,7 @@ credentials, receipts, assets and probe code stay private.
  .../appearance/BedrockItemAnimationTest.java  |  297 +
  .../appearance/BedrockLimbSelectionTest.java  |  182 +
  .../appearance/BedrockLimbSideTest.java       |   89 +
- .../BedrockMarketplaceTransactionsTest.java   |  114 +
+ .../BedrockMarketplaceTransactionsTest.java   |  189 +
  .../bedrock/appearance/BedrockMolangTest.java |  116 +
  .../appearance/BedrockOwnedSkinPacksTest.java |  181 +
  .../appearance/BedrockParticleAgingTest.java  |  118 +
@@ -972,7 +992,7 @@ credentials, receipts, assets and probe code stay private.
  .../render/BedrockModelLocatorsTest.java      |  112 +
  .../render/BedrockPlayerActorStateTest.java   |  124 +
  .../render/BedrockPlayerModelTest.java        |  100 +
- 144 files changed, 34164 insertions(+), 90 deletions(-)
+ 144 files changed, 34371 insertions(+), 90 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -15543,10 +15563,10 @@ index 0000000..2d4b898
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMarketplaceTransactions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMarketplaceTransactions.java
 new file mode 100644
-index 0000000..f056d13
+index 0000000..e6b38ce
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMarketplaceTransactions.java
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,214 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -15554,6 +15574,7 @@ index 0000000..f056d13
 + */
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
++import com.google.gson.JsonArray;
 +import com.google.gson.JsonObject;
 +import com.google.gson.JsonParser;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockCharacterProfiles.Category;
@@ -15565,18 +15586,95 @@ index 0000000..f056d13
 +import java.net.URI;
 +import java.net.http.HttpRequest;
 +import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
 +import java.util.List;
 +import java.util.UUID;
 +import java.util.concurrent.CompletableFuture;
 +import java.util.concurrent.CompletionException;
 +import java.util.concurrent.TimeUnit;
 +
-+/** Acquires persona offers through the native Minecoin transaction flow. */
++/** Acquires persona offers and synchronizes Microsoft Store purchases through native transactions. */
 +public final class BedrockMarketplaceTransactions {
 +    private static final URI VIRTUAL = URI.create(
 +            "https://entitlements.mktpl.minecraft-services.net/api/v1.0/transaction/virtual");
 +
++    private static final URI XBOX_REDEMPTION = URI.create(
++            "https://entitlements.mktpl.minecraft-services.net/api/v1.0/transaction/redeem/xbox");
++
 +    private BedrockMarketplaceTransactions() {}
++
++    public static CompletableFuture<RedemptionResult> redeemXbox(final BedrockAuthManager account) {
++        return CompletableFuture.supplyAsync(() -> {
++            try {
++                final JsonObject body = redemptionRequest(account.getXboxUserProfile().getUpToDate().getId(),
++                        account.getPlayFabXstsToken().getUpToDate().getAuthorizationHeader(), UUID.randomUUID());
++                final RedemptionResult result = parseRedemption(transaction(account, XBOX_REDEMPTION, body));
++                // Refresh the receipt before callers reload persona or classic catalog ownership.
++                BedrockMarketplaceAssets.accountKeys(account);
++                return result;
++            } catch (Exception e) {
++                throw new CompletionException(e);
++            }
++        });
++    }
++
++    private static JsonObject transaction(final BedrockAuthManager account, final URI endpoint, final JsonObject body)
++            throws Exception {
++        return JsonParser.parseString(new String(BedrockMarketplaceAssets.request(HttpRequest.newBuilder(endpoint)
++                .header("Authorization", account.getMinecraftSession().getUpToDate().getAuthorizationHeader())
++                .header("Accept", "application/json")
++                .header("Content-Type", "application/json")
++                .POST(HttpRequest.BodyPublishers.ofString(body.toString())), 2 * 1024 * 1024),
++                StandardCharsets.UTF_8)).getAsJsonObject();
++    }
++
++    static JsonObject redemptionRequest(final String userId, final String xboxToken, final UUID correlation)
++            throws IOException {
++        try {
++            if (userId == null || !userId.matches("[0-9]{1,20}") || Long.parseUnsignedLong(userId) == 0
++                    || xboxToken == null || !xboxToken.matches("XBL3\\.0 x=[^;\\r\\n]+;[^\\r\\n]+"))
++                throw new IOException("The account returned invalid Xbox redemption credentials");
++            final JsonObject authentication = new JsonObject();
++            authentication.addProperty("XboxToken", xboxToken);
++            final JsonObject marketplace = new JsonObject();
++            marketplace.addProperty("userId", userId);
++            marketplace.add("xboxAuthentication", authentication);
++            final JsonObject redemption = new JsonObject();
++            redemption.add("MarketplaceData", marketplace);
++            final JsonObject tags = new JsonObject();
++            tags.addProperty("CorrelationId", correlation.toString());
++            final JsonObject request = new JsonObject();
++            request.add("CustomTags", tags);
++            request.add("Redemption", redemption);
++            return request;
++        } catch (RuntimeException e) {
++            throw new IOException("The account returned invalid Xbox redemption credentials", e);
++        }
++    }
++
++    static RedemptionResult parseRedemption(final JsonObject response) throws IOException {
++        try {
++            final JsonObject result = response.getAsJsonObject("result");
++            final JsonArray succeeded = result.getAsJsonArray("succeeded");
++            final JsonArray failed = result.getAsJsonArray("failed");
++            if (succeeded == null || failed == null) throw new IOException("The Marketplace returned an invalid redemption result");
++            for (final var value : succeeded) {
++                if (!value.isJsonObject()) throw new IOException("The Marketplace returned an invalid redeemed offer");
++            }
++            for (final var value : failed) {
++                if (!value.isJsonObject()) throw new IOException("The Marketplace returned an invalid failed offer");
++            }
++            return new RedemptionResult(succeeded.size(), failed.size(), transactionIds(result.getAsJsonArray("transactionIds")));
++        } catch (RuntimeException e) {
++            throw new IOException("The Marketplace returned an invalid redemption result", e);
++        }
++    }
++
++    public record RedemptionResult(int succeeded, int failed, List<String> transactionIds) {
++        public RedemptionResult {
++            transactionIds = List.copyOf(transactionIds);
++        }
++    }
 +
 +    public static CompletableFuture<List<WardrobeItem>> acquire(
 +            final BedrockAuthManager account, final Category category, final WardrobeItem selected) {
@@ -15593,14 +15691,7 @@ index 0000000..f056d13
 +                try {
 +                    final JsonObject published = BedrockMarketplaceAssets.published(account, current.id());
 +                    final JsonObject body = purchaseRequest(current, published, UUID.randomUUID());
-+                    final JsonObject response = JsonParser.parseString(new String(
-+                            BedrockMarketplaceAssets.request(HttpRequest.newBuilder(VIRTUAL)
-+                                    .header("Authorization", account.getMinecraftSession().getUpToDate().getAuthorizationHeader())
-+                                    .header("Accept", "application/json")
-+                                    .header("Content-Type", "application/json")
-+                                    .POST(HttpRequest.BodyPublishers.ofString(body.toString())), 2 * 1024 * 1024),
-+                            StandardCharsets.UTF_8)).getAsJsonObject();
-+                    validatePurchase(current, response);
++                    validatePurchase(current, transaction(account, VIRTUAL, body));
 +                } catch (Exception e) {
 +                    throw new CompletionException(e);
 +                }
@@ -15672,14 +15763,22 @@ index 0000000..f056d13
 +            if (!selected.id().equals(result.get("offerId").getAsString())
 +                    || result.getAsJsonArray("transactionIds").isEmpty())
 +                throw new IOException("The Marketplace returned an invalid purchase result");
-+            for (final var id : result.getAsJsonArray("transactionIds")) {
-+                if (!id.isJsonPrimitive() || !id.getAsJsonPrimitive().isString() || id.getAsString().isBlank()
-+                        || id.getAsString().length() > 256)
-+                    throw new IOException("The Marketplace returned an invalid transaction ID");
-+            }
++            transactionIds(result.getAsJsonArray("transactionIds"));
 +        } catch (RuntimeException e) {
 +            throw new IOException("The Marketplace returned an invalid purchase result", e);
 +        }
++    }
++
++    private static List<String> transactionIds(final JsonArray values) throws IOException {
++        if (values == null) throw new IOException("The Marketplace returned no transaction IDs");
++        final List<String> ids = new ArrayList<>(values.size());
++        for (final var id : values) {
++            if (!id.isJsonPrimitive() || !id.getAsJsonPrimitive().isString() || id.getAsString().isBlank()
++                    || id.getAsString().length() > 256)
++                throw new IOException("The Marketplace returned an invalid transaction ID");
++            ids.add(id.getAsString());
++        }
++        return List.copyOf(ids);
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java
@@ -24337,10 +24436,10 @@ index 61a2b73..93db370 100644
  
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
 new file mode 100644
-index 0000000..990fce0
+index 0000000..e91385f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
-@@ -0,0 +1,1300 @@
+@@ -0,0 +1,1324 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -24409,6 +24508,7 @@ index 0000000..990fce0
 +    private int selectedEmoteSlot;
 +    private int itemPage;
 +    private boolean loading;
++    private Component purchaseStatus;
 +    private boolean failed;
 +    private boolean itemsFailed;
 +    private boolean itemsLoading;
@@ -24566,6 +24666,9 @@ index 0000000..990fce0
 +        super.extractRenderState(graphics, mouseX, mouseY, delta);
 +        final int left = this.width / 2 - 150;
 +        final int top = this.contentTop() + 52;
++        if (this.purchaseStatus != null) {
++            graphics.centeredText(this.font, this.purchaseStatus, this.width / 2, this.contentTop() - 12, ACCENT_COLOR);
++        }
 +        if (this.loading && this.wardrobe == null) {
 +            graphics.text(this.font, Component.translatable("bedrock_character_slots.viafabricplus.loading"), left, top, ACCENT_COLOR);
 +            return;
@@ -25101,6 +25204,7 @@ index 0000000..990fce0
 +
 +    private void updateControls() {
 +        this.loadColors();
++        this.refreshButton.active = !this.loading && !this.saving && ViaFabricPlusBedrock.impl().account().get() != null;
 +        final boolean canEditSides = this.isLimbCategory() && this.wardrobe != null
 +            && this.items != null && !this.items.isEmpty()
 +            && BedrockCharacterProfiles.canEditLimbSides(this.wardrobe, this.wardrobe.slots().get(this.selectedSlot),
@@ -25143,12 +25247,12 @@ index 0000000..990fce0
 +        final Height currentHeight = sizeSlot == null ? null : BedrockCharacterProfiles.height(sizeSlot).orElse(null);
 +        for (int index = 0; index < this.heightButtons.length; index++) {
 +            this.heightButtons[index].visible = this.view == View.SIZE;
-+            this.heightButtons[index].active = !this.saving && sizeSlot != null && sizeSlot.occupied()
++            this.heightButtons[index].active = !this.saving && !this.loading && sizeSlot != null && sizeSlot.occupied()
 +                && currentHeight != null && currentHeight != Height.values()[index];
 +        }
 +        for (int index = 0; index < this.armSizeButtons.length; index++) {
 +            this.armSizeButtons[index].visible = this.view == View.SIZE;
-+            this.armSizeButtons[index].active = !this.saving && sizeSlot != null && sizeSlot.occupied()
++            this.armSizeButtons[index].active = !this.saving && !this.loading && sizeSlot != null && sizeSlot.occupied()
 +                && ("wide".equals(sizeSlot.arm()) || "slim".equals(sizeSlot.arm()))
 +                && !sizeSlot.arm().equals(index == 0 ? "slim" : "wide");
 +        }
@@ -25172,7 +25276,7 @@ index 0000000..990fce0
 +            : this.view == View.SLOTS ? "bedrock_character_slots.viafabricplus.skin_tone"
 +            : this.category.colorTargets().isEmpty() ? "bedrock_character_slots.viafabricplus.choose_color"
 +            : colorLabel(this.category.colorTargets().getFirst())));
-+        this.colorButton.active = !this.saving && (this.view == View.COLORS || !this.availableColors.isEmpty() && this.wardrobe != null
++        this.colorButton.active = !this.saving && !this.loading && (this.view == View.COLORS || !this.availableColors.isEmpty() && this.wardrobe != null
 +            && this.wardrobe.slots().get(this.selectedSlot).occupied()
 +            && (this.view == View.SLOTS || this.view == View.WARDROBE
 +                && !this.category.colorTargets().isEmpty()
@@ -25187,13 +25291,13 @@ index 0000000..990fce0
 +            ? this.personaSelected ? "bedrock_character_slots.viafabricplus.world_active"
 +                : "bedrock_character_slots.viafabricplus.use_in_worlds"
 +            : "bedrock_character_slots.viafabricplus.use_slot"));
-+        this.useSlot.active = this.wardrobe != null && !this.saving
++        this.useSlot.active = this.wardrobe != null && !this.saving && !this.loading
 +            && (!occupied || !activeSlot || !this.personaSelected);
 +        this.deleteSlot.setMessage(Component.translatable(!occupied
 +            ? "bedrock_character_slots.viafabricplus.copy_active"
 +            : this.confirmDelete ? "bedrock_character_slots.viafabricplus.confirm_delete"
 +                : "bedrock_character_slots.viafabricplus.delete"));
-+        this.deleteSlot.active = this.wardrobe != null && !this.saving && (occupied
++        this.deleteSlot.active = this.wardrobe != null && !this.saving && !this.loading && (occupied
 +            ? this.wardrobe.slots().stream().filter(Slot::occupied).count() > 1
 +            : this.wardrobe.activeSlot() > 0
 +                && this.wardrobe.slots().get(this.wardrobe.activeSlot() - 1).occupied());
@@ -25202,7 +25306,7 @@ index 0000000..990fce0
 +        this.nextItem.active = hasPages;
 +        if (this.view == View.COLORS) {
 +            this.editPiece.setMessage(Component.translatable("bedrock_character_slots.viafabricplus.apply_color"));
-+            this.editPiece.active = !this.saving && this.selectedColor >= 0
++            this.editPiece.active = !this.saving && !this.loading && this.selectedColor >= 0
 +                && this.availableColors.contains(this.colorTarget)
 +                && (this.colorTarget == ColorTarget.SKIN || this.items != null)
 +                && this.selectedColor != this.colorTarget.paletteIndex(this.currentColor());
@@ -25214,7 +25318,7 @@ index 0000000..990fce0
 +                ? Component.translatable(item.price() == 0 ? "bedrock_character_slots.viafabricplus.get"
 +                    : "bedrock_character_slots.viafabricplus.buy", item.price())
 +                : Component.translatable(this.pieceActionLabel(equipped)));
-+            this.editPiece.active = !this.saving && slot.occupied()
++            this.editPiece.active = !this.saving && !this.loading && slot.occupied()
 +                && (equipped || item.canEquip() || item.price() >= 0);
 +        } else {
 +            this.editPiece.active = false;
@@ -25356,7 +25460,7 @@ index 0000000..990fce0
 +    }
 +
 +    private void acquireItem(final BedrockAuthManager account, final Category category, final WardrobeItem item) {
-+        if (this.saving || ViaFabricPlusBedrock.impl().account().get() != account) return;
++        if (this.saving || this.loading || ViaFabricPlusBedrock.impl().account().get() != account) return;
 +        this.saving = true;
 +        this.acquiring = true;
 +        this.acquisitionFailed = false;
@@ -25589,10 +25693,11 @@ index 0000000..990fce0
 +
 +    private void refresh() {
 +        final BedrockAuthManager account = ViaFabricPlusBedrock.impl().account().get();
-+        if (account == null || this.loading) {
++        if (account == null || this.loading || this.saving) {
 +            return;
 +        }
 +        this.loading = true;
++        this.purchaseStatus = Component.translatable("bedrock_marketplace.viafabricplus.synchronizing");
 +        this.colorContext = null;
 +        this.availableColors = List.of();
 +        this.colorsLoading = false;
@@ -25602,11 +25707,29 @@ index 0000000..990fce0
 +        this.selectionFailed = false;
 +        this.modelFailed = false;
 +        this.confirmDelete = false;
-+        BedrockCharacterProfiles.load(account).whenComplete((loaded, error) -> this.minecraft.execute(() -> {
-+            if (this.minecraft.gui.screen() != this) {
++        BedrockMarketplaceTransactions.redeemXbox(account).whenComplete((result, error) -> this.minecraft.execute(() -> {
++            if (ViaFabricPlusBedrock.impl().account().get() != account || this.minecraft.gui.screen() != this) {
++                this.loading = false;
++                this.purchaseStatus = null;
 +                return;
 +            }
++            if (error != null) {
++                this.purchaseStatus = Component.translatable("bedrock_marketplace.viafabricplus.sync_failed");
++                ViaFabricPlusBedrock.impl().logger().warn("Could not synchronize Microsoft Store purchases", error);
++            } else {
++                this.purchaseStatus = result.failed() == 0 ? null
++                    : Component.translatable("bedrock_marketplace.viafabricplus.sync_partial", result.failed());
++            }
++            this.loadWardrobe(account);
++        }));
++    }
++
++    private void loadWardrobe(final BedrockAuthManager account) {
++        BedrockCharacterProfiles.load(account).whenComplete((loaded, error) -> this.minecraft.execute(() -> {
 +            this.loading = false;
++            if (this.minecraft.gui.screen() != this || ViaFabricPlusBedrock.impl().account().get() != account) {
++                return;
++            }
 +            if (error != null) {
 +                this.failed = true;
 +                ViaFabricPlusBedrock.impl().logger().warn("Could not load Bedrock character slots", error);
@@ -26062,10 +26185,10 @@ index 0000000..2f796ac
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockOwnedSkinPacksScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockOwnedSkinPacksScreen.java
 new file mode 100644
-index 0000000..128cef2
+index 0000000..fe037c7
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockOwnedSkinPacksScreen.java
-@@ -0,0 +1,266 @@
+@@ -0,0 +1,292 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -26076,6 +26199,7 @@ index 0000000..128cef2
 +import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockOwnedSkinPacks;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockMarketplaceTransactions;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockOwnedSkinPacks.Item;
 +import com.viaversion.viafabricplus.screen.base.VFPScreen;
 +
@@ -26100,9 +26224,11 @@ index 0000000..128cef2
 +    private Item selected;
 +    private PackList packs;
 +    private Button open;
++    private Button refresh;
 +    private Component status =
 +            Component.translatable("bedrock_owned_skin_packs.viafabricplus.loading");
 +    private boolean downloading;
++    private boolean loading;
 +    private int request;
 +
 +    public BedrockOwnedSkinPacksScreen(final BedrockDressingRoomScreen dressingRoom) {
@@ -26120,14 +26246,14 @@ index 0000000..128cef2
 +                                        "bedrock_owned_skin_packs.viafabricplus.open"),
 +                                _ -> this.openSelected())
 +                        .build();
-+        final Button refresh =
++        this.refresh =
 +                Button.builder(
 +                                Component.translatable(
 +                                        "bedrock_owned_skin_packs.viafabricplus.refresh"),
 +                                _ -> this.loadItems())
 +                        .build();
-+        refresh.active = this.account != null;
-+        this.addFooter(this.open, refresh);
++        this.refresh.active = this.account != null;
++        this.addFooter(this.open, this.refresh);
 +        if (this.items != null) this.packs.populate();
 +        else if (this.account == null)
 +            this.status = Component.translatable("bedrock_owned_skin_packs.viafabricplus.sign_in");
@@ -26158,6 +26284,7 @@ index 0000000..128cef2
 +        this.request++;
 +        if (this.downloading) this.status = Component.empty();
 +        this.downloading = false;
++        this.loading = false;
 +        super.removed();
 +    }
 +
@@ -26170,16 +26297,36 @@ index 0000000..128cef2
 +    }
 +
 +    private void loadItems() {
-+        if (this.account == null) return;
++        if (this.account == null || this.loading || this.downloading) return;
 +        final int request = ++this.request;
-+        this.downloading = false;
-+        this.status = Component.translatable("bedrock_owned_skin_packs.viafabricplus.loading");
++        this.loading = true;
++        this.status = Component.translatable("bedrock_marketplace.viafabricplus.synchronizing");
++        this.updateControls();
++        BedrockMarketplaceTransactions.redeemXbox(this.account).whenComplete((result, error) ->
++                this.minecraft.schedule(() -> {
++                    if (!this.current(request)) return;
++                    final Component purchaseStatus;
++                    if (error != null) {
++                        purchaseStatus = Component.translatable("bedrock_marketplace.viafabricplus.sync_failed");
++                        ViaFabricPlusBedrock.impl().logger().warn("Could not synchronize Microsoft Store purchases", error);
++                    } else {
++                        purchaseStatus = result.failed() == 0 ? null
++                            : Component.translatable("bedrock_marketplace.viafabricplus.sync_partial", result.failed());
++                    }
++                    this.loadCatalog(request, purchaseStatus);
++                }));
++    }
++
++    private void loadCatalog(final int request, final @Nullable Component purchaseStatus) {
++        this.status = purchaseStatus == null
++            ? Component.translatable("bedrock_owned_skin_packs.viafabricplus.loading") : purchaseStatus;
 +        BedrockOwnedSkinPacks.list(this.account)
 +                .whenComplete(
 +                        (items, error) ->
 +                                this.minecraft.schedule(
 +                                        () -> {
 +                                            if (!this.current(request)) return;
++                                            this.loading = false;
 +                                            if (error != null) {
 +                                                this.status =
 +                                                        Component.translatable(
@@ -26201,7 +26348,7 @@ index 0000000..128cef2
 +                                                                .findFirst()
 +                                                                .orElse(null);
 +                                                this.packs.populate();
-+                                                this.status =
++                                                this.status = purchaseStatus != null ? purchaseStatus :
 +                                                        items.isEmpty()
 +                                                                ? Component.translatable(
 +                                                                        "bedrock_owned_skin_packs.viafabricplus.empty")
@@ -26213,7 +26360,7 @@ index 0000000..128cef2
 +    }
 +
 +    private void openSelected() {
-+        if (this.account == null || this.selected == null || this.downloading) return;
++        if (this.account == null || this.selected == null || this.downloading || this.loading) return;
 +        final int request = ++this.request;
 +        final Item selected = this.selected;
 +        this.downloading = true;
@@ -26250,7 +26397,9 @@ index 0000000..128cef2
 +
 +    private void updateControls() {
 +        if (this.open != null)
-+            this.open.active = this.selected != null && !this.downloading && this.account != null;
++            this.open.active = this.selected != null && !this.downloading && !this.loading && this.account != null;
++        if (this.refresh != null)
++            this.refresh.active = this.account != null && !this.downloading && !this.loading;
 +    }
 +
 +    private final class PackList extends ObjectSelectionList<PackEntry> {
@@ -27000,7 +27149,7 @@ index 0000000..9a72958
 +  ]
 +}
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
-index 4a503d3..a58341c 100644
+index 4a503d3..fcb8973 100644
 --- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 +++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 @@ -9,6 +9,7 @@
@@ -27100,7 +27249,7 @@ index 4a503d3..a58341c 100644
  
    "bedrock_realms.viafabricplus.warning": "This feature requires a Bedrock Edition account to be set in the settings!",
    "bedrock_realms.viafabricplus.availability_check": "Checking availability...",
-@@ -255,5 +328,30 @@
+@@ -255,5 +328,33 @@
    "minecraftauth_library.viafabricplus.playfabtoken": "Obtained PlayFab Token",
    "minecraftauth_library.viafabricplus.minecraftsession": "Obtained Minecraft Session",
    "minecraftauth_library.viafabricplus.minecraftmultiplayertoken": "Obtained Minecraft Multiplayer Token",
@@ -27130,7 +27279,10 @@ index 4a503d3..a58341c 100644
 +  "bedrock_character_slots.viafabricplus.buy_confirm": "Buy %s?",
 +  "bedrock_character_slots.viafabricplus.buy_explanation": "Spend %s Minecoins on this item? You can equip it after the purchase completes.",
 +  "bedrock_character_slots.viafabricplus.acquiring": "Acquiring item...",
-+  "bedrock_character_slots.viafabricplus.acquire_failed": "Could not confirm acquisition. Refresh the item list and check your balance before trying again."
++  "bedrock_character_slots.viafabricplus.acquire_failed": "Could not confirm acquisition. Refresh the item list and check your balance before trying again.",
++  "bedrock_marketplace.viafabricplus.synchronizing": "Synchronizing purchases...",
++  "bedrock_marketplace.viafabricplus.sync_failed": "Could not synchronize purchases",
++  "bedrock_marketplace.viafabricplus.sync_partial": "Could not synchronize %s purchases"
  }
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/licenses/brarchive-extractor.txt b/src/main/resources/assets/viafabricplus-bedrock/licenses/brarchive-extractor.txt
 new file mode 100644
@@ -31375,19 +31527,23 @@ index 0000000..97d768f
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMarketplaceTransactionsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMarketplaceTransactionsTest.java
 new file mode 100644
-index 0000000..7b73fae
+index 0000000..845e910
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMarketplaceTransactionsTest.java
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,189 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import com.google.gson.JsonObject;
 +import com.google.gson.JsonParser;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockCharacterProfiles.WardrobeItem;
 +import java.io.IOException;
++import java.nio.file.Files;
++import java.nio.file.Path;
 +import java.util.List;
 +import java.util.UUID;
 +import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++import net.raphimc.minecraftauth.xbl.model.XblXstsToken;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
@@ -31472,6 +31628,77 @@ index 0000000..7b73fae
 +        assertDoesNotThrow(() -> BedrockCharacterProfiles.pieceChangeRequest(wardrobe, 1, List.of(locked), locked, true));
 +        assertTrue(item(0, false, false).canEquip());
 +        assertTrue(item(120, true, true).canEquip());
++    }
++
++    @Test
++    void serializesTheAccountIdentityAndPlayFabXboxTokenForStoreRedemption() throws Exception {
++        final String userId = Long.toUnsignedString(UUID.randomUUID().getMostSignificantBits() | 1);
++        final var token = new XblXstsToken(Long.MAX_VALUE, UUID.randomUUID().toString(), UUID.randomUUID().toString());
++        final UUID correlation = UUID.randomUUID();
++        final var request = BedrockMarketplaceTransactions.redemptionRequest(userId, token.getAuthorizationHeader(), correlation);
++        final var marketplace = request.getAsJsonObject("Redemption").getAsJsonObject("MarketplaceData");
++        assertEquals(userId, marketplace.get("userId").getAsString());
++        assertEquals(token.getAuthorizationHeader(), marketplace.getAsJsonObject("xboxAuthentication").get("XboxToken").getAsString());
++        assertEquals(correlation.toString(), request.getAsJsonObject("CustomTags").get("CorrelationId").getAsString());
++        assertFalse(request.has("OfferId"));
++        assertFalse(request.has("VirtualCurrency"));
++    }
++
++    @Test
++    void rejectsInvalidRedemptionCredentials() {
++        final var token = new XblXstsToken(Long.MAX_VALUE, UUID.randomUUID().toString(), UUID.randomUUID().toString());
++        for (final String user : List.of("", "0", "-1", "invalid", "18446744073709551616")) {
++            assertThrows(IOException.class, () -> BedrockMarketplaceTransactions.redemptionRequest(user,
++                token.getAuthorizationHeader(), UUID.randomUUID()));
++        }
++        for (final String value : List.of("", "token", "XBL3.0 x=hash;", "XBL3.0 x=;token", "XBL3.0 x=hash;token\n")) {
++            assertThrows(IOException.class, () -> BedrockMarketplaceTransactions.redemptionRequest("1", value, UUID.randomUUID()));
++        }
++    }
++
++    @Test
++    void preservesPartialRedemptionsAndAllowsNoNewTransactions() throws Exception {
++        final var response = JsonParser.parseString("""
++            {"result":{"succeeded":[{},{}],"failed":[{}],"transactionIds":[]}}
++            """).getAsJsonObject();
++        var result = BedrockMarketplaceTransactions.parseRedemption(response);
++        assertEquals(2, result.succeeded());
++        assertEquals(1, result.failed());
++        assertTrue(result.transactionIds().isEmpty());
++        response.getAsJsonObject("result").getAsJsonArray("transactionIds").add("29");
++        result = BedrockMarketplaceTransactions.parseRedemption(response);
++        assertEquals(List.of("29"), result.transactionIds());
++        final var immutable = result;
++        assertThrows(UnsupportedOperationException.class, () -> immutable.transactionIds().add("30"));
++    }
++
++    @Test
++    void rejectsMalformedRedemptionListsAndTransactionIds() {
++        for (final String body : List.of("{}", "{\"result\":{}}",
++            "{\"result\":{\"succeeded\":[],\"failed\":[]}}",
++            "{\"result\":{\"succeeded\":[false],\"failed\":[],\"transactionIds\":[]}}",
++            "{\"result\":{\"succeeded\":[],\"failed\":[false],\"transactionIds\":[]}}",
++            "{\"result\":{\"succeeded\":[],\"failed\":[],\"transactionIds\":[29]}}")) {
++            assertThrows(IOException.class, () -> BedrockMarketplaceTransactions.parseRedemption(
++                JsonParser.parseString(body).getAsJsonObject()));
++        }
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_XBOX_REDEMPTION", matches = ".+")
++    void matchesNativeStoreRedemptionAndItsSuccessfulResponse() throws Exception {
++        final var captured = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_XBOX_REDEMPTION"))))
++            .getAsJsonObject();
++        final var request = captured.getAsJsonObject("request");
++        final var marketplace = request.getAsJsonObject("Redemption").getAsJsonObject("MarketplaceData");
++        final var production = BedrockMarketplaceTransactions.redemptionRequest(marketplace.get("userId").getAsString(),
++            marketplace.getAsJsonObject("xboxAuthentication").get("XboxToken").getAsString(), UUID.randomUUID());
++        // Boolean comparison keeps private credentials out of assertion messages.
++        assertTrue(request.getAsJsonObject("Redemption").equals(production.getAsJsonObject("Redemption")));
++        final var result = BedrockMarketplaceTransactions.parseRedemption(captured.getAsJsonObject("response"));
++        assertTrue(result.succeeded() > 0);
++        assertEquals(0, result.failed());
++        assertTrue(result.transactionIds().isEmpty());
 +    }
 +
 +    private static WardrobeItem item(final int price, final boolean owned, final boolean requiresRedeem) {
