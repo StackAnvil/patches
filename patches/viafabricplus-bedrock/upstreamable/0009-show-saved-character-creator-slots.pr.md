@@ -704,3 +704,30 @@ Four additional executions record native Molang node access. Linear reads the ri
 Five targeted tests cover native comparisons, particle state isolation, render callback order, dynamic ranges, expression dependencies, and malformed definitions. These tests exercise the emitter's visual output, but do not establish native visible parity. Raw binaries, decompilation, fixtures, and probes remain private.
 
 All 321 fixture-enabled add-on tests pass with no failures, errors, or skips after replaying all 16 patches. Fresh licensed-package extraction and cache reuse also pass. The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
+
+
+## Manual particles and nested particle events
+
+Support manual emission and particle creation, expiration, and timeline events. Resolve named event trees with ordered sequences and weighted random branches. Child effects support `particle`, `particle_with_velocity`, `emitter`, and `emitter_bound`. The [Creator event reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particleeffectevents) describes these forms. The [particle lifetime reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftparticle_lifetime_events) defines their triggers.
+
+Bedrock 1.26.51.1 uses the same native component callbacks for particle lifetime events and emitter lifetime events. The particle component registration points to creation callback `FUN_1461c4e40`, expiration callback `FUN_1461c4f20`, and timeline callback `FUN_1461c5000`. Timeline intervals include the previous age and exclude the new age. Event times retain the native float conversion to nanoseconds.
+
+Native graph dispatcher `FUN_142164cb0` chooses its random branch before it executes the sequence. It executes that branch after the sequence. Both inspected constructors omit leaf actions when a node contains `sequence` or `randomize`. Preserve those rules for JSON assets and decoded compiled assets.
+
+Manual emission creates one particle immediately. Capacity getter `FUN_1462a4d10` evaluates the maximum on each request and caps it at 2,000. Preserve its unsigned conversion before the cap. Birth routine `FUN_14215a440` adds the supplied position and velocity to the shape sample before birth transforms and initialization.
+
+Playback reuses manual child emitters by effect within each parent. Ordinary child emitters start at the event position. Bound child emitters inherit the parent's actor and locator supplier. When the actor is already absent, they start at the event position. Child effects own fresh Molang variables. Their initialization script runs after emitter creation. Particle events retain a copy of the source position and the requested velocity through asynchronous asset loading.
+
+Dispatch children after the active emitter iterator closes. Apply existing world and account generation checks to pending loads. Limit active emitters to 512 and total particles to 16,384. Limit each emitter to 1,024 event nodes per update and child nesting to 16 levels. Bound pending loads, event requests, and diagnostic logs.
+
+Private native execution covers 30 timeline cases, 16 event trees, and 15 manual capacity conversions. Native callbacks supply position, velocity, random draws, and expression execution. These probes do not execute asset lookup, JSON construction, or complete simulation scheduling. All private binaries and probes remain outside the patch.
+
+Tests also cover immediate births, changing capacity, velocity inheritance, lifetime triggers, recursive limits, and the extracted lava-to-smoke flow. The target lava effect now emits manual smoke particles through its timed `particle_with_velocity` events.
+
+Collision events, emitter lifetime and travel events, and level sound events remain explicit unsupported cases. Native comparisons still need to establish bound child queries, event expression context, asynchronous timing, and visible particle results. This change does not establish complete particle parity.
+
+All 328 fixture-enabled add-on tests pass with no failures, errors, or skips after replaying all 16 patches. Fresh licensed-package extraction and cache reuse also pass.
+
+The final actor-fallback change passes all 45 particle tests. The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
+
+After integrating concurrent actor-material and lighting changes, all 334 fixture-enabled add-on tests pass with no failures, errors, or skips. The combined stack replays all 16 patches. The full dependency build and Prism bundle also pass.
