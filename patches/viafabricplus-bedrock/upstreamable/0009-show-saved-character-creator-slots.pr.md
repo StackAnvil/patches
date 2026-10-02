@@ -942,3 +942,27 @@ Client frame gates, platform clocks, complete expression context, other world pa
 All 391 fixture-enabled tests pass across 79 suites with no failures, errors, or skips. This includes all 88 particle tests. Fresh package licensing, extraction, and cache reuse pass. All 16 patches replay.
 
 The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
+
+
+## Bind native spell-color structures
+
+The [Mojang Molang reference](https://mojang.github.io/bedrock-samples/Molang.html) describes `query.spellcolor` as an RGBA structure. Its fields return zero when the query has no actor.
+
+Native Bedrock 1.26.51.1 registers functor `14e7ff500`, whose callback is `14220f9d0`. It reads actor metadata slot 77 only when the entry has type Int (2). Those numbers match `DATA_SPELL_CASTING_COLOR` and `DataItemType.Int` in ViaBedrock's target protocol 2193. Channels come from packed ARGB bytes, converted through float32 division by 255. Missing actors, short metadata arrays, missing entries, and other entry types produce four zero channels.
+
+Publish immutable colors after accepted network metadata updates. The query captures the original network actor identity and reads its current snapshot. Existing particles receive metadata changes without waiting for another actor render. Removal or replacement produces zero. Initial emitter creation also sees zero, because its context has no actor. Refreshed child contexts consume the live color.
+
+Represent the result as a Molang object with `r`, `g`, `b`, and `a` fields. Nested query access, explicit calls, and variable copies preserve its channels. Particle tint expressions consume the same structure.
+
+Independent execution supplies 1,504 scalar cases. These cover missing actors, array spans, missing entries, six metadata types, boundary colors, and every byte value in each channel. Native gates, byte selection, float32 division, and result type publication execute. The probe supplies metadata type getters, color structure construction receipts, and temporary value cleanup.
+
+Another 60 cases execute the native initialization gate and full context refresh before reading the spell-color callback. They cover actor, unbound, and unresolved registry bindings. Prepared weak references, component tables, camera, and metadata arrays supply native input. Actor resolution, level/resource access, variable/expression callbacks, metadata type getters, and structure construction/cleanup are supplied boundaries.
+
+Production tests compare all channel receipts through real Molang structure access and network snapshots. Further checks cover refreshed particle tint, first creation, child initialization, actor removal/replacement, and snapshot isolation.
+
+These checks exclude native object property lookup, real native expressions, live network captures, tint quantization, and visible playback. Complete offscreen actor context and full skin/Dressing Room parity remain unverified. Executables, probes, fixtures, and account data stay private.
+
+
+All 396 fixture-enabled tests pass across 80 suites with no failures, errors, or skips. This includes all 88 particle tests and the spell-color structure and network snapshot checks. Fresh package licensing, extraction, and cache reuse pass. All 16 patches replay.
+
+The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
