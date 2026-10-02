@@ -1,4 +1,4 @@
-From d5481b932e6cdb3d9d33a1fb3025842166253f46 Mon Sep 17 00:00:00 2001
+From ff350c908066bf683839869ed90aba0d5d50e8ee Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1085,6 +1085,16 @@ the active Alex model, but its six-digit skcol fails the appearance store's
 eight-digit check. Accept both native RGB and ARGB recipe colors without
 rewriting them. Verify model, atlas, animation and color persistence and
 SkinData propagation for both lengths, including a return to classic skin.
+
+The target 1.26.51.1 native Bases request exposes the equipped Brawny Skin
+as price zero with requiresRedeem, without a pack-specific receipt key.
+Its published PersonaDurable identity matches and the production decoder
+reads its body and face tint maps using existing account receipt keys.
+Treat zero-price asset eligibility separately from redemption permission
+to equip; keep published price, content type, product and pack checks.
+Require receipt keys and never redeem or spend currency while preparing
+an already saved recipe. Parameterize the identity guards across both
+redemption states and retain the unclaimed equipment restriction.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   54 +
@@ -1241,7 +1251,7 @@ SkinData propagation for both lengths, including a return to classic skin.
  .../appearance/BedrockParticleSpaceTest.java  |  160 +
  .../BedrockPersonaAnimationAtlasTest.java     |  109 +
  .../BedrockPersonaAssemblerTest.java          |  246 +
- .../appearance/BedrockPersonaAssetsTest.java  |  362 +
+ .../appearance/BedrockPersonaAssetsTest.java  |  368 +
  .../appearance/BedrockPersonaBodyTest.java    |  592 ++
  .../appearance/BedrockPersonaCapeTest.java    |  340 +
  .../appearance/BedrockPersonaColorsTest.java  |   91 +
@@ -1257,7 +1267,7 @@ SkinData propagation for both lengths, including a return to classic skin.
  .../render/BedrockModelLocatorsTest.java      |  112 +
  .../render/BedrockPlayerActorStateTest.java   |  195 +
  .../render/BedrockPlayerModelTest.java        |  100 +
- 171 files changed, 38233 insertions(+), 92 deletions(-)
+ 171 files changed, 38239 insertions(+), 92 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -21337,7 +21347,7 @@ index 0000000..3c94c2b
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssets.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssets.java
 new file mode 100644
-index 0000000..3d350d9
+index 0000000..44f4adf
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssets.java
 @@ -0,0 +1,120 @@
@@ -21359,7 +21369,7 @@ index 0000000..3d350d9
 +import java.util.List;
 +import java.util.Map;
 +
-+/** Downloads owned and freely available pieces using the current account's receipt keys. */
++/** Downloads owned and zero-price pieces using the current account's receipt keys. */
 +final class BedrockPersonaAssets {
 +    private BedrockPersonaAssets() {}
 +
@@ -21419,7 +21429,7 @@ index 0000000..3d350d9
 +        for (final Reference piece : references) {
 +            if (packs.containsKey(piece.packId())) continue;
 +            final byte[] key = keys.get(piece.packId());
-+            if (key == null && (!piece.freelyAvailable() || keys.isEmpty())) continue;
++            if (key == null && (!piece.zeroPrice() || keys.isEmpty())) continue;
 +            final JsonObject item = BedrockMarketplaceAssets.published(account, piece.productId());
 +            if (key == null && !freePersonaItem(item, piece)) continue;
 +            final byte[] bytes = BedrockMarketplaceAssets.download(item, "personabinary");
@@ -21434,7 +21444,7 @@ index 0000000..3d350d9
 +    static boolean freePersonaItem(final JsonObject item, final Reference reference)
 +            throws IOException {
 +        try {
-+            if (!reference.freelyAvailable()
++            if (!reference.zeroPrice()
 +                    || !reference.productId().equals(item.get("Id").getAsString())
 +                    || !"PersonaDurable".equals(item.get("ContentType").getAsString()))
 +                return false;
@@ -21455,9 +21465,9 @@ index 0000000..3d350d9
 +        }
 +    }
 +
-+    record Reference(String packId, String productId, boolean freelyAvailable) {
++    record Reference(String packId, String productId, boolean zeroPrice) {
 +        static Reference from(final BedrockCharacterProfiles.WardrobeItem item) {
-+            return new Reference(item.packId(), item.id(), item.freelyAvailable());
++            return new Reference(item.packId(), item.id(), item.price() == 0);
 +        }
 +    }
 +}
@@ -37808,10 +37818,10 @@ index 0000000..da83d6a
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssetsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssetsTest.java
 new file mode 100644
-index 0000000..74bc423
+index 0000000..6f92125
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssetsTest.java
-@@ -0,0 +1,362 @@
+@@ -0,0 +1,368 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -37951,10 +37961,16 @@ index 0000000..74bc423
 +                                wrapped.toByteArray(), UUID.randomUUID().toString(), candidates));
 +    }
 +
-+    @Test
-+    void limitsSharedKeyLoadingToMatchingFreePersonaCatalogItems() throws Exception {
++    @ParameterizedTest
++    @ValueSource(booleans = {false, true})
++    void limitsSharedKeyLoadingToMatchingZeroPricePersonaCatalogItems(final boolean requiresRedeem)
++            throws Exception {
 +        final String pack = UUID.randomUUID().toString(), product = UUID.randomUUID().toString();
-+        final var reference = new BedrockPersonaAssets.Reference(pack, product, true);
++        final var catalog = new BedrockCharacterProfiles.WardrobeItem(
++                product, "Free piece", "persona_skin", "", pack, false, 0, requiresRedeem);
++        final var reference = BedrockPersonaAssets.Reference.from(catalog);
++        assertEquals(!requiresRedeem, catalog.canEquip());
++        assertTrue(reference.zeroPrice());
 +        final JsonObject item = new JsonObject(),
 +                properties = new JsonObject(),
 +                identity = new JsonObject();

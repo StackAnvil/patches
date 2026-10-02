@@ -981,3 +981,14 @@ The final run passes all 402 fixture-enabled tests across 81 suites, with zero f
 The rebuilt private Flatpak client acquires the official package through the host bridge. It uses its previous helper Store session. Extraction creates the versioned cache and assembles the active model. A second live failure exposed an eight-digit-only skin-color check: native Alex uses six-digit RGB. Accept both native RGB and ARGB strings and preserve them in model storage and `SkinData`. The expanded roundtrip test covers both formats, animations, atlas storage, and return to classic selection.
 
 Reloading the compiled color fix in the private JVM lets the production retry save and render the matched nine-piece slim Alex. The preview's saved profile hash matches the native HTTPS profile. Its geometry identifier proves that this recipe still uses Microsoft's GLTF body fallback. The non-default Skin catalog piece is unresolved; the extracted face is assembled locally. Idle videos and screenshots remain private. Cameras, poses, lighting, and animation phases differ, so this verifies the working acquisition/assembly/render path without proving visible parity. Native current skin-color wire formatting and fresh interactive Store sign-in remain open.
+
+
+### Zero-price assets that require redemption
+
+The native 1.26.51.1 Bases layout lists Brawny at zero price with `requiresRedeem`. The equipped recipe references its pack, but the account has no pack-specific receipt key. Published metadata confirms the product, persona content type, zero price, and pack identity. The production decoder reads its body and face tint maps with the account's existing receipt keys.
+
+Separate zero-price asset eligibility from permission to equip an unclaimed offer. Keep published metadata checks and the account receipt requirement. Preparing a saved recipe submits no purchase or redemption transaction. A parameterized guard test covers both redemption states and retains the equipment restriction. Paid and mismatched published items remain excluded from shared-key loading.
+
+The full run passes 403 tests across 81 suites without failures, errors, or skips. All 16 patches replay. The dependency build and Prism bundle pass. A restarted isolated Flatpak client prepares the same nine-piece slim Alex profile with local body and face geometry. The saved identifiers are `geometry.persona.body` and `geometry.persona.face`. Its 128 by 128 body texture matches all 16,384 texels in the previous service model, after accounting for atlas padding. The production preview renders the locally assembled body and animated face.
+
+This verifies local assembly for that recipe. It does not establish visible parity across camera, pose, lighting, or animation phase. Accounts without receipt keys, unavailable remote assets, and the remaining Dressing Room and classic-format checks stay open. Captures, decoded assets, receipts, and probes stay private.
