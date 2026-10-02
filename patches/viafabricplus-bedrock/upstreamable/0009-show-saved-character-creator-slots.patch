@@ -1,4 +1,4 @@
-From febbc99ca29a873734a364353beed8d1a9cd1fe2 Mon Sep 17 00:00:00 2001
+From a1ecabd19af722d69860c4c0e4c777934dbe0e09 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -940,6 +940,16 @@ Another 440 cases execute the native spin matrix multiplication after each
 facing branch, with imported float32 cosf/sinf results supplied. Use the
 resulting axes for both quad corners and frustum bounds so sheared planes
 remain visible. Each frame owns its world direction and immutable matrix.
+
+The owned Bedrock 1.26.51.1 actor-bound child factory starts with an
+identity transform and binds the actor/locator separately. Preserve the
+full event matrix only for ordinary emitters and unbound fallbacks, so a
+collision rotation cannot rotate a bound child's locator a second time.
+Native factory wrappers and the binding setter execute in 24 prepared
+cases. Resource lookup, allocation/constructor, initialized matrix
+constants, binding liveness, memcpy and cleanup boundaries are supplied;
+actor query evaluation, branch selection and visible output remain outside
+these fixtures. Add production comparisons and a scaled-locator regression.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   54 +
@@ -986,12 +996,12 @@ remain visible. Each frame owns its world direction and immutable matrix.
  .../appearance/BedrockParticleCurves.java     |  173 +
  .../appearance/BedrockParticleDefinition.java |  261 +
  .../appearance/BedrockParticleEffect.java     |  612 ++
- .../appearance/BedrockParticleEvents.java     |  146 +
+ .../appearance/BedrockParticleEvents.java     |  155 +
  .../appearance/BedrockParticleFacing.java     |  151 +
  .../appearance/BedrockParticleLayouts.java    |  413 +
  .../appearance/BedrockParticleLifetime.java   |  100 +
  .../BedrockParticleLifetimeEvents.java        |   64 +
- .../appearance/BedrockParticlePlayback.java   |  321 +
+ .../appearance/BedrockParticlePlayback.java   |  319 +
  .../appearance/BedrockParticleShape.java      |  165 +
  .../appearance/BedrockParticleSpace.java      |   43 +
  .../appearance/BedrockParticleTexture.java    |   24 +
@@ -1075,7 +1085,7 @@ remain visible. Each frame owns its world direction and immutable matrix.
  .../appearance/BedrockParticleCurvesTest.java |  119 +
  .../BedrockParticleDefinitionTest.java        |  190 +
  .../appearance/BedrockParticleEffectTest.java |  218 +
- .../appearance/BedrockParticleEventsTest.java |  192 +
+ .../appearance/BedrockParticleEventsTest.java |  246 +
  .../appearance/BedrockParticleFacingTest.java |  153 +
  .../BedrockParticleLifetimeTest.java          |  146 +
  .../appearance/BedrockParticleShapeTest.java  |  160 +
@@ -1099,7 +1109,7 @@ remain visible. Each frame owns its world direction and immutable matrix.
  .../render/BedrockModelLocatorsTest.java      |  112 +
  .../render/BedrockPlayerActorStateTest.java   |  124 +
  .../render/BedrockPlayerModelTest.java        |  100 +
- 158 files changed, 36571 insertions(+), 92 deletions(-)
+ 158 files changed, 36632 insertions(+), 92 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -18758,10 +18768,10 @@ index 0000000..fdd9d28
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEvents.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEvents.java
 new file mode 100644
-index 0000000..a7104e3
+index 0000000..f8ca23b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEvents.java
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,155 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -18869,7 +18879,11 @@ index 0000000..a7104e3
 +        }
 +    }
 +
-+    enum Kind { PARTICLE, PARTICLE_WITH_VELOCITY, EMITTER, EMITTER_BOUND }
++    enum Kind {
++        PARTICLE, PARTICLE_WITH_VELOCITY, EMITTER, EMITTER_BOUND;
++
++        boolean manual() { return this == PARTICLE || this == PARTICLE_WITH_VELOCITY; }
++    }
 +    record Spawn(String effect, Kind kind, BedrockMolang.Program initialization) {}
 +    sealed interface Action permits Request, Sound {
 +        Vector3f position();
@@ -18877,6 +18891,11 @@ index 0000000..a7104e3
 +    record Request(Spawn spawn, BedrockParticleAttachment.Matrix transform, Vector3f velocity) implements Action {
 +        Request { velocity = new Vector3f(velocity); }
 +        public Vector3f position() { return this.transform.position(new Vector3f()); }
++
++        BedrockParticleAttachment.Matrix emitterTransform(final boolean bound) {
++            // The actor-bound factory starts at identity; its actor/locator supplies the frame.
++            return this.spawn.kind.manual() || bound ? BedrockParticleAttachment.Matrix.IDENTITY : this.transform;
++        }
 +    }
 +    record Sound(String event, Vector3f position) implements Action {
 +        Sound { position = new Vector3f(position); }
@@ -19662,10 +19681,10 @@ index 0000000..99dc06a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePlayback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePlayback.java
 new file mode 100644
-index 0000000..d7a6bec
+index 0000000..713ef20
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticlePlayback.java
-@@ -0,0 +1,321 @@
+@@ -0,0 +1,319 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -19789,12 +19808,10 @@ index 0000000..d7a6bec
 +
 +    private static void child(final Playing parent, final BedrockParticleEvents.Request request) {
 +        final var spawn = request.spawn();
-+        final boolean manual = spawn.kind() == BedrockParticleEvents.Kind.PARTICLE
-+                || spawn.kind() == BedrockParticleEvents.Kind.PARTICLE_WITH_VELOCITY;
++        final boolean manual = spawn.kind().manual();
 +        final boolean bound = spawn.kind() == BedrockParticleEvents.Kind.EMITTER_BOUND
 +                && parent.attachment != null && parent.attachment.get() != null;
-+        final var transform = manual ? BedrockParticleAttachment.Matrix.IDENTITY
-+                : bound ? request.transform().withoutTranslation() : request.transform();
++        final var transform = request.emitterTransform(bound);
 +        schedule(new Key(parent.key.resources, spawn.effect()), new BedrockMolang(), spawn.initialization(), transform,
 +                bound ? parent.attachment : null, parent.depth + 1, manual ? request : null, parent);
 +    }
@@ -34600,10 +34617,10 @@ index 0000000..cbd196a
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEventsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEventsTest.java
 new file mode 100644
-index 0000000..f27481e
+index 0000000..65efd98
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEventsTest.java
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,246 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import com.google.gson.JsonObject;
@@ -34677,6 +34694,54 @@ index 0000000..f27481e
 +                default -> Float.parseFloat(input);
 +            };
 +            assertEquals(row.get("capacity").getAsInt(), BedrockParticleEffect.manualCapacity(value));
++        }
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_PARTICLE_REFERENCE", matches = ".+")
++    void matchesNativeChildFactoryTransforms() throws Exception {
++        final var document = BedrockParticleEffectTest.burst();
++        components(document).add("minecraft:emitter_shape_point", json("{\"offset\":[1,2,3]}"));
++        final var effect = BedrockParticleEffect.read(document);
++        for (final var entry : fixture("native-child-emitter-result.json").getAsJsonArray("cases")) {
++            final var row = entry.getAsJsonObject();
++            final var kind = BedrockParticleEvents.Kind.valueOf(row.get("kind").getAsString().toUpperCase(java.util.Locale.ROOT));
++            final var request = new BedrockParticleEvents.Request(new BedrockParticleEvents.Spawn("test:child", kind, null),
++                    matrix(row.getAsJsonArray("event_matrix")), new Vector3f());
++            final var actual = request.emitterTransform(kind == BedrockParticleEvents.Kind.EMITTER_BOUND);
++            final var expected = matrix(row.getAsJsonArray("constructor_matrix"));
++            assertArrayEquals(expected.values(), actual.values());
++            final var emitter = effect.emitter(new BedrockMolang(), new Random(1), actual);
++            emitter.advance(0, 10, null, (x, y, z) -> List.of());
++            assertEquals(expected.position(new Vector3f(1, 2, 3)), emitter.visuals().getFirst().position());
++        }
++    }
++
++    @Test
++    void usesTheActorLocatorForBoundChildrenAndTheContactFrameForFallbacks() throws Exception {
++        final var document = BedrockParticleEffectTest.burst();
++        components(document).add("minecraft:emitter_local_space", json("{\"position\":true,\"rotation\":true}"));
++        components(document).add("minecraft:emitter_shape_point", json("{\"offset\":[1,2,3]}"));
++        final var contact = new BedrockParticleAttachment.Matrix(new float[] {0,1,0,0,1,0,0,0,0,0,-1,0,4,5,6,1});
++        final var spawn = new BedrockParticleEvents.Spawn("test:child", BedrockParticleEvents.Kind.EMITTER_BOUND, null);
++        final var request = new BedrockParticleEvents.Request(spawn, contact, new Vector3f());
++        final var locator = new org.joml.Matrix4f().translation(10, 20, 30).scale(2, 3, -4);
++        final var effect = BedrockParticleEffect.read(document);
++        final var bound = effect.emitter(new BedrockMolang(), new Random(1), request.emitterTransform(true));
++        bound.advance(0, 10, new BedrockParticleAttachment(Vec3.ZERO, 180, locator, null), (x, y, z) -> List.of());
++        assertEquals(new Vector3f(12, 26, 18), bound.visuals().getFirst().position());
++        assertArrayEquals(locator.get(new float[16]), bound.visuals().getFirst().matrix().values(), 0F);
++        final var fallback = effect.emitter(new BedrockMolang(), new Random(1), request.emitterTransform(false));
++        fallback.advance(0, 10, null, (x, y, z) -> List.of());
++        assertEquals(new Vector3f(6, 6, 3), fallback.visuals().getFirst().position());
++        assertArrayEquals(contact.values(), fallback.visuals().getFirst().matrix().values());
++        for (final var kind : List.of(BedrockParticleEvents.Kind.PARTICLE, BedrockParticleEvents.Kind.PARTICLE_WITH_VELOCITY)) {
++            final var manual = new BedrockParticleEvents.Request(new BedrockParticleEvents.Spawn("test:child", kind, null),
++                    contact, new Vector3f(7, 8, 9));
++            assertArrayEquals(BedrockParticleAttachment.Matrix.IDENTITY.values(), manual.emitterTransform(false).values());
++            final var emitter = BedrockParticleEffect.read(manual()).emitter(new BedrockMolang(), new Random(1), manual.emitterTransform(false));
++            assertTrue(emitter.emit(manual.position(), manual.velocity(), 10));
++            assertEquals(new Vector3f(4, 5, 6), emitter.visuals().getFirst().position());
 +        }
 +    }
 +
@@ -34780,6 +34845,12 @@ index 0000000..f27481e
 +        }
 +        final var events = new JsonObject(); events.add("run", node);
 +        assertThrows(IOException.class, () -> BedrockParticleEvents.read(events));
++    }
++
++    private static BedrockParticleAttachment.Matrix matrix(final com.google.gson.JsonArray array) {
++        final float[] values = new float[16];
++        for (int index = 0; index < values.length; index++) values[index] = array.get(index).getAsFloat();
++        return new BedrockParticleAttachment.Matrix(values);
 +    }
 +
 +    private static JsonObject fixture(final String name) throws IOException {

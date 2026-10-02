@@ -807,3 +807,17 @@ Another 440 cases execute the native spin matrix multiplication after each facin
 These prepared probes supply inverse-view columns, particle state, normalized directions, emitter axes, and the runtime identity constant. They exclude camera selection, complete frame interpolation, vertex submission, and native visible output. Licensed package shaders, executables, licenses, account data, and native fixtures remain private. Production requires no external game installation or native research tool.
 
 All 371 tests pass across 73 suites with no failures, errors, or skips. This includes fresh package license acquisition, extraction, and cache reuse. All 16 patches replay. The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
+
+## Preserve the native child emitter frame
+
+The [particle event reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particleeffectevents?view=minecraft-bedrock-stable) distinguishes ordinary emitters, actor-bound emitters, and manual particles. Native factory `FUN_1421667d0` preserves the ordinary event matrix. Actor-bound factory `FUN_142166990` constructs an emitter at identity through `FUN_142130e20`, then binds the actor and locator through `FUN_142160260` and `FUN_14215ffc0`.
+
+The setter stores the supplied offset in binding metadata. It does not replace the constructor's base origin or matrix. The actor-bound child therefore uses its sampled actor/locator frame without an additional collision rotation. Production previously retained the collision axes after removing translation. Use identity for bound children and manual emitters. Preserve the complete event frame for ordinary emitters and unbound fallbacks.
+
+Independent native execution supplies 24 factory cases with ordinary and bound effects, different event matrices, valid and invalid handles, and present or absent weak actor references. The probe records constructor matrices and binding writes. Resource lookup, allocation/constructor, initialized identity and zero constants, binding liveness, string copying, and context cleanup are supplied. These cases do not execute event branch selection, actor query evaluation, asynchronous child scheduling, or native visible output.
+
+Production tests compare the constructor transforms and resulting particle placement. A regression also checks a bound child on a scaled locator, the unbound contact-frame fallback, and manual emission coordinates. Native binding metadata and complete child expression context still need runtime comparisons. Executables, assets, probes, and fixtures remain private.
+
+Another 12 cases execute the full native leaf dispatcher for ordinary requests and bound requests without an actor. Both retain the event matrix. Valid child handles run the child initialization callback before the source expression; invalid handles skip child initialization and retain the source expression. The probe supplies binding liveness and expression callbacks. Actor-present branch selection, actual Molang evaluation, and scheduling remain outside these receipts.
+
+All 373 fixture-enabled tests pass across 73 suites with no failures, errors, or skips. Fresh package license acquisition, extraction, and cache reuse pass. All 16 patches replay. The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.

@@ -400,7 +400,11 @@ Independent execution of Bedrock 1.26.51.1 supplies 196 evaluator cases and 90 r
 
 Manual emission and particle lifetime events now support nested particle effects. Sequences and weighted random branches preserve the inspected native order. Child effects retain position and optional velocity, with separate Molang variables. The extracted lava effect now spawns manual smoke particles.
 
-Collision events now use the incoming velocity and final contact normal. Events retain their native frame through child loading. Both block expiration filters use original Bedrock block identities. The extracted water-drip effect now spawns three splash particles after contact.
+Collision events now use the incoming velocity and final contact normal. Ordinary child emitters retain that frame through loading. Both block expiration filters use original Bedrock block identities. The extracted water-drip effect now spawns three splash particles after contact.
+
+Actor-bound child emitters start with an identity transform and reuse the parent's actor and locator. A collision frame cannot rotate the locator again. Ordinary emitters and unbound fallbacks retain the full event matrix. Manual child emitters start at identity and receive the event position and optional velocity separately.
+
+Another 24 native factory cases record constructor matrices and binding writes. Production tests compare constructor transforms and particle placement. Resource lookup, constructor allocation, initialized constants, binding liveness, string copying, and cleanup are supplied boundaries. These checks exclude event branch selection, actor queries, asynchronous child scheduling, and visible rendering.
 
 Independent native execution supplies 74 collision event cases, 16 event coordinate cases, and 64 block expiration cases. These cases verify component calculations and supplied world callbacks. Native name resolution, child scheduling, and visible comparisons remain separate checks.
 
@@ -416,7 +420,7 @@ Playback samples configured pitch before volume, then selects and decodes a cata
 
 Native execution supplies 56 dispatch cases, 34 range parsing cases, 70 sampling cases, and nine volume gate cases. Production matches their observed results. Prepared graph fields, JSON lookup, random draws, and event receipts are supplied boundaries. Name membership uses ViaBedrock’s target protocol data. String range parsing and ASCII normalization use inspected native code. These checks exclude seeded random generation, audible mixing, captions, and native server comparisons.
 
-Other facing modes remain incomplete. Native checks still need to establish child scheduling and expression context. Native comparisons still need to establish render interpolation, random and variable registration, tint quantization, and visible scale. These component tests do not establish complete particle parity.
+Native checks still need to establish child scheduling and expression context. Native comparisons still need to establish render interpolation, random and variable registration, tint quantization, and visible scale. These component tests do not establish complete particle parity.
 
 ### Missing features
 
@@ -437,6 +441,6 @@ The loader now uses the matching 68-alias player definition. Its added tracks in
 - Verify login and live changes on a second client, including height, arm width, capes, and several animated outfits. The native relay displays the Java HelliArm skin. This establishes visual presence, not complete timing or format parity.
 - Verify fresh interactive Store sign-in and helper runtime behavior on Windows and macOS. Linux acquisition, license decryption, extraction, and cache reuse already pass.
 
-The replayed full stack builds, and all 365 fixture-enabled add-on tests pass with no failures or skips. The rebuilt client also passes 13,578 native curve comparisons and a conditional-assignment check. Earlier Java runtime probes passed 1,324 checks across previously implemented paths. The new overlay probe passes 722 checks for the updated graph and renderer paths. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
+The replayed full stack builds, and all 373 fixture-enabled add-on tests pass with no failures or skips. The rebuilt client also passes 13,578 native curve comparisons and a conditional-assignment check. Earlier Java runtime probes passed 1,324 checks across previously implemented paths. The new overlay probe passes 722 checks for the updated graph and renderer paths. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
 
 Keep login JWTs, receipts, content keys, raw flows, screenshots, player textures, and account data private under `.stackanvil/`.
