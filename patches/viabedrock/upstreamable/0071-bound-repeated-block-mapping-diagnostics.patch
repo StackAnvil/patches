@@ -1,0 +1,202 @@
+From 7ed3018e80f52ab222666ee03c57df2f663fdcad Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 09:50:53 +0200
+Subject: [PATCH] perf(chunks): bound repeated block mapping diagnostics
+
+Invalid secondary layer entries can log once per cell across entire chunk batches. A recorded server palette mismatch produced over 100,000 warnings and blocked the client network loop for roughly 30 seconds.
+
+Retain each distinct warning per dimension tracker, up to 64 diagnostics and one suppression notice. Bound memory and synchronize admission across concurrent chunk consumers. Preserve block fallback and waterlogging behavior.
+---
+ .../storage/ChunkMappingDiagnostics.java      | 61 +++++++++++++++++++
+ .../protocol/storage/ChunkTracker.java        | 14 +++--
+ .../storage/ChunkMappingDiagnosticsTest.java  | 54 ++++++++++++++++
+ 3 files changed, 123 insertions(+), 6 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkMappingDiagnostics.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkMappingDiagnosticsTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkMappingDiagnostics.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkMappingDiagnostics.java
+new file mode 100644
+index 00000000..3fd00291
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkMappingDiagnostics.java
+@@ -0,0 +1,61 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import java.util.HashSet;
++import java.util.Set;
++import java.util.logging.Level;
++import java.util.logging.Logger;
++
++/** Keeps repeated invalid palette entries from blocking chunk processing with log output. */
++final class ChunkMappingDiagnostics {
++
++    private static final int LIMIT = 64;
++    private final Set<Warning> reported = new HashSet<>();
++    private final Logger logger;
++
++    ChunkMappingDiagnostics(final Logger logger) {
++        this.logger = logger;
++    }
++
++    void missingBlock(final int state) {
++        this.report(new Warning(Kind.MISSING_BLOCK, state, 0));
++    }
++
++    void missingWaterloggedBlock(final int state) {
++        this.report(new Warning(Kind.MISSING_WATERLOGGED_BLOCK, state, 0));
++    }
++
++    void invalidSecondaryLayer(final int first, final int second) {
++        this.report(new Warning(Kind.INVALID_SECONDARY_LAYER, first, second));
++    }
++
++    private void report(final Warning warning) {
++        final boolean reachedLimit;
++        synchronized (this.reported) {
++            if (this.reported.size() >= LIMIT || !this.reported.add(warning)) {
++                return;
++            }
++            reachedLimit = this.reported.size() == LIMIT;
++        }
++        this.logger.log(Level.WARNING, switch (warning.kind()) {
++            case MISSING_BLOCK -> "Missing block state: " + warning.first();
++            case MISSING_WATERLOGGED_BLOCK -> "Missing waterlogged block state: " + warning.first();
++            case INVALID_SECONDARY_LAYER -> "Invalid layer 2 block state. L1: " + warning.first() + ", L2: " + warning.second();
++        });
++        if (reachedLimit) {
++            this.logger.log(Level.WARNING, "Further chunk block mapping warnings are suppressed for this dimension tracker");
++        }
++    }
++
++    private enum Kind {
++        MISSING_BLOCK, MISSING_WATERLOGGED_BLOCK, INVALID_SECONDARY_LAYER
++    }
++
++    private record Warning(Kind kind, int first, int second) {
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+index 6d49991f..092ce916 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
+@@ -113,6 +113,8 @@ public class ChunkTracker extends StoredObject {
+     private int centerZ = 0;
+     private int radius;
+ 
++    private final ChunkMappingDiagnostics mappingDiagnostics = new ChunkMappingDiagnostics(ViaBedrock.getPlatform().getLogger());
++
+     public ChunkTracker(final UserConnection user, final Dimension dimension) {
+         super(user);
+         this.dimension = dimension;
+@@ -315,7 +317,7 @@ public class ChunkTracker extends StoredObject {
+         final int blockState0 = blockPalettes.get(0).idAt(sectionX, sectionY, sectionZ);
+         int remappedBlockState = blockStateRewriter.javaId(blockState0);
+         if (remappedBlockState == -1) {
+-            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing block state: " + blockState0);
++            this.mappingDiagnostics.missingBlock(blockState0);
+             remappedBlockState = ProtocolConstants.JAVA_AIR_ID;
+         }
+ 
+@@ -327,10 +329,10 @@ public class ChunkTracker extends StoredObject {
+                     if (waterloggedBlockState != -1) {
+                         remappedBlockState = waterloggedBlockState;
+                     } else {
+-                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing waterlogged block state: " + blockState0);
++                        this.mappingDiagnostics.missingWaterloggedBlock(blockState0);
+                     }
+                 } else {
+-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Invalid layer 2 block state. L1: " + blockState0 + ", L2: " + blockState1);
++                    this.mappingDiagnostics.invalidSecondaryLayer(blockState0, blockState1);
+                 }
+             }
+         }
+@@ -1246,7 +1248,7 @@ public class ChunkTracker extends StoredObject {
+                     if (javaBlockState != -1) {
+                         return javaBlockState;
+                     } else {
+-                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing block state: " + bedrockBlockState);
++                        this.mappingDiagnostics.missingBlock(bedrockBlockState);
+                         return ProtocolConstants.JAVA_AIR_ID;
+                     }
+                 });
+@@ -1302,10 +1304,10 @@ public class ChunkTracker extends StoredObject {
+                                         if (waterloggedBlockState != -1) {
+                                             remappedBlockPalette.setIdAt(x, y, z, waterloggedBlockState);
+                                         } else {
+-                                            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing waterlogged block state: " + blockState0);
++                                            this.mappingDiagnostics.missingWaterloggedBlock(blockState0);
+                                         }
+                                     } else {
+-                                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Invalid layer 2 block state. L1: " + blockState0 + ", L2: " + blockState1);
++                                        this.mappingDiagnostics.invalidSecondaryLayer(blockState0, blockState1);
+                                     }
+                                 }
+                             }
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkMappingDiagnosticsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkMappingDiagnosticsTest.java
+new file mode 100644
+index 00000000..74651ca2
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkMappingDiagnosticsTest.java
+@@ -0,0 +1,54 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import org.junit.jupiter.api.Test;
++
++import java.util.concurrent.atomic.AtomicInteger;
++import java.util.logging.Handler;
++import java.util.logging.LogRecord;
++import java.util.logging.Logger;
++import java.util.stream.IntStream;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class ChunkMappingDiagnosticsTest {
++
++    @Test
++    void boundsConcurrentDuplicatesAndDistinctFailuresPerTracker() {
++        final AtomicInteger records = new AtomicInteger();
++        final Logger logger = Logger.getAnonymousLogger();
++        logger.setUseParentHandlers(false);
++        logger.addHandler(new Handler() {
++            @Override
++            public void publish(final LogRecord record) {
++                records.incrementAndGet();
++            }
++
++            @Override
++            public void flush() {
++            }
++
++            @Override
++            public void close() {
++            }
++        });
++        final ChunkMappingDiagnostics diagnostics = new ChunkMappingDiagnostics(logger);
++        IntStream.range(0, 100_000).parallel().forEach(ignored -> diagnostics.invalidSecondaryLayer(17, 18));
++        assertEquals(1, records.get());
++        diagnostics.missingBlock(17);
++        diagnostics.missingWaterloggedBlock(17);
++        assertEquals(3, records.get());
++        IntStream.range(0, 100_000).parallel().forEach(diagnostics::missingBlock);
++        // Sixty-four distinct failures and one notice exhaust this tracker's bounded budget.
++        assertEquals(65, records.get());
++        diagnostics.invalidSecondaryLayer(19, 20);
++        assertEquals(65, records.get());
++        new ChunkMappingDiagnostics(logger).invalidSecondaryLayer(17, 18);
++        assertEquals(66, records.get());
++    }
++
++}
+-- 
+2.55.0
