@@ -992,3 +992,10 @@ Separate zero-price asset eligibility from permission to equip an unclaimed offe
 The full run passes 403 tests across 81 suites without failures, errors, or skips. All 16 patches replay. The dependency build and Prism bundle pass. A restarted isolated Flatpak client prepares the same nine-piece slim Alex profile with local body and face geometry. The saved identifiers are `geometry.persona.body` and `geometry.persona.face`. Its 128 by 128 body texture matches all 16,384 texels in the previous service model, after accounting for atlas padding. The production preview renders the locally assembled body and animated face.
 
 This verifies local assembly for that recipe. It does not establish visible parity across camera, pose, lighting, or animation phase. Accounts without receipt keys, unavailable remote assets, and the remaining Dressing Room and classic-format checks stay open. Captures, decoded assets, receipts, and probes stay private.
+
+
+### Owned arm strip runtime comparison
+
+The current catalog identifies the previously captured animated arm pack as The Chill Arm. The authenticated account owns it and has its specific receipt key. The live production loader decodes its 16-frame texture and 16 geometry variants. A private unsaved recipe combines both slim, medium arms with the active Alex's body and face. It assembles locally with ten arm cubes, a two-frame blinking face, and a separate 16-frame arm binding. The account's saved recipe remains unchanged.
+
+A read-only render-thread probe observes all 16 frames and 140 sequential steps at about 7.01 steps per second. Native and Java videos recorded at 120 fps show the corresponding drip columns. Three initial native 20-second windows match seven fps. Later native windows measure about 6.8 to 7.0 fps, while Java stays near seven. The cause remains unresolved. Independent clocks, changing native preview conditions, and capture timing still need investigation. This verifies the tested local assembly and Java frame sequence, without claiming exact native timing or complete animated-outfit parity. Assets, measurements, and probes stay private.

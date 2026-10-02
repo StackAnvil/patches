@@ -210,6 +210,10 @@ A rebuilt Java client uses a private native skin fixture with separate arm and f
 
 A live comparison records the same nine-piece slim Alex recipe at 120 fps. The native client shows 15 blinks in 64.5 seconds. The restarted Java client shows 39 in 169 seconds. Both close their eyes for roughly 17 to 200 ms. A read-only Java probe also observes controller transitions and uploaded texture frames during rendering. These recordings verify visible blinking for this recipe. They use independent clocks and different poses. They do not establish matching phase, random sampling, or timing across every face and outfit. Videos, per-frame measurements, and probe data remain private.
 
+The owned catalog piece The Chill Arm also assembles locally with the saved Alex body and face. Its published pack supplies 16 geometry variants and a 16-frame 32 by 512 texture. The selected slim, medium variant adds ten arm cubes. The preview retains separate two-frame blinking and 16-frame arm bindings. A read-only probe observes all arm frames in order, including 140 consecutive steps at about 7.01 steps per second. The saved account profile stays unchanged.
+
+Private 120 fps videos show the small drip columns in native and Java previews. The first three 20-second native measurement windows match seven fps. Later windows measure about 6.8 to 7.0 fps; Java stays near seven. The cause of the later difference is unresolved. These observations establish local assembly and Java frame order for this owned piece. They do not establish exact native clock behavior under load, matching phase, or general animated-outfit parity.
+
 Sources: [Persona render controllers](https://github.com/Mojang/bedrock-samples/blob/main/resource_pack/render_controllers/persona.render_controllers.json) and [blink controller](https://github.com/Mojang/bedrock-samples/blob/main/resource_pack/animation_controllers/persona.animation_controllers.json).
 
 ## Built-in persona assets
