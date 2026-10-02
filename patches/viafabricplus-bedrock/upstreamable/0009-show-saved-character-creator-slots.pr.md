@@ -645,6 +645,18 @@ Bedrock 1.26.51.1 picker `14713b490` routes single-channel writes through `1470e
 
 Independent execution covers 240 combinations of type, channel, existing state, and selected color. The probe supplies decoded map state and the security-cookie call. Native instructions build the new key/color pair, observed at insertion boundary `1404b5b40`, or update the existing group directly. Allocation, JSON serialization, HTTPS writes, and visible native UI remain outside the probe.
 
-Java tests compare every exposed color target against the applicable native cases. An unconditional regression test checks first-group creation and preservation of the source profile. All 20 targeted color, tint, and recipe tests pass with no failures, errors, or skips. A live service save of a newly created group remains unverified.
+Java tests compare every exposed color target against the applicable native cases. An unconditional regression test checks first-group creation and preservation of the source profile. All 20 targeted color, tint, and recipe tests pass with no failures, errors, or skips.
 
 The complete fixture suite passes all 296 tests with no failures, errors, or skips. This includes fresh standalone package acquisition, extraction, and cache reuse.
+
+## Native recipe color formats and live first edit
+
+The captured target account uses both six-digit RGB and eight-digit ARGB colors. Palette selection now compares decoded color values through the shared tint parser. RGB and opaque ARGB select the same swatch. Transparent, invalid, absent, and unlisted colors select no swatch. Apply stays disabled for an unchanged color, and saved recipe strings retain their original format.
+
+A muted native 1.26.51 capture opens the equipped eye picker without a saved tint group. The native preview is missing, so Equip stays disabled and the native UI sends no color write. A separate live HTTPS test uses the production request builder and captured native catalog. The service accepts the first iris group and returns its four channels exactly. The test preserves the other profiles, then restores all six original recipes with exact readback.
+
+This verifies the production request shape and service acceptance. It does not verify the full asynchronous save path, native UI save, or visible rendering. Credentials, account snapshots, flows, screenshots, and the live test harness remain private.
+
+After integration with the lighting patch, all 306 fixture-enabled add-on tests pass with no failures, errors, or skips. The two new tests cover palette matching across native color formats and rejection of invalid or unmatched colors. Fresh standalone package acquisition, extraction, and cache reuse also pass.
+
+The full dependency build and Prism bundle pass after replaying all 16 add-on patches. The build verifies the pinned ViaFabricPlus Jenkins artifacts.
