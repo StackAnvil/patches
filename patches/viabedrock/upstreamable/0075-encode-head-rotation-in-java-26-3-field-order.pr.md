@@ -16,3 +16,7 @@ The patch corrects only the Java packet field order. It preserves the existing B
 The native reference uses Bedrock 1.26.51.1, protocol 2193. Private captures, client assets, and runtime traces remain outside Git.
 
 The full exported stack builds successfully: 11 converter tests, 333 core tests, and 447 add-on tests. All 791 cases pass with no failures, errors, or skips. The Prism bundle also builds. The core patch is placed before deferred patches; the metadata patch changes only its regenerated Git blob indexes.
+
+The fixed local Hive replay confirms the correction at the actual draw calls. The gray seated player now has Java pitch 23.90625 degrees and yaw 125.15625 degrees. Previously these were 1.40625 and 23.90625. Its relative head yaw changes from 76.75 to about -6.73 degrees. The yellow player’s pitch and yaw also decode correctly; the fully synchronized red player is unchanged. The remaining difference from the captured pitch is the existing byte-angle quantization.
+
+The replay accepts all 49 native skins with no rejected appearances. Retained player and chair metadata contain no seat rotation bounds in fields 57–60. All five artifact hashes stay unchanged through the replay, and the owned client, replay server, display, and audio guards are cleaned up. This validates the wire fix; it does not establish complete default skin animation parity.
