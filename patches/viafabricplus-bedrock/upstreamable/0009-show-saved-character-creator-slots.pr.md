@@ -880,3 +880,21 @@ Live retained-component lifetime, registry locator construction, missing positio
 All 380 fixture-enabled tests pass across 75 suites with no failures, errors, or skips. This includes all 77 particle tests and network owner replacement checks. Fresh license acquisition, extraction, and cache reuse pass. All 16 patches replay.
 
 The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
+
+
+## Dispatch child events before source expressions
+
+The [particle event reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particleeffectevents?view=minecraft-bedrock-stable) places each pre-effect script in the child emitter's separate Molang context. The existing 48 native dispatcher/context cases establish initialization before the source expression. Invalid handles and invalid actor contexts skip initialization while the source expression still runs.
+
+Preload reachable child definitions and textures before root playback. Discovery covers every parsed sequence and random branch, including zero-weight branches. Shared definitions load once per graph. Visited identifiers terminate cycles. Missing child handles settle discovery without suppressing the source expression. Existing resource, image, emitter, and recursion limits remain active.
+
+Replace the emitter's deferred event queue with a direct dispatcher. Child construction, query refresh, initialization, and manual emission finish before the event leaf evaluates its source expression. Manual children reuse their existing emitter. Population checks refresh during births so inline children cannot exhaust the shared budget unnoticed.
+
+Update a snapshot of existing emitters, then collect visuals from the current population. This avoids mutation during iteration and includes newly emitted manual children in the same render extraction. Newly constructed emitters receive their first update on the next frame. Native frame order for those new emitters remains unverified.
+
+Production tests compare initialization/source order across all 48 native cases, including invalid handles and registry contexts. They evaluate the child Molang script and verify variable isolation. Additional tests cover pending/shared/cyclic dependencies, missing handles, discovery limits, parsed branches, and population contention during manual child births. Existing event tests now observe direct callbacks.
+
+These tests use the previously recorded native receipts. They do not execute native asynchronous asset loading or establish cold-load start timing, new-emitter frame order, or visible native playback. The loaded Java graph removes asynchronous dispatch between the event leaf and its child initialization. Full particle and skin parity remains incomplete.
+
+
+All 385 fixture-enabled tests pass across 77 suites with no failures, errors, or skips. This includes all 82 particle tests. Fresh package licensing, extraction, and cache reuse pass. All 16 patches replay. The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
