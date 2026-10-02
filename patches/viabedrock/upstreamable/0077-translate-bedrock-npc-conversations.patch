@@ -1,0 +1,598 @@
+From 36e5f1ee76ba0ba44dc63fb6b85b546479ef1710 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 22:10:18 +0200
+Subject: [PATCH] feat(dialogue): translate Bedrock NPC conversations into Java
+ dialogs
+
+Handle protocol 2193 NPC dialogue with Java built-in dialogs so ordinary
+Java clients can use server conversations through ViaProxy. Preserve the
+server action indices while hiding opening and closing command entries.
+Send indexed NPC requests instead of executing transmitted commands locally.
+
+Bind responses to one active scene and its tracked actor, reject stale or
+invalid actions, and clear the dialog when the NPC disappears. Share busy
+screen checks with forms and inventory. Link actions use Java URL prompts.
+
+A Bedrock Dedicated Server 1.26.51.1 probe confirms fixed-width actor IDs,
+JSON modes and indices, entry requests, branching button requests, and exit
+requests with the original scene name. Focused tests cover packet layouts,
+scene replacement, request ordering and shared screen state.
+---
+ .../viabedrock/protocol/BedrockProtocol.java  |   2 +
+ .../protocol/packet/InventoryPackets.java     |   5 +-
+ .../protocol/packet/NpcDialoguePackets.java   | 166 ++++++++++++++++++
+ .../protocol/storage/EntityTracker.java       |   4 +
+ .../protocol/storage/InventoryTracker.java    |   4 +-
+ .../protocol/storage/NpcDialogueStorage.java  |  95 ++++++++++
+ .../packet/NpcDialoguePacketTest.java         | 132 ++++++++++++++
+ .../storage/NpcDialogueStorageTest.java       |  70 ++++++++
+ 8 files changed, 476 insertions(+), 2 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePackets.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorage.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePacketTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorageTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+index cd0831e3..0ab3a6a0 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+@@ -108,6 +108,7 @@ public class BedrockProtocol
+         EntityPackets.register(this);
+         HudPackets.register(this);
+         InventoryPackets.register(this);
++        NpcDialoguePackets.register(this);
+         WorldEffectPackets.register(this);
+         UnhandledPackets.register(this);
+ 
+@@ -162,6 +163,7 @@ public class BedrockProtocol
+         user.put(new PlayerWaypointTracker(user));
+         user.put(new ScoreboardTracker());
+         user.put(new InventoryTracker(user));
++        user.put(new NpcDialogueStorage());
+         user.put(new BreakingTracker(user));
+ 
+         user.put(new InventoryTransactionRewriter(user));
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+index e238ed6a..fb8b236b 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+@@ -215,7 +215,7 @@ public final class InventoryPackets {
+             final int id = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // id
+             final String data = wrapper.read(BedrockTypes.STRING); // data
+ 
+-            if (inventoryTracker.getCurrentContainer() != null || inventoryTracker.getCurrentForm() != null) {
++            if (inventoryTracker.isAnyScreenOpen()) {
+                 final PacketWrapper modalFormResponse = PacketWrapper.create(ServerboundBedrockPackets.MODAL_FORM_RESPONSE, wrapper.user());
+                 modalFormResponse.write(BedrockTypes.UNSIGNED_VAR_INT, id); // id
+                 modalFormResponse.write(Types.BOOLEAN, false); // has response
+@@ -457,6 +457,9 @@ public final class InventoryPackets {
+         protocol.registerServerbound(ServerboundPackets26_3.CUSTOM_CLICK_ACTION, ServerboundBedrockPackets.MODAL_FORM_RESPONSE, wrapper -> {
+             final String id = wrapper.read(Types.STRING); // id
+             final CompoundTag payload = (CompoundTag) wrapper.read(Types.CUSTOM_CLICK_ACTION_TAG); // payload
++            if (NpcDialoguePackets.handleResponse(wrapper, id, payload)) {
++                return;
++            }
+             final InventoryTracker inventoryTracker = wrapper.user().get(InventoryTracker.class);
+             if (inventoryTracker.getCurrentForm() == null) {
+                 wrapper.cancel();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePackets.java
+new file mode 100644
+index 00000000..41068441
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePackets.java
+@@ -0,0 +1,166 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.NumberTag;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.Holder;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.libs.mcstructs.converter.impl.v1_21_5.NbtConverter_v1_21_5;
++import com.viaversion.viaversion.libs.mcstructs.core.Identifier;
++import com.viaversion.viaversion.libs.mcstructs.dialog.ActionButton;
++import com.viaversion.viaversion.libs.mcstructs.dialog.AfterAction;
++import com.viaversion.viaversion.libs.mcstructs.dialog.action.CustomAllAction;
++import com.viaversion.viaversion.libs.mcstructs.dialog.action.StaticAction;
++import com.viaversion.viaversion.libs.mcstructs.dialog.body.PlainMessageBody;
++import com.viaversion.viaversion.libs.mcstructs.dialog.impl.MultiActionDialog;
++import com.viaversion.viaversion.libs.mcstructs.dialog.serializer.DialogSerializer;
++import com.viaversion.viaversion.libs.mcstructs.text.events.click.ClickEvent;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTextUtils;
++import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.api.util.TextUtil;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.NpcDialogueActionType;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.NpcRequestPacketPayload_RequestType;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import net.raphimc.viabedrock.protocol.storage.NpcDialogueStorage;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++import java.net.URI;
++import java.util.ArrayList;
++import java.util.logging.Level;
++
++public final class NpcDialoguePackets {
++
++    public static void register(final BedrockProtocol protocol) {
++        protocol.registerClientbound(ClientboundBedrockPackets.NPC_DIALOGUE, ClientboundPackets26_3.SHOW_DIALOG, wrapper -> {
++            final long uniqueId = wrapper.read(BedrockTypes.LONG_LE);
++            final NpcDialogueActionType action = NpcDialogueActionType.getByValue(wrapper.read(BedrockTypes.VAR_INT));
++            final String dialogue = wrapper.read(BedrockTypes.STRING);
++            final String scene = wrapper.read(BedrockTypes.STRING);
++            final String name = wrapper.read(BedrockTypes.STRING);
++            final String actions = wrapper.read(BedrockTypes.STRING);
++            final NpcDialogueStorage storage = wrapper.user().get(NpcDialogueStorage.class);
++            if (action == NpcDialogueActionType.Close) {
++                if (storage.close(uniqueId)) {
++                    wrapper.setPacketType(ClientboundPackets26_3.CLEAR_DIALOG);
++                } else {
++                    wrapper.cancel();
++                }
++                return;
++            }
++            if (action != NpcDialogueActionType.Open
++                    || (wrapper.user().get(InventoryTracker.class).isAnyScreenOpen() && storage.current() == null)) {
++                wrapper.cancel();
++                return;
++            }
++            final Entity entity = wrapper.user().get(EntityTracker.class).getEntityByUid(uniqueId);
++            if (entity == null) {
++                wrapper.cancel();
++                return;
++            }
++            final NpcDialogueStorage.Session session;
++            try {
++                session = storage.open(uniqueId, entity.runtimeId(), scene, actions);
++            } catch (final RuntimeException e) {
++                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Invalid NPC dialogue actions", e);
++                wrapper.cancel();
++                return;
++            }
++            final var texts = wrapper.user().get(ResourcePackStorage.class).getTexts();
++            final Identifier responseId = Identifier.of(session.responseIdentifier());
++            final CompoundTag exit = new CompoundTag();
++            exit.putBoolean("exit", true);
++            final var dialog = new MultiActionDialog(TextUtil.stringToTextComponent(texts.translate(name)),
++                    true, false, AfterAction.WAIT_FOR_RESPONSE, new ArrayList<>(), new ArrayList<>(), new ArrayList<>(),
++                    new ActionButton(TextUtil.stringToTextComponent(texts.get("gui.close")), 200,
++                            new CustomAllAction(responseId, exit)), 1);
++            for (String line : BedrockTextUtils.split(texts.translate(dialogue), "\n")) {
++                dialog.getBody().add(new PlainMessageBody(TextUtil.stringToTextComponent(line)));
++            }
++            for (NpcDialogueStorage.Button button : session.buttons()) {
++                final CompoundTag payload = new CompoundTag();
++                payload.putInt("button_id", button.index());
++                if (button.url() == null) {
++                    dialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(texts.translate(button.name())),
++                            200, new CustomAllAction(responseId, payload)));
++                } else {
++                    final URI uri = URI.create(button.url());
++                    if ("https".equalsIgnoreCase(uri.getScheme()) || "http".equalsIgnoreCase(uri.getScheme())) {
++                        dialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent(texts.translate(button.name())),
++                                200, new StaticAction(ClickEvent.openUrl(uri))));
++                    }
++                }
++            }
++            wrapper.write(Types.TRUSTED_COMPOUND_TAG_HOLDER, Holder.of((CompoundTag) DialogSerializer.V1_21_6
++                    .getDirectCodec().serialize(NbtConverter_v1_21_5.INSTANCE, dialog).get()));
++            if (session.openingCommands()) {
++                sendRequest(wrapper.user(), new NpcDialogueStorage.Request(entity.runtimeId(),
++                        NpcRequestPacketPayload_RequestType.ExecuteOpeningCommands, 0, scene));
++            }
++        });
++    }
++
++    public static boolean handleResponse(final PacketWrapper wrapper, final String id, final CompoundTag payload) {
++        if (!id.startsWith("viabedrock:npc/")) {
++            return false;
++        }
++        wrapper.cancel();
++        final NpcDialogueStorage storage = wrapper.user().get(NpcDialogueStorage.class);
++        final var session = storage.current();
++        if (payload == null || session == null || !id.equals(session.responseIdentifier())) {
++            return true;
++        }
++        final Entity entity = wrapper.user().get(EntityTracker.class).getEntityByUid(session.uniqueId());
++        if (entity == null || entity.runtimeId() != session.runtimeId()) {
++            storage.close(session.uniqueId());
++            PacketWrapper.create(ClientboundPackets26_3.CLEAR_DIALOG, wrapper.user()).send(BedrockProtocol.class);
++            return true;
++        }
++        final Integer buttonIndex;
++        if (payload.getBoolean("exit", false)) {
++            buttonIndex = null;
++        } else if (payload.get("button_id") instanceof NumberTag number) {
++            buttonIndex = number.asInt();
++        } else {
++            return true;
++        }
++        final var requests = storage.respond(id, buttonIndex);
++        if (!requests.isEmpty()) {
++            PacketWrapper.create(ClientboundPackets26_3.CLEAR_DIALOG, wrapper.user()).send(BedrockProtocol.class);
++            for (var request : requests) {
++                sendRequest(wrapper.user(), request);
++            }
++        }
++        return true;
++    }
++
++    public static void writeRequest(final PacketWrapper wrapper, final NpcDialogueStorage.Request request) {
++        wrapper.write(BedrockTypes.UNSIGNED_VAR_LONG, request.runtimeId());
++        wrapper.write(Types.UNSIGNED_BYTE, (short) request.type().getValue());
++        wrapper.write(BedrockTypes.STRING, "");
++        wrapper.write(Types.UNSIGNED_BYTE, (short) request.actionIndex());
++        wrapper.write(BedrockTypes.STRING, request.scene());
++    }
++
++    private static void sendRequest(final UserConnection user, final NpcDialogueStorage.Request request) {
++        final PacketWrapper wrapper = PacketWrapper.create(ServerboundBedrockPackets.NPC_REQUEST, user);
++        writeRequest(wrapper, request);
++        wrapper.sendToServer(BedrockProtocol.class);
++    }
++
++    private NpcDialoguePackets() {
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
+index fb0efe92..ae42b17a 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
+@@ -131,6 +131,10 @@ public class EntityTracker extends StoredObject {
+         }
+ 
+         this.entities.remove(entity.uniqueId());
++        final NpcDialogueStorage npcDialogue = this.user().get(NpcDialogueStorage.class);
++        if (npcDialogue != null && npcDialogue.close(entity.uniqueId())) {
++            PacketWrapper.create(ClientboundPackets26_3.CLEAR_DIALOG, this.user()).send(BedrockProtocol.class);
++        }
+         this.runtimeIdToUniqueId.remove(entity.runtimeId());
+         this.javaIdToUniqueId.remove(entity.javaId());
+         this.pendingEntityLinks.keySet().removeIf(key -> key.vehicleId() == entity.uniqueId()
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryTracker.java
+index 5f13d761..8fa38f20 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryTracker.java
+@@ -169,7 +169,9 @@ public class InventoryTracker extends StoredObject {
+     }
+ 
+     public boolean isAnyScreenOpen() {
+-        return this.isContainerOpen() || this.currentForm != null;
++        final NpcDialogueStorage npcDialogue = this.user().get(NpcDialogueStorage.class);
++        return this.isContainerOpen() || this.currentForm != null
++                || npcDialogue != null && npcDialogue.current() != null;
+     }
+ 
+     public InventoryContainer getInventoryContainer() {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorage.java
+new file mode 100644
+index 00000000..ce9db367
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorage.java
+@@ -0,0 +1,95 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.StorableObject;
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.NpcRequestPacketPayload_RequestType;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.net.URI;
++
++public final class NpcDialogueStorage implements StorableObject {
++
++    private Session current;
++    private long sequence;
++
++    public Session open(final long uniqueId, final long runtimeId, final String scene, final String actionJson) {
++        final JsonArray actions = JsonParser.parseString(actionJson.isBlank() ? "[]" : actionJson).getAsJsonArray();
++        if (actions.size() > 256) {
++            throw new IllegalArgumentException("NPC dialogue has more than 256 actions");
++        }
++        final List<Button> buttons = new ArrayList<>();
++        boolean opening = false;
++        for (int index = 0; index < actions.size(); index++) {
++            final JsonObject action = actions.get(index).getAsJsonObject();
++            final int mode = action.get("mode").getAsInt();
++            final int type = action.get("type").getAsInt();
++            if (mode == 0 && (type == 0 || type == 1)) {
++                final String url = type == 0 ? action.get("text").getAsString().trim() : null;
++                if (url != null) {
++                    final URI uri = URI.create(url);
++                    if (uri.getHost() == null || !("https".equalsIgnoreCase(uri.getScheme())
++                            || "http".equalsIgnoreCase(uri.getScheme()))) {
++                        throw new IllegalArgumentException("Invalid NPC link action");
++                    }
++                }
++                buttons.add(new Button(index, action.get("button_name").getAsString(), url));
++            } else if (type == 1 && mode == 2) {
++                opening = true;
++            }
++        }
++        return this.current = new Session(uniqueId, runtimeId, scene, "viabedrock:npc/" + ++this.sequence,
++                List.copyOf(buttons), opening);
++    }
++
++    public Session current() {
++        return this.current;
++    }
++
++    public boolean close(final long uniqueId) {
++        if (this.current == null || this.current.uniqueId() != uniqueId) {
++            return false;
++        }
++        this.current = null;
++        return true;
++    }
++
++    public List<Request> respond(final String identifier, final Integer buttonIndex) {
++        final Session session = this.current;
++        if (session == null || !session.responseIdentifier().equals(identifier)) {
++            return List.of();
++        }
++        if (buttonIndex != null && session.buttons().stream().noneMatch(button ->
++                button.index() == buttonIndex && button.url() == null)) {
++            return List.of();
++        }
++        this.current = null;
++        final List<Request> requests = new ArrayList<>(2);
++        if (buttonIndex != null) {
++            requests.add(new Request(session.runtimeId(), NpcRequestPacketPayload_RequestType.ExecuteAction,
++                    buttonIndex, session.scene()));
++        }
++        // Closing a dialogue is a protocol interaction even when it has no exit commands.
++        requests.add(new Request(session.runtimeId(), NpcRequestPacketPayload_RequestType.ExecuteClosingCommands,
++                0, session.scene()));
++        return List.copyOf(requests);
++    }
++
++    public record Button(int index, String name, String url) {
++    }
++
++    public record Session(long uniqueId, long runtimeId, String scene, String responseIdentifier,
++                          List<Button> buttons, boolean openingCommands) {
++    }
++
++    public record Request(long runtimeId, NpcRequestPacketPayload_RequestType type, int actionIndex, String scene) {
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePacketTest.java
+new file mode 100644
+index 00000000..1e8cd29e
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/NpcDialoguePacketTest.java
+@@ -0,0 +1,132 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.NpcRequestPacketPayload_RequestType;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import net.raphimc.viabedrock.protocol.storage.NpcDialogueStorage;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Proxy;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NpcDialoguePacketTest {
++
++    @Test
++    void readsFixedWidthActorIdAndTranslatesOpenAndMatchingServerClose() throws Exception {
++        final Map<Class<?>, Object> storages = new HashMap<>();
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, args) ->
++                        method.getName().equals("get") ? storages.get(args[0]) : null);
++        final EntityTracker entities = new EntityTracker(user);
++        final NpcDialogueStorage storage = new NpcDialogueStorage();
++        storages.put(EntityTracker.class, entities);
++        storages.put(NpcDialogueStorage.class, storage);
++        storages.put(InventoryTracker.class, new InventoryTracker(user));
++        storages.put(ResourcePackStorage.class, new ResourcePackStorage(List.of()));
++        final Entity npc = entities.addEntity(new Entity(user, -21474836474L, 61, "minecraft:npc", 300,
++                UUID.randomUUID(), EntityTypes26_3.MANNEQUIN), false);
++        final TestProtocol protocol = new TestProtocol();
++        final ByteBuf input = dialogue(npc.uniqueId(), 0, "[{\"button_name\":\"Next\",\"mode\":0,\"type\":1}]");
++        try {
++            final PacketWrapper packet = new PacketWrapperImpl(ClientboundBedrockPackets.NPC_DIALOGUE, input, user);
++            protocol.translate(packet);
++            assertEquals(ClientboundPackets26_3.SHOW_DIALOG, packet.getPacketType());
++            assertNotNull(packet.get(Types.TRUSTED_COMPOUND_TAG_HOLDER, 0));
++            assertEquals(npc.uniqueId(), storage.current().uniqueId());
++            assertEquals(npc.runtimeId(), storage.current().runtimeId());
++            assertEquals(0, input.readableBytes());
++            assertTrue(user.get(InventoryTracker.class).isAnyScreenOpen());
++        } finally {
++            input.release();
++        }
++        final ByteBuf unrelated = dialogue(99, 1, "[]");
++        final ByteBuf closing = dialogue(npc.uniqueId(), 1, "[]");
++        try {
++            final PacketWrapper old = new PacketWrapperImpl(ClientboundBedrockPackets.NPC_DIALOGUE, unrelated, user);
++            protocol.translate(old);
++            assertTrue(old.isCancelled());
++            assertNotNull(storage.current());
++            final PacketWrapper packet = new PacketWrapperImpl(ClientboundBedrockPackets.NPC_DIALOGUE, closing, user);
++            protocol.translate(packet);
++            assertEquals(ClientboundPackets26_3.CLEAR_DIALOG, packet.getPacketType());
++            assertNull(storage.current());
++            assertFalse(user.get(InventoryTracker.class).isAnyScreenOpen());
++            assertEquals(0, closing.readableBytes());
++        } finally {
++            unrelated.release();
++            closing.release();
++        }
++    }
++
++    @Test
++    void sendsRuntimeIdActionIndexAndSceneWithoutClientSuppliedCommands() throws Exception {
++        final var request = new NpcDialogueStorage.Request(0x10000003DL,
++                NpcRequestPacketPayload_RequestType.ExecuteAction, 200, "probe_scene");
++        final PacketWrapper packet = new PacketWrapperImpl(ServerboundBedrockPackets.NPC_REQUEST, null, null);
++        NpcDialoguePackets.writeRequest(packet, request);
++        final ByteBuf wire = Unpooled.buffer();
++        try {
++            packet.writeToBuffer(wire);
++            assertEquals(ServerboundBedrockPackets.NPC_REQUEST.getId(), Types.VAR_INT.read(wire));
++            assertEquals(request.runtimeId(), BedrockTypes.UNSIGNED_VAR_LONG.read(wire));
++            assertEquals(request.type().getValue(), Types.UNSIGNED_BYTE.read(wire).intValue());
++            assertEquals("", BedrockTypes.STRING.read(wire));
++            assertEquals(request.actionIndex(), Types.UNSIGNED_BYTE.read(wire).intValue());
++            assertEquals(request.scene(), BedrockTypes.STRING.read(wire));
++            assertEquals(0, wire.readableBytes());
++        } finally {
++            wire.release();
++        }
++    }
++
++    private static ByteBuf dialogue(final long uniqueId, final int action, final String buttons) throws Exception {
++        final ByteBuf input = Unpooled.buffer();
++        BedrockTypes.LONG_LE.write(input, uniqueId);
++        BedrockTypes.VAR_INT.write(input, action);
++        BedrockTypes.STRING.write(input, "First line\nSecond line");
++        BedrockTypes.STRING.write(input, "probe_scene");
++        BedrockTypes.STRING.write(input, "Core NPC probe");
++        BedrockTypes.STRING.write(input, buttons);
++        return input;
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++
++        private TestProtocol() {
++            NpcDialoguePackets.register(this);
++        }
++
++        private void translate(final PacketWrapper packet) throws Exception {
++            final var mapping = this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++            mapping.applyType(packet);
++            mapping.handler().handle(packet);
++        }
++
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorageTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorageTest.java
+new file mode 100644
+index 00000000..5ff924ac
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/NpcDialogueStorageTest.java
+@@ -0,0 +1,70 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.NpcRequestPacketPayload_RequestType;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NpcDialogueStorageTest {
++
++    @Test
++    void preservesServerIndicesAndOrdersButtonThenClosingRequests() {
++        final NpcDialogueStorage storage = new NpcDialogueStorage();
++        final var session = storage.open(-21474836474L, 0x10000003DL, "probe_scene", """
++                [{"button_name":"","type":1,"mode":2},
++                 {"button_name":"First","type":1,"mode":0},
++                 {"button_name":"","type":1,"mode":1},
++                 {"button_name":"Next","type":1,"mode":0}]
++                """);
++        assertTrue(session.openingCommands());
++        assertEquals(List.of(1, 3), session.buttons().stream().map(NpcDialogueStorage.Button::index).toList());
++        assertTrue(storage.respond(session.responseIdentifier(), 2).isEmpty());
++        assertSame(session, storage.current());
++
++        final var requests = storage.respond(session.responseIdentifier(), 3);
++        assertEquals(List.of(NpcRequestPacketPayload_RequestType.ExecuteAction,
++                NpcRequestPacketPayload_RequestType.ExecuteClosingCommands), requests.stream().map(NpcDialogueStorage.Request::type).toList());
++        assertEquals(3, requests.get(0).actionIndex());
++        assertEquals(session.runtimeId(), requests.get(0).runtimeId());
++        assertEquals(session.scene(), requests.get(requests.size() - 1).scene());
++        assertNull(storage.current());
++        assertTrue(storage.respond(session.responseIdentifier(), 3).isEmpty());
++    }
++
++    @Test
++    void rejectsStaleResponsesAndKeepsUnrelatedServerCloseFromDismissingCurrentScene() {
++        final NpcDialogueStorage storage = new NpcDialogueStorage();
++        final var first = storage.open(1, 2, "first", "[]");
++        final var next = storage.open(1, 2, "next", "[]");
++        assertTrue(storage.respond(first.responseIdentifier(), null).isEmpty());
++        assertFalse(storage.close(99));
++        assertSame(next, storage.current());
++        final var close = storage.respond(next.responseIdentifier(), null);
++        assertEquals(1, close.size());
++        assertEquals(NpcRequestPacketPayload_RequestType.ExecuteClosingCommands, close.get(0).type());
++        assertEquals(next.scene(), close.get(0).scene());
++        assertNull(storage.current());
++    }
++
++    @Test
++    void linkActionsCannotBeForgedIntoCommandRequests() {
++        final NpcDialogueStorage storage = new NpcDialogueStorage();
++        final var session = storage.open(1, 2, "", """
++                [{"button_name":"Help","type":0,"mode":0,"text":"https://example.com/help"}]
++                """);
++        assertTrue(storage.respond(session.responseIdentifier(), 0).isEmpty());
++        assertSame(session, storage.current());
++        assertThrows(IllegalArgumentException.class, () -> storage.open(1, 2, "", """
++                [{"button_name":"Invalid","type":0,"mode":0,"text":"file:///tmp/example"}]
++                """));
++        assertSame(session, storage.current());
++    }
++
++}
+-- 
+2.55.0
+
+
