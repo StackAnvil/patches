@@ -1,4 +1,4 @@
-From a9cab346b0a93ca88e9f53b7956b008bd4c873ee Mon Sep 17 00:00:00 2001
+From d5bcd79b4927d76eef9b058deb153da175587ece Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:22:35 +0200
 Subject: [PATCH] feat(entities): evaluate named actor properties and
@@ -24,22 +24,50 @@ Retain ignore_lighting and the evaluated light_color_multiplier in immutable
 selected models so a client renderer can preserve native draw state. These
 properties are present in the saved protocol2193 Hive pack, including its
 logo controller, and in the target Bedrock1.26.51.1 render-controller format.
+
+Preserve the retained native actor scale from FLOAT metadata index 38 and
+bind query.model_scale before controller evaluation. The protocol 2193
+CubeCraft scene sends 1.7 for eleven banners and 5 for its hanging cube;
+the target Bedrock 1.26.51.1 reference renders those larger meshes. Native
+query.model_scale is registered at 1421f22c8 and its getter at 14221ac00
+reads the float context member at +0x110. The documented query name is
+model_scale, not scale: https://mojang.github.io/bedrock-samples/Molang.html .
+
+Refresh custom models on scale-only changes so sparse metadata updates
+reach both native client integrations and converted item displays. Multiply
+the converter fit and origin translation by the actor scale, retaining
+zero and negative values without introducing a Java living-entity clamp.
+Client scripts.scale and camera-driven animations remain separate work.
+
+Semantic tests decode the FLOAT wire value, retain it across unrelated
+metadata updates, exercise equal-model refreshes, and select controllers
+using query.model_scale.
 ---
- .../api/model/entity/CustomEntity.java        |  48 ++++-
- .../viabedrock/api/model/entity/Entity.java   |  15 ++
+ .../api/model/entity/CustomEntity.java        |  59 +++++-
+ .../viabedrock/api/model/entity/Entity.java   |  21 ++
  .../viabedrock/api/util/MoLangEngine.java     | 191 +++++++++++++++++-
  .../CustomEntityMaterialSelectionTest.java    |  41 ++++
  .../CustomEntityModelSelectionTest.java       |   2 +-
+ .../api/model/entity/EntityScaleTest.java     | 157 ++++++++++++++
  .../viabedrock/api/util/MoLangEngineTest.java |  81 ++++++++
- 6 files changed, 371 insertions(+), 7 deletions(-)
+ 7 files changed, 542 insertions(+), 10 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityMaterialSelectionTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/EntityScaleTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
-index 53394efe..fb06199f 100644
+index 53394efe..515137ba 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
-@@ -106,12 +106,24 @@ public class CustomEntity extends Entity {
+@@ -73,6 +73,7 @@ public class CustomEntity extends Entity {
+     private final List<EvaluatedModel> models = new ArrayList<>();
+     private final List<ItemDisplayEntity> partEntities = new ArrayList<>();
+     private boolean spawned;
++    private float renderedScale = 1F;
+ 
+     public CustomEntity(final UserConnection user, final long uniqueId, final long runtimeId, final String type, final int javaId, final EntityDefinitions.EntityDefinition entityDefinition) {
+         super(user, uniqueId, runtimeId, type, javaId, UUID.randomUUID(), EntityTypes26_3.INTERACTION);
+@@ -106,12 +107,24 @@ public class CustomEntity extends Entity {
          this.entityScope.set("texture", textureBinding);
  
          final MutableObjectBinding materialBinding = new MutableObjectBinding();
@@ -64,17 +92,32 @@ index 53394efe..fb06199f 100644
      @Override
      public void setPosition(final Position3f position) {
          super.setPosition(position);
-@@ -219,6 +231,9 @@ public class CustomEntity extends Entity {
+@@ -179,7 +192,7 @@ public class CustomEntity extends Entity {
+             final StructuredItem item = new StructuredItem(BedrockProtocol.MAPPINGS.getJavaItems().get("minecraft:paper"), 1, data);
+             javaEntityData.add(new EntityData(partEntity.getJavaEntityDataIndex(EntityDataFields.ITEM_STACK), VersionedTypes.V26_3.entityDataTypes.itemType, item));
+ 
+-            final float scale = (float) resourcePackStorage.getConverterData().get("ce_" + converterKey + "_scale");
++            final float scale = (float) resourcePackStorage.getConverterData().get("ce_" + converterKey + "_scale") * this.scale();
+             javaEntityData.add(new EntityData(partEntity.getJavaEntityDataIndex(EntityDataFields.SCALE), VersionedTypes.V26_3.entityDataTypes.vector3FType, new Vector3f(scale, scale, scale)));
+             javaEntityData.add(new EntityData(partEntity.getJavaEntityDataIndex(EntityDataFields.TRANSLATION), VersionedTypes.V26_3.entityDataTypes.vector3FType, new Vector3f(0F, scale * 0.5F, 0F)));
+ 
+@@ -217,8 +230,15 @@ public class CustomEntity extends Entity {
+     }
+ 
      private boolean evaluateRenderControllerChange() {
++        final float scale = this.scale();
++        final boolean scaleChanged = Float.compare(this.renderedScale, scale) != 0;
++        this.renderedScale = scale;
          final Scope executionScope = this.entityScope.copy();
          final MutableObjectBinding queryBinding = new MutableObjectBinding();
 +        MoLangEngine.bindPropertyQueries(queryBinding, this.entityProperties());
 +        queryBinding.set("life_time", Value.of(this.age / 20F));
 +        queryBinding.set("delta_time", Value.of(0.05F));
++        queryBinding.set("model_scale", Value.of(scale));
          if (this.entityData.containsKey(ActorDataIds.VARIANT)) {
              queryBinding.set("variant", Value.of(this.entityData.get(ActorDataIds.VARIANT).<Integer>value()));
          }
-@@ -240,6 +255,13 @@ public class CustomEntity extends Entity {
+@@ -240,6 +260,13 @@ public class CustomEntity extends Entity {
          executionScope.set("query", queryBinding);
          executionScope.set("q", queryBinding);
  
@@ -82,13 +125,13 @@ index 53394efe..fb06199f 100644
 +            MoLangEngine.runPreAnimation(executionScope, this.entityDefinition.entityData().getScripts().pre_animation());
 +        } catch (final Throwable e) {
 +            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to evaluate entity pre_animation", e);
-+            return replaceModels(this.models, List.of());
++            return replaceModels(this.models, List.of()) || scaleChanged;
 +        }
 +
          final List<EvaluatedModel> newModels = new ArrayList<>();
          final ResourcePackStorage resourcePackStorage = user.get(ResourcePackStorage.class);
          for (BedrockEntityData.RenderController entityRenderController : this.entityDefinition.entityData().getControllers()) {
-@@ -261,9 +283,11 @@ public class CustomEntity extends Entity {
+@@ -261,9 +288,11 @@ public class CustomEntity extends Entity {
  
              try {
                  final Scope renderControllerGeometryScope = executionScope.copy();
@@ -102,7 +145,7 @@ index 53394efe..fb06199f 100644
  
                  final String geometryValue = MoLangEngine.eval(renderControllerGeometryScope, renderController.geometryExpression()).getAsString();
                  final String geometryName = this.inverseGeometryMap.get(geometryValue);
-@@ -271,7 +295,7 @@ public class CustomEntity extends Entity {
+@@ -271,16 +300,16 @@ public class CustomEntity extends Entity {
                      final String textureValue = MoLangEngine.eval(renderControllerTextureScope, textureExpression).getAsString();
                      final String textureName = this.inverseTextureMap.get(textureValue);
                      if (geometryName != null && textureName != null) {
@@ -111,7 +154,18 @@ index 53394efe..fb06199f 100644
                      }
                  }
              } catch (final Throwable e) {
-@@ -292,7 +316,7 @@ public class CustomEntity extends Entity {
+                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to evaluate render controller", e);
+-                return replaceModels(this.models, List.of());
++                return replaceModels(this.models, List.of()) || scaleChanged;
+             }
+         }
+ 
+-        return replaceModels(this.models, newModels);
++        return replaceModels(this.models, newModels) || scaleChanged;
+     }
+ 
+     static boolean replaceModels(final List<EvaluatedModel> current, final List<EvaluatedModel> next) {
+@@ -292,7 +321,7 @@ public class CustomEntity extends Entity {
          return true;
      }
  
@@ -120,7 +174,7 @@ index 53394efe..fb06199f 100644
          final MutableObjectBinding arrayBinding = new MutableObjectBinding();
          for (BedrockRenderController.Array array : arrays) {
              if (array.name().toLowerCase(Locale.ROOT).startsWith("array.")) {
-@@ -307,7 +331,21 @@ public class CustomEntity extends Entity {
+@@ -307,7 +336,21 @@ public class CustomEntity extends Entity {
          return arrayBinding;
      }
  
@@ -144,7 +198,7 @@ index 53394efe..fb06199f 100644
  
      private class ItemDisplayEntity extends Entity {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index 615e9da4..bcfcedf9 100644
+index 615e9da4..038e747c 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 @@ -61,6 +61,7 @@ public class Entity {
@@ -155,10 +209,16 @@ index 615e9da4..bcfcedf9 100644
      protected String name;
      protected int age;
      protected boolean hasBossBar;
-@@ -79,6 +80,20 @@ public class Entity {
+@@ -79,6 +80,26 @@ public class Entity {
          this.javaType = javaType;
      }
  
++    /** The retained native actor scale; metadata index 38 defaults to one. */
++    public final float scale() {
++        final EntityData scaleData = this.entityData.get(ActorDataIds.RESERVED_038);
++        return scaleData == null ? 1F : ((Number) scaleData.value()).floatValue();
++    }
++
 +    public final Map<String, Object> entityProperties() {
 +        return Map.copyOf(this.entityProperties);
 +    }
@@ -466,6 +526,169 @@ index 2ae7687e..0ca12871 100644
          final List<CustomEntity.EvaluatedModel> current = new ArrayList<>(List.of(model));
  
          assertTrue(CustomEntity.replaceModels(current, List.of()));
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/EntityScaleTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/EntityScaleTest.java
+new file mode 100644
+index 00000000..8fb58f5e
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/entity/EntityScaleTest.java
+@@ -0,0 +1,157 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.entity;
++
++import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.DataItemType;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Field;
++import java.lang.reflect.Method;
++import java.lang.reflect.Proxy;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class EntityScaleTest {
++
++    private Field dataTypes;
++    private Field flagQueries;
++    private Object previousDataTypes;
++    private Object previousFlagQueries;
++
++    @BeforeEach
++    void installMetadataTypes() throws Exception {
++        this.dataTypes = BedrockProtocol.MAPPINGS.getClass().getDeclaredField("bedrockEntityDataTypes");
++        this.dataTypes.setAccessible(true);
++        this.previousDataTypes = this.dataTypes.get(BedrockProtocol.MAPPINGS);
++        this.dataTypes.set(BedrockProtocol.MAPPINGS, Map.of(ActorDataIds.RESERVED_038, DataItemType.Float, ActorDataIds.VARIANT, DataItemType.Int));
++        this.flagQueries = BedrockProtocol.MAPPINGS.getClass().getDeclaredField("bedrockEntityFlagMoLangQueries");
++        this.flagQueries.setAccessible(true);
++        this.previousFlagQueries = this.flagQueries.get(BedrockProtocol.MAPPINGS);
++        this.flagQueries.set(BedrockProtocol.MAPPINGS, Map.of());
++    }
++
++    @AfterEach
++    void restoreMappings() throws Exception {
++        this.dataTypes.set(BedrockProtocol.MAPPINGS, this.previousDataTypes);
++        this.flagQueries.set(BedrockProtocol.MAPPINGS, this.previousFlagQueries);
++    }
++
++    @Test
++    void decodesNativeFloatScaleAndRetainsItAcrossSparseUpdates() throws Exception {
++        final Actor actor = actor(false);
++        assertEquals(1F, actor.scale());
++        for (float scale : new float[]{1.7F, 5F, 0F, -2F}) {
++            final var wire = Unpooled.buffer();
++            try {
++                BedrockTypes.ENTITY_DATA_ARRAY.write(wire, new EntityData[]{new EntityData(38, EntityDataTypesBedrock.FLOAT, scale)});
++                actor.updateEntityData(BedrockTypes.ENTITY_DATA_ARRAY.read(wire), new ArrayList<>());
++            } finally {
++                wire.release();
++            }
++            assertEquals(scale, actor.scale());
++            actor.updateEntityData(new EntityData[]{new EntityData(2, EntityDataTypesBedrock.INT, 1)}, new ArrayList<>());
++            assertEquals(scale, actor.scale());
++        }
++    }
++
++    @Test
++    void refreshesScaleEvenWhenTheSelectedModelDoesNotChange() throws Exception {
++        final Actor actor = actor(false);
++        actor.updateEntityData(new EntityData[0], new ArrayList<>());
++        assertTrue(actor.changed);
++        actor.updateEntityData(new EntityData[]{new EntityData(38, EntityDataTypesBedrock.FLOAT, 5F)}, new ArrayList<>());
++        assertTrue(actor.changed);
++        actor.updateEntityData(new EntityData[]{new EntityData(2, EntityDataTypesBedrock.INT, 1)}, new ArrayList<>());
++        assertFalse(actor.changed);
++        actor.updateEntityData(new EntityData[]{new EntityData(38, EntityDataTypesBedrock.FLOAT, 1.7F)}, new ArrayList<>());
++        assertTrue(actor.changed);
++    }
++
++    @Test
++    void exposesNativeModelScaleToControllerConditions() throws Exception {
++        final Actor actor = actor(true);
++        actor.updateEntityData(new EntityData[0], new ArrayList<>());
++        assertEquals(0, actor.modelCount());
++        actor.updateEntityData(new EntityData[]{new EntityData(38, EntityDataTypesBedrock.FLOAT, 5F)}, new ArrayList<>());
++        assertEquals(1, actor.modelCount());
++        actor.updateEntityData(new EntityData[]{new EntityData(38, EntityDataTypesBedrock.FLOAT, 1.7F)}, new ArrayList<>());
++        assertEquals(0, actor.modelCount());
++    }
++
++    private static Actor actor(final boolean conditional) {
++        final InMemoryContent content = new InMemoryContent();
++        content.putString("manifest.json", """
++            {"format_version":2,"header":{"uuid":"f73995bf-7f9f-420b-8554-92a3e059ea66","version":[1,0,0],"name":"Scale fixture"}}
++            """);
++        content.putString("entity/actor.json", """
++            {"format_version":"1.10.0","minecraft:client_entity":{"description":{
++              "identifier":"example:actor","materials":{"default":"entity_alphatest"},
++              "geometry":{"default":"geometry.actor"},"textures":{"default":"textures/actor"},
++              "render_controllers":[%s]}}}
++            """.formatted(conditional ? "{\"controller.render.actor\":\"query.model_scale > 2\"}" : "\"controller.render.actor\""));
++        content.putString("render_controllers/actor.json", """
++            {"format_version":"1.10.0","render_controllers":{"controller.render.actor":{
++              "geometry":"Geometry.default","textures":["Texture.default"],"materials":[{"*":"Material.default"}]}}}
++            """);
++        final ResourcePackStorage packs = new ResourcePackStorage(List.of(new ResourcePack(content)));
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++            new Class<?>[]{UserConnection.class}, (proxy, method, arguments) -> {
++                if (method.getName().equals("get") && arguments[0] == ResourcePackStorage.class) {
++                    return packs;
++                }
++                throw new AssertionError("Unexpected connection operation: " + method.getName());
++            });
++        return new Actor(user, packs);
++    }
++
++    private static final class Actor extends CustomEntity {
++
++        private boolean changed;
++
++        private Actor(final UserConnection user, final ResourcePackStorage packs) {
++            super(user, 1, 2, "example:actor", 3, packs.getEntities().get("example:actor"));
++        }
++
++        @Override
++        protected boolean translateEntityData(final ActorDataIds id, final EntityData data, final List<EntityData> javaData) {
++            return true;
++        }
++
++        @Override
++        protected void onEntityDataChanged() {
++            try {
++                final Method evaluate = CustomEntity.class.getDeclaredMethod("evaluateRenderControllerChange");
++                evaluate.setAccessible(true);
++                this.changed = (boolean) evaluate.invoke(this);
++            } catch (final ReflectiveOperationException e) {
++                throw new AssertionError(e);
++            }
++        }
++
++        private int modelCount() throws Exception {
++            final Field models = CustomEntity.class.getDeclaredField("models");
++            models.setAccessible(true);
++            return ((List<?>) models.get(this)).size();
++        }
++
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java b/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
 new file mode 100644
 index 00000000..1ca7a40e

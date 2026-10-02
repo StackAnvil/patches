@@ -23,3 +23,9 @@ CubeCraft's saved banner uses `cc_lobby_banner:entity` with `ALPHA_TEST` and a c
 The installed Bedrock 1.26.51.1 `entity.material` SHA-256 is `fb971460c91e30fa2071f703db699934671e92b5b62617056b68a57eb7cf3eef`. The saved server material SHA-256 is `bfdabff5a1aaae7d314966fa9ba71a244f4d6d9947300777ec1d4e3cbdcf7b61`. Assets and raw probes stay private.
 
 Five focused tests cover inheritance, culling, whole-definition pack replacement, define removal, unsupported shader fields, invalid definitions, parent cycles, and independent pack caches. Together with the existing material tests, all seven cases pass. Unknown flags, states, shader overrides, and sampler changes retain the fallback. This does not add emissive, additive, or actor UV animation support.
+
+Retain server actor scale in immutable render snapshots and scale the mesh around its native origin. The saved protocol 2193 CubeCraft scene sends FLOAT metadata index 38 as 1.7 for eleven lobby banners and 5 for its hanging cube. The target Bedrock 1.26.51.1 reference renders those larger meshes. Core controller evaluation binds the documented `query.model_scale` and reports scale-only changes, so both initial values and sparse updates reach this renderer. Client `scripts.scale` evaluation remains separate.
+
+Numeric pose tests check origin stability and transformed vertices for 1, 1.7, 5, zero and negative scale. Snapshot tests check independent updates and copied model lists. Custom actor visibility already bypasses frustum geometry bounds. Converted display entities retain their zero width and height defaults. This change does not alter either route's distance policy.
+
+A material document with a non-object `materials` field now leaves valid neighboring documents available. A semantic test covers null, array, boolean and string fields beside an inherited alpha-test material. Nine focused renderer and material tests pass. Raw captures and native assets remain private.

@@ -1,4 +1,4 @@
-From aa3004ba0daecececdcbbadc35006fb2b7350d35 Mon Sep 17 00:00:00 2001
+From 8b2eca81515e7fed9ea59a10a0fa1fd830aada4d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:07 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -75,6 +75,24 @@ Private probes resolve the actual banner to cull=true. Target assets remain
 private. Emissive, additive, and UV-animation shader support remain outside
 this change. Test inheritance, culling changes, pack replacement, invalid
 shader families, cyclic parents, missing parents, and independent caches.
+
+Retain the native FLOAT actor scale in immutable render snapshots. Apply it
+around the Bedrock actor origin before Java model-origin compensation.
+The saved CubeCraft protocol 2193 scene sends metadata index 38 as 1.7
+for eleven banners and 5 for its hanging cube. Bedrock 1.26.51.1 renders
+those larger meshes. Scale-only updates refresh the snapshot through the
+core controller change result. Preserve zero and negative values without
+inventing a living-entity clamp or distance multiplier.
+
+Numeric pose tests cover origin stability and actual vertex positions at
+1, 1.7, 5, 0 and -2; snapshot tests cover independent updates and copied
+model lists. Native custom actors already bypass frustum bounds, while
+converted item displays retain zero default width/height bounds.
+
+Ignore valid JSON materials documents whose materials field is not an
+object. A malformed neighbor must not abort the entire effective material
+library after parsing. Test null, array, boolean and string fields beside
+a valid inherited alpha-test definition.
 ---
  build.gradle.kts                              |   6 +
  .../friends/FriendWorldSkinProvider.java      |   8 +
@@ -86,10 +104,10 @@ shader families, cyclic parents, missing parents, and independent caches.
  .../render/MixinEntityRenderDispatcher.java   |  93 +++++++
  .../render/MixinMinecraftSkinLifecycle.java   |  46 ++++
  .../render/MixinPlayerSkinWidget.java         |  28 +++
- .../BedrockActorMaterialDefinitions.java      | 128 ++++++++++
+ .../BedrockActorMaterialDefinitions.java      | 129 ++++++++++
  .../bedrock/render/BedrockActorMaterials.java |  56 +++++
  .../render/BedrockActorRenderTypes.java       |  45 ++++
- .../bedrock/render/BedrockEntityRenderer.java | 178 +++++++++++++
+ .../bedrock/render/BedrockEntityRenderer.java | 187 ++++++++++++++
  .../bedrock/render/BedrockGeometry.java       | 215 ++++++++++++++++
  .../bedrock/render/BedrockPlayerRenderer.java |  33 +++
  .../bedrock/render/BedrockPlayerSkins.java    | 236 ++++++++++++++++++
@@ -100,11 +118,12 @@ shader families, cyclic parents, missing parents, and independent caches.
  .../shaders/core/bedrock_actor.vsh            |  47 ++++
  .../viafabricplus-bedrock.accesswidener       |   3 +
  .../viafabricplus-bedrock.mixins.json         |   7 +
- .../BedrockActorMaterialDefinitionsTest.java  |  90 +++++++
+ .../BedrockActorMaterialDefinitionsTest.java  |  98 ++++++++
  .../render/BedrockActorMaterialsTest.java     |  48 ++++
- .../render/BedrockEntityRendererTest.java     |  27 ++
+ .../render/BedrockEntityRendererTest.java     |  50 ++++
  .../bedrock/render/BedrockSkinQueueTest.java  |  83 ++++++
- 28 files changed, 1674 insertions(+), 1 deletion(-)
+ .../render/CustomEntityRenderStoreTest.java   |  36 +++
+ 29 files changed, 1751 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractClientPlayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorPipelines.java
@@ -128,6 +147,7 @@ shader families, cyclic parents, missing parents, and independent caches.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRendererTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinQueueTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStoreTest.java
 
 diff --git a/build.gradle.kts b/build.gradle.kts
 index 73b09ff..5962de8 100644
@@ -313,7 +333,7 @@ index 0000000..18faec1
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinCustomEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinCustomEntity.java
 new file mode 100644
-index 0000000..c196c18
+index 0000000..4829d16
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinCustomEntity.java
 @@ -0,0 +1,59 @@
@@ -360,7 +380,7 @@ index 0000000..c196c18
 +    private void publishRenderModels(final CallbackInfoReturnable<Boolean> cir) {
 +        if (cir.getReturnValueZ()) {
 +            final CustomEntity entity = (CustomEntity) (Object) this;
-+            CustomEntityRenderStore.update(entity.javaUuid(), entity.type(), this.models);
++            CustomEntityRenderStore.update(entity.javaUuid(), entity.type(), entity.scale(), this.models);
 +        }
 +    }
 +
@@ -563,10 +583,10 @@ index 0000000..582c708
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
 new file mode 100644
-index 0000000..9cc5972
+index 0000000..dca8622
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,129 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -640,8 +660,9 @@ index 0000000..9cc5972
 +    }
 +
 +    private void add(final JsonObject document) {
-+        final JsonObject materials = document.getAsJsonObject("materials");
-+        if (materials == null) return;
++        final JsonElement materialElement = document.get("materials");
++        if (materialElement == null || !materialElement.isJsonObject()) return;
++        final JsonObject materials = materialElement.getAsJsonObject();
 +        for (var entry : materials.entrySet()) {
 +            if (!entry.getValue().isJsonObject()) continue;
 +            final int separator = entry.getKey().indexOf(':');
@@ -810,10 +831,10 @@ index 0000000..d131104
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 new file mode 100644
-index 0000000..cd593c9
+index 0000000..d62181c
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
-@@ -0,0 +1,178 @@
+@@ -0,0 +1,187 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -903,6 +924,7 @@ index 0000000..cd593c9
 +            return;
 +        }
 +        state.models = List.of();
++        state.scale = 1F;
 +        final UserConnection connection = ViaFabricPlus.api().userConnection();
 +        if (connection == null || !connection.has(ResourcePackStorage.class)) {
 +            this.currentPacks = null;
@@ -923,6 +945,7 @@ index 0000000..cd593c9
 +            this.renderTypes.clear();
 +        }
 +        state.models = this.resolveModels(renderData, packs);
++        state.scale = renderData.scale();
 +        state.yaw = entity.getYRot();
 +    }
 +
@@ -968,18 +991,25 @@ index 0000000..cd593c9
 +        }
 +        for (RenderedModel rendered : state.models) {
 +            poseStack.pushPose();
-+            poseStack.rotateDegrees(Axis.YP, 180F - state.yaw);
-+            poseStack.scale(-1F, -1F, 1F);
-+            poseStack.translate(0F, -1.5F, 0F);
++            applyActorTransform(poseStack, state.yaw, state.scale);
 +            nodes.submitModel(rendered.model, state, poseStack, rendered.renderType, state.lightCoords, OverlayTexture.NO_OVERLAY, state.outlineColor);
 +            poseStack.popPose();
 +        }
 +        super.submit(renderState, poseStack, nodes, camera);
 +    }
 +
++    static void applyActorTransform(final PoseStack poseStack, final float yaw, final float scale) {
++        // Scale around the native actor origin before compensating for the Java model origin.
++        poseStack.scale(scale, scale, scale);
++        poseStack.rotateDegrees(Axis.YP, 180F - yaw);
++        poseStack.scale(-1F, -1F, 1F);
++        poseStack.translate(0F, -1.5F, 0F);
++    }
++
 +    public static final class State extends EntityRenderState {
 +        private List<RenderedModel> models = List.of();
 +        private float yaw;
++        private float scale = 1F;
 +    }
 +
 +    private record ModelKey(String geometry, Set<String> bones) {
@@ -1542,7 +1572,7 @@ index 0000000..fc3f57c
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStore.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStore.java
 new file mode 100644
-index 0000000..c3beb07
+index 0000000..4ffe604
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStore.java
 @@ -0,0 +1,54 @@
@@ -1580,8 +1610,8 @@ index 0000000..c3beb07
 +    private CustomEntityRenderStore() {
 +    }
 +
-+    public static void update(final UUID uuid, final String identifier, final List<CustomEntity.EvaluatedModel> models) {
-+        MODELS.put(uuid, new RenderData(identifier, List.copyOf(models)));
++    public static void update(final UUID uuid, final String identifier, final float scale, final List<CustomEntity.EvaluatedModel> models) {
++        MODELS.put(uuid, new RenderData(identifier, scale, List.copyOf(models)));
 +    }
 +
 +    public static RenderData get(final UUID uuid) {
@@ -1596,7 +1626,7 @@ index 0000000..c3beb07
 +        MODELS.clear();
 +    }
 +
-+    public record RenderData(String identifier, List<CustomEntity.EvaluatedModel> models) {
++    public record RenderData(String identifier, float scale, List<CustomEntity.EvaluatedModel> models) {
 +    }
 +
 +}
@@ -1735,10 +1765,10 @@ index 17da109..85ecea8 100644
      "features.movement.MixinEntityFluidInteraction_CurrentAccumulator",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
 new file mode 100644
-index 0000000..42f3e98
+index 0000000..b7f95b4
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,98 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1821,6 +1851,14 @@ index 0000000..42f3e98
 +        }
 +    }
 +
++    @Test
++    void malformedDocumentsPreserveValidNeighborDefinitions() {
++        final var materials = BedrockActorMaterialDefinitions.read(List.of(
++            document("null"), document("[]"), document("false"), document("\"invalid\""),
++            document("{\"banner:entity_alphatest_one_sided\":{}}")));
++        assertTrue(materials.alphaTest("banner").orElseThrow().cull());
++    }
++
 +    private static BedrockActorMaterialDefinitions read(final String materials) {
 +        return BedrockActorMaterialDefinitions.read(List.of(document(materials)));
 +    }
@@ -1885,10 +1923,10 @@ index 0000000..865c89a
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRendererTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRendererTest.java
 new file mode 100644
-index 0000000..5659db2
+index 0000000..aac5efd
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRendererTest.java
-@@ -0,0 +1,27 @@
+@@ -0,0 +1,50 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1897,11 +1935,14 @@ index 0000000..5659db2
 +
 +package com.viaversion.viafabricplus.bedrock.render;
 +
++import com.mojang.blaze3d.vertex.PoseStack;
 +import net.minecraft.client.renderer.entity.EntityRendererProvider;
 +import net.minecraft.client.renderer.entity.state.EntityRenderState;
 +import org.junit.jupiter.api.Test;
++import org.joml.Vector3f;
 +
 +import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
++import static org.junit.jupiter.api.Assertions.assertEquals;
 +
 +final class BedrockEntityRendererTest {
 +
@@ -1913,6 +1954,26 @@ index 0000000..5659db2
 +        final var renderer = new BedrockEntityRenderer(context);
 +
 +        assertDoesNotThrow(() -> renderer.submit(new EntityRenderState(), null, null, null));
++    }
++
++    @Test
++    void scalesGeometryAroundNativeActorOrigin() {
++        for (float scale : new float[]{1F, 1.7F, 5F, 0F, -2F}) {
++            final PoseStack poses = new PoseStack();
++            poses.translate(12F, 34F, 56F);
++            BedrockEntityRenderer.applyActorTransform(poses, 180F, scale);
++
++            // BedrockGeometry places the native origin at Java model Y=24/16.
++            final Vector3f origin = poses.last().pose().transformPosition(new Vector3f(0F, 1.5F, 0F));
++            assertEquals(12F, origin.x, 0.00001F);
++            assertEquals(34F, origin.y, 0.00001F);
++            assertEquals(56F, origin.z, 0.00001F);
++
++            final Vector3f vertex = poses.last().pose().transformPosition(new Vector3f(-1F, 0.5F, 1F));
++            assertEquals(12F + scale, vertex.x, 0.00001F);
++            assertEquals(34F + scale, vertex.y, 0.00001F);
++            assertEquals(56F + scale, vertex.z, 0.00001F);
++        }
 +    }
 +
 +}
@@ -2004,6 +2065,48 @@ index 0000000..8a6499d
 +        return new SkinData("", "", "", image, List.of(), null, "", "", "", false, false, false, false,
 +                "", "", "wide", "", List.of(), List.of(), false, "", "");
 +    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStoreTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStoreTest.java
+new file mode 100644
+index 0000000..922a673
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStoreTest.java
+@@ -0,0 +1,36 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.render;
++
++import java.util.ArrayList;
++import java.util.UUID;
++import net.raphimc.viabedrock.api.model.entity.CustomEntity;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++final class CustomEntityRenderStoreTest {
++
++    @Test
++    void scaleUpdatesPublishIndependentImmutableSnapshots() {
++        final UUID uuid = UUID.randomUUID();
++        final var models = new ArrayList<CustomEntity.EvaluatedModel>();
++        try {
++            CustomEntityRenderStore.update(uuid, "test:actor", 5F, models);
++            final var before = CustomEntityRenderStore.get(uuid);
++            models.add(null);
++            assertEquals(0, before.models().size());
++
++            CustomEntityRenderStore.update(uuid, "test:actor", 1.7F, before.models());
++            assertEquals(5F, before.scale());
++            assertEquals(1.7F, CustomEntityRenderStore.get(uuid).scale());
++        } finally {
++            CustomEntityRenderStore.remove(uuid);
++        }
++    }
++
 +}
 -- 
 2.55.0
