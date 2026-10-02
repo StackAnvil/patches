@@ -24,7 +24,7 @@ Expand both base vanilla model archives under their original model paths. Index 
 
 Classic imports resolve missing models and parents lazily through the licensed library. Pack definitions retain precedence. Loading runs on a worker; a changed account or closed screen prevents stale results from opening. Self-contained packs require no asset acquisition.
 
-Licensed tests resolve all seven inherited entries from the base skin-model library, including the zombie parent from an entity file. They verify extraction, equal duplicate definitions, model decoding, cache reuse, and schema refresh. The loader now resolves versioned vanilla model overrides. Native visual comparisons remain pending. A broader check found an unresolved `rightarm` parent in the native legacy vex model; native parent-name behavior needs research before importing it.
+Licensed tests resolve all seven inherited entries from the base skin-model library, including the zombie parent from an entity file. They verify extraction, equal duplicate definitions, model decoding, cache reuse, and schema refresh. The loader now resolves versioned vanilla model overrides. The classic importer applies the native ASCII lowercase rule before legacy bone merges and parent lookup. This rule resolves the Vex model's `rightArm`/`rightarm` mismatch. Native visual comparisons and other inheritance edges remain pending.
 
 ## Classic actor graph
 

@@ -24,7 +24,11 @@ Custom geometry import checks bone hierarchy, coordinate bounds, texture dimensi
 
 Missing legacy parents resolve from the licensed package's base vanilla model library. Pack definitions take precedence, including across library chains. Imports run in the background and request the package only when the pack lacks a selected model or parent. Self-contained packs need no Store sign-in. The importer checks the account and open screen before showing the result.
 
-Licensed tests resolve all seven inherited entries from the base skin-model library, including parents supplied by entity model files. Equal duplicate definitions share one library entry. Conflicting definitions remain errors. The library now resolves versioned vanilla overlays. Native visual comparisons remain pending. A broader library check found an unresolved `rightarm` parent in the native legacy vex model. The importer rejects this model until native parent-name behavior is established. Classic skin animation aliases and render flags survive import and transport. Local alias playback uses the licensed player graph. Geometry-provided alias precedence remains incomplete.
+Licensed tests resolve all seven inherited entries from the base skin-model library, including parents supplied by entity model files. Equal duplicate definitions share one library entry. Conflicting definitions remain errors. The library now resolves versioned vanilla overlays.
+
+The importer applies native ASCII lowercase rules to legacy bone names and parent references before inheritance merges. This rule resolves the Vex model's `rightArm`/`rightarm` mismatch. Non-ASCII characters and modern geometry names retain their case. Native visual comparisons and other inheritance edges remain pending.
+
+Classic skin animation aliases and render flags survive import and transport. Local alias playback uses the licensed player graph. Geometry-provided alias precedence remains incomplete.
 
 ## Account-owned classic packs
 
@@ -481,7 +485,7 @@ Native checks still need to establish live frame timing and complete expression 
 - Verify paid acquisition, the Get/Buy screen flow, and interactive Store synchronization. Synchronize classic skin selection with the native account.
 - Finish the remaining particle components, named actor events, captions, and stream concurrency. Verify dynamic emote bindings, native render suppression, and scaled world locators. Emote chat announcements exist, but native platform communication filters remain incomplete.
 - Complete native item poses, first-person playback, and equipment behavior. Remaining bindings include local charging prediction, post-use trident behavior, item-name mappings, and exact native use durations.
-- Resolve additional geometry animation alias sources and native parent-name behavior. Modern and library geometry flags derive aliases through persistence and transport. The legacy vex model still has an unresolved `rightarm` parent.
+- Resolve additional geometry animation alias sources and compare remaining legacy inheritance edges. Modern and library geometry flags derive aliases through persistence and transport. Legacy bone names now follow the native ASCII lowercase rule.
 
 The loader now uses the matching 68-alias player definition. Its added tracks include crawling, spyglass, goat horn, brush, and spear poses. These tracks still need complete query bindings and native motion comparisons. Inverse interpolation and all 30 easing functions now use target curve behavior. Conditional assignments and modern nested conditionals preserve their selected values. Licensed spear scripts produce changing bone rotations with supplied queries; live spear query bindings and first-person playback remain incomplete.
 

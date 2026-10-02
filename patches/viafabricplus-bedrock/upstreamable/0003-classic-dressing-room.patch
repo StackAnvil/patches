@@ -1,4 +1,4 @@
-From 40f7730fec686774867f093687f0a633a23124b9 Mon Sep 17 00:00:00 2001
+From eeaa87555d43bdcd1216c704f13450dc33726fa6 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:39 +0200
 Subject: [PATCH] feat(bedrock): add classic Dressing Room
@@ -69,14 +69,21 @@ Derive geometry aliases during direct imports and saved appearance loads.
 Older saved models retain their geometry flags even when their stored
 options omitted the derived aliases. Recompute those aliases without
 changing the saved skin identity or requiring another pack import.
+
+Normalize legacy bone names and parent references before inheritance merges.
+Bedrock 1.26.51.1 calls the same ASCII-only lowercase routine for both
+fields, so its Vex rightArm/rightarm references resolve to one bone.
+Preserve non-ASCII characters and modern geometry names. Native scalar
+and SIMD instruction probes pass 443 byte and boundary cases. Reject
+ambiguous local names and cycles after normalization.
 ---
  README.md                                     |  12 +
  .../bedrock/ViaFabricPlusBedrock.java         |  11 +-
- .../appearance/BedrockAppearanceStore.java    | 327 ++++++++++++++++++
+ .../appearance/BedrockAppearanceStore.java    | 327 +++++++++++++++++
  .../appearance/BedrockClassicModel.java       | 130 +++++++
  .../appearance/BedrockClassicOptions.java     | 150 ++++++++
  .../appearance/BedrockClassicSkinPack.java    | 214 ++++++++++++
- .../appearance/BedrockLegacyGeometry.java     | 285 +++++++++++++++
+ .../appearance/BedrockLegacyGeometry.java     | 289 +++++++++++++++
  .../bedrock/appearance/BedrockLegacySkin.java |  61 ++++
  .../appearance/ViaFabricPlusSkinProvider.java |  82 +++++
  .../friends/FriendWorldSkinProvider.java      |  49 ---
@@ -88,10 +95,10 @@ changing the saved skin identity or requiring another pack import.
  .../viafabricplus-bedrock/lang/en_us.json     |  23 ++
  .../viafabricplus-bedrock.mixins.json         |   1 +
  .../BedrockAppearanceStoreTest.java           | 194 +++++++++++
- .../appearance/BedrockClassicModelTest.java   | 273 +++++++++++++++
+ .../appearance/BedrockClassicModelTest.java   | 328 ++++++++++++++++++
  .../appearance/BedrockClassicOptionsTest.java | 173 +++++++++
  .../BedrockClassicSkinPackTest.java           | 268 ++++++++++++++
- 21 files changed, 2716 insertions(+), 53 deletions(-)
+ 21 files changed, 2775 insertions(+), 53 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAppearanceStore.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModel.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicOptions.java
@@ -1025,10 +1032,10 @@ index 0000000..5f35a0d
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacyGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacyGeometry.java
 new file mode 100644
-index 0000000..de86ce2
+index 0000000..a4b9618
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLegacyGeometry.java
-@@ -0,0 +1,285 @@
+@@ -0,0 +1,289 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1036,6 +1043,7 @@ index 0000000..de86ce2
 + */
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
++import com.google.common.base.Ascii;
 +import com.google.gson.JsonArray;
 +import com.google.gson.JsonObject;
 +import com.google.gson.JsonPrimitive;
@@ -1166,7 +1174,10 @@ index 0000000..de86ce2
 +        if (selected.has("bones")) {
 +            for (final var element : selected.getAsJsonArray("bones")) {
 +                final JsonObject bone = element.getAsJsonObject();
-+                final String boneName = bone.get("name").getAsString();
++                final String boneName = Ascii.toLowerCase(bone.get("name").getAsString());
++                bone.addProperty("name", boneName);
++                if (bone.has("parent") && !bone.get("parent").isJsonNull())
++                    bone.addProperty("parent", Ascii.toLowerCase(bone.get("parent").getAsString()));
 +                if (boneName.isBlank() || !localNames.add(boneName))
 +                    throw new IOException("The skin geometry has a duplicate or empty bone name");
 +                applyCubeDefaults(bone);
@@ -2383,10 +2394,10 @@ index 0000000..e7efc8c
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModelTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModelTest.java
 new file mode 100644
-index 0000000..155e2f9
+index 0000000..e78b679
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockClassicModelTest.java
-@@ -0,0 +1,273 @@
+@@ -0,0 +1,328 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -2404,6 +2415,61 @@ index 0000000..155e2f9
 +import java.nio.file.Path;
 +
 +final class BedrockClassicModelTest {
++    @Test
++    void foldsLegacyBoneNamesBeforeInheritanceAndParentResolution() throws IOException {
++        final var model = BedrockClassicModel.read("""
++                {"geometry.base":{"bones":[{"name":"rightArm","pivot":[-5,22,0],
++                  "cubes":[{"origin":[0,0,0],"size":[1,1,1],"uv":[0,0]}]}]},
++                 "geometry.child:geometry.base":{"bones":[
++                  {"name":"RIGHTARM","pivot":[-6,23,0],
++                   "cubes":[{"origin":[1,0,0],"size":[1,1,1],"uv":[0,0]}]},
++                  {"name":"rightItem","parent":"RightArm","pivot":[-6,13,0]},
++                  {"name":"accessory","parent":"RIGHTITEM"}]}}
++                """, "geometry.child");
++        final var decoded = BedrockGeometryModel.fromJson(model.geometry()).getFirst();
++        assertEquals(3, decoded.getParents().size());
++        final var arm = decoded.getParents().stream().filter(bone -> bone.getName().equals("rightarm")).findFirst().orElseThrow();
++        assertEquals(2, arm.getCubes().size());
++        assertEquals(23, arm.getPivot().getY());
++        for (final var bone : decoded.getParents()) {
++            if (!bone.getParent().isEmpty())
++                assertTrue(decoded.getParents().stream().anyMatch(parent -> parent.getName().equals(bone.getParent())));
++        }
++        assertEquals(model, BedrockClassicModel.read(model.geometry(), model.identifier()));
++    }
++
++    @Test
++    void keepsNonAsciiLegacyNamesDistinctAndRejectsFoldedAmbiguity() throws IOException {
++        final var model = BedrockClassicModel.read("""
++                {"geometry.sample":{"bones":[{"name":"İArm"},{"name":"iarm"},
++                  {"name":"item","parent":"İARM"}]}}
++                """, "geometry.sample");
++        final var bones = BedrockGeometryModel.fromJson(model.geometry()).getFirst().getParents();
++        assertEquals(3, bones.size());
++        final var item = bones.stream().filter(bone -> !bone.getParent().isEmpty()).findFirst().orElseThrow();
++        assertTrue(bones.stream().anyMatch(bone -> bone.getName().equals(item.getParent())));
++        for (final String data : new String[] {
++                "{\"geometry.sample\":{\"bones\":[{\"name\":\"arm\"},{\"name\":\"ARM\"}]}}",
++                "{\"geometry.sample\":{\"bones\":[{\"name\":\"arm\",\"parent\":\"ARM\"}]}}"}) {
++            assertThrows(IOException.class, () -> BedrockClassicModel.read(data, "geometry.sample"));
++        }
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_NATIVE_VEX_GEOMETRY", matches = ".+")
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_LEGACY_GEOMETRY", matches = ".+")
++    void resolvesTheLicensedLegacyVexParent() throws IOException {
++        final String data = Files.readString(Path.of(System.getenv("STACKANVIL_NATIVE_VEX_GEOMETRY")));
++        final JsonObject library = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_LEGACY_GEOMETRY")))).getAsJsonObject();
++        final var model = BedrockClassicModel.read(data, "geometry.vex", name -> library);
++        final var bones = BedrockGeometryModel.fromJson(model.geometry()).getFirst().getParents();
++        final var item = bones.stream().filter(bone -> bone.getName().equals("rightitem")).findFirst().orElseThrow();
++        final var parent = bones.stream().filter(bone -> bone.getName().equals(item.getParent())).findFirst().orElseThrow();
++        assertFalse(parent.getCubes().isEmpty());
++        assertTrue(item.getCubes().isEmpty());
++        assertEquals(model, BedrockClassicModel.read(model.geometry(), model.identifier()));
++    }
++
 +    @Test
 +    void resolvesLibraryParentsWhileKeepingPackOverrides() throws IOException {
 +        final JsonObject library =

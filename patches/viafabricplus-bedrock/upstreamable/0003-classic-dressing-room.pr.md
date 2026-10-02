@@ -34,7 +34,7 @@ Eighteen classic tests pass with the private model library enabled. Tests cover 
 
 A private running-client probe passed 208 checks across standard and custom models, flag combinations, layer submissions, lighting, replacement, and release. The client loads the injected layer handler. Native visual and first-person comparisons of the equipment flags remain pending.
 
-The account asset patch supplies the licensed base vanilla model library through the model-source interface. Pack definitions retain precedence across library chains. Tests cover external parents, modern library models, absent selections, cross-library cycles, and persistence. The account asset patch compiles the licensed player graph for classic alias playback. Versioned vanilla overrides, native parent-name behavior, item-action bindings, first-person playback, and native visual comparisons remain pending.
+The account asset patch supplies the licensed base vanilla model library through the model-source interface. Pack definitions retain precedence across library chains. Tests cover external parents, modern library models, absent selections, cross-library cycles, and persistence. The account asset patch compiles the licensed player graph for classic alias playback. The account loader resolves versioned vanilla overrides. Item-action bindings, first-person playback, and native visual comparisons remain pending.
 
 ## Geometry animation flags
 
@@ -71,3 +71,13 @@ A private local test pack loads its three skins in the native client. Its declar
 The current [LeviLamina pack-access declaration](https://github.com/LiteLDev/LeviLamina/blob/main/src/mc/resources/PackAccessStrategy.h) identifies this virtual slot as `isTrusted`. Its [origin enum](https://github.com/LiteLDev/LeviLamina/blob/main/src/mc/deps/core/resource/PackOrigin.h) names 2 Package and 8 PremiumCache. Older SDK enum names differ, so the inspected target build's numeric branch is the evidence for this version.
 
 The account-pack reader in patch 0009 now preserves trusted provenance after receipt, published identity, and decrypted content checks. Its bundled cape reaches preview, persistence, and skin transport. Local imports still omit declared capes, matching the observed gate. Manual PNG capes remain an independent local extension. Their precedence against native account and persona capes still needs comparison. The executable, native branch harness, test pack, and captures remain private.
+
+## Legacy bone names and parent references
+
+Bedrock 1.26.51.1 normalizes bone names and parent references through the same ASCII lowercase routine. The importer normalizes both fields before inheritance merges. This rule resolves the licensed Vex model's `rightArm` bone and `rightarm` parent reference. Non-ASCII characters and modern geometry names retain their case. The importer rejects duplicate local names and cycles after normalization.
+
+Private execution of the native scalar and SIMD instructions passes 443 byte and boundary cases. Parser call sites establish that both fields use this routine. The execution probe excludes JSON parsing and allocation. Native rendering comparisons and other legacy inheritance edges remain pending. Executable files, licensed assets, and probes remain private.
+
+The focused classic suite passes 24 tests, with two unrelated optional fixtures skipped. The licensed Vex integration test passes. Tests cover mixed-case inheritance, parent lookup, non-ASCII names, duplicate detection, cycles, and normalized persistence.
+
+The replayed full stack builds and bundles successfully. The full add-on suite passes 382 tests, with 95 optional fixtures skipped. The licensed Vex and base-library tests run in this build. No account profiles change.
