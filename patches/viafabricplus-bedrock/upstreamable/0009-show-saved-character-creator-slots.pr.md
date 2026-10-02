@@ -1107,13 +1107,13 @@ All 18 patches replay. The dependency build, Prism bundle, and north-star patch 
 
 - **Faces and tints:** Production assembly consumes animated faces and tint masks. Native execution and fixture checks cover the implemented blend paths. The tested Java world face renders both irises correctly. Native world comparisons and broader visible checks across facial combinations remain open.
 - **Persona assembly:** Licensed package acquisition, extraction, versioned caching, and local assembly work for the tested default and free-leg recipes. Exhaustive free-piece coverage, additional layering combinations, accounts without usable receipt keys, and unavailable remote products remain open.
-- **Animation:** Strip timing, blinking, multiple sources, timelines, delays, actor queries, rotations, and effect machinery have implementation and targeted checks. Native world phase and receive comparisons remain open. World emote effects currently resolve aliases through the installed actor graph, which is absent for ordinary persona skins; that path still needs implementation and verification.
+- **Animation:** Strip timing, blinking, multiple sources, timelines, delays, actor queries, rotations, and effect machinery have implementation and targeted checks. Native world phase and receive comparisons remain open. The matching vanilla player declares no emote effect aliases. Effect-only server player overrides retain their aliases when optional animations or scripts are absent. Effects from other products still need native world comparisons.
 - **Dressing Room:** Saved characters, tested palettes, limb side/default edits, catalog previews, zero-price acquisition, and owned classic-pack browsing/downloads have checks. Remaining palette combinations, paid purchase/redemption behavior, native cloud synchronization, and broader interaction checks remain open. No paid transaction was tested here.
 - **Classic formats:** Geometry inheritance and animation flag conversion have targeted tests and native execution evidence. Trusted bundled cape import remains missing. Native inheritance edges, first-person behavior, equipment interaction, and visible motion comparisons remain open.
 
 This is progress on the six-part parity goal. It is not a full-parity result.
 
-These checks verify query forwarding and authored motion evaluation. They do not compare native multiplayer phase or the full entity renderer. Native preview clock, effect aliases, offscreen actor context, and broader visual parity remain open. Assets, executable instructions, account data, and runtime probes stay private.
+These checks verify query forwarding and authored motion evaluation. They do not compare native multiplayer phase or the full entity renderer. Native preview clock, visible effect comparisons, offscreen actor context, and broader visual parity remain open. Assets, executable instructions, account data, and runtime probes stay private.
 
 ### Interactive owned classic-pack downloads
 
@@ -1122,3 +1122,23 @@ The production Owned packs screen synchronizes Store purchases and lists Earth S
 Native Bedrock 1.26.51.1 also lists both owned packs. Selecting Birdie Wings opens its preview with an explicit Equip action. The Java and native views show the same character and its wings. This is a qualitative geometry and texture check, without a pixel, lighting, pose, or animation-phase comparison. Neither owned pack declares classic animation aliases, so the interaction does not verify animated classic packs.
 
 No Equip or Use this skin action is selected. Independent HTTPS reads confirm all six original cloud recipes. A fresh production profile load confirms the original active appearance. Native browsing changes only the current local profile's `offlineUpdate` bookkeeping flag. Cleanup closes the owned native client, checks that exact difference, removes the flag, and verifies all six original local profiles before relaunch. The recipes survive relaunch. Raw traffic, licensed assets, and captures remain private.
+
+### Native wallet and acquisition checks
+
+Native Bedrock 1.26.51.1 shows the Minecoin count and a plus button in the top right of the Dressing Room. Its captured request uses `POST /api/v1.0/currencies/virtual/balances` on `entitlements.mktpl.minecraft-services.net`, with an empty body and Minecraft session authorization. The response separates Minecoins from PlayStation Tokens.
+
+The Dressing Room, Character Creator, owned-pack browser, and classic-pack preview use that endpoint for the selected account. The balance loads independently from catalog rows and character previews. Refreshes follow account changes, game focus, item acquisition, and Store synchronization. A periodic refresh preserves a known balance while its request runs. A failed request shows unavailable, rather than a zero balance. Compact windows retain the full balance description in tooltips and narration.
+
+The plus button opens the [official Minecoin shop](https://www.minecraft.net/en-us/marketplace/buy-minecoins) through Java's link confirmation screen. Minecraft documents this purchase route for Microsoft accounts. Fabric cannot invoke the native client's platform purchase UI. This implementation needs no external Bedrock installation and does not handle payment credentials.
+
+The real Java catalog acquires the zero-price Prosthetic Foot offer through Get. An independent production read confirms its entitlement and receipt key. The asset loader downloads and decrypts all eight files. All five saved character recipes and the settings profile remain unchanged. Selecting Hacker Legs opens the 400-Minecoin confirmation; choosing No returns to the unowned offer. No paid transaction runs.
+
+### Optional client entity sections and effect aliases
+
+The matching licensed vanilla assets contain client entities without animations or scripts. The inspected vanilla player declares no sound or particle effect aliases. A generic persona fallback graph therefore has no supported aliases to supply from that file.
+
+The actual loader failure affects server player overrides that declare effects without those optional sections. The constructor now treats absent sections as empty collections. Targeted tests retain sound and particle aliases, locator names, attachment flags, and caller animation overrides. Supplied malformed sections still fail validation. This follows the [client entity schema](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/entityreference/examples/cliententitydocumentation/cliententitydocumentationintroduction?view=minecraft-bedrock-stable).
+
+The clean production client shows the same zero balance as the native capture. Independent backend reads match all four wallet screens. Mouse input refreshes the compact counter and opens the official shop link confirmation. Cancel returns to the Dressing Room. GUI widths 320, 427, and 640 keep the wallet clear of the centered header; compact tooltips retain the currency name. No payment runs.
+
+The focused run reports 28 tests: 27 pass and one optional redemption capture comparison skips because its fixture is absent. The balance parser and optional actor section tests run without skips. The production server-player entry point now loads a minimal effect-only override and resolves both aliases, preserving the sound locator. All 18 patches replay. The dependency build, pinned ViaFabricPlus verification, Prism bundle, and north-star patch check pass. Traffic, account snapshots, downloaded assets, and client probes stay private.
