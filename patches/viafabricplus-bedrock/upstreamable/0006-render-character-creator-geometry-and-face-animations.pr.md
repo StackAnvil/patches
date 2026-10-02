@@ -13,3 +13,7 @@ A rebuilt Java client receives a private native skin fixture with separate arm a
 Private package assets and research binaries remain outside the repository.
 
 Sources: [Persona render controllers](https://github.com/Mojang/bedrock-samples/blob/main/resource_pack/render_controllers/persona.render_controllers.json) and [blink controller](https://github.com/Mojang/bedrock-samples/blob/main/resource_pack/animation_controllers/persona.animation_controllers.json).
+
+Visible animated persona surfaces now use the shared native alpha-test shader. The target's `player_animated` material inherits `entity_alphatest` and adds `USE_UV_ANIM`. Existing CPU frame extraction already produces the selected surface texture, so this draw uses identity UVs. Each surface caches its two immutable dimension materials. Spectator and invisible surfaces retain their existing fallback.
+
+The saved Hive scene includes five animated persona skins. Its skin resource patches supply geometry and animation bindings without material overrides. Numeric pipeline tests cover culling, depth, blending and dimension selection. Private geometry, animation and four-height cape fixtures remain unchanged.

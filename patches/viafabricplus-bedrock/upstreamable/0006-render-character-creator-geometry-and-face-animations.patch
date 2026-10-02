@@ -1,4 +1,4 @@
-From f29b38a38918afff0f9e08ac64ab195ac5129602 Mon Sep 17 00:00:00 2001
+From c6dea7872ddd55487a3119f3dbbe683d2b4d9569 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 10:44:51 +0200
 Subject: [PATCH] feat(bedrock): render Character Creator geometry and face
@@ -32,11 +32,18 @@ establish controller behavior, not a native multiplayer video comparison.
 Reference:
 https://github.com/Mojang/bedrock-samples/blob/main/resource_pack/render_controllers/persona.render_controllers.json
 https://github.com/Mojang/bedrock-samples/blob/main/resource_pack/animation_controllers/persona.animation_controllers.json
+
+Render the verified animated face, 32x32, and 128x128 persona surfaces
+through the shared native lit alpha-test material when visible and not
+spectating. Bedrock 1.26.51.1 persona controllers select player_animated,
+which inherits entity_alphatest with UV animation. Existing CPU frame
+cropping preserves its selected texels with identity shader UVs. Keep
+spectator and invisible surfaces on their existing fallback route.
 ---
  .../render/MixinEntityRenderDispatcher.java   |   2 +-
  .../features/render/MixinGuiSkinRenderer.java |  32 +++
  .../bedrock/render/BedrockGeometry.java       | 105 ++++++-
- .../bedrock/render/BedrockPersonaLayer.java   |  37 +++
+ .../bedrock/render/BedrockPersonaLayer.java   |  49 ++++
  .../bedrock/render/BedrockPlayerRenderer.java |  10 +-
  .../bedrock/render/BedrockPlayerSkins.java    | 269 ++++++++++++++++--
  .../bedrock/render/BedrockSkinAnimation.java  | 220 ++++++++++++++
@@ -44,7 +51,7 @@ https://github.com/Mojang/bedrock-samples/blob/main/resource_pack/animation_cont
  .../render/BedrockPersonaCaptureTest.java     |  70 +++++
  .../render/BedrockPersonaGeometryTest.java    | 243 ++++++++++++++++
  .../render/BedrockSkinAnimationTest.java      | 157 ++++++++++
- 11 files changed, 1124 insertions(+), 22 deletions(-)
+ 11 files changed, 1136 insertions(+), 22 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinGuiSkinRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaLayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimation.java
@@ -104,7 +111,7 @@ index 0000000..6d30dcd
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
-index 52b059d..52ee876 100644
+index 1f62280..e1084db 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 @@ -18,6 +18,9 @@
@@ -256,10 +263,10 @@ index 52b059d..52ee876 100644
          final float pivotY = cube.getPivot().getY();
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaLayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaLayer.java
 new file mode 100644
-index 0000000..5137223
+index 0000000..53a1cf5
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaLayer.java
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,49 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -268,11 +275,14 @@ index 0000000..5137223
 +package com.viaversion.viafabricplus.bedrock.render;
 +
 +import com.mojang.blaze3d.vertex.PoseStack;
++import java.util.HashMap;
++import java.util.Map;
 +import net.minecraft.client.model.player.PlayerModel;
 +import net.minecraft.client.renderer.SubmitNodeCollector;
 +import net.minecraft.client.renderer.entity.layers.RenderLayer;
 +import net.minecraft.client.renderer.entity.player.AvatarRenderer;
 +import net.minecraft.client.renderer.entity.state.AvatarRenderState;
++import net.minecraft.client.renderer.rendertype.RenderType;
 +import net.minecraft.client.renderer.rendertype.RenderTypes;
 +import net.minecraft.client.renderer.texture.OverlayTexture;
 +import net.minecraft.resources.Identifier;
@@ -281,6 +291,7 @@ index 0000000..5137223
 +
 +    private final PlayerModel surfaceModel;
 +    private final Identifier surfaceTexture;
++    private final Map<Boolean, RenderType> nativeMaterials = new HashMap<>();
 +
 +    BedrockPersonaLayer(final AvatarRenderer<?> parent, final PlayerModel surfaceModel, final Identifier surfaceTexture) {
 +        super(parent);
@@ -292,27 +303,40 @@ index 0000000..5137223
 +    public void submit(final PoseStack poseStack, final SubmitNodeCollector collector, final int packedLight,
 +                       final AvatarRenderState state, final float yRot, final float xRot) {
 +        this.surfaceModel.setupAnim(state);
-+        collector.order(1).submitModel(this.surfaceModel, state, poseStack, RenderTypes.entityTranslucent(this.surfaceTexture),
++        final RenderType renderType;
++        if (BedrockPlayerRenderer.usesNativeMaterial(state, !state.isInvisible, false)) {
++            final boolean netherLighting = BedrockActorRenderTypes.usesNetherLighting();
++            renderType = this.nativeMaterials.computeIfAbsent(netherLighting, _ -> BedrockActorRenderTypes.create(
++                this.surfaceTexture, false, false, false, 1F, BedrockActorUvTransform.IDENTITY, netherLighting));
++        } else {
++            renderType = RenderTypes.entityTranslucent(this.surfaceTexture);
++        }
++        collector.order(1).submitModel(this.surfaceModel, state, poseStack, renderType,
 +            packedLight, OverlayTexture.NO_OVERLAY, state.outlineColor);
 +    }
 +
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
-index 4b9f121..3a9f2f2 100644
+index 471807a..e5ea04b 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
-@@ -18,16 +18,24 @@
- 
+@@ -19,6 +19,7 @@
  package com.viaversion.viafabricplus.bedrock.render;
  
+ import java.util.HashMap;
 +import java.util.List;
+ import java.util.Map;
  import net.minecraft.client.model.player.PlayerModel;
  import net.minecraft.client.player.AbstractClientPlayer;
- import net.minecraft.client.renderer.entity.EntityRendererProvider;
+@@ -26,14 +27,19 @@ import net.minecraft.client.renderer.entity.EntityRendererProvider;
  import net.minecraft.client.renderer.entity.player.AvatarRenderer;
+ import net.minecraft.client.renderer.entity.state.AvatarRenderState;
+ import net.minecraft.client.renderer.rendertype.RenderType;
 +import net.minecraft.resources.Identifier;
  
  final class BedrockPlayerRenderer extends AvatarRenderer<AbstractClientPlayer> {
+ 
+     private final Map<Boolean, RenderType> nativeMaterials = new HashMap<>();
  
 -    BedrockPlayerRenderer(final EntityRendererProvider.Context context, final PlayerModel model, final boolean slim) {
 +    BedrockPlayerRenderer(final EntityRendererProvider.Context context, final PlayerModel model, final boolean slim,
@@ -322,6 +346,11 @@ index 4b9f121..3a9f2f2 100644
 +        for (final Surface surface : surfaces) {
 +            this.addLayer(new BedrockPersonaLayer(this, surface.model(), surface.texture()));
 +        }
+     }
+ 
+     @Override
+@@ -50,4 +56,6 @@ final class BedrockPlayerRenderer extends AvatarRenderer<AbstractClientPlayer> {
+         return visible && !translucent && !state.isSpectator;
      }
  
 +    record Surface(PlayerModel model, Identifier texture) {

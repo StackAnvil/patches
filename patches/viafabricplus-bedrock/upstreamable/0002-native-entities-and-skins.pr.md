@@ -14,7 +14,7 @@ The licensed Bedrock 1.26.51.1 Windows executable, CPU function `141eb6120`, and
 
 Validation: focused tests cover mixed material overrides and retained ancestor pivots and rotation. The actual vertex and fragment shaders pass 192 Mesa EGL numerical scenarios. These cover cardinal and rotated normals, alpha at the cutoff, fractional and above-one multipliers, and lightmap bypass. The owning feature build passes.
 
-Scope: unsupported materials retain the existing fallback. Ordinary lit directional shading retains the Java path while the native light alpha sign remains unverified. This change does not claim full actor shader parity or render controller support through ViaProxy.
+Scope: unsupported materials retain the existing fallback. This change does not claim full actor shader parity or render controller support through ViaProxy.
 
 Resolve effective actor material inheritance before selecting the verified alpha-test shader. Higher packs replace complete definitions, including their parent. Apply define and state replacement, addition, and removal. Missing and cyclic parents use the existing fallback.
 
@@ -22,7 +22,7 @@ CubeCraft's saved banner uses `cc_lobby_banner:entity` with `ALPHA_TEST` and a c
 
 The installed Bedrock 1.26.51.1 `entity.material` SHA-256 is `fb971460c91e30fa2071f703db699934671e92b5b62617056b68a57eb7cf3eef`. The saved server material SHA-256 is `bfdabff5a1aaae7d314966fa9ba71a244f4d6d9947300777ec1d4e3cbdcf7b61`. Assets and raw probes stay private.
 
-Five focused tests cover inheritance, culling, whole-definition pack replacement, define removal, unsupported shader fields, invalid definitions, parent cycles, and independent pack caches. Together with the existing material tests, all seven cases pass. Unknown flags, states, shader overrides, and sampler changes retain the fallback. Additive effects and actor UV animation retain the fallback.
+Five focused tests cover inheritance, culling, whole-definition pack replacement, define removal, unsupported shader fields, invalid definitions, parent cycles, and independent pack caches. Together with the existing material tests, all seven cases pass. Unknown flags, states, shader overrides, and sampler changes retain the fallback. Unverified additive and mask effects retain the fallback.
 
 Retain server actor scale in immutable render snapshots and scale the mesh around its native origin. The saved protocol 2193 CubeCraft scene sends FLOAT metadata index 38 as 1.7 for eleven lobby banners and 5 for its hanging cube. The target Bedrock 1.26.51.1 reference renders those larger meshes. Core controller evaluation binds the documented `query.model_scale` and reports scale-only changes, so both initial values and sparse updates reach this renderer. Client `scripts.scale` evaluation remains separate.
 
@@ -34,14 +34,37 @@ The target's `entity_emissive_alpha` family now uses its native inverse-alpha li
 
 Bedrock 1.26.51.1 `Entity.material.bin` SHA-256 is `403efcc7777c9712176f6715f861c873e31d8e45d0b73b8e320bd29754789058`. Unmodified Lazurite 0.11 parses the exact `AlphaTestEmissive` pass at byte 1368400. Its sampled SM65 fragment SHA-256 is `3cd762aa42a07cb9d8557e0a4e890c3b2cdf72109673668914ce20a0795ddbdf`. DXIL establishes the discard, overlay, inverse-alpha blend, alpha output, and fog order. The vertex shader is identical to ordinary `AlphaTest`.
 
-Validation: material tests cover inherited emission, culling, removal, replacement, and rejection of unrelated emissive effects. The actual shaders pass 672 Mesa EGL numerical scenarios at tolerance 1e-6. These include alpha-zero colored pixels, empty texels, fractional alpha, overlay, normals, and light multipliers. Ordinary lit diffuse keeps the existing Java calculation. CubeCraft's galaxy UV animation and mask remain outside this shader change. Raw assets and shader exports remain private.
+Validation: material tests cover inherited emission, culling, removal, replacement, and rejection of unrelated emissive effects. The actual shaders pass 672 Mesa EGL numerical scenarios at tolerance 1e-6. These include alpha-zero colored pixels, empty texels, fractional alpha, overlay, normals, and light multipliers. CubeCraft's galaxy material family remains unverified. Raw assets and shader exports remain private.
 
 Explicit east and west UV faces now use the same model-space conversion as box UVs. The saved Bedrock 1.26.51.1 CubeCraft banner declares a west-only plane and uses a 90-degree bone rotation plus its camera expression. Its source and Java carrier yaw are both zero. The previous explicit-face path produced winding and normals with a camera dot product near -0.992 at three saved actor positions. The corrected path produces +0.992 with unchanged rotations and culling. This addresses the missing plane without changing its one-sided material.
 
-Three semantic tests cover equivalent box and explicit lateral vertices and UVs, asymmetric east and west surface positions, and transformed one-sided winding across eight camera directions and four actor yaws. All 13 focused owner renderer and material tests pass. Actual banner pixels still require a new offline capture. Client script variables and the cube's galaxy UV animation remain outside this correction.
+Three semantic tests cover equivalent box and explicit lateral vertices and UVs, asymmetric east and west surface positions, and transformed one-sided winding across eight camera directions and four actor yaws. All 13 focused owner renderer and material tests pass. Actual banner pixels still require a new offline capture. Client script variables and the galaxy material family remain separate.
 
 Controller UV transforms use the target Bedrock 1.26.51.1 ENTITY vertex
 formula, UV times scale plus offset, with immutable per-draw matrices.
 The native UVAnimation default is (0, 0, 1, 1). USE_UV_ANIM is supported
 for the verified ordinary and emissive alpha-test families; unknown
 shader combinations still use the existing material fallback.
+
+Both ordinary and emissive actors now use the target's world-normal shade:
+`0.45 - 0.1*nx² + 0.1*nz² + 0.35*OverlayColor.w + 0.275*(ny*TileLightColor.w + 1)`.
+Java overlay alpha is the inverse of native overlay alpha. Native dimension
+constructors and actor producer `141eb6120` establish vertical factor -1
+in Nether, +1 in Overworld/End, and +1 whenever lighting is ignored.
+Dimension identity comes from the native `ChunkTracker`, or the canonical
+Java Nether key through ViaProxy. Shader variants retain this state per draw.
+
+Ordinary overlay now applies before all RGB lighting, and output alpha
+remains the source texture alpha. The sampled native AlphaTest fragment
+SHA-256 is `4fc97f0d5c15c6d404fe895e473440b9f0de32b5cb16a78dee677489d3222172`;
+shared vertex SHA-256 is `6d38198816c62b18d1ed4649968cab5269e5d49af503f1d01c5278a54c56de55`.
+
+Validation: 8,064 private actual-GLSL cases pass at tolerance 1e-6 for
+ordinary/emissive families, dimension signs, lighting bypass, normals,
+overlay, inverse-alpha emission and alpha independent of Java tint and
+lightmap alpha. The existing 192 ordinary, 672 emissive and 60 texture UV
+cases also pass. Native assets and exports remain private.
+
+Visible supplied player bodies now use the same native alpha-test shader as actors. Bedrock 1.26.51.1 selects `entity_alphatest` for both visible player controllers. That material inherits `entity_nocull`, and its shader keeps only texels with alpha above 0.5. The saved Hive scene supplies 49 skin updates without material overrides or a server player definition.
+
+The renderer retains the server body visibility guard and the existing spectator, translucent and hidden outline routes. Each appearance caches its two immutable dimension materials. Semantic tests exercise visibility selection and actual pipeline culling, depth, blend and dimension states. Standard skins without supplied geometry, first-person hands and menu previews retain their existing renderer paths.
