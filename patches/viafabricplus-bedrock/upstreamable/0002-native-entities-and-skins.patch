@@ -1,4 +1,4 @@
-From b2b995b3d2d2f262961521985625ba4346d19dbf Mon Sep 17 00:00:00 2001
+From 7708face52a0893c0fee3c21a96d026907bd4389 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:07 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -242,6 +242,19 @@ The official Bedrock 1.26.51.1/protocol 2193 Hive replay renders ordinary name g
 Java 26.3 submits a depth-tested opaque name pass and a see-through pass whose foreground alpha is max((backgroundOpacity + .75) * .5, .5). When an avatar occludes the opaque pass, only the dim overlay remains. Preserve foreground RGB, background color and packed light, but use opaque default glyph alpha for the ordinary native SEE_THROUGH name pass. Keep NORMAL/depth-tested passes and other connections unchanged.
 
 The native actor-specific foreground RGBA getter is not fully traced. This change reproduces the captured default ordinary-name opacity; it does not claim support for every actor fade.
+
+Recover the native clamped .005-block name height for proxy armor stands
+whose explicit native zero width and height translate to Java marker state.
+Bedrock 1.26.51.1 anchors names at scaled AABB height plus .7 blocks; Java
+26.3 adds .5 after the attachment. Publish .005+.2 only for marker armor
+stands in an accepted native rendering context. Ordinary Java connections,
+unknown actors and ambiguous Interaction height one retain their fallback.
+
+The marker flag carries proved empty-box semantics, not a fitted screen
+offset. Native scale zero alone does not imply marker state. Direct native
+snapshots remain authoritative and do not read mutable state while drawing.
+Six focused anchor tests pass, including scoped marker recovery and the
+unchanged sparse bounds, identity, fallback and lighting cases.
 ---
  build.gradle.kts                              |   6 +
  .../friends/FriendWorldSkinProvider.java      |   8 +
@@ -250,7 +263,7 @@ The native actor-specific foreground RGBA getter is not fully traced. This chang
  .../render/MixinBedrockActorPipelines.java    |  25 ++
  .../render/MixinBedrockActorRenderType.java   |  47 ++++
  .../render/MixinBedrockNameTagMetadata.java   |  33 +++
- .../render/MixinBedrockNameTagRenderer.java   |  54 ++++
+ .../render/MixinBedrockNameTagRenderer.java   |  56 +++++
  .../features/render/MixinBedrockNameTags.java |  59 +++++
  .../render/MixinBedrockRidingMetadata.java    |  38 +++
  .../render/MixinBedrockRidingPosition.java    |  27 ++
@@ -264,7 +277,7 @@ The native actor-specific foreground RGBA getter is not fully traced. This chang
  .../render/BedrockActorUvTransform.java       |  18 ++
  .../bedrock/render/BedrockEntityRenderer.java | 188 ++++++++++++++
  .../bedrock/render/BedrockGeometry.java       | 215 ++++++++++++++++
- .../bedrock/render/BedrockNameTagAnchors.java |  71 ++++++
+ .../bedrock/render/BedrockNameTagAnchors.java |  75 ++++++
  .../bedrock/render/BedrockNameTags.java       |  53 ++++
  .../bedrock/render/BedrockPlayerRenderer.java |  53 ++++
  .../bedrock/render/BedrockPlayerSkins.java    | 236 ++++++++++++++++++
@@ -281,13 +294,13 @@ The native actor-specific foreground RGBA getter is not fully traced. This chang
  .../render/BedrockActorUvTransformTest.java   |  27 ++
  .../bedrock/render/BedrockCubeFacesTest.java  | 182 ++++++++++++++
  .../render/BedrockEntityRendererTest.java     |  50 ++++
- .../render/BedrockNameTagAnchorsTest.java     | 112 +++++++++
+ .../render/BedrockNameTagAnchorsTest.java     | 120 +++++++++
  .../bedrock/render/BedrockNameTagsTest.java   |  88 +++++++
  .../render/BedrockPlayerMaterialsTest.java    |  42 ++++
  .../render/BedrockRidingAnchorsTest.java      | 130 ++++++++++
  .../bedrock/render/BedrockSkinQueueTest.java  |  83 ++++++
  .../render/CustomEntityRenderStoreTest.java   |  36 +++
- 44 files changed, 2898 insertions(+), 1 deletion(-)
+ 44 files changed, 2912 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractClientPlayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorPipelines.java
@@ -564,10 +577,10 @@ index 0000000..9340195
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTagRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTagRenderer.java
 new file mode 100644
-index 0000000..b3f2286
+index 0000000..4b616d4
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTagRenderer.java
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,56 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -587,6 +600,7 @@ index 0000000..b3f2286
 +import net.minecraft.network.chat.Component;
 +import net.minecraft.world.entity.Entity;
 +import net.minecraft.world.entity.Interaction;
++import net.minecraft.world.entity.decoration.ArmorStand;
 +import net.minecraft.world.phys.Vec3;
 +import net.raphimc.viabedrock.api.BedrockProtocolVersion;
 +import org.jspecify.annotations.Nullable;
@@ -607,6 +621,7 @@ index 0000000..b3f2286
 +            if (snapshot != null) state.nameTagAttachment = snapshot.attachment(state.nameTagAttachment);
 +        } else {
 +            state.nameTagAttachment = BedrockNameTagAnchors.proxyAttachment(true, entity instanceof Interaction,
++                    entity instanceof ArmorStand armorStand && armorStand.isMarker(),
 +                    entity.getBbHeight(), state.nameTagAttachment);
 +        }
 +    }
@@ -1743,10 +1758,10 @@ index 0000000..08fef85
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagAnchors.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagAnchors.java
 new file mode 100644
-index 0000000..6492b14
+index 0000000..02572ba
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagAnchors.java
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,75 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1797,12 +1812,16 @@ index 0000000..6492b14
 +        return directBedrock || BedrockRenderingMetadata.active();
 +    }
 +
-+    public static Vec3 proxyAttachment(final boolean nativeContext, final boolean interaction,
++    public static Vec3 proxyAttachment(final boolean nativeContext, final boolean interaction, final boolean markerArmorStand,
 +                                       final float height, final Vec3 fallback) {
++        if (!nativeContext) return fallback;
++        // Explicit zero native armor-stand dimensions become Java's marker flag.
++        // Native collision dimensions still clamp to .005 rather than Java's zero.
++        if (markerArmorStand) return new Vec3(0, 0.005 + 0.2, 0);
 +        // A proxy cannot expose native snapshots. Interaction dimensions are translated
 +        // into Java metadata, but Java's default height of one is ambiguous when only
 +        // width was supplied. Keep that case and unknown entity types unchanged.
-+        if (!nativeContext || !interaction || !Float.isFinite(height) || height < 0.005F || height == 1F) return fallback;
++        if (!interaction || !Float.isFinite(height) || height < 0.005F || height == 1F) return fallback;
 +        return new Vec3(0, height + 0.2, 0);
 +    }
 +
@@ -2999,10 +3018,10 @@ index 0000000..aac5efd
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagAnchorsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagAnchorsTest.java
 new file mode 100644
-index 0000000..462e9d8
+index 0000000..012ca09
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagAnchorsTest.java
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,120 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3078,12 +3097,20 @@ index 0000000..462e9d8
 +    void keepsAmbiguousProxyBoundsAndOrdinaryJavaAttachments() {
 +        final Vec3 fallback = new Vec3(0.1, 1.8, 0.2);
 +        for (float unknown : new float[]{0F, 1F, Float.NaN, Float.POSITIVE_INFINITY, -1F}) {
-+            assertSame(fallback, BedrockNameTagAnchors.proxyAttachment(true, true, unknown, fallback));
++            assertSame(fallback, BedrockNameTagAnchors.proxyAttachment(true, true, false, unknown, fallback));
 +        }
-+        assertSame(fallback, BedrockNameTagAnchors.proxyAttachment(false, true, 2F, fallback));
-+        assertSame(fallback, BedrockNameTagAnchors.proxyAttachment(true, false, 2F, fallback));
-+        assertEquals(2.7, BedrockNameTagAnchors.proxyAttachment(true, true, 2F, fallback).y + 0.5, 0.000001);
-+        assertEquals(4.2, BedrockNameTagAnchors.proxyAttachment(true, true, 3.5F, fallback).y + 0.5, 0.000001);
++        assertSame(fallback, BedrockNameTagAnchors.proxyAttachment(false, true, false, 2F, fallback));
++        assertSame(fallback, BedrockNameTagAnchors.proxyAttachment(true, false, false, 2F, fallback));
++        assertEquals(2.7, BedrockNameTagAnchors.proxyAttachment(true, true, false, 2F, fallback).y + 0.5, 0.000001);
++        assertEquals(4.2, BedrockNameTagAnchors.proxyAttachment(true, true, false, 3.5F, fallback).y + 0.5, 0.000001);
++    }
++
++    @Test
++    void usesClampedNativeHeightOnlyForProxyMarkerArmorStands() {
++        final Vec3 fallback = new Vec3(0.1, 1.8, 0.2);
++        assertEquals(0.705, BedrockNameTagAnchors.proxyAttachment(true, false, true, 0F, fallback).y + 0.5, 0.000001);
++        assertSame(fallback, BedrockNameTagAnchors.proxyAttachment(false, false, true, 0F, fallback));
++        assertSame(fallback, BedrockNameTagAnchors.proxyAttachment(true, false, false, 0F, fallback));
 +    }
 +
 +    @Test
