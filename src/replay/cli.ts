@@ -13,6 +13,7 @@ import { activeDisplay, displayEnv, stopDisplay } from "../lab/display.ts";
 import { inspectJournal } from "./journal.ts";
 import { requireNativeOfflineReplay, requireNativeReplayProcessNamespaces, type NativeOfflineProof } from "./native-offline.ts";
 import { prepareNativeReplayPrefix } from "./native-prefix.ts";
+import { prepareNativeProfile } from "./native-profile.ts";
 import { verifyRendering, type SceneFeatures, type RenderAudit } from "./verification.ts";
 
 const execute = promisify(execFile);
@@ -168,23 +169,8 @@ async function launchNative(directory: string, bind: number, nativeHome?: string
   const isolated = await displayEnv(true);
   if (!isolated) throw new Error("Native recording requires the lab's private display.");
   const source = resolve(nativeHome ?? process.env.STACKANVIL_REPLAY_BEDROCK_HOME ?? join(homedir(), ".local/share/bedrock-on-linux"));
-  const settings = JSON.parse(await readFile(join(source, "settings.json"), "utf8"));
-  if (!/^1\.26\.51(?:\.|$)/.test(settings.mc_version ?? "")) throw new Error("Native recording requires the official Bedrock 1.26.51 client, matching protocol 2193.");
-  for (const key of ["game_dir", "proton"]) {
-    if (typeof settings[key] !== "string" || !(await realpath(settings[key])).startsWith(`${await realpath(source)}/`)) {
-      throw new Error(`The native profile's ${key} must be inside its installation directory so the recorder can isolate it.`);
-    }
-  }
   const runtime = join(privateRoot, "native-client");
-  const marker = join(runtime, ".stackanvil-source");
-  if (!existsSync(marker)) {
-    if (existsSync(runtime)) throw new Error("The private native profile is incomplete. Preserve or remove it before preparing another copy.");
-    await execute("cp", ["-a", "--reflink=auto", source, runtime]);
-    await chmod(runtime, 0o700);
-    for (const key of ["game_dir", "proton"]) if (typeof settings[key] === "string" && settings[key].startsWith(`${source}/`)) settings[key] = `${runtime}${settings[key].slice(source.length)}`;
-    await writeFile(join(runtime, "settings.json"), JSON.stringify(settings), { mode: 0o600 });
-    await writeFile(marker, source, { mode: 0o600 });
-  } else if ((await readFile(marker, "utf8")) !== source) throw new Error("The native recorder profile belongs to a different source installation.");
+  await prepareNativeProfile({ source, privateRoot, runtime });
   const replayPrefix = offline ? await prepareNativeReplayPrefix({
     privateRoot, directory, sourcePrefix: process.env.BOL_WINEPREFIX || join(runtime, "compatdata/pfx"), port: bind,
   }) : undefined;
