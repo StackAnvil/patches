@@ -64,10 +64,10 @@ The replayed full stack builds. All 191 fixture-enabled add-on tests pass with n
 
 ## Native cape eligibility boundary
 
-Bedrock 1.26.51.1's classic pack loader consults `cape` only when its pack-access callback succeeds and the origin byte is 2 or 8. Independent execution of that native branch passes all 24 combinations of the supplied callback result and origin bytes 0 through 11. This check verifies the branch; it does not reproduce the callback or establish bundled/manual cape precedence.
+Bedrock 1.26.51.1's classic pack loader consults `cape` only when its pack-access callback succeeds and the origin byte is 2 or 8. Independent execution of that native branch passes all 24 combinations of the supplied callback result and origin bytes 0 through 11. This check verifies the branch. A later live startup trace records both actual origin callbacks returning true.
 
 A private local test pack loads its three skins in the native client. Its declared blue cape does not appear in the preview. The test changes no saved character recipe. Cleanup removes only the verified test pack and confirms that all six native profiles match the original snapshot.
 
 The current [LeviLamina pack-access declaration](https://github.com/LiteLDev/LeviLamina/blob/main/src/mc/resources/PackAccessStrategy.h) identifies this virtual slot as `isTrusted`. Its [origin enum](https://github.com/LiteLDev/LeviLamina/blob/main/src/mc/deps/core/resource/PackOrigin.h) names 2 Package and 8 PremiumCache. Older SDK enum names differ, so the inspected target build's numeric branch is the evidence for this version.
 
-The importer still omits a classic skin's bundled cape. Adding support requires preserving trusted package/account provenance through loading, then implementing preview, persistence, and transport with native selection precedence. Reading every local pack's `cape` field would contradict the observed gate. Manual PNG cape support already exists. The executable, native branch harness, test pack, and captures remain private.
+The account-pack reader in patch 0009 now preserves trusted provenance after receipt, published identity, and decrypted content checks. Its bundled cape reaches preview, persistence, and skin transport. Local imports still omit declared capes, matching the observed gate. Manual PNG capes remain an independent local extension. Their precedence against native account and persona capes still needs comparison. The executable, native branch harness, test pack, and captures remain private.

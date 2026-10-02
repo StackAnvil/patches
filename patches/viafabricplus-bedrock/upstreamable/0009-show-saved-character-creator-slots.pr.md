@@ -1109,7 +1109,7 @@ All 18 patches replay. The dependency build, Prism bundle, and north-star patch 
 - **Persona assembly:** Licensed package acquisition, extraction, versioned caching, and local assembly work for the tested default and free-leg recipes. Exhaustive free-piece coverage, additional layering combinations, accounts without usable receipt keys, and unavailable remote products remain open.
 - **Animation:** Strip timing, blinking, multiple sources, timelines, delays, actor queries, rotations, and effect machinery have implementation and targeted checks. Native world phase and receive comparisons remain open. The matching vanilla player declares no emote effect aliases. Effect-only server player overrides retain their aliases when optional animations or scripts are absent. Effects from other products still need native world comparisons.
 - **Dressing Room:** Saved characters, tested palettes, limb side/default edits, catalog previews, zero-price acquisition, and owned classic-pack browsing/downloads have checks. Remaining palette combinations, paid purchase/redemption behavior, native cloud synchronization, and broader interaction checks remain open. No paid transaction was tested here.
-- **Classic formats:** Geometry inheritance and animation flag conversion have targeted tests and native execution evidence. Trusted bundled cape import remains missing. Native inheritance edges, first-person behavior, equipment interaction, and visible motion comparisons remain open.
+- **Classic formats:** Geometry inheritance and animation flag conversion have targeted tests and native execution evidence. Trusted account-pack capes now reach preview, storage, and skin transport. Native cape precedence and visible comparisons remain open. Native inheritance edges, first-person behavior, equipment interaction, and visible motion comparisons remain open.
 
 This is progress on the six-part parity goal. It is not a full-parity result.
 
@@ -1142,3 +1142,25 @@ The actual loader failure affects server player overrides that declare effects w
 The clean production client shows the same zero balance as the native capture. Independent backend reads match all four wallet screens. Mouse input refreshes the compact counter and opens the official shop link confirmation. Cancel returns to the Dressing Room. GUI widths 320, 427, and 640 keep the wallet clear of the centered header; compact tooltips retain the currency name. No payment runs.
 
 The focused run reports 28 tests: 27 pass and one optional redemption capture comparison skips because its fixture is absent. The balance parser and optional actor section tests run without skips. The production server-player entry point now loads a minimal effect-only override and resolves both aliases, preserving the sound locator. All 18 patches replay. The dependency build, pinned ViaFabricPlus verification, Prism bundle, and north-star patch check pass. Traffic, account snapshots, downloaded assets, and client probes stay private.
+
+
+### Trusted bundled classic capes
+
+A live Bedrock 1.26.51.1 startup trace records the actual trust callbacks for Package origin 2 and PremiumCache origin 8. Both return true. The classic loader then enters its cape lookup. Package trust uses callback `1419b8a10`; PremiumCache uses `1400848a0`. Independent instruction decoding confirms their observed results.
+
+Account downloads preserve trusted provenance after receipt, published identity, and decrypted pack checks. Local skin-pack imports remain untrusted. The reader accepts cape paths shorter than 1024 UTF-8 bytes. It resolves the final component after either slash, matching the target loader. Bounded PNG decoding checks dimensions before appearance files change.
+
+The preview includes the pack cape. Storage keeps its pixels and stable identity in a separate account file. Standard presets hide that bundled cape. Returning to the imported skin restores it. Skin transport carries the same pixels and identity. A new skin import replaces or clears the bundled cape.
+
+Manual PNG capes retain their existing priority as a local extension. This behavior does not establish native account, persona, and bundled cape precedence. A visible native comparison with an entitled cape pack remains open.
+
+Three cape tests cover trust, path resolution, decoded pixels, persistence, preset selection, wire round trips, replacement, and invalid input. Native executables, traces, synthetic format fixtures, and account files remain private.
+
+Wallet requests now complete while the purchase confirmation covers their screen. Account and request identity still reject stale results. Returning to the Dressing Room can therefore retain the completed balance instead of leaving the request pending.
+
+
+The focused run reports 31 tests: 30 pass and one optional redemption capture comparison skips because its fixture is absent. All three cape tests pass. The final full build reports 466 tests, with 370 passing and 96 optional fixture tests skipped. It has no failures or errors. All 18 patches replay. Pinned ViaFabricPlus verification, the dependency build, Prism bundle, and north-star patch check pass.
+
+The clean production client starts a real balance request, then opens the shop confirmation before that request finishes. Its completed wallet reports zero Minecoins while the confirmation remains open. Cancelling returns to the same completed counter. An independent backend read matches it. These checks perform no payment or appearance write. The cape format tests use synthetic fixtures; they do not establish visible native cape parity.
+
+After the concurrent equipment patches reached main, all 19 patches replay. The integrated dependency build also passes.
