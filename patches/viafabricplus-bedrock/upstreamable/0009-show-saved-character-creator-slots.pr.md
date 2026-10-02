@@ -1094,3 +1094,11 @@ All six emote tests pass with both licensed fixture directories supplied, withou
 The rebuilt production client exercises its public world sampler on the Minecraft thread with Hover's licensed asset. Four supplied actor lifetimes match the authored root motion while emote elapsed time stays near two seconds. Moving the probe actor cancels playback. A fresh production account load confirms the original active recipe. This probe sends no account write. The dependency build, Prism bundle, and north-star patch check pass.
 
 These checks verify query forwarding and authored motion evaluation. They do not compare native multiplayer phase or the full entity renderer. Native preview clock, effect aliases, offscreen actor context, and broader visual parity remain open. Assets, executable instructions, account data, and runtime probes stay private.
+
+### Interactive owned classic-pack downloads
+
+The production Owned packs screen synchronizes Store purchases and lists Earth Skin and Birdie Wings for the selected account. Real mouse input opens each pack through the normal asynchronous download path. Both previews render their resolved custom geometry. At 640 by 480, the preview, navigation, and Use this skin action fit inside the 320 by 240 GUI. Next wraps correctly for these single-skin packs. Refresh preserves the pack rows during synchronization and returns the same owned entries.
+
+Native Bedrock 1.26.51.1 also lists both owned packs. Selecting Birdie Wings opens its preview with an explicit Equip action. The Java and native views show the same character and its wings. This is a qualitative geometry and texture check, without a pixel, lighting, pose, or animation-phase comparison. Neither owned pack declares classic animation aliases, so the interaction does not verify animated classic packs.
+
+No Equip or Use this skin action is selected. Independent HTTPS reads confirm all six original cloud recipes. A fresh production profile load confirms the original active appearance. Native browsing changes only the current local profile's `offlineUpdate` bookkeeping flag. Cleanup closes the owned native client, checks that exact difference, removes the flag, and verifies all six original local profiles before relaunch. The recipes survive relaunch. Raw traffic, licensed assets, and captures remain private.
