@@ -11,6 +11,7 @@ import { root } from "../model.ts";
 import { artifact } from "../prism.ts";
 import { activeDisplay, displayEnv, stopDisplay } from "../lab/display.ts";
 import { inspectJournal } from "./journal.ts";
+import { requireNativeOfflineReplay, requireNativeReplayProcessNamespaces, type NativeOfflineProof } from "./native-offline.ts";
 import { verifyRendering, type SceneFeatures, type RenderAudit } from "./verification.ts";
 
 const execute = promisify(execFile);
@@ -155,7 +156,7 @@ async function launchJava(directory: string, bind: number, client: "addon" | "pr
   }
   throw new Error(`Minecraft startup timed out. Read ${launcherLog}.`);
 }
-async function launchNative(directory: string, bind: number, nativeHome?: string): Promise<{ pid: number; log: string }> {
+async function launchNative(directory: string, bind: number, nativeHome?: string, manualConnect = false, offline?: NativeOfflineProof): Promise<{ pid: number; log: string }> {
   const isolated = await displayEnv(true);
   if (!isolated) throw new Error("Native recording requires the lab's private display.");
   const source = resolve(nativeHome ?? process.env.STACKANVIL_REPLAY_BEDROCK_HOME ?? join(homedir(), ".local/share/bedrock-on-linux"));
@@ -200,13 +201,20 @@ async function launchNative(directory: string, bind: number, nativeHome?: string
   }
   await Bun.sleep(20_000);
   await ui(["screenshot", "native-menu"], directory, "bedrock");
+  if (offline) await requireNativeReplayProcessNamespaces(offline, [process.pid, ...children.flatMap(service => service.pid ? [service.pid] : [])]);
+  if (manualConnect) {
+    console.log(`Native client is waiting for verified manual connection to 127.0.0.1:${bind}.`);
+    return { pid: child.pid, log };
+  }
   await ui(["key", "Return"], directory, "bedrock"); await Bun.sleep(2500);
   await ui(["click", "0.82", "0.11"], directory, "bedrock"); await Bun.sleep(2500);
   await ui(["click", "0.17", "0.22"], directory, "bedrock"); await Bun.sleep(2000);
-  await ui(["click", "0.25", "0.17"], directory, "bedrock"); await ui(["type", "stackanvil-native-recording"], directory, "bedrock");
-  await ui(["click", "0.25", "0.31"], directory, "bedrock"); await ui(["type", "127.0.0.1"], directory, "bedrock");
-  await ui(["click", "0.25", "0.46"], directory, "bedrock"); await ui(["key", "Control+a"], directory, "bedrock");
-  await ui(["type", String(bind)], directory, "bedrock"); await ui(["click", "0.69", "0.57"], directory, "bedrock");
+  for (const [row, value] of [["0.17", "stackanvil-native-recording"], ["0.31", "127.0.0.1"], ["0.46", String(bind)]] as const) {
+    await ui(["click", "0.25", row], directory, "bedrock"); await Bun.sleep(250);
+    await ui(["key", "Control+a"], directory, "bedrock"); await Bun.sleep(250);
+    await ui(["type", value], directory, "bedrock"); await Bun.sleep(250);
+  }
+  await ui(["click", "0.69", "0.57"], directory, "bedrock");
   await Bun.sleep(4000);
   await ui(["screenshot", "native-before-trust"], directory, "bedrock");
   const pixel = await execute("bun", [join(root, "src/capture/cli.ts"), "ui", "pixel", "0.36", "0.28", "--client", "bedrock"], { cwd: root });
@@ -259,6 +267,7 @@ async function main(): Promise<void> {
   const client = option("--client") ?? (mode === "replay" ? "addon" : "proxy");
   const transportOnly = args.includes("--transport-only");
   if (client !== "addon" && client !== "proxy" && client !== "native") throw new Error("--client must be addon, proxy, or native.");
+  const nativeOffline = mode === "replay" && client === "native" ? await requireNativeOfflineReplay() : undefined;
   if (!Number.isInteger(seconds) || seconds < 20 || seconds > 300) throw new Error("--seconds must be between 20 and 300.");
   if (mode === "record" && input === "hive" && client !== "native" && !args.includes("--allow-hive")) throw new Error("ViaBedrock blacklists The Hive because translated clients can be banned. Use an official client capture, or explicitly pass --allow-hive for this diagnostic join.");
   let target = servers[input as keyof typeof servers];
@@ -327,7 +336,7 @@ async function main(): Promise<void> {
     }
     const assetAccount = client === "addon" ? option("--account") : undefined;
     const game = client === "native"
-      ? await launchNative(directory, bind, option("--native-home"))
+      ? await launchNative(directory, bind, option("--native-home"), mode === "replay" || args.includes("--native-manual-connect"), nativeOffline)
       : await launchJava(directory, bind, client, recorder, assetAccount ? resolve(assetAccount) : undefined);
     gamePid = game.pid;
     console.log(`Private ${mode} session: ${directory}`);

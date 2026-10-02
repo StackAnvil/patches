@@ -12,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(targets = "com.viaversion.viafabricplus.bedrock.render.CustomEntityRenderStore", remap = false)
 public abstract class MixinRenderStore {
     @Inject(method = "update", at = @At("TAIL"))
-    private static void models(UUID uuid, String identifier, List<CustomEntity.EvaluatedModel> models, CallbackInfo callback) {
-        RenderAudit.models(identifier, models);
+    private static void models(UUID uuid, String identifier, float scale, List<CustomEntity.EvaluatedModel> models, CallbackInfo callback) {
+        RenderAudit.models(identifier, scale, models);
     }
 }

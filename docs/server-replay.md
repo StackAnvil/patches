@@ -62,11 +62,24 @@ The replay server binds only to loopback. It creates a fresh offline handshake a
 
 The default replay connects the Fabric add-on directly to the local Bedrock replay server. This exercises its native skin and entity renderer. A separate recorder mod exists only in the private test instance.
 
-For an official-client reference, use:
+For an official-client reference, run the complete CLI inside a Linux network
+namespace with only loopback routes and cleared capabilities:
 
 ```bash
-bun run server-replay replay .stackanvil/replay/<recording> --client native --seconds 180
+bun run server-replay replay .stackanvil/replay/<recording> --client native --native-manual-connect --seconds 240
 ```
+
+Native replay refuses an ordinary host network before launching. Keep the relay,
+launcher and game in the same namespace. Use a fresh private Wine prefix so it
+cannot reuse a wineserver from the host. Verify the actual game and wineserver
+namespace before Join. Native replay always stops at the main menu for manual
+connection; inspect the local address and port before connecting.
+
+The bundled launcher fetches a package license at each start. A restricted TLS
+bridge can provide its verified Microsoft licensing endpoints while game traffic
+stays isolated. The bridge must reject arbitrary CONNECT targets and preserve
+TLS encryption. The private lab keeps its broker and licensing data outside Git.
+A native menu that cannot expose local server entry is a failed reference run.
 
 The native route uses the same isolated installation and graphics safety checks as native recording. It connects through the recording relay to the loopback replay server. It requires the complete scene payload SHA-256, completed pack reconstruction, local-player initialization, gameplay input, and a saved reference screenshot. Its report uses `rendering: reference-captured`. It does not substitute for the add-on's rendering assertions.
 
@@ -119,6 +132,17 @@ Actor controllers preserve `ignore_lighting`, their floating `light_color_multip
 Emissive-alpha materials and ordinary lit directional shading retain the existing fallback. Native shader binaries, decompiler output, and licensed assets remain private. This port does not establish pixel-identical ambient occlusion, Vibrant Visuals, ray tracing, or custom world lighting. The End retains Java’s lightmap until its animated native brightness input is verified.
 
 The saved Hive comparison still shows differences in sky gradients, clouds, and held-item shading. Java's final compass color matches its measured eye-block light and quad normal. Native held-item sample position and shader selection remain unresolved. Native clouds are enabled; removing them is not a supported parity fix.
+
+Check graphics mode before comparing colors. The isolated official client can
+select Vibrant Visuals, which uses a different lighting path from this classic
+lightmap port. Use an explicit Fancy-mode reference for classic shader checks.
+Record brightness, field of view, weather and world clocks with each pair. Keep
+clock-controlled derived recordings separate from the unchanged source recording.
+
+Private terrain observations raycast from the actual camera and record nearby
+block states and raw light values. They also recompute the current Java model's
+quad colors and corner lights. These values help isolate propagation from
+shading; they do not inspect the chunk's cached GPU vertices.
 
 For image comparisons, align static building features and validate each measured region's edges. Use the same pixels before and after a change. Full difference maps also include moving actors, nameplates, HUD, and texture filtering. Those pixels cannot support an overall renderer parity percentage.
 

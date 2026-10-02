@@ -18,6 +18,8 @@ public final class RenderAudit {
     private static boolean thirdPerson;
     private static final Set<String> skins = new TreeSet<>(), models = new TreeSet<>(), actors = new TreeSet<>();
 
+    private static final Map<String, Set<Float>> actorScales = new TreeMap<>();
+
     public static synchronized void skin(UUID uuid, SkinData data, boolean installed) {
         if (installed) installedSkins++; else rejectedSkins++;
         if (installed) try {
@@ -50,8 +52,9 @@ public final class RenderAudit {
         if (actors.add(identifier)) save();
     }
 
-    public static synchronized void models(String identifier, List<CustomEntity.EvaluatedModel> selected) {
+    public static synchronized void models(String identifier, float scale, List<CustomEntity.EvaluatedModel> selected) {
         modelUpdates++;
+        actorScales.computeIfAbsent(identifier, ignored -> new TreeSet<>()).add(scale);
         actors.add(identifier);
         if (selected.isEmpty()) emptyModels++;
         for (CustomEntity.EvaluatedModel model : selected) models.add(model.geometryValue() + ":" + model.textureValue());
@@ -73,7 +76,7 @@ public final class RenderAudit {
             stats.put("nativeCustomActorResolvedModels", nativeActorModels);
             stats.put("nativePlayerRendererSelections", playerSelections); stats.put("modelUpdates", modelUpdates);
             stats.put("emptyModelUpdates", emptyModels); stats.put("skinTextures", skins);
-            stats.put("actorIdentifiers", actors); stats.put("evaluatedModels", models);
+            stats.put("actorIdentifiers", actors); stats.put("evaluatedModels", models); stats.put("actorScales", actorScales);
             Path temporary = directory.resolve("render-audit.json.tmp");
             Files.writeString(temporary, new Gson().toJson(stats));
             Files.setPosixFilePermissions(temporary, PosixFilePermissions.fromString("rw-------"));

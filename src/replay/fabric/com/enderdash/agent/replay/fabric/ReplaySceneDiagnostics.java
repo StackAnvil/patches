@@ -86,6 +86,7 @@ final class ReplaySceneDiagnostics {
             Path file = directory.resolve("camera-audit.jsonl");
             if (!Files.exists(file)) Files.createFile(file, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
             Files.writeString(file, new Gson().toJson(state) + "\n", StandardOpenOption.APPEND);
+            TerrainLightAudit.sample(minecraft, directory);
         } catch (ReflectiveOperationException | java.io.IOException error) {
             throw new IllegalStateException("Could not observe private replay scene", error);
         }
