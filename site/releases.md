@@ -2,12 +2,16 @@
 layout: default
 title: Downloads
 nav_order: 3
-description: Get ViaProxy or the matching ViaFabricPlus and Bedrock add-on JARs from a StackAnvil release.
+description: Find Bedrock add-on downloads and get ViaProxy, matching ViaFabricPlus JARs, or a prepared Prism Launcher client.
 ---
 
 # Download StackAnvil
 
-Open **Assets** on the [latest StackAnvil release on GitHub](https://github.com/StackAnvil/patches/releases/latest). Choose one of the two ways to play below. The [player guide]({{ '/getting-started/' | relative_url }}) has setup and connection steps.
+Choose one of the two ways to play below. The [player guide]({{ '/getting-started/' | relative_url }}) has setup and connection steps.
+
+**Bedrock add-on downloads:** [CurseForge](https://www.curseforge.com/minecraft/mc-mods/stackanvil-bedrock-addon-for-viafabricplus).
+
+The [latest StackAnvil release on GitHub](https://github.com/StackAnvil/patches/releases/latest) has all JARs and the Prism Launcher bundle under **Assets**.
 
 ## ViaProxy: use your regular Java client
 
@@ -15,9 +19,9 @@ Download `ViaProxy-...-StackAnvil.jar`. Run it as a separate app, enter the Bedr
 
 ## ViaFabricPlus + Bedrock add-on: use a Fabric client
 
-Download **both** `ViaFabricPlus-...jar` and `viafabricplus-bedrock-...-StackAnvil.jar` from the **same release**. Install Fabric Loader for the Minecraft version shown on that release and put both JARs in the client's `mods` folder. Keep only one ViaFabricPlus JAR there.
+Get the add-on using the download links above. For the tested pair, download **both** `ViaFabricPlus-...jar` and `viafabricplus-bedrock-...-StackAnvil.jar` from the **same GitHub release**. Install Fabric Loader for the Minecraft version shown on that release and put both JARs in the client's `mods` folder. Keep only one ViaFabricPlus JAR there.
 
-The add-on includes its patched ViaBedrock and CubeConverter libraries. Do not install those library JARs as separate Fabric mods. [Modrinth](https://modrinth.com/mod/stackanvil-bedrock-addon) and [CurseForge](https://www.curseforge.com/minecraft/mc-mods/stackanvil-bedrock-addon-for-viafabricplus) also list the add-on, but new files there can still be under review. The matching GitHub release has the tested pair.
+The add-on includes its patched ViaBedrock and CubeConverter libraries. Do not install those library JARs as separate Fabric mods. New files on mod platforms can remain under review after the GitHub release appears.
 
 ## Optional: prepared Prism Launcher client
 

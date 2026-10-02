@@ -26,6 +26,7 @@ const lines = [
   "### ViaProxy", "",
   "Download the `ViaProxy-...-StackAnvil.jar` file. Run it beside your regular Java client, enter the Bedrock server address and version, and select Start. Join the address shown by ViaProxy from Java Edition. The JAR includes the patched ViaBedrock build; no client mods are needed.", "",
   "### ViaFabricPlus + Bedrock add-on", "",
+  "**Bedrock add-on downloads:** [CurseForge](https://www.curseforge.com/minecraft/mc-mods/stackanvil-bedrock-addon-for-viafabricplus).", "",
   "For Minecraft Java Edition 26.3 with Fabric Loader 0.19.5, install the `ViaFabricPlus-...jar` and `viafabricplus-bedrock-...-StackAnvil.jar` files from this release in the same client's mods folder. The ViaFabricPlus JAR is a copy of the pinned upstream Jenkins artifact. The add-on includes the patched ViaBedrock and CubeConverter libraries, so do not install those JARs as separate Fabric mods.", "",
   "See the [player guide](https://stackanvil.pistonmaster.net/getting-started/) for connection and sign-in steps for both setups.", "",
   "### Optional Prism Launcher instance", "",

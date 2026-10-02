@@ -4,7 +4,9 @@ This guide is for StackAnvil maintainers who publish the patched ViaFabricPlus B
 
 The [Modrinth project](https://modrinth.com/mod/stackanvil-bedrock-addon) is owned by `pistonmaster`. Its project ID is `opL7gK2I`. It has beta versions of the add-on JAR, with Fabric 26.3 and ViaFabricPlus marked as a required dependency. Its AI-assisted text, fork, and local skin import disclosures are saved. It uses the maintainer's hand-drawn icon. Its description, website guide, and Discord invite match the CurseForge listing.
 
-The [CurseForge project](https://authors.curseforge.com/#/projects/1713307/files) is owned by `pistonmaster`. Its project ID is `1713307`. Its description, hand-drawn logo, GPLv3 license, GitHub source link, StackAnvil website, Discord invite, and required ViaFabricPlus relation are saved. Files can remain under manual review before they appear in search. Both project IDs are stored as GitHub Actions repository variables.
+The [CurseForge project](https://www.curseforge.com/minecraft/mc-mods/stackanvil-bedrock-addon-for-viafabricplus) is owned by `pistonmaster`. Its project ID is `1713307`. Maintainers can manage uploads in the [CurseForge author dashboard](https://authors.curseforge.com/#/projects/1713307/files).
+
+The CurseForge description, hand-drawn logo, GPLv3 license, GitHub source link, website, Discord invite, and required ViaFabricPlus relation are saved. Files can remain under manual review before they appear in search. Both project IDs are stored as GitHub Actions repository variables.
 
 ## Listing fields
 

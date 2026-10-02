@@ -22,6 +22,8 @@ The [ViaBedrock patch series](https://github.com/StackAnvil/patches/tree/main/pa
 
 ## ViaFabricPlus Bedrock add-on
 
+**Bedrock add-on downloads:** [CurseForge](https://www.curseforge.com/minecraft/mc-mods/stackanvil-bedrock-addon-for-viafabricplus). The [player guide]({{ '/getting-started/' | relative_url }}) explains installation and connection steps.
+
 The [add-on patch series](https://github.com/StackAnvil/patches/tree/main/patches/viafabricplus-bedrock) connects Bedrock support to the Fabric client. Focused upstream PRs include [#7](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/7), [#9](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/9), and [#11](https://github.com/ViaVersionAddons/viafabricplus-bedrock/pull/11).
 
 ## CubeConverter

@@ -7,7 +7,7 @@ description: Connect to Bedrock servers from Java Edition with ViaProxy or ViaFa
 
 # Play on Bedrock from Java Edition
 
-You need a Minecraft Java Edition account. To join a server, have its Bedrock address ready. Choose the setup you want, then get its files from the [latest StackAnvil release](https://github.com/StackAnvil/patches/releases/latest). You do not need to build the code.
+You need a Minecraft Java Edition account. To join a server, have its Bedrock address ready. Choose a setup, then use the [downloads page]({{ '/releases/' | relative_url }}) to get its files. You do not need to build the code.
 
 - [ViaProxy](#use-viaproxy) runs beside your regular Java client. Install no client mods.
 - [ViaFabricPlus + Bedrock add-on](#use-viafabricplus-and-the-bedrock-add-on) runs inside a Fabric client. Use this setup for the in-game Bedrock Friends, Realms, and LAN menus.
@@ -24,8 +24,12 @@ Your Java client connects to ViaProxy first. ViaProxy connects to the Bedrock se
 
 ## Use ViaFabricPlus and the Bedrock add-on
 
+**Bedrock add-on downloads:** [CurseForge](https://www.curseforge.com/minecraft/mc-mods/stackanvil-bedrock-addon-for-viafabricplus).
+
+For the tested pair, use the add-on and pinned ViaFabricPlus JAR from the same GitHub release. A launcher can install ViaFabricPlus automatically as a dependency. Keep only one copy when you install the pinned JAR.
+
 1. Install the Fabric Loader for the Minecraft Java Edition version shown on the [latest StackAnvil release](https://github.com/StackAnvil/patches/releases/latest). If you have not installed Fabric mods before, follow [Fabric's installation guide](https://docs.fabricmc.net/players/installing-mods).
-2. Under **Assets** on that release, download `ViaFabricPlus-...jar` and `viafabricplus-bedrock-...-StackAnvil.jar`.
+2. Download the add-on using the links above. Get `ViaFabricPlus-...jar` from the matching GitHub release.
 3. Put both JARs in that Fabric client's `mods` folder. Keep only one ViaFabricPlus JAR there. Do not put the separate ViaBedrock or CubeConverter JARs in the folder; the add-on already includes them.
 4. Launch the Fabric client. Open **Multiplayer**, then the **ViaFabricPlus** menu. For online mode servers and Realms, open **Bedrock** settings, select **Account for Bedrock Edition**, and sign in through your browser.
 5. In **Multiplayer**, select **Add Server** and enter the Bedrock server address. Add its port after a colon if needed, such as `play.example.com:19132`.

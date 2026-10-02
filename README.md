@@ -8,6 +8,8 @@ We welcome bug reports, test results, and patches. You do not need to work on al
 
 ## Play from Java Edition
 
+**Bedrock add-on downloads:** [CurseForge](https://www.curseforge.com/minecraft/mc-mods/stackanvil-bedrock-addon-for-viafabricplus).
+
 Use the [player guide](https://stackanvil.pistonmaster.net/getting-started/) to run the StackAnvil ViaProxy JAR beside a regular Java client, or install the matching ViaFabricPlus and Bedrock add-on JARs in a Fabric client. The [latest release](https://github.com/StackAnvil/patches/releases/latest) has all three JARs. An optional Prism Launcher ZIP provides a prepared Fabric client.
 
 ## Use the libraries in a project
@@ -91,6 +93,6 @@ The sync command adds the project's default PR assignees when your GitHub accoun
 
 [GitHub releases](https://github.com/StackAnvil/patches/releases) provide four StackAnvil JARs, the pinned upstream ViaFabricPlus JAR, and a PrismLauncher instance ZIP. The [Maven repository](https://stackanvil-maven.pistonmaster.net/) serves the StackAnvil release artifacts. A full build can contain features that are still under upstream review. Test it before using it in a production server.
 
-Maintainers can use the [VFP Bedrock add-on publishing guide](docs/publishing-vfp-vb-addon.md) to prepare separate StackAnvil listings on Modrinth and CurseForge.
+Maintainers can use the [VFP Bedrock add-on publishing guide](docs/publishing-vfp-vb-addon.md) to manage the StackAnvil listings on mod platforms.
 
 StackAnvil tooling is licensed under [GPL-3.0-or-later](LICENSE). Each upstream project keeps its own license and copyright notices. StackAnvil is an independent experiment and is not an official ViaVersion release.
