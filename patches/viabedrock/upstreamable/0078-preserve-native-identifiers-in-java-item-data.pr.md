@@ -1,4 +1,4 @@
-# Native item identifiers in Java item data
+# Native item context in Java item data
 
 Java item mappings can rename a Bedrock item or represent several native items with one Java item type. Client animation queries need the original identity. This patch adds `viabedrock:item_identifier` to the Java item's standard custom data after translation. The field reaches ordinary Java clients through ViaProxy.
 
@@ -14,4 +14,14 @@ A live Java 26.3 client through ViaProxy received `minecraft:banner` as a Java `
 
 All four build targets passed. ViaBedrock passed 380 tests with no failures or skips, including custom-data copy, retained fields, and distinct native aliases. The client integration passed its native query fixtures. Native executables, fixtures, captures, and runtime probes remain private.
 
-Use durations, local charging prediction, additional equipment-slot queries, custom component name comparisons, and first-person rendering remain separate work.
+## Compiled native use durations
+
+The same custom data now carries `viabedrock:item_use_duration` when the server supplies compiled item properties. Its integer value is ticks. Missing legacy values remain unspecified. A mapping-owned duration marker is removed when the current native definition has no duration.
+
+The target Bedrock 1.26.51.1 server sends 2,077 item entries. Thirty-two entries contain this property: seven spear types use 1,440,000 ticks, apple uses 32 ticks, and 24 non-use items use zero. Eight entries also carry authored use modifiers. Their seconds multiplied by 20 match the compiled ticks. The [Creator use-modifiers reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/itemreference/examples/itemcomponents/minecraft_use_modifiers?view=minecraft-bedrock-stable) specifies seconds for that authored component.
+
+The full dependency build passes all four targets. Core passes 383 tests, with no failures or skips and the private registry fixture enabled. Tests cover compiled units, missing and invalid data, duration bounds, copied metadata, and removal of stale markers.
+
+A live Java 26.3 client through ViaProxy receives the spear's native maximum of 1,440,000 ticks. Its Java maximum is 72,000 ticks. Production animation queries preserve elapsed time: at 17 elapsed ticks, native remaining time is 1,439,983. After release, remaining time is zero while the maximum persists.
+
+These fields supply animation context. They do not change Java's input timeout or replace inventory request validation. Legacy duration discovery, local charging prediction, additional equipment-slot queries, custom component name comparisons, and first-person rendering remain separate work.

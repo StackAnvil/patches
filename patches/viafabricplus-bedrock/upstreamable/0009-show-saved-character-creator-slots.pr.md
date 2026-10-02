@@ -1178,3 +1178,14 @@ Player animation queries now read the original Bedrock identifier from the stand
 Bedrock 1.26.51.1 callback `FUN_14221b950` selects the legacy or component-backed raw-name hash. Native execution covers 44 source, empty-stack, and argument combinations. Production tests compare those receipts through the item-name query. Name resolution, expression arguments, hand getters, item allocation, error callbacks, and thread-local state are supplied boundaries. The callback uses the rendered hand only with exactly two arguments. With more arguments, it reads the equipped hand and ignores the extras; production now follows that branch.
 
 The full dependency build passes all four targets. ViaBedrock passes 380 tests with no failures or skips. The add-on run reports 479 tests, including 96 skips, with no failures; both native name and duration query fixtures are enabled. A live Java 26.3 client connects through ViaProxy to Bedrock 1.26.51.1. Its Java white banner retains `minecraft:banner`, and the production actor query returns `banner` on the Minecraft thread. This verifies transport and query binding. It does not prove complete pose, first-person, custom component constructor, or visible equipment parity.
+
+
+### Native item-use clocks through ViaProxy
+
+Read the compiled native duration from standard Java item custom data. Preserve elapsed Java ticks when deriving native remaining ticks. Both the actor queries and specialized pose variables use this clock. A released or completed use returns zero. Missing legacy durations retain the Java fallback.
+
+Bedrock 1.26.51.1 sends spear durations of 1,440,000 ticks; Java 26.3 uses 72,000 ticks. A live spear test through ViaProxy invokes the production actor queries on the Minecraft thread. At 17 elapsed ticks, native remaining ticks equal 1,439,983. After release, native remaining ticks equal zero and the native maximum stays 1,440,000.
+
+The full dependency build and Prism bundle pass. The core suite passes 383 tests with its native registry fixture enabled. The add-on suite reports 480 tests, no failures, and 96 optional fixture skips. Targeted tests cover differing clocks, elapsed ticks, startup, release, completion, short native durations, and integer bounds. Native name and duration query fixtures are enabled.
+
+This verifies transmitted duration context and live query binding. Java's input timeout, legacy native durations, local charging prediction, spear tag and kinetic bindings, first-person playback, and visible native motion comparisons remain incomplete.
