@@ -1,0 +1,380 @@
+From f8b7284d348880c4009518bd6f88fb6890de8372 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 21:56:35 +0200
+Subject: [PATCH] feat(items): translate shared Bedrock cooldown categories
+
+Translate protocol 2193 PlayerStartItemCooldown into Java group cooldowns.
+Use the same lossless resource identifier conversion for item components
+and packets so custom items sharing a category cool down together.
+
+Read registry cooldown components and legacy food cooldown ticks, including
+entries that are not data-driven items. Supply native defaults for the
+three built-in cooldown items whose registry entries omit component data.
+Resource pack definitions provide a fallback for custom item categories.
+
+The 1.26.51.1 dedicated server registry and Script API probe confirm the
+native category names, durations and zero-duration reset packet. Java 26.3
+uses group identifiers in both the cooldown packet and use_cooldown data.
+---
+ .../definition/ItemDefinitions.java           | 12 +++
+ .../protocol/model/ItemCooldown.java          | 49 +++++++++++
+ .../protocol/packet/InventoryPackets.java     |  6 ++
+ .../protocol/rewriter/ItemRewriter.java       | 24 ++++++
+ .../protocol/model/ItemCooldownTest.java      | 85 +++++++++++++++++++
+ .../packet/ItemCooldownPacketTest.java        | 64 ++++++++++++++
+ 6 files changed, 240 insertions(+)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/ItemCooldown.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/ItemCooldownTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/ItemCooldownPacketTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java
+index 06ec1ffd..4c9d776a 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java
+@@ -23,6 +23,7 @@ import com.viaversion.viaversion.libs.gson.JsonObject;
+ import com.viaversion.viaversion.util.Key;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.protocol.model.ItemCooldown;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+ 
+ import java.util.HashMap;
+@@ -43,6 +44,11 @@ public class ItemDefinitions {
+                     final ItemDefinition itemDefinition = new ItemDefinition(identifier);
+                     if (item.has("components")) {
+                         final JsonObject components = item.getAsJsonObject("components");
++                        if (components.has("minecraft:cooldown")) {
++                            final JsonObject cooldown = components.getAsJsonObject("minecraft:cooldown");
++                            itemDefinition.cooldown = new ItemCooldown(cooldown.get("category").getAsString(),
++                                    cooldown.get("duration").getAsFloat());
++                        }
+                         if (components.has("minecraft:icon")) {
+                             itemDefinition.iconComponent = components.get("minecraft:icon").getAsString();
+                         }
+@@ -61,6 +67,7 @@ public class ItemDefinitions {
+     public void addFromNetworkTag(final String identifier, final CompoundTag tag) {
+         final ItemDefinition itemDefinition = new ItemDefinition(identifier);
+         if (tag.get("components") instanceof CompoundTag components) {
++            itemDefinition.cooldown = ItemCooldown.fromNetworkComponents(components);
+             if (components.get("item_properties") instanceof CompoundTag itemProperties) {
+                 if (itemProperties.get("minecraft:icon") instanceof CompoundTag icon) {
+                     if (icon.get("textures") instanceof CompoundTag texture) {
+@@ -92,6 +99,7 @@ public class ItemDefinitions {
+         private final String identifier;
+         private String iconComponent;
+         private String displayNameComponent;
++        private ItemCooldown cooldown;
+ 
+         public ItemDefinition(final String identifier) {
+             this.identifier = identifier;
+@@ -109,6 +117,10 @@ public class ItemDefinitions {
+             return this.displayNameComponent;
+         }
+ 
++        public ItemCooldown cooldown() {
++            return this.cooldown;
++        }
++
+     }
+ 
+ }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemCooldown.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemCooldown.java
+new file mode 100644
+index 00000000..0211309f
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemCooldown.java
+@@ -0,0 +1,49 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.NumberTag;
++import com.viaversion.nbt.tag.StringTag;
++import com.viaversion.viaversion.api.minecraft.item.data.UseCooldown;
++import com.viaversion.viaversion.util.Key;
++
++import java.nio.charset.StandardCharsets;
++import java.util.HexFormat;
++
++public record ItemCooldown(String category, float seconds) {
++
++    public ItemCooldown {
++        category = Key.namespaced(category);
++        if (!Float.isFinite(seconds) || seconds < 0F) {
++            throw new IllegalArgumentException("Invalid item cooldown duration: " + seconds);
++        }
++    }
++
++    public static ItemCooldown fromNetworkComponents(final CompoundTag components) {
++        if (components.get("minecraft:cooldown") instanceof CompoundTag cooldown
++                && cooldown.get("category") instanceof StringTag category
++                && cooldown.get("duration") instanceof NumberTag duration) {
++            return new ItemCooldown(category.getValue(), duration.asFloat());
++        }
++        if (components.get("minecraft:food") instanceof CompoundTag food
++                && food.get("cooldown_type") instanceof StringTag category
++                && food.get("cooldown_time") instanceof NumberTag ticks && ticks.asInt() > 0) {
++            return new ItemCooldown(category.getValue(), ticks.asInt() / 20F);
++        }
++        return null;
++    }
++
++    public static String javaGroup(final String category) {
++        // Bedrock category names need not be legal Java resource identifiers.
++        return "viabedrock:cooldown/" + HexFormat.of().formatHex(Key.namespaced(category).getBytes(StandardCharsets.UTF_8));
++    }
++
++    public UseCooldown javaComponent() {
++        return new UseCooldown(this.seconds, javaGroup(this.category));
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+index b3362e10..e238ed6a 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+@@ -72,6 +72,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.EquipmentSlot;
+ import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.ItemCooldown;
+ import net.raphimc.viabedrock.protocol.model.FullContainerName;
+ import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+@@ -89,6 +90,11 @@ public final class InventoryPackets {
+     private static final String DIALOG_FAKE_BUTTON_TEXT = "This is not actually a button, but has to be one because dialogs don't support adding text only elements. Clicking it has the same effect as closing the dialog.";
+ 
+     public static void register(final BedrockProtocol protocol) {
++        protocol.registerClientbound(ClientboundBedrockPackets.PLAYER_START_ITEM_COOLDOWN,
++                ClientboundPackets26_3.COOLDOWN, wrapper -> {
++                    wrapper.write(Types.STRING, ItemCooldown.javaGroup(wrapper.read(BedrockTypes.STRING)));
++                    wrapper.write(Types.VAR_INT, Math.max(0, wrapper.read(BedrockTypes.VAR_INT)));
++                });
+         protocol.registerClientbound(ClientboundBedrockPackets.CONTAINER_OPEN, ClientboundPackets26_3.OPEN_SCREEN, wrapper -> {
+             final ChunkTracker chunkTracker = wrapper.user().get(ChunkTracker.class);
+             final BlockStateRewriter blockStateRewriter = wrapper.user().get(BlockStateRewriter.class);
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
+index 4ff94df8..6c115dce 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
+@@ -48,6 +48,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemVersion;
+ import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomItemTags;
+ import net.raphimc.viabedrock.protocol.model.BedrockItem;
+ import net.raphimc.viabedrock.protocol.model.ItemEntry;
++import net.raphimc.viabedrock.protocol.model.ItemCooldown;
+ import net.raphimc.viabedrock.protocol.rewriter.item.BundleItemRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomAttachableResourceRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
+@@ -66,6 +67,11 @@ import java.util.logging.Level;
+ 
+ public class ItemRewriter extends StoredObject {
+ 
++    private final Map<String, ItemCooldown> cooldowns = new HashMap<>(Map.of(
++            "minecraft:ender_pearl", new ItemCooldown("ender_pearl", 1F),
++            "minecraft:goat_horn", new ItemCooldown("goat_horn", 7F),
++            "minecraft:shield", new ItemCooldown("shield", 5F)));
++
+     private static final Map<String, NbtRewriter> ITEM_NBT_REWRITERS = new HashMap<>();
+ 
+     private final BiMap<String, Integer> items;
+@@ -91,6 +97,13 @@ public class ItemRewriter extends StoredObject {
+         for (ItemEntry itemEntry : itemEntries) {
+             this.items.inverse().remove(itemEntry.id());
+             this.items.put(itemEntry.identifier(), itemEntry.id());
++            if (itemEntry.componentData() != null
++                    && itemEntry.componentData().get("components") instanceof CompoundTag components) {
++                final ItemCooldown cooldown = ItemCooldown.fromNetworkComponents(components);
++                if (cooldown != null) {
++                    this.cooldowns.put(itemEntry.identifier(), cooldown);
++                }
++            }
+             if (itemEntry.version() == ItemVersion.DataDriven || (itemEntry.version() == ItemVersion.None && itemEntry.componentBased())) {
+                 this.componentItems.add(itemEntry.identifier());
+             }
+@@ -212,6 +225,17 @@ public class ItemRewriter extends StoredObject {
+             javaItem = new StructuredItem(BedrockProtocol.MAPPINGS.getJavaItems().get("minecraft:paper"), bedrockItem.amount(), data);
+         }
+ 
++        ItemCooldown cooldown = this.cooldowns.get(identifier);
++        if (cooldown == null) {
++            final ItemDefinitions.ItemDefinition definition = this.user().get(ResourcePackStorage.class).getItems().get(identifier);
++            if (definition != null) {
++                cooldown = definition.cooldown();
++            }
++        }
++        if (cooldown != null) {
++            javaItem.dataContainer().set(StructuredDataKey.USE_COOLDOWN, cooldown.javaComponent());
++        }
++
+         final CompoundTag bedrockTag = bedrockItem.tag();
+         if (bedrockTag != null) {
+             if (identifier.equals("minecraft:filled_map") && bedrockTag.get("map_uuid") instanceof NumberTag mapUuid) {
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/ItemCooldownTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemCooldownTest.java
+new file mode 100644
+index 00000000..2ebbca9a
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemCooldownTest.java
+@@ -0,0 +1,85 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.api.minecraft.item.data.UseCooldown;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class ItemCooldownTest {
++
++    @Test
++    void preservesSharedCategoriesThroughPackRegistryAndJavaWireData() throws Exception {
++        final InMemoryContent content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"uuid\":\"" + UUID.randomUUID()
++                + "\",\"version\":[1,0,0],\"name\":\"Cooldown probe\"}}");
++        content.putString("items/wand.json", "{\"minecraft:item\":{\"description\":{\"identifier\":\"probe:wand\"},"
++                + "\"components\":{\"minecraft:cooldown\":{\"category\":\"Probe shared: Ω\",\"duration\":2.75}}}}");
++        final var definitions = new ResourcePackStorage(List.of(new ResourcePack(content))).getItems();
++        final ItemCooldown resourceCooldown = definitions.get("probe:wand").cooldown();
++        final CompoundTag registryCooldown = new CompoundTag();
++        registryCooldown.putString("category", resourceCooldown.category());
++        registryCooldown.putFloat("duration", 1.25F);
++        final CompoundTag components = new CompoundTag();
++        components.put("minecraft:cooldown", registryCooldown);
++        final CompoundTag registry = new CompoundTag();
++        registry.put("components", components);
++        definitions.addFromNetworkTag("probe:wand", registry);
++        final var javaCooldown = definitions.get("probe:wand").cooldown().javaComponent();
++
++        assertEquals(2.75F, resourceCooldown.seconds());
++        assertEquals(1.25F, javaCooldown.seconds());
++        assertEquals(resourceCooldown.javaComponent().cooldownGroup(), javaCooldown.cooldownGroup());
++        assertTrue(javaCooldown.cooldownGroup().matches("[a-z0-9_.-]+:[a-z0-9/._-]+"));
++        final var wire = Unpooled.buffer();
++        try {
++            UseCooldown.TYPE.write(wire, javaCooldown);
++            assertEquals(javaCooldown, UseCooldown.TYPE.read(wire));
++            assertEquals(0, wire.readableBytes());
++        } finally {
++            wire.release();
++        }
++    }
++
++    @Test
++    void convertsLegacyFoodTickDurationAndHonorsExplicitCooldownOverride() {
++        final CompoundTag food = new CompoundTag();
++        food.putString("cooldown_type", "chorusfruit");
++        food.putInt("cooldown_time", 20);
++        final CompoundTag components = new CompoundTag();
++        components.put("minecraft:food", food);
++        final ItemCooldown legacy = ItemCooldown.fromNetworkComponents(components);
++        assertNotNull(legacy);
++        assertEquals(1F, legacy.seconds());
++        assertEquals(ItemCooldown.javaGroup("minecraft:chorusfruit"), legacy.javaComponent().cooldownGroup());
++
++        final CompoundTag explicit = new CompoundTag();
++        explicit.putString("category", "probe:shared");
++        explicit.putFloat("duration", 0.5F);
++        components.put("minecraft:cooldown", explicit);
++        assertEquals(new ItemCooldown("probe:shared", 0.5F), ItemCooldown.fromNetworkComponents(components));
++        assertNull(ItemCooldown.fromNetworkComponents(new CompoundTag()));
++    }
++
++    @Test
++    void normalizesDefaultNamespacesWithoutMergingDistinctCategories() {
++        assertEquals(ItemCooldown.javaGroup("ender_pearl"), ItemCooldown.javaGroup("minecraft:ender_pearl"));
++        assertNotEquals(ItemCooldown.javaGroup("probe:A"), ItemCooldown.javaGroup("probe:a"));
++        assertNotEquals(ItemCooldown.javaGroup("probe:a b"), ItemCooldown.javaGroup("probe:a_b"));
++        assertThrows(IllegalArgumentException.class, () -> new ItemCooldown("probe:a", Float.NaN));
++        assertThrows(IllegalArgumentException.class, () -> new ItemCooldown("probe:a", -1F));
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ItemCooldownPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ItemCooldownPacketTest.java
+new file mode 100644
+index 00000000..ea8c3a3d
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/ItemCooldownPacketTest.java
+@@ -0,0 +1,64 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.model.ItemCooldown;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class ItemCooldownPacketTest {
++
++    @ParameterizedTest
++    @ValueSource(ints = {55, 0, -1, 32768})
++    void translatesSharedCategoriesAndClearsExpiredCooldowns(final int ticks) throws Exception {
++        final String category = "Probe shared: Ω";
++        final ByteBuf input = Unpooled.buffer();
++        final ByteBuf output = Unpooled.buffer();
++        try {
++            BedrockTypes.STRING.write(input, category);
++            BedrockTypes.VAR_INT.write(input, ticks);
++            final PacketWrapper packet = new PacketWrapperImpl(ClientboundBedrockPackets.PLAYER_START_ITEM_COOLDOWN, input, null);
++            new TestProtocol().translate(packet);
++            packet.writeToBuffer(output);
++
++            assertEquals(ClientboundPackets26_3.COOLDOWN.getId(), Types.VAR_INT.read(output));
++            assertEquals(new ItemCooldown(category, 2.75F).javaComponent().cooldownGroup(), Types.STRING.read(output));
++            assertEquals(Math.max(0, ticks), Types.VAR_INT.read(output));
++            assertEquals(0, input.readableBytes());
++            assertEquals(0, output.readableBytes());
++        } finally {
++            input.release();
++            output.release();
++        }
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++
++        private TestProtocol() {
++            InventoryPackets.register(this);
++        }
++
++        private void translate(final PacketWrapper packet) throws Exception {
++            final var mapping = this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++            mapping.applyType(packet);
++            mapping.handler().handle(packet);
++        }
++
++    }
++
++}
+-- 
+2.55.0
+
+
