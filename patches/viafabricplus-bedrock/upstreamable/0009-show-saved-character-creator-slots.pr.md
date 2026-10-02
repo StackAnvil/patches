@@ -821,3 +821,20 @@ Production tests compare the constructor transforms and resulting particle place
 Another 12 cases execute the full native leaf dispatcher for ordinary requests and bound requests without an actor. Both retain the event matrix. Valid child handles run the child initialization callback before the source expression; invalid handles skip child initialization and retain the source expression. The probe supplies binding liveness and expression callbacks. Actor-present branch selection, actual Molang evaluation, and scheduling remain outside these receipts.
 
 All 373 fixture-enabled tests pass across 73 suites with no failures, errors, or skips. Fresh package license acquisition, extraction, and cache reuse pass. All 16 patches replay. The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
+
+
+## Refresh particle actor queries
+
+Attached effects now use the player's sampled actor query bindings. Sample those bindings before the emote pose branch, so emotes retain water and motion queries. Water and motion callbacks read the current entity. Each emitter and particle retains its own Molang variables. Query refresh does not copy the parent's variables or animation clocks.
+
+Refresh queries before child initialization, before each update, and before render expressions. Existing particles receive the same refreshed map. Camera distance uses the cached previous emitter position. Generic particle `anim_time`, `delta_time`, `frame_alpha`, and `life_time` retain the target context's zero defaults. Emitter and particle ages remain separate lifetime variables.
+
+Native initialization gate `FUN_1421603e0` refreshes context through `FUN_142159bd0` before the child script callback. The actor pointer supplies actor queries. Native `ground_speed` callback `FUN_14220ecd0` scales all three motion components by 20, including vertical motion. Its assembly sums `z*z + (y*y + x*x)` before the float32 square root. Preserve that order to avoid a one-bit rounding difference from the decompiler's grouping.
+
+Independent native execution supplies 54 prepared context cases. These cover absent actors, resolved actors, unresolved bindings, water membership, camera positions, and lifetime values. Seven scalar query callbacks execute against those contexts. Actor resolution, level access, variable access, expression callbacks, and motion component lookup are supplied boundaries. Native velocity scaling and length execute after the supplied component lookup.
+
+Production tests compare all seven query values exactly as float32. Additional tests refresh existing particles, retain their local variables, and preserve parameterized actor queries. They also verify immutable binding maps and context removal. These cases exclude live actor updates, full query coverage, asynchronous scheduling, and native visible output. Spell-color structures, effect-count queries, and complete offscreen actor context remain incomplete. Executables, assets, probes, and fixtures remain private.
+
+All 376 fixture-enabled tests pass across 74 suites with no failures, errors, or skips. This includes all 73 particle tests. Fresh license acquisition, extraction, and cache reuse pass. All 16 patches replay.
+
+The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
