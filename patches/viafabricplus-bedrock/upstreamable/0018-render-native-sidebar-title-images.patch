@@ -1,0 +1,473 @@
+From ee3492f52f7bb0a46ecd530d104cbb7ab111e024 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 12:29:04 +0200
+Subject: [PATCH] feat(scoreboard): render native sidebar title images
+
+Load bounded protocol 2193 sidebar metadata from the accepted converted server resource pack. Match the exact dedicated title font and glyph before replacing the Java sidebar. Render the authored image dimensions and row height while preserving score order, styled entry components and number format. CubeCraft 1.26.51.1 declares a 66 by 21 title image and 10-pixel rows; its 360 by 94 source texture intentionally stretches to that UI size. Reload snapshots reject stale completions and resources from another pack, and disconnect clears prior server state. Tests cover metadata acceptance, identity, dimensions and layout.
+---
+ .../MixinBedrockRenderingConnection.java      |   2 +
+ .../MixinBedrockRenderingResources.java       |   2 +
+ .../render/MixinBedrockScoreboardSidebar.java |  34 ++++
+ .../render/hud/BedrockScoreboardImages.java   | 117 +++++++++++++
+ .../render/hud/BedrockScoreboardRenderer.java |  69 ++++++++
+ .../viafabricplus-bedrock.mixins.json         |   1 +
+ .../hud/BedrockScoreboardImagesTest.java      | 155 ++++++++++++++++++
+ 7 files changed, 380 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockScoreboardSidebar.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardImages.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardRenderer.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardImagesTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingConnection.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingConnection.java
+index 6311d59..df1029c 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingConnection.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingConnection.java
+@@ -6,6 +6,7 @@
+ package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
+ 
+ import com.viaversion.viafabricplus.bedrock.render.light.BedrockRenderingMetadata;
++import com.viaversion.viafabricplus.bedrock.render.hud.BedrockScoreboardImages;
+ import net.minecraft.client.multiplayer.ClientCommonPacketListenerImpl;
+ import net.minecraft.network.DisconnectionDetails;
+ import org.spongepowered.asm.mixin.Mixin;
+@@ -18,5 +19,6 @@ public abstract class MixinBedrockRenderingConnection {
+     @Inject(method = "onDisconnect", at = @At("HEAD"))
+     private void clearNativeMetadata(final DisconnectionDetails details, final CallbackInfo ci) {
+         BedrockRenderingMetadata.clear();
++        BedrockScoreboardImages.clear();
+     }
+ }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingResources.java
+index 27e98b5..f70a0c9 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingResources.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingResources.java
+@@ -6,6 +6,7 @@
+ package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
+ 
+ import com.viaversion.viafabricplus.bedrock.render.light.BedrockRenderingMetadata;
++import com.viaversion.viafabricplus.bedrock.render.hud.BedrockScoreboardImages;
+ import net.minecraft.server.packs.PackType;
+ import net.minecraft.server.packs.resources.ReloadableResourceManager;
+ import org.spongepowered.asm.mixin.Mixin;
+@@ -19,6 +20,7 @@ public abstract class MixinBedrockRenderingResources {
+     private void registerNativeMetadata(final PackType type, final CallbackInfo ci) {
+         if (type == PackType.CLIENT_RESOURCES) {
+             ((ReloadableResourceManager) (Object) this).registerReloadListener(new BedrockRenderingMetadata());
++            ((ReloadableResourceManager) (Object) this).registerReloadListener(new BedrockScoreboardImages());
+         }
+     }
+ }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockScoreboardSidebar.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockScoreboardSidebar.java
+new file mode 100644
+index 0000000..dd4008a
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockScoreboardSidebar.java
+@@ -0,0 +1,34 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.viaversion.viafabricplus.bedrock.render.hud.BedrockScoreboardRenderer;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.Font;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.gui.Hud;
++import net.minecraft.world.scores.Objective;
++import net.minecraft.world.scores.PlayerScoreEntry;
++import org.spongepowered.asm.mixin.Final;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++import java.util.Comparator;
++
++@Mixin(Hud.class)
++public abstract class MixinBedrockScoreboardSidebar {
++    @Shadow @Final private Minecraft minecraft;
++    @Shadow @Final private static Comparator<PlayerScoreEntry> SCORE_DISPLAY_ORDER;
++    @Shadow public abstract Font getFont();
++
++    @Inject(method = "displayScoreboardSidebar", at = @At("HEAD"), cancellable = true)
++    private void bedrockTitleImage(final GuiGraphicsExtractor graphics, final Objective objective, final CallbackInfo ci) {
++        if (BedrockScoreboardRenderer.render(this.minecraft, graphics, this.getFont(), objective, SCORE_DISPLAY_ORDER)) ci.cancel();
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardImages.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardImages.java
+new file mode 100644
+index 0000000..1a97450
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardImages.java
+@@ -0,0 +1,117 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.hud;
++
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.minecraft.network.chat.Component;
++import net.minecraft.network.chat.FontDescription;
++import net.minecraft.resources.Identifier;
++import net.minecraft.server.packs.repository.PackSource;
++import net.minecraft.server.packs.resources.Resource;
++import net.minecraft.server.packs.resources.ResourceManager;
++import net.minecraft.server.packs.resources.SimplePreparableReloadListener;
++import net.minecraft.util.profiling.ProfilerFiller;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++
++import java.io.IOException;
++import java.math.BigDecimal;
++import java.nio.charset.StandardCharsets;
++import java.util.LinkedHashMap;
++import java.util.Map;
++import java.util.concurrent.atomic.AtomicReference;
++
++/** Images are active only for a converted, accepted server resource pack in the current reload. */
++public final class BedrockScoreboardImages extends SimplePreparableReloadListener<BedrockScoreboardImages.Prepared> {
++    private static final Identifier LOCATION = Identifier.fromNamespaceAndPath("viabedrock", "scoreboard_ui.json");
++    private static final AtomicReference<State> STATE = new AtomicReference<>(new State(Map.of()));
++
++    public static Image image(final Component title) {
++        if (!"\uE000".equals(title.getString()) || !title.getSiblings().isEmpty()
++            || !(title.getStyle().getFont() instanceof FontDescription.Resource font)) return null;
++        return STATE.get().images.get(font.id());
++    }
++
++    public static void clear() {
++        STATE.set(new State(Map.of()));
++    }
++
++    @Override
++    protected Prepared prepare(final ResourceManager resources, final ProfilerFiller profiler) {
++        final State pending = new State(Map.of());
++        STATE.set(pending);
++        final var stack = resources.getResourceStack(LOCATION);
++        for (int i = stack.size() - 1; i >= 0; i--) {
++            final Resource resource = stack.get(i);
++            if (resource.source().location().source() != PackSource.SERVER) continue;
++            try (final var input = resource.open()) {
++                final byte[] bytes = input.readNBytes(32769);
++                if (bytes.length > 32768) return new Prepared(pending, Map.of());
++                final Map<Identifier, Image> images = parse(JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)));
++                for (final Image image : images.values()) {
++                    if (!sameServerPack(resources, resource, image.texture)
++                        || !sameServerPack(resources, resource, image.font.withPrefix("font/").withSuffix(".json")))
++                        return new Prepared(pending, Map.of());
++                }
++                return new Prepared(pending, images);
++            } catch (final IOException | RuntimeException ignored) {
++                return new Prepared(pending, Map.of());
++            }
++        }
++        return new Prepared(pending, Map.of());
++    }
++
++    @Override
++    protected void apply(final Prepared prepared, final ResourceManager resources, final ProfilerFiller profiler) {
++        STATE.compareAndSet(prepared.pending, new State(prepared.images));
++    }
++
++    private static boolean sameServerPack(final ResourceManager resources, final Resource metadata, final Identifier location) {
++        final var resource = resources.getResource(location);
++        return resource.isPresent() && resource.get().source() == metadata.source();
++    }
++
++    static Map<Identifier, Image> parse(final JsonElement element) {
++        if (!element.isJsonObject()) throw new IllegalArgumentException("Invalid scoreboard image metadata");
++        final var object = element.getAsJsonObject();
++        if (integer(object.get("format"), 1, 1) != 1
++            || integer(object.get("bedrock_protocol"), ProtocolConstants.BEDROCK_PROTOCOL_VERSION, ProtocolConstants.BEDROCK_PROTOCOL_VERSION) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION
++            || !object.has("images") || !object.get("images").isJsonArray() || object.getAsJsonArray("images").size() > 64)
++            throw new IllegalArgumentException("Unsupported scoreboard image metadata");
++        final Map<Identifier, Image> images = new LinkedHashMap<>();
++        for (final JsonElement entry : object.getAsJsonArray("images")) {
++            final var image = entry.getAsJsonObject();
++            final String fontName = image.get("font").getAsString();
++            final String textureName = image.get("texture").getAsString();
++            if (!fontName.matches("viabedrock:scoreboard/[a-f0-9]{64}")
++                || !textureName.equals(fontName.replace("viabedrock:", "viabedrock:textures/") + ".png"))
++                throw new IllegalArgumentException("Invalid scoreboard image identifier");
++            final Identifier font = Identifier.parse(fontName);
++            final Image definition = new Image(font, Identifier.parse(textureName), integer(image.get("width"), 1, 1024),
++                integer(image.get("height"), 1, 1024), integer(image.get("offset_x"), -1024, 1024), integer(image.get("offset_y"), -1024, 1024), integer(image.get("row_height"), 1, 64));
++            if (images.putIfAbsent(font, definition) != null) throw new IllegalArgumentException("Duplicate scoreboard image font");
++        }
++        return Map.copyOf(images);
++    }
++
++    private static int integer(final JsonElement value, final int min, final int max) {
++        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber())
++            throw new IllegalArgumentException("Expected scoreboard image integer");
++        final BigDecimal number = value.getAsBigDecimal();
++        final int result = number.intValueExact();
++        if (result < min || result > max) throw new IllegalArgumentException("Scoreboard image value exceeds bounds");
++        return result;
++    }
++
++    record State(Map<Identifier, Image> images) {
++    }
++
++    record Prepared(State pending, Map<Identifier, Image> images) {
++    }
++
++    public record Image(Identifier font, Identifier texture, int width, int height, int offsetX, int offsetY, int rowHeight) {
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardRenderer.java
+new file mode 100644
+index 0000000..eed5299
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardRenderer.java
+@@ -0,0 +1,69 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render.hud;
++
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockRenderingMetadata;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.Font;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.network.chat.Component;
++import net.minecraft.network.chat.numbers.StyledFormat;
++import net.minecraft.world.scores.Objective;
++import net.minecraft.world.scores.PlayerScoreEntry;
++import net.minecraft.world.scores.PlayerTeam;
++
++import java.util.Comparator;
++
++public final class BedrockScoreboardRenderer {
++    private BedrockScoreboardRenderer() {
++    }
++
++    public static boolean render(final Minecraft minecraft, final GuiGraphicsExtractor graphics, final Font font,
++                                 final Objective objective, final Comparator<PlayerScoreEntry> order) {
++        if (!BedrockRenderingMetadata.active()) return false;
++        final var image = BedrockScoreboardImages.image(objective.getDisplayName());
++        if (image == null) return false;
++        final var scoreboard = objective.getScoreboard();
++        final var format = objective.numberFormatOrDefault(StyledFormat.SIDEBAR_DEFAULT);
++        final var entries = scoreboard.listPlayerScores(objective).stream().filter(entry -> !entry.isHidden()).sorted(order).limit(15)
++            .map(entry -> new Entry(PlayerTeam.formatNameForTeam(scoreboard.getPlayersTeam(entry.owner()), entry.ownerName()), entry.formatValue(format)))
++            .toList();
++        int width = image.width() + Math.abs(image.offsetX()) * 2;
++        final int separator = font.width(": ");
++        for (final var entry : entries) {
++            final int scoreWidth = font.width(entry.score);
++            width = Math.max(width, font.width(entry.name) + (scoreWidth == 0 ? 0 : separator + scoreWidth));
++        }
++        final Layout layout = layout(graphics.guiWidth(), graphics.guiHeight(), width, entries.size(), image);
++        graphics.fill(layout.left - 2, layout.headerTop - 1, layout.right, layout.rowTop - 1, minecraft.options.getBackgroundColor(.4F));
++        graphics.fill(layout.left - 2, layout.rowTop - 1, layout.right, layout.bottom, minecraft.options.getBackgroundColor(.3F));
++        graphics.blit(image.texture(), layout.imageX, layout.imageY, layout.imageX + image.width(), layout.imageY + image.height(), 0, 1, 0, 1);
++        for (int i = 0; i < entries.size(); i++) {
++            final var entry = entries.get(i);
++            final int y = layout.rowTop + i * image.rowHeight();
++            graphics.text(font, entry.name, layout.left, y, -1, false);
++            graphics.text(font, entry.score, layout.right - font.width(entry.score), y, -1, false);
++        }
++        return true;
++    }
++
++    static Layout layout(final int guiWidth, final int guiHeight, final int width, final int rows, final BedrockScoreboardImages.Image image) {
++        final int headerHeight = Math.max(9, image.height() + image.offsetY()) - Math.min(0, image.offsetY());
++        final int headerTop = (guiHeight - headerHeight - rows * image.rowHeight()) / 2;
++        final int rowTop = headerTop + headerHeight;
++        final int bottom = rowTop + rows * image.rowHeight();
++        final int origin = headerTop - Math.min(0, image.offsetY());
++        final int left = guiWidth - width - 3;
++        return new Layout(left, guiWidth - 1, headerTop, rowTop, bottom,
++            left + (width - image.width()) / 2 + image.offsetX(), origin + image.offsetY());
++    }
++
++    private record Entry(Component name, Component score) {
++    }
++
++    record Layout(int left, int right, int headerTop, int rowTop, int bottom, int imageX, int imageY) {
++    }
++}
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index 5486eed..9058948 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -59,6 +59,7 @@
+     "features.render.MixinBedrockNameTags",
+     "features.render.MixinBedrockNameTagMetadata",
+     "features.render.MixinBedrockNameTagRenderer",
++    "features.render.MixinBedrockScoreboardSidebar",
+     "features.render.MixinBedrockRenderingResources",
+     "features.render.MixinBedrockRenderingConnection",
+     "features.render.MixinBedrockVignette",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardImagesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardImagesTest.java
+new file mode 100644
+index 0000000..b1872d5
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/hud/BedrockScoreboardImagesTest.java
+@@ -0,0 +1,155 @@
++package com.viaversion.viafabricplus.bedrock.render.hud;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import net.minecraft.network.chat.Component;
++import net.minecraft.network.chat.FontDescription;
++import net.minecraft.resources.Identifier;
++import net.minecraft.server.packs.PackLocationInfo;
++import net.minecraft.server.packs.PackResources;
++import net.minecraft.server.packs.repository.PackSource;
++import net.minecraft.server.packs.resources.Resource;
++import net.minecraft.server.packs.resources.ResourceManager;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.Test;
++
++import java.io.ByteArrayInputStream;
++import java.lang.reflect.Proxy;
++import java.nio.charset.StandardCharsets;
++import java.util.List;
++import java.util.Map;
++import java.util.Optional;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockScoreboardImagesTest {
++    private static final Identifier FONT = Identifier.parse("viabedrock:scoreboard/" + "a".repeat(64));
++    private static final Identifier TEXTURE = Identifier.parse("viabedrock:textures/scoreboard/" + "a".repeat(64) + ".png");
++
++    @AfterEach
++    void clear() {
++        BedrockScoreboardImages.clear();
++    }
++
++    @Test
++    void onlyAnAcceptedServerPackAndExactDedicatedTitleActivateImages() {
++        final var listener = new BedrockScoreboardImages();
++        final var local = resources(PackSource.DEFAULT, true);
++        listener.apply(listener.prepare(local, null), local, null);
++        assertNull(BedrockScoreboardImages.image(title()));
++        final var accepted = resources(PackSource.SERVER, true);
++        listener.apply(listener.prepare(accepted, null), accepted, null);
++        assertNotNull(BedrockScoreboardImages.image(title()));
++        assertNull(BedrockScoreboardImages.image(Component.literal("ordinary")));
++        assertNull(BedrockScoreboardImages.image(title().append("extra")));
++        assertNull(BedrockScoreboardImages.image(Component.literal("other").withStyle(style -> style.withFont(new FontDescription.Resource(FONT)))));
++    }
++
++    @Test
++    void missingServerImageOrFontResourcesNeverActivateMetadata() {
++        final var listener = new BedrockScoreboardImages();
++        final var incomplete = resources(PackSource.SERVER, false);
++        listener.apply(listener.prepare(incomplete, null), incomplete, null);
++        assertNull(BedrockScoreboardImages.image(title()));
++    }
++
++    @Test
++    void removedPackAndStaleReloadCompletionCannotReactivateImages() {
++        final var listener = new BedrockScoreboardImages();
++        final var accepted = resources(PackSource.SERVER, true);
++        final var pending = listener.prepare(accepted, null);
++        BedrockScoreboardImages.clear();
++        listener.apply(pending, accepted, null);
++        assertNull(BedrockScoreboardImages.image(title()));
++        listener.apply(listener.prepare(accepted, null), accepted, null);
++        assertNotNull(BedrockScoreboardImages.image(title()));
++        final var older = listener.prepare(accepted, null);
++        final var removed = resources();
++        listener.apply(listener.prepare(removed, null), removed, null);
++        listener.apply(older, accepted, null);
++        assertNull(BedrockScoreboardImages.image(title()));
++    }
++
++    @Test
++    void invalidProtocolDimensionsAndConflictingFontsAreRejected() {
++        final JsonObject metadata = metadata();
++        assertThrows(UnsupportedOperationException.class, () -> BedrockScoreboardImages.parse(metadata).clear());
++        metadata.addProperty("bedrock_protocol", ProtocolConstants.BEDROCK_PROTOCOL_VERSION + .5);
++        assertThrows(ArithmeticException.class, () -> BedrockScoreboardImages.parse(metadata));
++        metadata.addProperty("bedrock_protocol", ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++        final JsonObject image = metadata.getAsJsonArray("images").get(0).getAsJsonObject();
++        image.addProperty("height", 0);
++        assertThrows(IllegalArgumentException.class, () -> BedrockScoreboardImages.parse(metadata));
++        image.addProperty("height", 21);
++        metadata.getAsJsonArray("images").add(image.deepCopy());
++        assertThrows(IllegalArgumentException.class, () -> BedrockScoreboardImages.parse(metadata));
++    }
++
++    @Test
++    void authoredHeaderAndRowsDoNotOverlapAtDifferentViewportSizes() {
++        final var image = BedrockScoreboardImages.parse(metadata()).get(FONT);
++        for (int width : new int[]{320, 640, 1280}) {
++            for (int rows : new int[]{0, 1, 9, 15}) {
++                final var layout = BedrockScoreboardRenderer.layout(width, 347, 100, rows, image);
++                assertEquals(21, layout.rowTop() - layout.headerTop());
++                assertTrue(Math.abs((layout.headerTop() + layout.bottom()) / 2 - 347 / 2) <= 1);
++                assertEquals(rows * 10, layout.bottom() - layout.rowTop());
++                assertEquals(layout.headerTop(), layout.imageY());
++                assertEquals(layout.left() + 17, layout.imageX());
++                assertTrue(layout.imageY() + image.height() <= layout.rowTop());
++            }
++        }
++    }
++
++    @Test
++    void positiveAndNegativeImageOffsetsRemainInsideTheHeaderBudget() {
++        for (int y : new int[]{-20, -1, 0, 1, 20}) {
++            final var image = new BedrockScoreboardImages.Image(FONT, TEXTURE, 66, 21, 4, y, 10);
++            final var layout = BedrockScoreboardRenderer.layout(640, 347, 100, 8, image);
++            assertTrue(layout.imageY() >= layout.headerTop());
++            assertTrue(layout.imageY() + image.height() <= layout.rowTop());
++        }
++    }
++
++    private static net.minecraft.network.chat.MutableComponent title() {
++        return Component.literal(Character.toString(0xE000)).withStyle(style -> style.withFont(new FontDescription.Resource(FONT)));
++    }
++
++    private static JsonObject metadata() {
++        final JsonObject metadata = new JsonObject();
++        metadata.addProperty("format", 1);
++        metadata.addProperty("bedrock_protocol", ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++        final JsonObject image = new JsonObject();
++        image.addProperty("font", FONT.toString());
++        image.addProperty("texture", TEXTURE.toString());
++        image.addProperty("width", 66);
++        image.addProperty("height", 21);
++        image.addProperty("row_height", 10);
++        image.addProperty("offset_x", 0);
++        image.addProperty("offset_y", 0);
++        final JsonArray images = new JsonArray();
++        images.add(image);
++        metadata.add("images", images);
++        return metadata;
++    }
++
++    private static ResourceManager resources(final PackSource source, final boolean complete) {
++        final PackLocationInfo location = new PackLocationInfo("fixture", Component.empty(), source, Optional.empty());
++        final PackResources pack = (PackResources) Proxy.newProxyInstance(PackResources.class.getClassLoader(), new Class<?>[]{PackResources.class},
++            (proxy, method, args) -> method.getName().equals("location") ? location : null);
++        final Resource metadata = new Resource(pack, () -> new ByteArrayInputStream(metadata().toString().getBytes(StandardCharsets.UTF_8)));
++        final ResourceManager resourceManager = (ResourceManager) Proxy.newProxyInstance(ResourceManager.class.getClassLoader(), new Class<?>[]{ResourceManager.class},
++            (proxy, method, args) -> switch (method.getName()) {
++                case "getResourceStack" -> List.of(metadata);
++                case "getResource" -> complete ? Optional.of(metadata) : Optional.empty();
++                default -> null;
++            });
++        return resourceManager;
++    }
++
++    private static ResourceManager resources() {
++        return (ResourceManager) Proxy.newProxyInstance(ResourceManager.class.getClassLoader(), new Class<?>[]{ResourceManager.class},
++            (proxy, method, args) -> method.getName().equals("getResourceStack") ? List.of() : null);
++    }
++}
+-- 
+2.55.0
+

@@ -1,0 +1,1265 @@
+From a3d059bec6499fdde50610ab897b79777f2b94fd Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 12:06:00 +0200
+Subject: [PATCH] feat(scoreboard): convert native sidebar title images and
+ styled scores
+
+Bedrock 1.26.51 resource packs can replace the objective title with a JSON UI image binding. Convert a bounded subset with literal title equality, a matching hidden label, explicit dimensions, and native sidebar anchors. Resolve active server UI and texture priority, isolate each image in its own font, and advertise authored dimensions for client integrations. Unsupported controls retain ordinary text.
+
+Send objective CHANGE packets for repeated display titles without replacing score identities. Hide sidebar numbers while retaining score values for ordering, and send styled score display components separately from raw owners so extended Bedrock formatting survives. Other display slots keep numeric presentation. Invalidate older converted packs when the new metadata becomes available.
+
+Saved protocol 2193 CubeCraft resources declare a 66 by 21 title image and 10-pixel player rows. The native Java 26.3 BlankFormat codec is registry zero with a unit payload. Targeted tests cover wire fields, pack priority, bounded UI parsing, image conversion, and disk cache rollover; captured resources remain private.
+---
+ .../model/scoreboard/ScoreboardObjective.java |  22 +-
+ .../definition/ScoreboardUiDefinitions.java   | 370 ++++++++++++++++++
+ .../http/ConvertedResourcePackCache.java      |  22 +-
+ .../raphimc/viabedrock/api/util/TextUtil.java |  15 +-
+ .../protocol/packet/HudPackets.java           |  38 +-
+ .../rewriter/ResourcePackRewriter.java        |   2 +
+ .../ScoreboardUiResourceRewriter.java         |  98 +++++
+ .../protocol/storage/ResourcePackStorage.java |   6 +
+ .../ScoreboardPresentationTest.java           |  72 ++++
+ .../ScoreboardUiDefinitionsTest.java          | 275 +++++++++++++
+ .../http/ConvertedResourcePackCacheTest.java  |  32 ++
+ .../protocol/packet/HudPacketsTest.java       |  39 ++
+ 12 files changed, 975 insertions(+), 16 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ScoreboardUiResourceRewriter.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/scoreboard/ScoreboardPresentationTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitionsTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/scoreboard/ScoreboardObjective.java b/src/main/java/net/raphimc/viabedrock/api/model/scoreboard/ScoreboardObjective.java
+index 34b0825b..cd527ea3 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/scoreboard/ScoreboardObjective.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/scoreboard/ScoreboardObjective.java
+@@ -23,14 +23,18 @@ import com.viaversion.viaversion.api.type.Types;
+ import com.viaversion.viaversion.libs.fastutil.longs.Long2ObjectMap;
+ import com.viaversion.viaversion.libs.fastutil.longs.Long2ObjectOpenHashMap;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.raphimc.viabedrock.api.util.TextUtil;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.IdentityDefinition_Type;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ObjectiveSortOrder;
+ 
++import java.util.Map;
++
+ public class ScoreboardObjective {
+ 
+     private final String name;
+     private final ObjectiveSortOrder sortOrder;
++    private Map<Character, Integer> formattingColors = Map.of();
+     private final Long2ObjectMap<ScoreboardEntry> entries = new Long2ObjectOpenHashMap<>();
+ 
+     public ScoreboardObjective(final String name, final ObjectiveSortOrder sortOrder) {
+@@ -38,6 +42,16 @@ public class ScoreboardObjective {
+         this.sortOrder = sortOrder;
+     }
+ 
++    public void setFormattingColors(final UserConnection user, final Map<Character, Integer> colors) {
++        if (this.formattingColors.equals(colors)) {
++            return;
++        }
++        this.formattingColors = Map.copyOf(colors);
++        for (final ScoreboardEntry entry : this.entries.values()) {
++            this.updateEntry0(user, entry);
++        }
++    }
++
+     public ScoreboardEntry getEntry(final long scoreboardId) {
+         return this.entries.get(scoreboardId);
+     }
+@@ -84,12 +98,16 @@ public class ScoreboardObjective {
+ 
+     private void updateEntry0(final UserConnection user, final ScoreboardEntry entry) {
+         final PacketWrapper setScore = PacketWrapper.create(ClientboundPackets26_3.SET_SCORE, user);
++        this.writeJavaScore(setScore, entry);
++        setScore.send(BedrockProtocol.class);
++    }
++
++    void writeJavaScore(final PacketWrapper setScore, final ScoreboardEntry entry) {
+         setScore.write(Types.STRING, entry.javaName()); // player name
+         setScore.write(Types.STRING, this.name); // objective name
+         setScore.write(Types.VAR_INT, this.sortOrder == ObjectiveSortOrder.Ascending ? -entry.score() : entry.score()); // score
+-        setScore.write(Types.OPTIONAL_TAG, null); // display name
++        setScore.write(Types.OPTIONAL_TAG, TextUtil.stringToNbt(entry.javaName(), this.formattingColors)); // display name
+         setScore.write(Types.BOOLEAN, false); // has number format
+-        setScore.send(BedrockProtocol.class);
+     }
+ 
+     private void removeEntry0(final UserConnection user, final ScoreboardEntry entry) {
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java
+new file mode 100644
+index 00000000..2d319f0c
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java
+@@ -0,0 +1,370 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.api.resourcepack.definition;
++
++import com.viaversion.nbt.tag.Tag;
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.mcstructs.core.Identifier;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.util.TextUtil;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++
++import java.nio.charset.StandardCharsets;
++import java.security.MessageDigest;
++import java.security.NoSuchAlgorithmException;
++import java.util.*;
++import java.util.regex.Pattern;
++
++/** A deliberately limited subset of objective-dependent JSON UI image controls. */
++public final class ScoreboardUiDefinitions {
++
++    public static final String IMAGE_CHARACTER = Character.toString(0xE000);
++    private static final Pattern EQUALITY = Pattern.compile("\\(\\s*#objective_sidebar_name\\s*=\\s*'([^'\\r\\n]{1,256})'\\s*\\)");
++    private static final Pattern INVERSE = Pattern.compile("\\(\\s*not\\(\\s*#objective_sidebar_name\\s*=\\s*'([^'\\r\\n]{1,256})'\\s*\\)\\s*\\)");
++    private final Map<String, SidebarImage> images;
++    private final Map<Character, Integer> formattingColors;
++
++    public ScoreboardUiDefinitions(final ResourcePackStorage storage) {
++        final Map<String, SidebarImage> found = new LinkedHashMap<>();
++        final JsonObject file = effectiveFile(storage);
++        final JsonObject panel = file == null || !file.get("scoreboard_sidebar").isJsonObject() ? null : file.getAsJsonObject("scoreboard_sidebar");
++        if (panel != null && "panel".equals(string(panel, "type"))
++                && "right_middle".equals(string(panel, "anchor_from")) && "right_middle".equals(string(panel, "anchor_to"))) {
++            try {
++                collect(panel, storage, found, new int[]{0}, 0, rowHeight(file, panel));
++            } catch (final RuntimeException ignored) {
++                found.clear(); // An ambiguous or oversized UI is outside this supported subset.
++            }
++        }
++        this.images = Collections.unmodifiableMap(found);
++        this.formattingColors = readFormattingColors(storage);
++    }
++
++    public Map<Character, Integer> formattingColors() {
++        return this.formattingColors;
++    }
++
++    private static Map<Character, Integer> readFormattingColors(final ResourcePackStorage storage) {
++        final Map<Character, Integer> colors = new HashMap<>();
++        final Set<Character> seen = new HashSet<>();
++        for (final ResourcePack pack : storage.getPackStackTopToBottom()) {
++            if (!storage.isServerPack(pack) || !pack.content().contains("ui/_global_variables.json")
++                    || pack.content().get("ui/_global_variables.json").length > 262144) {
++                continue;
++            }
++            try {
++                final JsonObject variables = pack.content().getJson("ui/_global_variables.json");
++                for (final char code : "0123456789abcdef".toCharArray()) {
++                    final String key = "$" + code + "_color_format";
++                    if (!variables.has(key) || !seen.add(code)) {
++                        continue;
++                    }
++                    final Integer color = rgb(variables.get(key));
++                    if (color != null) {
++                        colors.put(code, color);
++                    }
++                }
++            } catch (final RuntimeException ignored) {
++                // Dynamic variables and malformed files are outside this static subset.
++            }
++        }
++        return Map.copyOf(colors);
++    }
++
++    private static Integer rgb(final JsonElement value) {
++        if (!value.isJsonArray() || value.getAsJsonArray().size() < 3) {
++            return null;
++        }
++        int rgb = 0;
++        for (int i = 0; i < 3; i++) {
++            final JsonElement channel = value.getAsJsonArray().get(i);
++            if (!channel.isJsonPrimitive() || !channel.getAsJsonPrimitive().isNumber()) {
++                return null;
++            }
++            final float n = channel.getAsFloat();
++            if (!Float.isFinite(n) || n < 0F || n > 1F) {
++                return null;
++            }
++            rgb = rgb << 8 | Math.round(n * 255F);
++        }
++        return rgb;
++    }
++
++    public Collection<SidebarImage> images() {
++        return this.images.values();
++    }
++
++    public SidebarImage image(final String rawTitle) {
++        return this.images.get(rawTitle);
++    }
++
++    public Tag titleComponent(final String rawTitle, final String fallbackText) {
++        final SidebarImage image = this.image(rawTitle);
++        if (image == null) {
++            return TextUtil.stringToNbt(fallbackText, this.formattingColors);
++        }
++        final var component = TextUtil.stringToTextComponent(IMAGE_CHARACTER);
++        component.getStyle().setFont(Identifier.of(image.font())).setColor(0xFFFFFF);
++        return TextUtil.textComponentToNbt(component);
++    }
++
++    private static JsonObject effectiveFile(final ResourcePackStorage storage) {
++        for (ResourcePack pack : storage.getPackStackTopToBottom()) {
++            if (!storage.isServerPack(pack)) {
++                continue;
++            }
++            for (String path : loadedUiPaths(pack.content())) {
++                final byte[] bytes = pack.content().get(path);
++                if (bytes == null || bytes.length > 262144) {
++                    continue;
++                }
++                try {
++                    final JsonObject file = pack.content().getJson(path);
++                    if ("scoreboard".equals(string(file, "namespace")) && file.has("scoreboard_sidebar")) {
++                        return file;
++                    }
++                } catch (final RuntimeException ignored) {
++                    // Other JSON UI files need not use the supported direct-control form.
++                }
++            }
++        }
++        return null;
++    }
++
++    private static List<String> loadedUiPaths(final Content content) {
++        // This filename is a native vanilla UI override. Additional files must be
++        // explicitly loaded by the pack, rather than discovered by their namespace.
++        final List<String> paths = new ArrayList<>();
++        paths.add("ui/scoreboards.json");
++        if (content.contains("ui/_ui_defs.json") && content.get("ui/_ui_defs.json").length <= 262144) {
++            try {
++                final JsonElement definitions = content.getJson("ui/_ui_defs.json").get("ui_defs");
++                if (definitions != null && definitions.isJsonArray() && definitions.getAsJsonArray().size() <= 128) {
++                    for (JsonElement value : definitions.getAsJsonArray()) {
++                        if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString()) {
++                            final String path = value.getAsString();
++                            if (path.matches("ui/[A-Za-z0-9_./-]+\\.json") && !path.contains("..")) {
++                                paths.remove(path);
++                                paths.add(path);
++                            }
++                        }
++                    }
++                }
++            } catch (final RuntimeException ignored) {
++                // Malformed additional definitions do not activate unused UI files.
++            }
++        }
++        Collections.reverse(paths);
++        return paths;
++    }
++
++    private static void collect(final JsonObject node, final ResourcePackStorage storage, final Map<String, SidebarImage> found, final int[] count, final int depth, final int rowHeight) {
++        if (++count[0] > 512 || depth > 16 || found.size() > 64) {
++            throw new IllegalArgumentException("Scoreboard UI exceeds supported bounds");
++        }
++        if (!node.has("controls") || !node.get("controls").isJsonArray()) {
++            return;
++        }
++        final JsonArray controls = node.getAsJsonArray("controls");
++        for (JsonElement element : controls) {
++            if (!element.isJsonObject() || element.getAsJsonObject().size() != 1) {
++                continue;
++            }
++            final var entry = element.getAsJsonObject().entrySet().iterator().next();
++            if (!entry.getValue().isJsonObject()) {
++                continue;
++            }
++            final JsonObject control = entry.getValue().getAsJsonObject();
++            final String title = visibility(control, entry.getKey(), false);
++            if ("image".equals(string(control, "type")) && title != null && companion(controls, title)) {
++                final SidebarImage image = parseImage(storage, control, title, rowHeight);
++                if (image != null && found.putIfAbsent(title, image) != null) {
++                    throw new IllegalArgumentException("Ambiguous scoreboard image binding");
++                }
++            }
++            collect(control, storage, found, count, depth + 1, rowHeight);
++        }
++    }
++
++    private static int rowHeight(final JsonObject file, final JsonObject panel) {
++        final String name = playerFactory(panel, 0);
++        if (!name.startsWith("scoreboard.") || !file.has(name.substring(11)) || !file.get(name.substring(11)).isJsonObject()) {
++            return 9;
++        }
++        final JsonObject label = file.getAsJsonObject(name.substring(11));
++        if (!"label".equals(string(label, "type")) || !"#player_name_sidebar".equals(string(label, "text"))
++                || !label.has("size") || !label.get("size").isJsonArray()) {
++            return 9;
++        }
++        final JsonArray size = label.getAsJsonArray("size");
++        if (size.size() != 2 || !size.get(0).isJsonPrimitive() || !size.get(0).getAsJsonPrimitive().isString()
++                || !"default".equals(size.get(0).getAsString())) {
++            return 9;
++        }
++        final JsonArray numeric = new JsonArray();
++        numeric.add(size.get(1));
++        numeric.add(size.get(1));
++        final int[] values = pair(numeric, 1, 64);
++        return values == null ? 9 : values[0];
++    }
++
++    private static String playerFactory(final JsonObject node, final int depth) {
++        if (depth > 16) {
++            return "";
++        }
++        if ("scoreboard_players".equals(string(node, "collection_name")) && node.has("factory") && node.get("factory").isJsonObject()) {
++            return string(node.getAsJsonObject("factory"), "control_name");
++        }
++        if (node.has("controls") && node.get("controls").isJsonArray()) {
++            for (JsonElement wrapped : node.getAsJsonArray("controls")) {
++                if (!wrapped.isJsonObject()) {
++                    continue;
++                }
++                for (JsonElement control : wrapped.getAsJsonObject().asMap().values()) {
++                    if (control.isJsonObject()) {
++                        final String name = playerFactory(control.getAsJsonObject(), depth + 1);
++                        if (!name.isEmpty()) {
++                            return name;
++                        }
++                    }
++                }
++            }
++        }
++        return "";
++    }
++
++    private static boolean companion(final JsonArray controls, final String title) {
++        for (JsonElement element : controls) {
++            if (!element.isJsonObject() || element.getAsJsonObject().size() != 1) {
++                continue;
++            }
++            final var entry = element.getAsJsonObject().entrySet().iterator().next();
++            if (!entry.getValue().isJsonObject()) {
++                continue;
++            }
++            final JsonObject control = entry.getValue().getAsJsonObject();
++            if ("label".equals(string(control, "type")) && "#objective_sidebar_name".equals(string(control, "text"))
++                    && title.equals(visibility(control, entry.getKey(), true))) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    private static String visibility(final JsonObject control, final String name, final boolean inverse) {
++        if (!control.has("bindings") || !control.get("bindings").isJsonArray()) {
++            return null;
++        }
++        boolean global = false;
++        String title = null;
++        int views = 0;
++        for (JsonElement element : control.getAsJsonArray("bindings")) {
++            if (!element.isJsonObject()) {
++                return null;
++            }
++            final JsonObject binding = element.getAsJsonObject();
++            if ("global".equals(string(binding, "binding_type")) && "#objective_sidebar_name".equals(string(binding, "binding_name"))) {
++                global = true;
++            } else if ("view".equals(string(binding, "binding_type")) && "#visible".equals(string(binding, "target_property_name"))) {
++                if (++views > 1 || !name.equals(string(binding, "source_control_name"))
++                        || !binding.has("resolve_sibling_scope") || !binding.get("resolve_sibling_scope").getAsBoolean()) {
++                    return null;
++                }
++                final var matcher = (inverse ? INVERSE : EQUALITY).matcher(string(binding, "source_property_name"));
++                if (!matcher.matches()) {
++                    return null;
++                }
++                title = matcher.group(1);
++            } else {
++                return null;
++            }
++        }
++        return global && views == 1 ? title : null;
++    }
++
++    private static SidebarImage parseImage(final ResourcePackStorage storage, final JsonObject control, final String title, final int rowHeight) {
++        if (!"top_middle".equals(string(control, "anchor_from")) || !"top_middle".equals(string(control, "anchor_to"))
++                || control.has("visible") && !control.get("visible").getAsBoolean()
++                || control.has("alpha") && control.get("alpha").getAsDouble() != 1
++                || control.has("ignored") && control.get("ignored").getAsBoolean()) {
++            return null;
++        }
++        final int[] size = pair(control.get("size"), 1, 1024);
++        final int[] offset = control.has("offset") ? pair(control.get("offset"), -1024, 1024) : new int[]{0, 0};
++        final String path = string(control, "texture");
++        if (size == null || offset == null || !path.matches("textures/[A-Za-z0-9_./-]+") || path.contains("..")) {
++            return null;
++        }
++        for (ResourcePack pack : storage.getPackStackTopToBottom()) {
++            final String fullPath = pack.content().getFullPath(path, "png", "jpg", "tga");
++            if (fullPath == null) {
++                continue;
++            }
++            final byte[] bytes = pack.content().get(fullPath);
++            if (bytes.length > 8388608) {
++                return null;
++            }
++            final Content.LazyImage image = pack.content().getImage(fullPath);
++            if (image == null || image.getImage().getWidth() > 4096 || image.getImage().getHeight() > 4096) {
++                return null;
++            }
++            final String hash = hash(title + "\n" + path + "\n" + Arrays.toString(size) + Arrays.toString(offset) + rowHeight);
++            return new SidebarImage(title, "viabedrock:scoreboard/" + hash, "viabedrock:textures/scoreboard/" + hash + ".png", size[0], size[1], offset[0], offset[1], rowHeight, fullPath);
++        }
++        return null;
++    }
++
++    public static int[] pair(final JsonElement value, final int min, final int max) {
++        if (value == null || !value.isJsonArray() || value.getAsJsonArray().size() != 2) {
++            return null;
++        }
++        final int[] result = new int[2];
++        for (int i = 0; i < 2; i++) {
++            final JsonElement number = value.getAsJsonArray().get(i);
++            if (!number.isJsonPrimitive() || !number.getAsJsonPrimitive().isNumber()) {
++                return null;
++            }
++            final double n = number.getAsDouble();
++            if (!Double.isFinite(n) || n != Math.rint(n) || n < min || n > max) {
++                return null;
++            }
++            result[i] = (int) n;
++        }
++        return result;
++    }
++
++    private static String string(final JsonObject object, final String key) {
++        final JsonElement value = object.get(key);
++        return value != null && value.isJsonPrimitive() && value.getAsJsonPrimitive().isString() ? value.getAsString() : "";
++    }
++
++    private static String hash(final String value) {
++        try {
++            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
++        } catch (final NoSuchAlgorithmException e) {
++            throw new IllegalStateException(e);
++        }
++    }
++
++    public record SidebarImage(String match, String font, String texture, int width, int height, int offsetX, int offsetY, int rowHeight, String sourcePath) {
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
+index 73d0d4d4..987e7a36 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
+@@ -52,9 +52,10 @@ import java.util.logging.Level;
+ 
+ public class ConvertedResourcePackCache {
+ 
+-    private static final String CONVERSION_VERSION = "native-appearance-rendering-metadata-7";
++    private static final String CONVERSION_VERSION = "native-appearance-rendering-metadata-8";
+ 
+     private final Path directory;
++    private final String conversionVersion;
+     private final ViaBedrockConfig.PackCacheMode mode;
+     private final Function<ResourcePackStorage, Content> converter;
+     private final ExecutorService executor = Executors.newFixedThreadPool(Math.max(1, Math.min(2, Runtime.getRuntime().availableProcessors())), task -> {
+@@ -78,6 +79,11 @@ public class ConvertedResourcePackCache {
+     }
+ 
+     ConvertedResourcePackCache(final Path directory, final ViaBedrockConfig.PackCacheMode mode, final Function<ResourcePackStorage, Content> converter) {
++        this(directory, mode, converter, CONVERSION_VERSION);
++    }
++
++    ConvertedResourcePackCache(final Path directory, final ViaBedrockConfig.PackCacheMode mode, final Function<ResourcePackStorage, Content> converter, final String conversionVersion) {
++        this.conversionVersion = conversionVersion;
+         this.directory = directory;
+         this.mode = mode;
+         this.converter = converter;
+@@ -87,7 +93,7 @@ public class ConvertedResourcePackCache {
+         if (this.mode == ViaBedrockConfig.PackCacheMode.DISABLED) {
+             return CompletableFuture.supplyAsync(() -> this.convert(storage), this.executor);
+         }
+-        return CompletableFuture.supplyAsync(() -> fingerprint(storage), this.executor).thenCompose(key -> {
++        return CompletableFuture.supplyAsync(() -> fingerprint(storage, this.conversionVersion), this.executor).thenCompose(key -> {
+             final CompletableFuture<Pack> future = this.pending.computeIfAbsent(key, ignored -> CompletableFuture.supplyAsync(() ->
+                     this.mode == ViaBedrockConfig.PackCacheMode.DISK ? this.loadOrConvert(key, storage) : this.convert(storage), this.executor));
+             return future.thenApply(pack -> {
+@@ -175,10 +181,14 @@ public class ConvertedResourcePackCache {
+     }
+ 
+     static String fingerprint(final Collection<ResourcePack> packs) {
++        return fingerprint(packs, CONVERSION_VERSION);
++    }
++
++    private static String fingerprint(final Collection<ResourcePack> packs, final String conversionVersion) {
+         final MessageDigest digest = digest("SHA-256");
+         try (var output = new DataOutputStream(new DigestOutputStream(OutputStream.nullOutputStream(), digest))) {
+             writeString(output, ViaBedrock.IMPL_VERSION);
+-            writeString(output, CONVERSION_VERSION);
++            writeString(output, conversionVersion);
+             for (ResourcePack pack : packs) {
+                 writeString(output, pack.key().toString());
+                 final List<String> paths = new ArrayList<>(pack.content().getFilesDeep("", ""));
+@@ -198,7 +208,11 @@ public class ConvertedResourcePackCache {
+     }
+ 
+     static String fingerprint(final ResourcePackStorage storage) {
+-        final StringBuilder identity = new StringBuilder(fingerprint(storage.getPackStackTopToBottom()));
++        return fingerprint(storage, CONVERSION_VERSION);
++    }
++
++    private static String fingerprint(final ResourcePackStorage storage, final String conversionVersion) {
++        final StringBuilder identity = new StringBuilder(fingerprint(storage.getPackStackTopToBottom(), conversionVersion));
+         storage.getCustomBlockVisuals().entrySet().stream().sorted(java.util.Map.Entry.comparingByKey()).forEach(entry -> {
+             final var visual = entry.getValue();
+             identity.append('\n').append(entry.getKey()).append(':').append(visual.bedrockState()).append(':').append(visual.modelJson());
+diff --git a/src/main/java/net/raphimc/viabedrock/api/util/TextUtil.java b/src/main/java/net/raphimc/viabedrock/api/util/TextUtil.java
+index 20a57fb8..55b07337 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/util/TextUtil.java
++++ b/src/main/java/net/raphimc/viabedrock/api/util/TextUtil.java
+@@ -32,6 +32,7 @@ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+ 
+ import java.util.EnumSet;
+ import java.util.List;
++import java.util.Map;
+ import java.util.Optional;
+ import java.util.Set;
+ import java.util.concurrent.atomic.AtomicBoolean;
+@@ -75,12 +76,24 @@ public final class TextUtil {
+         return textComponentToNbt(stringToTextComponent(text));
+     }
+ 
++    public static Tag stringToNbt(final String text, final Map<Character, Integer> colors) {
++        return textComponentToNbt(stringToTextComponent(text, colors));
++    }
++
+     public static Tag textComponentToNbt(final TextComponent textComponent) {
+         return ProtocolConstants.JAVA_TEXT_COMPONENT_SERIALIZER.serializeNbtTree(textComponent);
+     }
+ 
+     public static TextComponent stringToTextComponent(final String text) {
+-        final TextComponent textComponent = LegacyStringDeserializer.parse(appendFormattingCodesAfterColorCode(text), TextFormatting.COLOR_CHAR, ResetTrackingStyle::new, BEDROCK_FORMATTING_RESOLVER);
++        return stringToTextComponent(text, Map.of());
++    }
++
++    public static TextComponent stringToTextComponent(final String text, final Map<Character, Integer> colors) {
++        final Function<Character, TextFormatting> resolver = c -> {
++            final Integer color = colors.get(Character.toLowerCase(c));
++            return color == null ? BEDROCK_FORMATTING_RESOLVER.apply(c) : new TextFormatting(color);
++        };
++        final TextComponent textComponent = LegacyStringDeserializer.parse(appendFormattingCodesAfterColorCode(text), TextFormatting.COLOR_CHAR, ResetTrackingStyle::new, resolver);
+         final AtomicBoolean wasReset = new AtomicBoolean(false);
+         TextUtils.iterateAll(textComponent, c -> {
+             final Style style = c.getStyle();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
+index a8564eaf..1b372273 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
+@@ -17,6 +17,7 @@
+  */
+ package net.raphimc.viabedrock.protocol.packet;
+ 
++import com.viaversion.nbt.tag.Tag;
+ import com.viaversion.viaversion.api.Via;
+ import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.minecraft.GameProfile;
+@@ -50,12 +51,25 @@ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
+ import java.util.ArrayList;
+ import java.util.List;
++import java.util.Map;
+ import java.util.UUID;
+ import java.util.function.Function;
+ import java.util.logging.Level;
+ 
+ public final class HudPackets {
+ 
++    static void writeObjectivePresentation(final PacketWrapper wrapper, final String objectiveName,
++                                           final ObjectiveAction action, final Tag displayName, final boolean hideNumbers) {
++        wrapper.write(Types.STRING, objectiveName); // objective name
++        wrapper.write(Types.BYTE, (byte) action.ordinal()); // mode
++        wrapper.write(Types.TAG, displayName); // display name
++        wrapper.write(Types.VAR_INT, ObjectiveCriteriaRenderType.INTEGER.ordinal()); // display mode
++        wrapper.write(Types.BOOLEAN, hideNumbers); // has number format
++        if (hideNumbers) {
++            wrapper.write(Types.VAR_INT, 0); // blank number format (unit payload)
++        }
++    }
++
+     public static void register(final BedrockProtocol protocol) {
+         protocol.registerClientbound(ClientboundBedrockPackets.PLAYER_LIST, null, wrapper -> {
+             final PlayerListStorage playerListStorage = wrapper.user().get(PlayerListStorage.class);
+@@ -246,17 +260,23 @@ public final class HudPackets {
+                 return;
+             }
+ 
+-            if (!scoreboardTracker.hasObjective(objectiveName)) {
++            final boolean newObjective = !scoreboardTracker.hasObjective(objectiveName);
++            if (newObjective) {
+                 scoreboardTracker.addObjective(objectiveName, new ScoreboardObjective(objectiveName, sortOrder));
+-
+-                final PacketWrapper scoreboardObjective = PacketWrapper.create(ClientboundPackets26_3.SET_OBJECTIVE, wrapper.user());
+-                scoreboardObjective.write(Types.STRING, objectiveName); // objective name
+-                scoreboardObjective.write(Types.BYTE, (byte) ObjectiveAction.ADD.ordinal()); // mode
+-                scoreboardObjective.write(Types.TAG, TextUtil.stringToNbt(wrapper.user().get(ResourcePackStorage.class).getTexts().translate(displayName))); // display name
+-                scoreboardObjective.write(Types.VAR_INT, ObjectiveCriteriaRenderType.INTEGER.ordinal()); // display mode
+-                scoreboardObjective.write(Types.BOOLEAN, false); // has number format
+-                scoreboardObjective.send(BedrockProtocol.class);
+             }
++
++            final ResourcePackStorage resourcePacks = wrapper.user().get(ResourcePackStorage.class);
++            scoreboardTracker.getObjective(objectiveName).setFormattingColors(wrapper.user(),
++                    displaySlot.equals("sidebar") ? resourcePacks.getScoreboardUi().formattingColors() : Map.of());
++            final String translatedTitle = resourcePacks.getTexts().translate(displayName);
++            final Tag title = displaySlot.equals("sidebar")
++                    ? resourcePacks.getScoreboardUi().titleComponent(displayName, translatedTitle)
++                    : TextUtil.stringToNbt(translatedTitle);
++            final PacketWrapper scoreboardObjective = PacketWrapper.create(ClientboundPackets26_3.SET_OBJECTIVE, wrapper.user());
++            writeObjectivePresentation(scoreboardObjective, objectiveName,
++                    newObjective ? ObjectiveAction.ADD : ObjectiveAction.CHANGE,
++                    title, displaySlot.equals("sidebar"));
++            scoreboardObjective.send(BedrockProtocol.class);
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.SET_SCORE, null, wrapper -> {
+             wrapper.cancel();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
+index ccdc3501..4f43f563 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
+@@ -26,6 +26,7 @@ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockResource
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomEntityResourceRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.GlyphSheetResourceRewriter;
++import net.raphimc.viabedrock.protocol.rewriter.resourcepack.ScoreboardUiResourceRewriter;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+ 
+ import java.util.ArrayList;
+@@ -40,6 +41,7 @@ public final class ResourcePackRewriter {
+ 
+     static {
+         REWRITERS.add(new GlyphSheetResourceRewriter());
++        REWRITERS.add(new ScoreboardUiResourceRewriter());
+         REWRITERS.add(new CustomItemTextureResourceRewriter());
+         REWRITERS.add(new CustomBlockResourceRewriter());
+         REWRITERS.add(new CustomAttachableResourceRewriter());
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ScoreboardUiResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ScoreboardUiResourceRewriter.java
+new file mode 100644
+index 00000000..10415e9d
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ScoreboardUiResourceRewriter.java
+@@ -0,0 +1,98 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.api.resourcepack.definition.ScoreboardUiDefinitions;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++
++import java.awt.image.BufferedImage;
++import java.util.function.Consumer;
++import java.util.function.Supplier;
++
++public final class ScoreboardUiResourceRewriter implements ResourcePackRewriter.Rewriter {
++
++    @Override
++    public void submitTasks(final ResourcePackStorage storage, final Consumer<Supplier<Content>> submitter) {
++        submitter.accept(() -> convert(storage));
++    }
++
++    public static Content convert(final ResourcePackStorage storage) {
++        final Content output = new InMemoryContent();
++        final JsonArray images = new JsonArray();
++        for (ScoreboardUiDefinitions.SidebarImage image : storage.getScoreboardUi().images()) {
++            for (ResourcePack pack : storage.getPackStackTopToBottom()) {
++                if (!pack.content().contains(image.sourcePath())) {
++                    continue;
++                }
++                final String texturePath = "assets/viabedrock/" + image.texture().substring("viabedrock:".length());
++                final BufferedImage original = pack.content().getImage(image.sourcePath()).getImage();
++                output.putPngImage(texturePath, original);
++                // Vanilla Java has a nine-pixel header. Keep its fallback compact, while the
++                // add-on draws the original texture at the separately advertised authored size.
++                final BufferedImage stretched = new BufferedImage(image.width(), image.height(), BufferedImage.TYPE_INT_ARGB);
++                final var graphics = stretched.createGraphics();
++                try {
++                    graphics.drawImage(original, 0, 0, image.width(), image.height(), null);
++                } finally {
++                    graphics.dispose();
++                }
++                final String fallback = image.texture().replace(".png", "_font.png");
++                output.putPngImage("assets/viabedrock/" + fallback.substring("viabedrock:".length()), stretched);
++                final JsonObject provider = new JsonObject();
++                provider.addProperty("type", "bitmap");
++                provider.addProperty("file", fallback.replace("viabedrock:textures/", "viabedrock:"));
++                provider.addProperty("height", 9);
++                provider.addProperty("ascent", 8);
++                final JsonArray characters = new JsonArray();
++                characters.add(ScoreboardUiDefinitions.IMAGE_CHARACTER);
++                provider.add("chars", characters);
++                final JsonArray providers = new JsonArray();
++                providers.add(provider);
++                final JsonObject font = new JsonObject();
++                font.add("providers", providers);
++                output.putJson("assets/viabedrock/font/" + image.font().substring("viabedrock:".length()) + ".json", font);
++                final JsonObject entry = new JsonObject();
++                entry.addProperty("font", image.font());
++                entry.addProperty("texture", image.texture());
++                entry.addProperty("width", image.width());
++                entry.addProperty("height", image.height());
++                entry.addProperty("row_height", image.rowHeight());
++                entry.addProperty("offset_x", image.offsetX());
++                entry.addProperty("offset_y", image.offsetY());
++                images.add(entry);
++                break;
++            }
++        }
++        if (!images.isEmpty()) {
++            final JsonObject metadata = new JsonObject();
++            metadata.addProperty("format", 1);
++            metadata.addProperty("bedrock_protocol", ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            metadata.add("images", images);
++            output.putJson("assets/viabedrock/scoreboard_ui.json", metadata);
++        }
++        return output;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
+index 66931e7d..ec8485cd 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
+@@ -40,6 +40,7 @@ public class ResourcePackStorage implements StorableObject {
+     private final Map<String, Object> converterData = new ConcurrentHashMap<>();
+ 
+     private final TextDefinitions texts;
++    private final ScoreboardUiDefinitions scoreboardUi;
+     private final BlockDefinitions blocks;
+     private final ItemDefinitions items;
+     private final AttachableDefinitions attachables;
+@@ -86,6 +87,7 @@ public class ResourcePackStorage implements StorableObject {
+         }
+ 
+         this.texts = new TextDefinitions(this);
++        this.scoreboardUi = new ScoreboardUiDefinitions(this);
+         this.blocks = new BlockDefinitions(this);
+         this.items = new ItemDefinitions(this);
+         this.attachables = new AttachableDefinitions(this);
+@@ -147,6 +149,10 @@ public class ResourcePackStorage implements StorableObject {
+         return this.converterData;
+     }
+ 
++    public ScoreboardUiDefinitions getScoreboardUi() {
++        return this.scoreboardUi;
++    }
++
+     public TextDefinitions getTexts() {
+         return this.texts;
+     }
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/scoreboard/ScoreboardPresentationTest.java b/src/test/java/net/raphimc/viabedrock/api/model/scoreboard/ScoreboardPresentationTest.java
+new file mode 100644
+index 00000000..9d0d60d1
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/scoreboard/ScoreboardPresentationTest.java
+@@ -0,0 +1,72 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.api.model.scoreboard;
++
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.util.TextUtil;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.IdentityDefinition_Type;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ObjectiveSortOrder;
++import org.junit.jupiter.api.Test;
++
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class ScoreboardPresentationTest {
++
++    @Test
++    void translatesExtendedColorsWithoutChangingScoreIdentityOrOrdering() throws Exception {
++        final String rawName = "§pGold §qGreen §fName";
++        final var entry = new ScoreboardEntry(17, IdentityDefinition_Type.FakePlayer, null, rawName);
++        entry.updateJavaName(null);
++        for (final var order : new ObjectiveSortOrder[]{ObjectiveSortOrder.Ascending, ObjectiveSortOrder.Descending}) {
++            final var objective = new ScoreboardObjective("ranking", order);
++            final var packet = new PacketWrapperImpl(ClientboundPackets26_3.SET_SCORE, null, null);
++            objective.writeJavaScore(packet, entry);
++            final var buffer = Unpooled.buffer();
++            try {
++                packet.writeToBuffer(buffer);
++                assertEquals(ClientboundPackets26_3.SET_SCORE.getId(), Types.VAR_INT.read(buffer));
++                assertEquals(rawName, Types.STRING.read(buffer));
++                assertEquals("ranking", Types.STRING.read(buffer));
++                assertEquals(order == ObjectiveSortOrder.Ascending ? -17 : 17, Types.VAR_INT.read(buffer));
++                assertEquals(TextUtil.stringToNbt(rawName), Types.OPTIONAL_TAG.read(buffer));
++                assertFalse(Types.BOOLEAN.read(buffer));
++                assertEquals(0, buffer.readableBytes());
++                assertEquals(rawName, entry.javaName());
++                assertEquals(17, entry.score());
++            } finally {
++                buffer.release();
++            }
++        }
++    }
++
++    @Test
++    void sidebarPaletteDoesNotChangeTheOwnerOrScore() throws Exception {
++        final var objective = new ScoreboardObjective("ui", ObjectiveSortOrder.Descending);
++        objective.setFormattingColors(null, Map.of('9', 0x3AA9FF));
++        final var entry = new ScoreboardEntry(5, IdentityDefinition_Type.FakePlayer, null, "§9Player");
++        entry.updateJavaName(null);
++        final var packet = new PacketWrapperImpl(ClientboundPackets26_3.SET_SCORE, null, null);
++        objective.writeJavaScore(packet, entry);
++        assertEquals("§9Player", packet.get(Types.STRING, 0));
++        assertEquals(5, packet.get(Types.VAR_INT, 0));
++        assertEquals(TextUtil.stringToNbt("§9Player", Map.of('9', 0x3AA9FF)), packet.get(Types.OPTIONAL_TAG, 0));
++        objective.setFormattingColors(null, Map.of());
++        final var ordinary = new PacketWrapperImpl(ClientboundPackets26_3.SET_SCORE, null, null);
++        objective.writeJavaScore(ordinary, entry);
++        assertEquals(TextUtil.stringToNbt("§9Player"), ordinary.get(Types.OPTIONAL_TAG, 0));
++        assertEquals(entry.javaName(), packet.get(Types.STRING, 0));
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitionsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitionsTest.java
+new file mode 100644
+index 00000000..650bf7e5
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitionsTest.java
+@@ -0,0 +1,275 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.api.resourcepack.definition;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonPrimitive;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.rewriter.resourcepack.ScoreboardUiResourceRewriter;
++import net.raphimc.viabedrock.api.util.TextUtil;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++
++import java.awt.image.BufferedImage;
++import java.util.List;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class ScoreboardUiDefinitionsTest {
++
++    @Test
++    void explicitLiteralBindingProducesAnIsolatedFontAndAuthoredImageDimensions() {
++        final ResourcePack pack = pack(panel("sample.title", "textures/ui/sample", 66, 21), 0xFFFF8844);
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack));
++        final var definition = storage.getScoreboardUi().image("sample.title");
++        assertNotNull(definition);
++        assertEquals(66, definition.width());
++        assertEquals(21, definition.height());
++        assertNull(storage.getScoreboardUi().image("other.title"));
++        final var output = ScoreboardUiResourceRewriter.convert(storage);
++        final var original = output.getImage("assets/viabedrock/" + definition.texture().substring(11)).getImage();
++        assertEquals(8, original.getWidth());
++        assertEquals(2, original.getHeight());
++        assertEquals(0xFFFF8844, original.getRGB(3, 1));
++        final var fallback = output.getImage("assets/viabedrock/" + definition.texture().substring(11).replace(".png", "_font.png")).getImage();
++        assertEquals(66, fallback.getWidth());
++        assertEquals(21, fallback.getHeight());
++        assertFalse(output.contains("assets/minecraft/font/default.json"));
++        assertTrue(output.contains("assets/viabedrock/font/" + definition.font().substring(11) + ".json"));
++        assertNotEquals(storage.getScoreboardUi().titleComponent("sample.title", "fallback"), storage.getScoreboardUi().titleComponent("ordinary", "fallback"));
++        assertThrows(UnsupportedOperationException.class, () -> storage.getScoreboardUi().images().clear());
++    }
++
++    @Test
++    void effectiveUiAndTextureFollowPackPriority() {
++        final var lower = pack(panel("lower.title", "textures/ui/sample", 66, 21), 0xFF112233);
++        final var higher = pack(panel("higher.title", "textures/ui/sample", 40, 12), 0xFF445566);
++        final var storage = new ResourcePackStorage(List.of(higher, lower));
++        assertNull(storage.getScoreboardUi().image("lower.title"));
++        final var image = storage.getScoreboardUi().image("higher.title");
++        assertEquals(40, image.width());
++        final var converted = ScoreboardUiResourceRewriter.convert(storage);
++        assertEquals(0xFF445566, converted.getImage("assets/viabedrock/" + image.texture().substring(11)).getImage().getRGB(0, 0));
++    }
++
++    @Test
++    void unsupportedHigherControlDoesNotResurrectLowerUi() {
++        final JsonObject upper = panel("upper", "textures/ui/sample", 40, 12);
++        image(upper).addProperty("anchor_to", "bottom_left");
++        final var storage = new ResourcePackStorage(List.of(pack(upper, -1), pack(panel("lower", "textures/ui/sample", 40, 12), -1)));
++        assertTrue(storage.getScoreboardUi().images().isEmpty());
++    }
++
++    @Test
++    void missingInverseCompanionAndAdditionalVisibilityExpressionsAreRejected() {
++        final JsonObject withoutLabel = panel("test", "textures/ui/sample", 40, 12);
++        withoutLabel.getAsJsonArray("controls").remove(0);
++        assertEmpty(withoutLabel);
++        final JsonObject expression = panel("test", "textures/ui/sample", 40, 12);
++        image(expression).getAsJsonArray("bindings").get(1).getAsJsonObject().addProperty("source_property_name", "(#objective_sidebar_name = 'test' or true)");
++        assertEmpty(expression);
++    }
++
++    @Test
++    void fractionalNonfiniteAndOversizedDimensionsNeverProduceImageTitles() {
++        for (double value : new double[]{0, -1, 4.5, 1025, Double.POSITIVE_INFINITY}) {
++            final JsonObject panel = panel("test", "textures/ui/sample", 40, 12);
++            image(panel).getAsJsonArray("size").set(0, new JsonPrimitive(value));
++            assertEmpty(panel);
++        }
++    }
++
++    @Test
++    void conflictingImagesAndMissingTexturePreserveOrdinaryTitle() {
++        final JsonObject duplicate = panel("test", "textures/ui/sample", 40, 12);
++        final JsonObject wrapped = new JsonObject();
++        wrapped.add("duplicate", image(duplicate).deepCopy());
++        wrapped.getAsJsonObject("duplicate").getAsJsonArray("bindings").get(1).getAsJsonObject().addProperty("source_control_name", "duplicate");
++        duplicate.getAsJsonArray("controls").add(wrapped);
++        assertEmpty(duplicate);
++        assertEmpty(panel("test", "textures/ui/missing", 40, 12));
++    }
++
++    @Test
++    void distinctTitlesUseDistinctFontsWithoutConsumingServerGlyphSlots() {
++        final var first = new ResourcePackStorage(List.of(pack(panel("one", "textures/ui/sample", 40, 12), -1)));
++        final var second = new ResourcePackStorage(List.of(pack(panel("two", "textures/ui/sample", 40, 12), -1)));
++        assertNotEquals(first.getScoreboardUi().image("one").font(), second.getScoreboardUi().image("two").font());
++    }
++
++    @Test
++    void explicitPlayerFactoryExportsTheStaticRowHeight() {
++        final JsonObject panel = panel("test", "textures/ui/sample", 40, 12);
++        final JsonObject players = new JsonObject();
++        players.addProperty("collection_name", "scoreboard_players");
++        final JsonObject factory = new JsonObject();
++        factory.addProperty("control_name", "scoreboard.rows");
++        players.add("factory", factory);
++        final JsonObject wrapped = new JsonObject();
++        wrapped.add("players", players);
++        panel.getAsJsonArray("controls").add(wrapped);
++        final ResourcePack pack = pack(panel, -1);
++        final JsonObject ui = pack.content().getJson("ui/example.json");
++        final JsonObject label = new JsonObject();
++        label.addProperty("type", "label");
++        label.addProperty("text", "#player_name_sidebar");
++        final JsonArray size = new JsonArray();
++        size.add("default");
++        size.add(10);
++        label.add("size", size);
++        ui.add("rows", label);
++        pack.content().putJson("ui/example.json", ui);
++        final var storage = new ResourcePackStorage(List.of(pack));
++        assertEquals(10, storage.getScoreboardUi().image("test").rowHeight());
++        assertEquals(10, ScoreboardUiResourceRewriter.convert(storage).getJson("assets/viabedrock/scoreboard_ui.json")
++                .getAsJsonArray("images").get(0).getAsJsonObject().get("row_height").getAsInt());
++    }
++
++    @Test
++    void unreferencedFilesDoNotActivateControlsButNativeVanillaOverridesDo() {
++        final ResourcePack unused = pack(panel("test", "textures/ui/sample", 40, 12), -1);
++        unused.content().putJson("ui/_ui_defs.json", new JsonObject());
++        assertTrue(new ResourcePackStorage(List.of(unused)).getScoreboardUi().images().isEmpty());
++        unused.content().copyFrom(unused.content(), "ui/example.json", "ui/scoreboards.json");
++        assertNotNull(new ResourcePackStorage(List.of(unused)).getScoreboardUi().image("test"));
++    }
++
++    private static void assertEmpty(final JsonObject panel) {
++        assertTrue(new ResourcePackStorage(List.of(pack(panel, -1))).getScoreboardUi().images().isEmpty());
++    }
++
++    private static JsonObject image(final JsonObject panel) {
++        return panel.getAsJsonArray("controls").get(1).getAsJsonObject().getAsJsonObject("image");
++    }
++
++    @Test
++    void serverUiFormattingUsesEffectiveRgbOverridesWithoutRecoloringWorldText() {
++        final var lower = pack(panel("lower", "textures/ui/sample", 40, 12), -1);
++        final var higher = pack(panel("higher", "textures/ui/sample", 40, 12), -1);
++        final var lowVariables = new JsonObject();
++        lowVariables.add("$9_color_format", rgb(1, 0, 0));
++        lowVariables.add("$a_color_format", rgb(0, 1, 0));
++        lowVariables.add("$b_color_format", rgb(0.5, 0.1, 1));
++        lower.content().putJson("ui/_global_variables.json", lowVariables);
++        final var highVariables = new JsonObject();
++        highVariables.add("$9_color_format", rgb(0.22745098, 0.662745098, 1));
++        higher.content().putJson("ui/_global_variables.json", highVariables);
++        final var colors = new ResourcePackStorage(List.of(higher, lower)).getScoreboardUi().formattingColors();
++        assertEquals(0x3AA9FF, colors.get('9'));
++        assertEquals(0x00FF00, colors.get('a'));
++        assertEquals(0x801AFF, colors.get('b'));
++        assertEquals(0x3AA9FF, TextUtil.stringToTextComponent("§9Blue", colors).getStyle().getColor().getRgbValue());
++        assertEquals(0x5555FF, TextUtil.stringToTextComponent("§9Blue").getStyle().getColor().getRgbValue());
++        assertTrue(TextUtil.stringToTextComponent("§l§9Blue", colors).getStyle().isBold());
++        assertThrows(UnsupportedOperationException.class, () -> colors.put('b', 0));
++    }
++
++    @Test
++    void unsupportedHigherUiColorsDoNotReviveLowerDefinitions() {
++        final var lower = pack(panel("lower", "textures/ui/sample", 40, 12), -1);
++        final var higher = pack(panel("higher", "textures/ui/sample", 40, 12), -1);
++        final var lowVariables = new JsonObject();
++        lowVariables.add("$9_color_format", rgb(1, 0, 0));
++        lower.content().putJson("ui/_global_variables.json", lowVariables);
++        for (final var invalid : List.of(new JsonPrimitive("$dynamic_color"), rgb(-1, 0, 0), rgb(0, 2, 0), rgb(0, 0, Double.POSITIVE_INFINITY))) {
++            final var highVariables = new JsonObject();
++            highVariables.add("$9_color_format", invalid);
++            higher.content().putJson("ui/_global_variables.json", highVariables);
++            assertFalse(new ResourcePackStorage(List.of(higher, lower)).getScoreboardUi().formattingColors().containsKey('9'));
++        }
++    }
++
++    private static JsonArray rgb(final double red, final double green, final double blue) {
++        final var rgb = new JsonArray();
++        rgb.add(red);
++        rgb.add(green);
++        rgb.add(blue);
++        return rgb;
++    }
++
++    private static JsonObject panel(final String title, final String texture, final int width, final int height) {
++        final JsonObject label = control("label", "label", title, true);
++        label.addProperty("text", "#objective_sidebar_name");
++        final JsonObject image = control("image", "image", title, false);
++        image.addProperty("texture", texture);
++        image.addProperty("anchor_from", "top_middle");
++        image.addProperty("anchor_to", "top_middle");
++        final JsonArray size = new JsonArray();
++        size.add(width);
++        size.add(height);
++        image.add("size", size);
++        final JsonArray controls = new JsonArray();
++        final JsonObject wrappedLabel = new JsonObject();
++        wrappedLabel.add("label", label);
++        controls.add(wrappedLabel);
++        final JsonObject wrappedImage = new JsonObject();
++        wrappedImage.add("image", image);
++        controls.add(wrappedImage);
++        final JsonObject panel = new JsonObject();
++        panel.addProperty("type", "panel");
++        panel.addProperty("anchor_from", "right_middle");
++        panel.addProperty("anchor_to", "right_middle");
++        panel.add("controls", controls);
++        return panel;
++    }
++
++    private static JsonObject control(final String type, final String name, final String title, final boolean inverse) {
++        final JsonObject control = new JsonObject();
++        control.addProperty("type", type);
++        final JsonArray bindings = new JsonArray();
++        final JsonObject global = new JsonObject();
++        global.addProperty("binding_type", "global");
++        global.addProperty("binding_name", "#objective_sidebar_name");
++        bindings.add(global);
++        final JsonObject view = new JsonObject();
++        view.addProperty("binding_type", "view");
++        view.addProperty("source_control_name", name);
++        view.addProperty("resolve_sibling_scope", true);
++        view.addProperty("target_property_name", "#visible");
++        view.addProperty("source_property_name", inverse ? "(not(#objective_sidebar_name = '" + title + "'))" : "(#objective_sidebar_name = '" + title + "')");
++        bindings.add(view);
++        control.add("bindings", bindings);
++        return control;
++    }
++
++    private static ResourcePack pack(final JsonObject panel, final int color) {
++        final InMemoryContent content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":[1,0,0],\"name\":\"test\"}}");
++        final JsonObject ui = new JsonObject();
++        ui.addProperty("namespace", "scoreboard");
++        ui.add("scoreboard_sidebar", panel);
++        content.putJson("ui/example.json", ui);
++        final JsonObject definitions = new JsonObject();
++        final JsonArray files = new JsonArray();
++        files.add("ui/example.json");
++        definitions.add("ui_defs", files);
++        content.putJson("ui/_ui_defs.json", definitions);
++        final BufferedImage texture = new BufferedImage(8, 2, BufferedImage.TYPE_INT_ARGB);
++        for (int x = 0; x < 8; x++) {
++            for (int y = 0; y < 2; y++) {
++                texture.setRGB(x, y, color);
++            }
++        }
++        content.putPngImage("textures/ui/sample.png", texture);
++        return new ResourcePack(content);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
+index 52eece5d..ba64fe26 100644
+--- a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
+@@ -40,6 +40,38 @@ class ConvertedResourcePackCacheTest {
+     @TempDir
+     Path directory;
+ 
++    @Test
++    void changedConversionFormatRebuildsDiskOutputWithoutReusingThePreviousArchive() {
++        final AtomicInteger conversions = new AtomicInteger();
++        final ConvertedResourcePackCache previous = new ConvertedResourcePackCache(this.directory, ViaBedrockConfig.PackCacheMode.DISK, storage -> {
++            conversions.incrementAndGet();
++            final InMemoryContent content = new InMemoryContent();
++            content.put("assets/example/output", new byte[]{1});
++            return content;
++        }, "previous-converter");
++        final ConvertedResourcePackCache.Pack oldOutput;
++        try {
++            oldOutput = previous.prepare(new ResourcePackStorage(List.of())).join();
++        } finally {
++            previous.stop();
++        }
++        final ConvertedResourcePackCache current = new ConvertedResourcePackCache(this.directory, ViaBedrockConfig.PackCacheMode.DISK, storage -> {
++            conversions.incrementAndGet();
++            final InMemoryContent content = new InMemoryContent();
++            content.put("assets/example/output", new byte[]{2});
++            return content;
++        });
++        try {
++            final var rebuilt = current.prepare(new ResourcePackStorage(List.of())).join();
++            assertNotEquals(oldOutput.sha1(), rebuilt.sha1());
++            assertEquals(2, conversions.get());
++            assertEquals(rebuilt.sha1(), current.prepare(new ResourcePackStorage(List.of())).join().sha1());
++            assertEquals(2, conversions.get());
++        } finally {
++            current.stop();
++        }
++    }
++
+     @Test
+     void effectivePackOrderChangesCacheIdentity() {
+         final ResourcePack first = pack(UUID.randomUUID(), new byte[]{1});
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/HudPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/HudPacketsTest.java
+index dfd42cd1..8199a3e7 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/packet/HudPacketsTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/HudPacketsTest.java
+@@ -9,7 +9,13 @@
+  */
+ package net.raphimc.viabedrock.protocol.packet;
+ 
++import com.viaversion.nbt.tag.CompoundTag;
+ import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.data.enums.java.ObjectiveAction;
+ import net.raphimc.viabedrock.api.model.scoreboard.ScoreboardEntry;
+ import net.raphimc.viabedrock.api.model.scoreboard.ScoreboardObjective;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.IdentityDefinition_Type;
+@@ -20,6 +26,7 @@ import org.junit.jupiter.api.Test;
+ import java.util.HashMap;
+ import java.util.Map;
+ 
++import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertNotNull;
+ import static org.junit.jupiter.api.Assertions.assertNull;
+ 
+@@ -59,6 +66,38 @@ class HudPacketsTest {
+         assertNotNull(second.getEntry(7));
+     }
+ 
++    @Test
++    void encodesSidebarBlankNumbersForBothCreationAndTitleUpdates() throws Exception {
++        for (final ObjectiveAction action : new ObjectiveAction[]{ObjectiveAction.ADD, ObjectiveAction.CHANGE}) {
++            assertObjectivePresentation(action, true);
++            assertObjectivePresentation(action, false);
++        }
++    }
++
++    private static void assertObjectivePresentation(final ObjectiveAction action, final boolean hideNumbers) throws Exception {
++        final var title = new CompoundTag();
++        title.putString("text", Character.toString(0xE000));
++        title.putString("font", "example:objective_image");
++        final var packet = new PacketWrapperImpl(ClientboundPackets26_3.SET_OBJECTIVE, null, null);
++        HudPackets.writeObjectivePresentation(packet, "sidebar", action, title, hideNumbers);
++        final var buffer = Unpooled.buffer();
++        try {
++            packet.writeToBuffer(buffer);
++            assertEquals(ClientboundPackets26_3.SET_OBJECTIVE.getId(), Types.VAR_INT.read(buffer));
++            assertEquals("sidebar", Types.STRING.read(buffer));
++            assertEquals((byte) action.ordinal(), Types.BYTE.read(buffer));
++            assertEquals(title, Types.TAG.read(buffer));
++            assertEquals(0, Types.VAR_INT.read(buffer));
++            assertEquals(hideNumbers, Types.BOOLEAN.read(buffer));
++            if (hideNumbers) {
++                assertEquals(0, Types.VAR_INT.read(buffer));
++            }
++            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
++        }
++    }
++
+     private static final class TrackingObjective extends ScoreboardObjective {
+ 
+         private final Map<Long, ScoreboardEntry> entries = new HashMap<>();
+-- 
+2.55.0
+

@@ -1,4 +1,4 @@
-From 5c0f0d76033661ace0623e51a1331e419317901d Mon Sep 17 00:00:00 2001
+From 8f21ed6cb6669c8822191b33b97fce12b44f2867 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:07 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -234,6 +234,8 @@ Apply optional native rider anchors to the Java passenger attachment path. The l
 Publish immutable passenger/vehicle UUID bindings, vectors and eye offsets on the connection thread after metadata or resolved mount changes. Match both current Java actors before applying the snapshot, and clear it on dismount or removal. Adapt native vehicle origins to Java origins and return the passenger attachment once, allowing Java positionRider to subtract it once. This places the body, nametag and attached surfaces at the same corrected world position. Numeric tests use independently captured coordinates, sparse metadata, delayed mounts, invalid vectors and stale identities.
 
 This path requires the add-on's native connection state. Java clients behind ViaProxy retain their ordinary attachment placement when native metadata is not exposed to the client; no approximate vehicle or server-specific offset is introduced.
+
+Place native names at retained scaled AABB height plus .7 blocks, compensating the Java renderer .5-block padding by .2 only when height is known. Bedrock 1.26.51.1 producer 141d55a60 splits LF and cancels the internal actor Y offset against its collision bounds. Cache immutable actor identity and bounds per connection and discard them on removal. Ordinary name_tag_text is unlit; preserve depth-tested/sneaking light and actor body light. Gate multiline and unlit names on direct Bedrock or accepted converted server metadata. ViaProxy Interaction metadata supplies known non-default heights; preserve unknown/default height and other actor attachments. Native line spacing and complete proxy anchors remain outside the verified support.
 ---
  build.gradle.kts                              |   6 +
  .../friends/FriendWorldSkinProvider.java      |   8 +
@@ -241,7 +243,9 @@ This path requires the add-on's native connection state. Java clients behind Via
  .../render/MixinAbstractClientPlayer.java     |  38 +++
  .../render/MixinBedrockActorPipelines.java    |  25 ++
  .../render/MixinBedrockActorRenderType.java   |  47 ++++
- .../features/render/MixinBedrockNameTags.java |  36 +++
+ .../render/MixinBedrockNameTagMetadata.java   |  33 +++
+ .../render/MixinBedrockNameTagRenderer.java   |  54 ++++
+ .../features/render/MixinBedrockNameTags.java |  40 +++
  .../render/MixinBedrockRidingMetadata.java    |  38 +++
  .../render/MixinBedrockRidingPosition.java    |  27 ++
  .../features/render/MixinCustomEntity.java    |  59 +++++
@@ -254,6 +258,7 @@ This path requires the add-on's native connection state. Java clients behind Via
  .../render/BedrockActorUvTransform.java       |  18 ++
  .../bedrock/render/BedrockEntityRenderer.java | 188 ++++++++++++++
  .../bedrock/render/BedrockGeometry.java       | 215 ++++++++++++++++
+ .../bedrock/render/BedrockNameTagAnchors.java |  71 ++++++
  .../bedrock/render/BedrockNameTags.java       |  48 ++++
  .../bedrock/render/BedrockPlayerRenderer.java |  53 ++++
  .../bedrock/render/BedrockPlayerSkins.java    | 236 ++++++++++++++++++
@@ -264,22 +269,25 @@ This path requires the add-on's native connection state. Java clients behind Via
  .../shaders/core/bedrock_actor.fsh            |  46 ++++
  .../shaders/core/bedrock_actor.vsh            |  47 ++++
  .../viafabricplus-bedrock.accesswidener       |   3 +
- .../viafabricplus-bedrock.mixins.json         |  10 +
+ .../viafabricplus-bedrock.mixins.json         |  12 +
  .../BedrockActorMaterialDefinitionsTest.java  | 147 +++++++++++
  .../render/BedrockActorMaterialsTest.java     |  48 ++++
  .../render/BedrockActorUvTransformTest.java   |  27 ++
  .../bedrock/render/BedrockCubeFacesTest.java  | 182 ++++++++++++++
  .../render/BedrockEntityRendererTest.java     |  50 ++++
+ .../render/BedrockNameTagAnchorsTest.java     | 112 +++++++++
  .../bedrock/render/BedrockNameTagsTest.java   |  73 ++++++
  .../render/BedrockPlayerMaterialsTest.java    |  42 ++++
  .../render/BedrockRidingAnchorsTest.java      | 130 ++++++++++
  .../bedrock/render/BedrockSkinQueueTest.java  |  83 ++++++
  .../render/CustomEntityRenderStoreTest.java   |  36 +++
- 40 files changed, 2583 insertions(+), 1 deletion(-)
+ 44 files changed, 2859 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractClientPlayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorPipelines.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorRenderType.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTagMetadata.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTagRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRidingMetadata.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRidingPosition.java
@@ -293,6 +301,7 @@ This path requires the add-on's native connection state. Java clients behind Via
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvTransform.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagAnchors.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTags.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
@@ -306,6 +315,7 @@ This path requires the add-on's native connection state. Java clients behind Via
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvTransformTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCubeFacesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRendererTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagAnchorsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerMaterialsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockRidingAnchorsTest.java
@@ -507,12 +517,111 @@ index 0000000..99dbe1f
 +        return data.writeTransform(modelView, new Vector4f(this.bedrock$multiplier, this.bedrock$multiplier, this.bedrock$multiplier, 1F), new Vector3f(), this.bedrock$uv.apply(texture));
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTagMetadata.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTagMetadata.java
+new file mode 100644
+index 0000000..9340195
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTagMetadata.java
+@@ -0,0 +1,33 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.viaversion.viafabricplus.bedrock.render.BedrockNameTagAnchors;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
++import java.util.List;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import org.spongepowered.asm.mixin.Final;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(value = Entity.class, remap = false)
++public abstract class MixinBedrockNameTagMetadata {
++    @Shadow @Final protected UserConnection user;
++
++    @Inject(method = "updateEntityData([Lcom/viaversion/viaversion/api/minecraft/entitydata/EntityData;Ljava/util/List;)V", at = @At("TAIL"))
++    private void publishNameMetadata(final EntityData[] metadata, final List<EntityData> javaMetadata, final CallbackInfo ci) {
++        BedrockNameTagAnchors.update(this.user, (Entity) (Object) this);
++    }
++
++    @Inject(method = "remove", at = @At("HEAD"))
++    private void removeNameMetadata(final CallbackInfo ci) {
++        BedrockNameTagAnchors.remove(this.user, (Entity) (Object) this);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTagRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTagRenderer.java
+new file mode 100644
+index 0000000..b3f2286
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTagRenderer.java
+@@ -0,0 +1,54 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.mojang.blaze3d.vertex.PoseStack;
++import com.viaversion.viafabricplus.ViaFabricPlus;
++import com.viaversion.viafabricplus.bedrock.render.BedrockNameTagAnchors;
++import net.minecraft.client.renderer.SubmitNodeCollector;
++import net.minecraft.client.renderer.entity.EntityRenderer;
++import net.minecraft.client.renderer.entity.state.EntityRenderState;
++import net.minecraft.client.renderer.state.level.CameraRenderState;
++import net.minecraft.network.chat.Component;
++import net.minecraft.world.entity.Entity;
++import net.minecraft.world.entity.Interaction;
++import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.BedrockProtocolVersion;
++import org.jspecify.annotations.Nullable;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(EntityRenderer.class)
++public abstract class MixinBedrockNameTagRenderer {
++    @Inject(method = "extractRenderState", at = @At("TAIL"))
++    private void extractNativeNameTag(final Entity entity, final EntityRenderState state,
++                                     final float partialTicks, final CallbackInfo ci) {
++        final boolean directBedrock = ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST);
++        if (!BedrockNameTagAnchors.enabled(directBedrock)) return;
++        if (directBedrock) {
++            final var snapshot = BedrockNameTagAnchors.get(ViaFabricPlus.api().userConnection(), entity.getId(), entity.getUUID());
++            if (snapshot != null) state.nameTagAttachment = snapshot.attachment(state.nameTagAttachment);
++        } else {
++            state.nameTagAttachment = BedrockNameTagAnchors.proxyAttachment(true, entity instanceof Interaction,
++                    entity.getBbHeight(), state.nameTagAttachment);
++        }
++    }
++
++    @WrapOperation(method = "submitNameDisplay(Lnet/minecraft/client/renderer/entity/state/EntityRenderState;Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;Lnet/minecraft/client/renderer/state/level/CameraRenderState;I)V",
++            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/SubmitNodeCollector;submitNameTag(Lcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/world/phys/Vec3;ILnet/minecraft/network/chat/Component;ZILnet/minecraft/client/renderer/state/level/CameraRenderState;)V"))
++    private void submitNativeNameTag(final SubmitNodeCollector collector, final PoseStack poses,
++                                    final @Nullable Vec3 attachment, final int offset, final Component name,
++                                    final boolean seeThrough, final int light, final CameraRenderState camera,
++                                    final Operation<Void> original) {
++        final boolean bedrock = BedrockNameTagAnchors.enabled(ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST));
++        original.call(collector, poses, attachment, offset, name, seeThrough,
++                bedrock ? BedrockNameTagAnchors.light(!seeThrough, light) : light, camera);
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java
 new file mode 100644
-index 0000000..33dd08b
+index 0000000..3d2e13f
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,40 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -523,12 +632,15 @@ index 0000000..33dd08b
 +import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 +import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 +import com.mojang.blaze3d.vertex.PoseStack;
++import com.viaversion.viafabricplus.ViaFabricPlus;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockNameTags;
++import com.viaversion.viafabricplus.bedrock.render.BedrockNameTagAnchors;
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.client.renderer.SubmitNodeCollection;
 +import net.minecraft.client.renderer.state.level.CameraRenderState;
 +import net.minecraft.network.chat.Component;
 +import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.BedrockProtocolVersion;
 +import org.jspecify.annotations.Nullable;
 +import org.spongepowered.asm.mixin.Mixin;
 +
@@ -538,7 +650,8 @@ index 0000000..33dd08b
 +    private void renderServerNameLines(final PoseStack poses, final @Nullable Vec3 attachment,
 +                                      final int offset, final Component name, final boolean seeThrough,
 +                                      final int light, final CameraRenderState camera, final Operation<Void> original) {
-+        if (!name.getString().contains("\n")) {
++        if (!BedrockNameTagAnchors.enabled(ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST))
++                || !name.getString().contains("\n")) {
 +            original.call(poses, attachment, offset, name, seeThrough, light, camera);
 +            return;
 +        }
@@ -1603,6 +1716,83 @@ index 0000000..08fef85
 +    private record Bone(Parent definition, ModelPart part, Map<String, ModelPart> children) {
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagAnchors.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagAnchors.java
+new file mode 100644
+index 0000000..6492b14
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagAnchors.java
+@@ -0,0 +1,71 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockRenderingMetadata;
++import com.viaversion.viaversion.api.connection.StorableObject;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import java.util.Map;
++import java.util.Optional;
++import java.util.UUID;
++import java.util.concurrent.ConcurrentHashMap;
++import net.minecraft.util.LightCoordsUtil;
++import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++
++/** Publishes native name geometry without reading mutable network state while drawing. */
++public final class BedrockNameTagAnchors implements StorableObject {
++    private final Map<Integer, Snapshot> actors = new ConcurrentHashMap<>();
++
++    private BedrockNameTagAnchors() {}
++
++    public static void update(final UserConnection connection, final Entity actor) {
++        BedrockNameTagAnchors store = connection.get(BedrockNameTagAnchors.class);
++        if (store == null) {
++            store = new BedrockNameTagAnchors();
++            connection.put(store);
++        }
++        store.actors.put(actor.javaId(), new Snapshot(actor.javaUuid(), actor.boundingBoxDimensions().height()));
++    }
++
++    public static void remove(final UserConnection connection, final Entity actor) {
++        final BedrockNameTagAnchors store = connection.get(BedrockNameTagAnchors.class);
++        if (store != null) store.actors.computeIfPresent(actor.javaId(),
++                (_, snapshot) -> snapshot.uuid().equals(actor.javaUuid()) ? null : snapshot);
++    }
++
++    public static Snapshot get(final UserConnection connection, final int id, final UUID uuid) {
++        if (connection == null) return null;
++        final BedrockNameTagAnchors store = connection.get(BedrockNameTagAnchors.class);
++        final Snapshot snapshot = store == null ? null : store.actors.get(id);
++        return snapshot != null && snapshot.uuid().equals(uuid) ? snapshot : null;
++    }
++
++    public static boolean enabled(final boolean directBedrock) {
++        return directBedrock || BedrockRenderingMetadata.active();
++    }
++
++    public static Vec3 proxyAttachment(final boolean nativeContext, final boolean interaction,
++                                       final float height, final Vec3 fallback) {
++        // A proxy cannot expose native snapshots. Interaction dimensions are translated
++        // into Java metadata, but Java's default height of one is ambiguous when only
++        // width was supplied. Keep that case and unknown entity types unchanged.
++        if (!nativeContext || !interaction || !Float.isFinite(height) || height < 0.005F || height == 1F) return fallback;
++        return new Vec3(0, height + 0.2, 0);
++    }
++
++    public static int light(final boolean depthTested, final int worldLight) {
++        return depthTested ? worldLight : LightCoordsUtil.FULL_BRIGHT;
++    }
++
++    public record Snapshot(UUID uuid, Optional<Float> height) {
++        public Vec3 attachment(final Vec3 fallback) {
++            // Java adds .5 blocks when drawing; native anchors .7 blocks above the collision box.
++            if (this.height.isPresent()) return new Vec3(0, this.height.get() + 0.2, 0);
++            return fallback;
++        }
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTags.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTags.java
 new file mode 100644
 index 0000000..162a204
@@ -2271,10 +2461,10 @@ index 35145bc..91ad0d7 100644
 +accessible field net/minecraft/client/renderer/RenderPipelines ENTITY_SNIPPET Lcom/mojang/renderpearl/api/pipeline/RenderPipeline$Snippet;
 +accessible method net/minecraft/client/renderer/rendertype/RenderType create (Ljava/lang/String;Lnet/minecraft/client/renderer/rendertype/RenderSetup;)Lnet/minecraft/client/renderer/rendertype/RenderType;
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 17da109..0cea790 100644
+index 17da109..a323d8c 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -45,6 +45,16 @@
+@@ -45,6 +45,18 @@
      "features.misc.MixinClientSuggestionProvider",
      "features.misc.MixinInventoryScreen",
      "features.misc.MixinMinecraft",
@@ -2282,6 +2472,8 @@ index 17da109..0cea790 100644
 +    "features.render.MixinBedrockActorPipelines",
 +    "features.render.MixinBedrockActorRenderType",
 +    "features.render.MixinBedrockNameTags",
++    "features.render.MixinBedrockNameTagMetadata",
++    "features.render.MixinBedrockNameTagRenderer",
 +    "features.render.MixinCustomEntity",
 +    "features.render.MixinBedrockRidingMetadata",
 +    "features.render.MixinBedrockRidingPosition",
@@ -2774,6 +2966,124 @@ index 0000000..aac5efd
 +        }
 +    }
 +
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagAnchorsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagAnchorsTest.java
+new file mode 100644
+index 0000000..462e9d8
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagAnchorsTest.java
+@@ -0,0 +1,112 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockRenderingMetadata;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
++import java.lang.reflect.Proxy;
++import java.util.HashMap;
++import java.util.Map;
++import java.util.UUID;
++import net.minecraft.util.LightCoordsUtil;
++import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
++import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertSame;
++
++final class BedrockNameTagAnchorsTest {
++    @Test
++    void usesNativeCollisionHeightAndPreservesUnknownAttachments() {
++        final Fixture fixture = new Fixture();
++        final Vec3 fallback = new Vec3(0.1, 1.8, 0.2);
++        BedrockNameTagAnchors.update(fixture.user, fixture.actor);
++        assertSame(fallback, fixture.snapshot().attachment(fallback));
++        fixture.height(2F);
++        // Java's submission adds .5; the native producer adds .7 to the AABB height.
++        assertEquals(2.7, fixture.snapshot().attachment(fallback).y + 0.5, 0.000001);
++        fixture.actor.entityData().put(ActorDataIds.RESERVED_038, new EntityData(38, EntityDataTypesBedrock.FLOAT, 1.75F));
++        BedrockNameTagAnchors.update(fixture.user, fixture.actor);
++        assertEquals(4.2, fixture.snapshot().attachment(fallback).y + 0.5, 0.000001);
++        fixture.height(0F);
++        assertEquals(0.705, fixture.snapshot().attachment(fallback).y + 0.5, 0.000001);
++        fixture.height(Float.NaN);
++        assertSame(fallback, fixture.snapshot().attachment(fallback));
++    }
++
++    @Test
++    void publishesImmutableSnapshotsAndRejectsReusedEntityIds() {
++        final Fixture fixture = new Fixture();
++        fixture.height(2F);
++        final BedrockNameTagAnchors.Snapshot old = fixture.snapshot();
++        fixture.actor.entityData().put(ActorDataIds.RESERVED_054,
++                new EntityData(54, EntityDataTypesBedrock.FLOAT, 3F));
++        assertEquals(2.2, old.attachment(Vec3.ZERO).y, 0.000001);
++        BedrockNameTagAnchors.update(fixture.user, fixture.actor);
++        assertEquals(3.2, fixture.snapshot().attachment(Vec3.ZERO).y, 0.000001);
++        assertEquals(2.2, old.attachment(Vec3.ZERO).y, 0.000001);
++        assertNull(BedrockNameTagAnchors.get(fixture.user, fixture.actor.javaId(), UUID.randomUUID()));
++        assertNull(BedrockNameTagAnchors.get(null, fixture.actor.javaId(), fixture.actor.javaUuid()));
++        BedrockNameTagAnchors.remove(fixture.user, fixture.actor);
++        assertNull(fixture.snapshot());
++    }
++
++    @Test
++    void keepsDepthTestedLightingAndUsesUnlitOrdinaryNameMaterial() {
++        final int worldLight = LightCoordsUtil.pack(3, 7);
++        assertEquals(worldLight, BedrockNameTagAnchors.light(true, worldLight));
++        assertEquals(LightCoordsUtil.FULL_BRIGHT, BedrockNameTagAnchors.light(false, worldLight));
++    }
++
++    @Test
++    void keepsAmbiguousProxyBoundsAndOrdinaryJavaAttachments() {
++        final Vec3 fallback = new Vec3(0.1, 1.8, 0.2);
++        for (float unknown : new float[]{0F, 1F, Float.NaN, Float.POSITIVE_INFINITY, -1F}) {
++            assertSame(fallback, BedrockNameTagAnchors.proxyAttachment(true, true, unknown, fallback));
++        }
++        assertSame(fallback, BedrockNameTagAnchors.proxyAttachment(false, true, 2F, fallback));
++        assertSame(fallback, BedrockNameTagAnchors.proxyAttachment(true, false, 2F, fallback));
++        assertEquals(2.7, BedrockNameTagAnchors.proxyAttachment(true, true, 2F, fallback).y + 0.5, 0.000001);
++        assertEquals(4.2, BedrockNameTagAnchors.proxyAttachment(true, true, 3.5F, fallback).y + 0.5, 0.000001);
++    }
++
++    @Test
++    void requiresDirectBedrockOrAcceptedNativeRenderingMetadata() {
++        BedrockRenderingMetadata.clear();
++        assertFalse(BedrockNameTagAnchors.enabled(false));
++        assertTrue(BedrockNameTagAnchors.enabled(true));
++    }
++
++    private static final class Fixture {
++        final Map<Class<?>, Object> stores = new HashMap<>();
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (_, method, args) -> switch (method.getName()) {
++                    case "get" -> this.stores.get(args[0]);
++                    case "put" -> this.stores.put(args[0].getClass(), args[0]);
++                    default -> null;
++                });
++        final Entity actor = new Entity(this.user, 1, 1, "minecraft:armor_stand", 10,
++                UUID.randomUUID(), EntityTypes26_3.INTERACTION);
++
++        void height(final float height) {
++            this.actor.entityData().put(ActorDataIds.RESERVED_054,
++                    new EntityData(54, EntityDataTypesBedrock.FLOAT, height));
++            BedrockNameTagAnchors.update(this.user, this.actor);
++        }
++
++        BedrockNameTagAnchors.Snapshot snapshot() {
++            return BedrockNameTagAnchors.get(this.user, this.actor.javaId(), this.actor.javaUuid());
++        }
++    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java
 new file mode 100644

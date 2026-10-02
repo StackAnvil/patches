@@ -1,4 +1,4 @@
-From 8b11575bafabb51a909849d1e0b31187503aaab6 Mon Sep 17 00:00:00 2001
+From 3ecb83a458ba88eb03f4ffea9f8070a5cb47ba41 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 00:27:08 +0200
 Subject: [PATCH] feat(entities): translate Bedrock metadata and properties
@@ -47,7 +47,7 @@ batch. Preserve null CUSTOM_NAME clearing and the existing player profile
 and team-name fallback. Tests cover both metadata orders, sparse clearing
 and restoring, an absent ordinary NAME, and default player names.
 ---
- .../viabedrock/api/model/entity/Entity.java   |  35 ++
+ .../viabedrock/api/model/entity/Entity.java   |  56 ++
  .../api/model/entity/LivingEntity.java        |   7 +-
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
  .../data/enums/bedrock/ActorFlags.java        |   6 +-
@@ -56,15 +56,15 @@ and restoring, an absent ordinary NAME, and default player names.
  .../protocol/packet/EntityPackets.java        |  33 +-
  .../protocol/packet/JoinPackets.java          |   2 +-
  .../protocol/packet/OtherPlayerPackets.java   |   5 +-
- .../rewriter/EntityMetadataRewriter.java      | 575 ++++++++++++++++--
+ .../rewriter/EntityMetadataRewriter.java      | 598 ++++++++++++++++--
  .../storage/EntityPropertyTracker.java        |  61 ++
  .../entity_flag_molang_query_mappings.json    |   6 +-
  .../entity/EntityPropertyRenderTest.java      |  74 +++
  .../enums/bedrock/ActorFlagsMappingTest.java  |  27 +
  .../model/entity/EntityPropertyListTest.java  |  79 +++
- .../rewriter/EntityBodyVisibilityTest.java    | 201 ++++++
+ .../rewriter/EntityBodyVisibilityTest.java    | 253 ++++++++
  .../rewriter/EntityMetadataRewriterTest.java  | 151 +++++
- 17 files changed, 1361 insertions(+), 64 deletions(-)
+ 17 files changed, 1457 insertions(+), 64 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityProperty.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyList.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/EntityPropertyTracker.java
@@ -75,7 +75,7 @@ and restoring, an absent ordinary NAME, and default player names.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index 210a0f11..b0324863 100644
+index 15d58193..1c93cf2a 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 @@ -32,6 +32,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
@@ -86,7 +86,7 @@ index 210a0f11..b0324863 100644
  import net.raphimc.viabedrock.protocol.model.Position3f;
  import net.raphimc.viabedrock.protocol.rewriter.EntityMetadataRewriter;
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
-@@ -65,10 +66,12 @@ public class Entity {
+@@ -67,10 +68,12 @@ public class Entity {
      protected String name;
      protected int age;
      protected boolean hasBossBar;
@@ -99,7 +99,32 @@ index 210a0f11..b0324863 100644
  
      public Entity(final UserConnection user, final long uniqueId, final long runtimeId, final String type, final int javaId, final UUID javaUuid, final EntityTypes26_3 javaType) {
          this.user = user;
-@@ -123,6 +126,18 @@ public class Entity {
+@@ -88,6 +91,24 @@ public class Entity {
+         return scaleData == null ? 1F : ((Number) scaleData.value()).floatValue();
+     }
+ 
++    /** Native collision-box metadata stores base dimensions; the AABB applies actor scale. */
++    public final BoundingBoxDimensions boundingBoxDimensions() {
++        return new BoundingBoxDimensions(this.boundingBoxDimension(ActorDataIds.RESERVED_053), this.boundingBoxDimension(ActorDataIds.RESERVED_054));
++    }
++
++    private Optional<Float> boundingBoxDimension(final ActorDataIds id) {
++        final EntityData data = this.entityData.get(id);
++        if (data == null || !(data.value() instanceof Number number)) {
++            return Optional.empty();
++        }
++        final float baseValue = number.floatValue();
++        final float scale = this.scale();
++        final float value = baseValue * scale;
++        // The native AABB producer clamps collapsed dimensions to .005 blocks.
++        return Float.isFinite(baseValue) && baseValue >= 0F && Float.isFinite(scale) && scale >= 0F
++                && Float.isFinite(value) && value < 1E9F ? Optional.of(Math.max(0.005F, value)) : Optional.empty();
++    }
++
+     public final Map<String, Object> entityProperties() {
+         return Map.copyOf(this.entityProperties);
+     }
+@@ -125,6 +146,18 @@ public class Entity {
          setEntityData.send(BedrockProtocol.class);
      }
  
@@ -118,7 +143,7 @@ index 210a0f11..b0324863 100644
      public final void updateEntityData(final EntityData[] entityData, final List<EntityData> javaEntityData) {
          for (EntityData data : entityData) {
              final ActorDataIds dataId = ActorDataIds.getByValue(data.id());
-@@ -144,6 +159,10 @@ public class Entity {
+@@ -146,6 +179,10 @@ public class Entity {
          this.onEntityDataChanged();
      }
  
@@ -129,7 +154,7 @@ index 210a0f11..b0324863 100644
      public void playSound(final String soundEvent) {
          final PacketWrapper levelSoundEvent = PacketWrapper.create(ClientboundBedrockPackets.LEVEL_SOUND_EVENT, this.user);
          levelSoundEvent.write(BedrockTypes.STRING, soundEvent); // event
-@@ -195,6 +214,14 @@ public class Entity {
+@@ -197,6 +234,14 @@ public class Entity {
          return this.javaType;
      }
  
@@ -144,7 +169,7 @@ index 210a0f11..b0324863 100644
      public Position3f position() {
          return this.position;
      }
-@@ -297,6 +324,14 @@ public class Entity {
+@@ -299,6 +344,14 @@ public class Entity {
          return this.mountRuntimeId;
      }
  
@@ -159,6 +184,14 @@ index 210a0f11..b0324863 100644
      public final int getJavaEntityDataIndex(final String fieldName) {
          final int index = BedrockProtocol.MAPPINGS.getJavaEntityDataFields().get(this.javaType).indexOf(fieldName);
          if (index == -1) {
+@@ -314,4 +367,7 @@ public class Entity {
+     protected void onEntityDataChanged() {
+     }
+ 
++    public record BoundingBoxDimensions(Optional<Float> width, Optional<Float> height) {
++    }
++
+ }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/LivingEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/LivingEntity.java
 index 8f927e66..f90269e6 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/LivingEntity.java
@@ -557,7 +590,7 @@ index 48767edb..545c61a9 100644
                  entityTracker.applyEntityLink(link);
              }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
-index ed40425a..67d34a50 100644
+index ed40425a..56348251 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
 @@ -17,55 +17,86 @@
@@ -923,7 +956,7 @@ index ed40425a..67d34a50 100644
              case INV -> {
                  if (entity.javaType().is(EntityTypes26_3.WITHER)) {
                      final int invulnerabilityTicks = readNumber(entityData).intValue();
-@@ -639,6 +744,20 @@ public final class EntityMetadataRewriter {
+@@ -639,6 +744,24 @@ public final class EntityMetadataRewriter {
                      ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received TARGET for non-GUARDIAN entity " + entity.type() + " with non-zero value " + targetId);
                  }
              }
@@ -940,11 +973,15 @@ index ed40425a..67d34a50 100644
 +                final float scale = readNumber(entityData).floatValue();
 +                updateSharedFlags(entity, javaEntityData);
 +                updateScale(entity, scale, javaEntityData);
++                updateInteractionDimensions(entity, true, true, javaEntityData);
++            }
++            case RESERVED_053, RESERVED_054 -> { // Native collision-box base width and height
++                updateInteractionDimensions(entity, id == ActorDataIds.RESERVED_053, id == ActorDataIds.RESERVED_054, javaEntityData);
 +            }
              case AGENT, BALLOON_ANCHOR -> {
              } // Education edition only, ignore
              default -> {
-@@ -649,6 +768,364 @@ public final class EntityMetadataRewriter {
+@@ -649,6 +772,383 @@ public final class EntityMetadataRewriter {
          return true;
      }
  
@@ -1123,6 +1160,25 @@ index ed40425a..67d34a50 100644
 +            index++;
 +        }
 +        return -1;
++    }
++
++    private static void updateInteractionDimensions(final Entity entity, final boolean width, final boolean height, final List<EntityData> javaEntityData) {
++        if (!entity.javaType().is(EntityTypes26_3.INTERACTION)) {
++            return;
++        }
++        final var dimensions = entity.boundingBoxDimensions();
++        if (width) {
++            dimensions.width().ifPresent(value -> updateInteractionDimension(entity, EntityDataFields.WIDTH, value, javaEntityData));
++        }
++        if (height) {
++            dimensions.height().ifPresent(value -> updateInteractionDimension(entity, EntityDataFields.HEIGHT, value, javaEntityData));
++        }
++    }
++
++    private static void updateInteractionDimension(final Entity entity, final String field, final float value, final List<EntityData> javaEntityData) {
++        final int index = entity.getJavaEntityDataIndex(field);
++        javaEntityData.removeIf(data -> data.id() == index);
++        javaEntityData.add(new EntityData(index, VersionedTypes.V26_3.entityDataTypes().floatType, value));
 +    }
 +
 +    private static void updateNameVisibility(final Entity entity, final List<EntityData> javaEntityData) {
@@ -1593,10 +1649,10 @@ index 00000000..eacc385c
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityBodyVisibilityTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityBodyVisibilityTest.java
 new file mode 100644
-index 00000000..679b3667
+index 00000000..67014480
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityBodyVisibilityTest.java
-@@ -0,0 +1,201 @@
+@@ -0,0 +1,253 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1632,7 +1688,7 @@ index 00000000..679b3667
 +    private final Map<Field, Object> previousMappings = new HashMap<>();
 +    private static final List<String> FIELDS = List.of(EntityDataFields.SHARED_FLAGS, EntityDataFields.SILENT,
 +            EntityDataFields.NO_GRAVITY, EntityDataFields.LIVING_ENTITY_FLAGS,
-+            EntityDataFields.CUSTOM_NAME, EntityDataFields.CUSTOM_NAME_VISIBLE);
++            EntityDataFields.CUSTOM_NAME, EntityDataFields.CUSTOM_NAME_VISIBLE, EntityDataFields.WIDTH, EntityDataFields.HEIGHT);
 +
 +    @BeforeAll
 +    static void initializeStructuredDataKeys() throws Exception {
@@ -1762,6 +1818,58 @@ index 00000000..679b3667
 +        field.setAccessible(true);
 +        this.previousMappings.put(field, field.get(BedrockProtocol.MAPPINGS));
 +        field.set(BedrockProtocol.MAPPINGS, replacement);
++    }
++
++    @Test
++    void retainsIndependentSparseBoundingBoxDimensionsAndPublishesInteractionMetadata() {
++        final Entity actor = actor(EntityTypes26_3.INTERACTION);
++        final List<EntityData> initial = update(actor, dimension(ActorDataIds.RESERVED_053, 0F), dimension(ActorDataIds.RESERVED_054, 2F));
++        final var before = actor.boundingBoxDimensions();
++        assertEquals(0.005F, before.width().orElseThrow());
++        assertEquals(2F, before.height().orElseThrow());
++        assertEquals(0.005F, value(initial, EntityDataFields.WIDTH));
++        assertEquals(2F, value(initial, EntityDataFields.HEIGHT));
++        final List<EntityData> sparse = update(actor, scale(1.9F), dimension(ActorDataIds.RESERVED_054, 2.9F));
++        assertEquals(0.005F, actor.boundingBoxDimensions().width().orElseThrow());
++        assertEquals(2.9F * 1.9F, actor.boundingBoxDimensions().height().orElseThrow());
++        assertEquals(2F, before.height().orElseThrow());
++        assertEquals(2.9F * 1.9F, value(sparse, EntityDataFields.HEIGHT));
++        assertEquals(0.005F, value(sparse, EntityDataFields.WIDTH));
++    }
++
++    @Test
++    void recomputesScaledBoundsOncePerFieldRegardlessOfMetadataOrder() {
++        for (boolean scaleFirst : new boolean[]{false, true}) {
++            final Entity actor = actor(EntityTypes26_3.INTERACTION);
++            final EntityData[] metadata = scaleFirst
++                    ? new EntityData[]{scale(1.75F), dimension(ActorDataIds.RESERVED_053, 0.6F), dimension(ActorDataIds.RESERVED_054, 2F)}
++                    : new EntityData[]{dimension(ActorDataIds.RESERVED_053, 0.6F), dimension(ActorDataIds.RESERVED_054, 2F), scale(1.75F)};
++            final List<EntityData> initial = update(actor, metadata);
++            assertEquals(1.05F, ((Number) value(initial, EntityDataFields.WIDTH)).floatValue(), 0.000001F);
++            assertEquals(3.5F, value(initial, EntityDataFields.HEIGHT));
++            assertEquals(1, initial.stream().filter(entry -> entry.id() == FIELDS.indexOf(EntityDataFields.HEIGHT)).count());
++            final List<EntityData> sparse = update(actor, scale(0F));
++            assertEquals(0.005F, value(sparse, EntityDataFields.WIDTH));
++            assertEquals(0.005F, value(sparse, EntityDataFields.HEIGHT));
++            assertEquals(2F, ((Number) actor.entityData().get(ActorDataIds.RESERVED_054).value()).floatValue());
++        }
++    }
++
++    @Test
++    void keepsMissingAndInvalidDimensionsDistinctFromZeroAndPreservesOtherEntityTypes() {
++        final Entity actor = actor(EntityTypes26_3.PLAYER);
++        assertTrue(actor.boundingBoxDimensions().height().isEmpty());
++        final List<EntityData> result = update(actor, dimension(ActorDataIds.RESERVED_054, 0F));
++        assertEquals(0.005F, actor.boundingBoxDimensions().height().orElseThrow());
++        assertTrue(result.stream().noneMatch(entry -> entry.id() == FIELDS.indexOf(EntityDataFields.HEIGHT)));
++        update(actor, dimension(ActorDataIds.RESERVED_054, Float.NaN));
++        assertTrue(actor.boundingBoxDimensions().height().isEmpty());
++        update(actor, dimension(ActorDataIds.RESERVED_053, -1F));
++        assertTrue(actor.boundingBoxDimensions().width().isEmpty());
++    }
++
++    private static EntityData dimension(final ActorDataIds id, final float value) {
++        return new EntityData(id.getValue(), EntityDataTypesBedrock.FLOAT, value);
 +    }
 +
 +    private static Entity actor(final EntityTypes26_3 type) {
