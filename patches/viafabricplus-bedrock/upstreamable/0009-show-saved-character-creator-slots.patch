@@ -1115,17 +1115,28 @@ top and bottom UV orientation rules.
 The existing licensed native cape oracle checks positions, normals,
 texture coordinates, and atlas pixels at all four persona heights.
 It passes unchanged together with the box/per-face geometry tests.
+
+Ship an independent headless package helper for Flatpak runtimes that lack
+WebKitGTK. Keep interactive Store sign-in as the default host feature;
+headless acquisition requires valid Store credentials and preserves token
+expiry, selected-account, and fresh device-bound license validation.
+Missing or expired credentials return an explicit sign-in requirement.
+
+Consume bounded private helper output before reporting an early process
+exit, so loader errors do not become misleading closed-stdin failures.
+Keep payloads and credentials out of diagnostics, and package both helper
+variants with independent checksums for local builds and release CI.
 ---
  .gitignore                                    |    4 +-
- build.gradle.kts                              |   54 +
+ build.gradle.kts                              |   68 +
  native/persona-assets/Cargo.lock              | 6725 +++++++++++++++++
- native/persona-assets/Cargo.toml              |   27 +
+ native/persona-assets/Cargo.toml              |   31 +
  native/persona-assets/LICENSE                 |  674 ++
  native/persona-assets/NOTICE                  |   34 +
  native/persona-assets/src/index.rs            |  263 +
  native/persona-assets/src/license.rs          |   96 +
  native/persona-assets/src/login.rs            |  179 +
- native/persona-assets/src/main.rs             |  516 ++
+ native/persona-assets/src/main.rs             |  537 ++
  native/persona-assets/src/remote.rs           |  315 +
  native/persona-assets/src/store.rs            |   92 +
  native/persona-assets/src/webview.rs          |  399 +
@@ -1458,7 +1469,7 @@ index d845caa..e1f9fb5 100644
 +# Bundled package helper build output
 +/native/persona-assets/target/
 diff --git a/build.gradle.kts b/build.gradle.kts
-index 5962de8..8b57f38 100644
+index 5962de8..e5b3e48 100644
 --- a/build.gradle.kts
 +++ b/build.gradle.kts
 @@ -3,6 +3,8 @@ import de.florianreuth.baseproject.integration.includeTransitiveJijDependencies
@@ -1479,7 +1490,7 @@ index 5962de8..8b57f38 100644
      shade(viaBedrockDependency) {
          exclude(group = "com.mojang", module = "brigadier")
          exclude(group = "at.yawk.lz4", module = "lz4-java")
-@@ -88,3 +92,53 @@ tasks.withType<Jar>().configureEach {
+@@ -88,3 +92,67 @@ tasks.withType<Jar>().configureEach {
  tasks.test {
      useJUnitPlatform()
  }
@@ -1495,8 +1506,9 @@ index 5962de8..8b57f38 100644
 +    when (it) { "amd64", "x86_64" -> "x86_64"; "arm64", "aarch64" -> "aarch64"; else -> error("Unsupported package helper architecture: $it") }
 +}
 +val helperName = "persona-assets" + if (hostOs == "windows") ".exe" else ""
++val headlessHelperName = "persona-assets-headless" + if (hostOs == "windows") ".exe" else ""
 +val helperResources = layout.buildDirectory.dir("persona-helper-resources")
-+val buildPersonaHelper by tasks.registering(Exec::class) {
++val buildPersonaHelper = tasks.register<Exec>("buildPersonaHelper") {
 +    onlyIf { !prebuiltPersonaHelpers.isPresent }
 +    workingDir(nativeRoot)
 +    commandLine("cargo", "+1.98.1", "build", "--release", "--locked")
@@ -1504,12 +1516,21 @@ index 5962de8..8b57f38 100644
 +    inputs.dir(nativeRoot.dir("src"))
 +    outputs.file(nativeRoot.file("target/release/$helperName"))
 +}
-+val embedPersonaHelper by tasks.registering {
++val buildHeadlessPersonaHelper = tasks.register<Exec>("buildHeadlessPersonaHelper") {
++    onlyIf { !prebuiltPersonaHelpers.isPresent }
++    workingDir(nativeRoot)
++    commandLine("cargo", "+1.98.1", "build", "--release", "--locked", "--no-default-features", "--target-dir", "target/headless")
++    inputs.files(nativeRoot.file("Cargo.toml"), nativeRoot.file("Cargo.lock"))
++    inputs.dir(nativeRoot.dir("src"))
++    outputs.file(nativeRoot.file("target/headless/release/$helperName"))
++}
++val embedPersonaHelper = tasks.register("embedPersonaHelper") {
 +    if (prebuiltPersonaHelpers.isPresent) {
 +        inputs.dir(prebuiltPersonaHelpers)
 +    } else {
-+        dependsOn(buildPersonaHelper)
++        dependsOn(buildPersonaHelper, buildHeadlessPersonaHelper)
 +        inputs.file(nativeRoot.file("target/release/$helperName"))
++        inputs.file(nativeRoot.file("target/headless/release/$helperName"))
 +    }
 +    inputs.files(nativeRoot.file("LICENSE"), nativeRoot.file("NOTICE"))
 +    outputs.dir(helperResources)
@@ -1519,12 +1540,16 @@ index 5962de8..8b57f38 100644
 +        if (prebuiltPersonaHelpers.isPresent) {
 +            copy { from(prebuiltPersonaHelpers); into(root.resolve("assets/viafabricplus-bedrock/native")) }
 +        } else {
-+            val source = nativeRoot.file("target/release/$helperName").asFile
 +            val directory = root.resolve("assets/viafabricplus-bedrock/native/$hostOs-$hostArch")
 +            directory.mkdirs()
-+            source.copyTo(directory.resolve(helperName), overwrite = true)
-+            val digest = MessageDigest.getInstance("SHA-256").digest(source.readBytes())
-+            directory.resolve("$helperName.sha256").writeText(HexFormat.of().formatHex(digest) + "\n")
++            for ((name, source) in listOf(
++                helperName to nativeRoot.file("target/release/$helperName").asFile,
++                headlessHelperName to nativeRoot.file("target/headless/release/$helperName").asFile,
++            )) {
++                source.copyTo(directory.resolve(name), overwrite = true)
++                val digest = MessageDigest.getInstance("SHA-256").digest(source.readBytes())
++                directory.resolve("$name.sha256").writeText(HexFormat.of().formatHex(digest) + "\n")
++            }
 +        }
 +        val notices = root.resolve("assets/viafabricplus-bedrock/native")
 +        nativeRoot.file("LICENSE").asFile.copyTo(notices.resolve("LICENSE"), overwrite = true)
@@ -8266,10 +8291,10 @@ index 0000000..1126e58
 +checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 diff --git a/native/persona-assets/Cargo.toml b/native/persona-assets/Cargo.toml
 new file mode 100644
-index 0000000..139a1f8
+index 0000000..ab4a8e9
 --- /dev/null
 +++ b/native/persona-assets/Cargo.toml
-@@ -0,0 +1,27 @@
+@@ -0,0 +1,31 @@
 +[package]
 +name = "persona-assets"
 +version = "0.1.0"
@@ -8286,8 +8311,8 @@ index 0000000..139a1f8
 +serde = { version = "1.0.229", features = ["derive"] }
 +serde_json = "1.0.151"
 +sha2 = "0.11"
-+tao = { package = "tao", version = "0.37.0" }
-+wry = "0.56.1"
++tao = { package = "tao", version = "0.37.0", optional = true }
++wry = { version = "0.56.1", optional = true }
 +uuid = "1.25"
 +fs2 = "0.4"
 +chrono = "0.4"
@@ -8297,6 +8322,10 @@ index 0000000..139a1f8
 +
 +[patch.crates-io]
 +ntfs = { git = "https://github.com/xodus-gaming/ntfs", rev = "5edc794c3ec73a2722dad24abefd05f270d3e066" }
++
++[features]
++default = ["interactive-login"]
++interactive-login = ["dep:tao", "dep:wry"]
 diff --git a/native/persona-assets/LICENSE b/native/persona-assets/LICENSE
 new file mode 100644
 index 0000000..f288702
@@ -9575,16 +9604,18 @@ index 0000000..55acfd9
 +}
 diff --git a/native/persona-assets/src/main.rs b/native/persona-assets/src/main.rs
 new file mode 100644
-index 0000000..e8d1a22
+index 0000000..500476f
 --- /dev/null
 +++ b/native/persona-assets/src/main.rs
-@@ -0,0 +1,516 @@
+@@ -0,0 +1,537 @@
 +// SPDX-License-Identifier: GPL-3.0-or-later
 +mod index;
 +mod license;
++#[cfg(feature = "interactive-login")]
 +mod login;
 +mod remote;
 +mod store;
++#[cfg(feature = "interactive-login")]
 +mod webview;
 +
 +use msixvc::{models::xvd::XvdHeader, xvd::XvdFile};
@@ -9613,14 +9644,30 @@ index 0000000..e8d1a22
 +
 +type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 +
++#[derive(Debug)]
++struct InteractiveSignInRequired;
++
++impl std::fmt::Display for InteractiveSignInRequired {
++    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        formatter.write_str("Interactive Microsoft Store sign-in is required")
++    }
++}
++
++impl std::error::Error for InteractiveSignInRequired {}
++
 +#[tokio::main]
 +async fn main() {
 +    // Neither tokens nor license keys are part of the process protocol.
 +    std::panic::set_hook(Box::new(|_| eprintln!("The package service failed")));
 +    match run().await {
 +        Ok(count) => println!("{}", serde_json::json!({"ok": true, "files": count})),
-+        Err(_) => {
-+            println!("{}", serde_json::json!({"ok": false}));
++        Err(error) => {
++            let response = if error.is::<InteractiveSignInRequired>() {
++                serde_json::json!({"ok": false, "error": "interactive_sign_in_required"})
++            } else {
++                serde_json::json!({"ok": false})
++            };
++            println!("{response}");
 +            std::process::exit(1);
 +        }
 +    }
@@ -9719,10 +9766,13 @@ index 0000000..e8d1a22
 +    backend.prune_expired()?;
 +    let tokens = TokenManager::new(backend, Arc::new(MemoryBackend::default()));
 +    xodus::tokens::device::ensure_device_credentials(&client, &tokens).await;
-+    if tokens.get_user_sts_token().is_err()
-+        && login::run(&client, &tokens).await != std::process::ExitCode::SUCCESS
-+    {
-+        return Err("Sign-in was cancelled".into());
++    if tokens.get_user_sts_token().is_err() {
++        #[cfg(feature = "interactive-login")]
++        if login::run(&client, &tokens).await != std::process::ExitCode::SUCCESS {
++            return Err("Sign-in was cancelled".into());
++        }
++        #[cfg(not(feature = "interactive-login"))]
++        return Err(InteractiveSignInRequired.into());
 +    }
 +    let device = tokens.get_device_sts_token()?;
 +    let user = tokens.get_user_sts_token()?;

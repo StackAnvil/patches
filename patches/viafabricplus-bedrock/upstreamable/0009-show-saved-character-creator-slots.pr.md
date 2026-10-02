@@ -10,7 +10,11 @@ The bundled Xodus-based helper signs into Microsoft Store with the selected Xbox
 
 Read resident and ordinary multi-run NTFS streams or the package segment index. Unpack BR archives with shared offsets and empty stubs, then atomically publish a versioned cache with file checksums. Decode native PNG face strips and BGRA TGA tint masks and feed equipped built-in pieces into the asset loader. Wave, Clap, Over There, and Follow Me use their extracted animation sources for preview and world playback.
 
-Local Linux tests acquired the official license and all 57 stable vanilla layers through the bundled helper. Fresh interactive Store sign-in and Windows and macOS runtime flows still need verification. CI builds the four supported helper variants. The runtime requires no installed game, copied keys, or user-supplied extractor.
+Local Linux tests acquired the official license and all 57 stable vanilla layers through the bundled helper. Fresh interactive Store sign-in and Windows and macOS runtime flows still need verification. CI builds interactive and headless helpers for the four supported platforms. The runtime requires no installed game, copied keys, or user-supplied extractor.
+
+Flatpak uses a separate helper without WebKitGTK. It retains Store token expiry checks, selected Xbox identity checks, and fresh device-bound licensing. Missing or expired Store credentials report that interactive sign-in is required. The normal host helper retains its interactive Store sign-in path. The add-on does not request host execution permissions.
+
+Linux Flatpak tests acquired 6,117 official files with valid Store credentials, then indexed 21,770 resources across 57 packs. Missing and expired credentials produced no assets. Java process tests cover early loader exits, private diagnostics, sign-in requirements, and successful response handling. Loader errors no longer appear as a closed stdin stream.
 
 Sources: [Pinned Xodus extraction](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/commands/streaming.rs), [license acquisition](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/license.rs), and [BR archive format](https://github.com/bedrock-crustaceans/brarchive/blob/main/FORMAT.md).
 
