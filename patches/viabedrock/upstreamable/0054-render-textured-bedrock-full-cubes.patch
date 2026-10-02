@@ -1,4 +1,4 @@
-From 7abdee607075796271575e57ee7ed30efdbb0d32 Mon Sep 17 00:00:00 2001
+From f7dd3c9e83d8765d002b9f77e4bda673f1300e7e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:38:26 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -64,30 +64,41 @@ Java 26.3 ignores the older shade flag, so use shade_direction_override
 with the upward direction to remove directional attenuation while retaining
 world light and ambient occlusion. Partition mixed-face elements without
 changing their bounds, rotations, UVs, emission, or solid-block occlusion.
+
+Render missing back faces for zero-thickness alpha-test block planes while
+retaining the authored texture at each corner, face lighting and static
+rotations. Preserve explicitly authored opposite faces, single-sided
+materials, inflated planes and solid cubes. The official Bedrock 1.26.51.1
+Hive recording (protocol 2193) sends red snapdragons as crossed WEST-only
+planes with alpha_test and disabled face dimming. Its broad plane faces
+away from the matched camera; Java culled the native-visible blossoms.
+Semantic tests cover every face axis, signed UVs and quarter-turn UV
+rotations, material partitions and immutable source geometry.
 ---
  .../api/model/CustomBlockVisual.java          |  26 +
  .../definition/BlockDefinitions.java          |  17 +-
- .../definition/CustomBlockDefinition.java     |  57 +++
+ .../definition/CustomBlockDefinition.java     |  57 ++
  .../definition/ModelDefinitions.java          |   7 +
- .../definition/TextureDefinitions.java        |  54 +++
+ .../definition/TextureDefinitions.java        |  54 ++
  .../http/ConvertedResourcePackCache.java      |  11 +-
  .../viabedrock/protocol/BedrockProtocol.java  |  24 +-
  .../protocol/packet/JoinPackets.java          |  29 +-
  .../protocol/packet/ResourcePackPackets.java  |  44 +-
  .../protocol/rewriter/BlockStateRewriter.java |  60 ++-
  .../rewriter/ResourcePackRewriter.java        |   2 +
- .../resourcepack/CustomBlockModel.java        | 445 ++++++++++++++++++
+ .../resourcepack/CustomBlockModel.java        | 489 ++++++++++++++++++
  .../CustomBlockResourceRewriter.java          | 202 ++++++++
  .../CustomBlockStateDefinitions.java          | 153 ++++++
  .../protocol/storage/ChunkTracker.java        |  33 +-
  .../storage/CustomBlockPackStorage.java       | 103 ++++
  .../protocol/storage/ResourcePackStorage.java |  34 ++
  .../rewriter/CustomBlockBoneGeometryTest.java | 177 +++++++
- .../CustomBlockModelSelectionTest.java        | 341 ++++++++++++++
- .../CustomBlockStateDefinitionsTest.java      | 218 +++++++++
+ .../CustomBlockModelSelectionTest.java        | 341 ++++++++++++
+ .../CustomBlockPlaneGeometryTest.java         | 170 ++++++
+ .../CustomBlockStateDefinitionsTest.java      | 218 ++++++++
  .../protocol/storage/ChunkTrackerTest.java    |  23 +
- .../storage/CustomBlockPackStorageTest.java   | 168 +++++++
- 22 files changed, 2207 insertions(+), 21 deletions(-)
+ .../storage/CustomBlockPackStorageTest.java   | 168 ++++++
+ 23 files changed, 2421 insertions(+), 21 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockVisual.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/CustomBlockDefinition.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
@@ -96,6 +107,7 @@ changing their bounds, rotations, UVs, emission, or solid-block occlusion.
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorage.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockBoneGeometryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockPlaneGeometryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitionsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorageTest.java
 
@@ -688,10 +700,10 @@ index 07a19fa9..9b746b0c 100644
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
 new file mode 100644
-index 00000000..aeb26ad0
+index 00000000..4ddcc38c
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
-@@ -0,0 +1,445 @@
+@@ -0,0 +1,489 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -714,6 +726,7 @@ index 00000000..aeb26ad0
 +import java.util.Map;
 +import java.util.LinkedHashMap;
 +import java.util.HashSet;
++import java.util.Set;
 +import org.cube.converter.util.element.Direction;
 +import org.cube.converter.model.element.Parent;
 +
@@ -817,7 +830,7 @@ index 00000000..aeb26ad0
 +        model.addProperty("ambientocclusion", ao);
 +        final Transform transformation = new Transform(components.getCompoundTag("minecraft:transformation"));
 +        transformModel(model, transformation);
-+        applyFaceDimming(model, faceDimming);
++        applyFaceMaterials(model, faceDimming, directionMethods);
 +        final boolean occluding = fullCube && opaque && transformation.identity();
 +        return new CustomBlockVisual(state, javaState, textureBindings.values().iterator().next(), JsonUtil.sort(model, Comparator.naturalOrder()).toString(), renderMethod,
 +                boxes(components.getCompoundTag("minecraft:collision_box"), false, transformation),
@@ -826,10 +839,51 @@ index 00000000..aeb26ad0
 +                light(components, "minecraft:block_light_filter", "lightLevel", 15), textureBindings, textureMethods);
 +    }
 +
-+    private static void applyFaceDimming(final JsonObject model, final Map<String, Boolean> faceDimming) {
++    private static void addPlaneBackFaces(final JsonObject element, final Map<Direction, String> methods, final Set<String> authoredFaces) {
++        final double[] from = point(element.getAsJsonArray("from"));
++        final double[] to = point(element.getAsJsonArray("to"));
++        final JsonObject faces = element.getAsJsonObject("faces");
++        for (String name : List.copyOf(faces.keySet())) {
++            final Direction direction = Direction.valueOf(name.toUpperCase(java.util.Locale.ROOT));
++            final int axis = switch (direction) {
++                case EAST, WEST -> 0;
++                case UP, DOWN -> 1;
++                case NORTH, SOUTH -> 2;
++            };
++            if (from[axis] != to[axis] || !methods.get(direction).equals("alpha_test")) {
++                continue;
++            }
++            final String opposite = switch (direction) {
++                case EAST -> "west";
++                case WEST -> "east";
++                case UP -> "down";
++                case DOWN -> "up";
++                case NORTH -> "south";
++                case SOUTH -> "north";
++            };
++            if (authoredFaces.contains(opposite)) {
++                continue;
++            }
++            final JsonObject back = faces.getAsJsonObject(name).deepCopy();
++            final JsonArray uv = back.getAsJsonArray("uv");
++            // Opposite Java faces traverse a plane in reverse. Keep the same
++            // texel at each point instead of mirroring the authored image.
++            final int coordinate = axis == 1 ? 1 : 0;
++            final JsonElement start = uv.get(coordinate);
++            uv.set(coordinate, uv.get(coordinate + 2));
++            uv.set(coordinate + 2, start);
++            if (back.has("rotation")) {
++                back.addProperty("rotation", (360 - back.get("rotation").getAsInt()) % 360);
++            }
++            faces.add(opposite, back);
++        }
++    }
++
++    private static void applyFaceMaterials(final JsonObject model, final Map<String, Boolean> faceDimming, final Map<Direction, String> methods) {
 +        final JsonArray elements = new JsonArray();
 +        for (JsonElement value : model.getAsJsonArray("elements")) {
 +            final JsonObject element = value.getAsJsonObject();
++            final var authoredFaces = Set.copyOf(element.getAsJsonObject("faces").keySet());
 +            final JsonObject shadedFaces = new JsonObject();
 +            final JsonObject unshadedFaces = new JsonObject();
 +            for (Map.Entry<String, JsonElement> face : element.getAsJsonObject("faces").entrySet()) {
@@ -837,6 +891,7 @@ index 00000000..aeb26ad0
 +            }
 +            if (!shadedFaces.isEmpty()) {
 +                element.add("faces", shadedFaces);
++                addPlaneBackFaces(element, methods, authoredFaces);
 +                elements.add(element);
 +            }
 +            if (!unshadedFaces.isEmpty()) {
@@ -845,6 +900,7 @@ index 00000000..aeb26ad0
 +                // Java 26.3 replaces the old shade flag with a direction override.
 +                // Upward faces have no directional attenuation, without making them emissive.
 +                unshaded.addProperty("shade_direction_override", "up");
++                addPlaneBackFaces(unshaded, methods, authoredFaces);
 +                elements.add(unshaded);
 +            }
 +        }
@@ -2319,6 +2375,182 @@ index 00000000..a48616db
 +        content.putString("blocks.json", "{\"format_version\":\"1.1.0\",\"test:legacy\":{\"textures\":{\"side\":\"ruby\",\"up\":\"gold\",\"down\":\"ruby\"}}}");
 +        content.putString("models/blocks/test.json", "{\"format_version\":\"1.12.0\",\"minecraft:geometry\":[{\"description\":{\"identifier\":\"geometry.test\",\"texture_width\":64,\"texture_height\":64},\"bones\":[{\"name\":\"root\",\"pivot\":[0,0,0],\"cubes\":[{\"origin\":[-8,0,-8],\"size\":[16,8,16],\"uv\":[0,0]}]}]}]}");
 +        return new ResourcePack(content);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockPlaneGeometryTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockPlaneGeometryTest.java
+new file mode 100644
+index 00000000..68188746
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockPlaneGeometryTest.java
+@@ -0,0 +1,170 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockModel;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.cube.converter.util.element.Direction;
++import org.junit.jupiter.api.Test;
++
++import java.awt.image.BufferedImage;
++import java.util.List;
++import java.util.Locale;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class CustomBlockPlaneGeometryTest {
++
++    @Test
++    void preservesTexelsAtEachPlaneCornerForBothWindingsAndEveryUvRotation() {
++        for (final Direction direction : Direction.values()) {
++            final int axis = axis(direction);
++            final String name = direction.name().toLowerCase(Locale.ROOT);
++            final String size = switch (axis) {
++                case 0 -> "[0,10,12]";
++                case 1 -> "[10,0,12]";
++                default -> "[10,12,0]";
++            };
++            final ResourcePackStorage storage = storage(size, "\"" + name + "\":{\"uv\":[12,2],\"uv_size\":[-8,10]}");
++            final var cube = storage.getModels().blockModels().get("geometry.test").getParents().get(0).getCubes().get(0);
++            for (int rotation = 0; rotation < 360; rotation += 90) {
++                cube.getUvMap().getUvRotation().put(direction, (float) rotation);
++                final CompoundTag components = components("alpha_test");
++                components.getCompoundTag("minecraft:material_instances").getCompoundTag("*").putByte("face_dimming", (byte) 0);
++                final JsonObject model = compile(storage, components);
++                final var elements = model.getAsJsonArray("elements");
++                assertEquals(1, elements.size());
++                final JsonObject element = elements.get(0).getAsJsonObject();
++                final JsonObject faces = element.getAsJsonObject("faces");
++                assertEquals(2, faces.size());
++                final JsonObject front = faces.getAsJsonObject(name);
++                final JsonObject back = faces.getAsJsonObject(opposite(direction));
++                assertEquals(front.get("texture"), back.get("texture"));
++                assertEquals("up", element.get("shade_direction_override").getAsString());
++                assertEquals(element.getAsJsonArray("from").get(axis), element.getAsJsonArray("to").get(axis));
++                assertNotNull(element.get("rotation"));
++                // Java 26.3 FaceInfo reverses U on vertical faces and V on
++                // horizontal faces. Compare texels at the same physical corner.
++                for (int corner = 0; corner < 4; corner++) {
++                    final int corresponding = Math.floorMod((axis == 1 ? 1 : 3) - corner, 4);
++                    assertArrayEquals(uv(front, corner), uv(back, corresponding), 1E-8);
++                }
++                assertEquals(model, compile(storage, components));
++                assertEquals(0, axis == 0 ? cube.getSize().getX() : axis == 1 ? cube.getSize().getY() : cube.getSize().getZ());
++                assertEquals(12, cube.getUvMap().getUvMap().get(direction)[0]);
++                assertEquals(4, cube.getUvMap().getUvMap().get(direction)[2]);
++            }
++        }
++    }
++
++    @Test
++    void leavesSingleSidedOpaqueBlendedAndSolidGeometryUnchanged() {
++        final ResourcePackStorage plane = storage("[0,10,12]", "\"west\":{\"uv\":[12,2],\"uv_size\":[-8,10]}");
++        for (final String method : List.of("alpha_test_single_sided", "opaque", "blend")) {
++            assertEquals(1, compile(plane, components(method)).getAsJsonArray("elements").get(0).getAsJsonObject().getAsJsonObject("faces").size());
++        }
++        final ResourcePackStorage solid = storage("[2,10,12]", "\"west\":{\"uv\":[12,2],\"uv_size\":[-8,10]}");
++        assertEquals(1, compile(solid, components("alpha_test")).getAsJsonArray("elements").get(0).getAsJsonObject().getAsJsonObject("faces").size());
++        final var cube = plane.getModels().blockModels().get("geometry.test").getParents().get(0).getCubes().get(0);
++        cube.setInflate(0.25F);
++        assertEquals(1, compile(plane, components("alpha_test")).getAsJsonArray("elements").get(0).getAsJsonObject().getAsJsonObject("faces").size());
++    }
++
++    @Test
++    void retainsDistinctAuthoredOppositeFacesAcrossDimmingPartitions() {
++        final ResourcePackStorage storage = storage("[0,10,12]", """
++                "west":{"uv":[12,2],"uv_size":[-8,10]},
++                "east":{"uv":[1,3],"uv_size":[6,9]}
++                """);
++        final CompoundTag components = components("alpha_test");
++        final CompoundTag materials = components.getCompoundTag("minecraft:material_instances");
++        final CompoundTag west = materials.getCompoundTag("*").copy();
++        west.putByte("face_dimming", (byte) 0);
++        materials.put("west", west);
++        final JsonObject model = compile(storage, components);
++        assertEquals(2, model.getAsJsonArray("elements").size());
++        int westFaces = 0;
++        int eastFaces = 0;
++        for (final var value : model.getAsJsonArray("elements")) {
++            final JsonObject element = value.getAsJsonObject();
++            final JsonObject faces = element.getAsJsonObject("faces");
++            assertEquals(1, faces.size());
++            if (faces.has("west")) {
++                westFaces++;
++                assertEquals("up", element.get("shade_direction_override").getAsString());
++                assertEquals("#WEST", faces.getAsJsonObject("west").get("texture").getAsString());
++            } else {
++                eastFaces++;
++                assertFalse(element.has("shade_direction_override"));
++                assertEquals("#EAST", faces.getAsJsonObject("east").get("texture").getAsString());
++            }
++        }
++        assertEquals(1, westFaces);
++        assertEquals(1, eastFaces);
++    }
++
++    private static double[] uv(final JsonObject face, final int corner) {
++        final int rotated = (corner + (face.has("rotation") ? face.get("rotation").getAsInt() / 90 : 0)) % 4;
++        final var uv = face.getAsJsonArray("uv");
++        return new double[]{uv.get(rotated < 2 ? 0 : 2).getAsDouble(), uv.get(rotated == 0 || rotated == 3 ? 1 : 3).getAsDouble()};
++    }
++
++    private static int axis(final Direction direction) {
++        return switch (direction) {
++            case EAST, WEST -> 0;
++            case UP, DOWN -> 1;
++            case NORTH, SOUTH -> 2;
++        };
++    }
++
++    private static String opposite(final Direction direction) {
++        return switch (direction) {
++            case EAST -> "west";
++            case WEST -> "east";
++            case UP -> "down";
++            case DOWN -> "up";
++            case NORTH -> "south";
++            case SOUTH -> "north";
++        };
++    }
++
++    private static JsonObject compile(final ResourcePackStorage storage, final CompoundTag components) {
++        final var visual = CustomBlockModel.compile(storage, "test:plant", 1, components);
++        assertNotNull(visual);
++        return JsonParser.parseString(visual.modelJson()).getAsJsonObject();
++    }
++
++    private static CompoundTag components(final String method) {
++        final CompoundTag components = new CompoundTag();
++        components.putString("minecraft:geometry", "geometry.test");
++        final CompoundTag materials = new CompoundTag();
++        final CompoundTag material = new CompoundTag();
++        material.putString("texture", "skin");
++        material.putString("render_method", method);
++        materials.put("*", material);
++        components.put("minecraft:material_instances", materials);
++        return components;
++    }
++
++    private static ResourcePackStorage storage(final String size, final String faces) {
++        final InMemoryContent content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":3,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":\"1.0.0\",\"name\":\"test\"}}");
++        content.putString("textures/terrain_texture.json", "{\"texture_data\":{\"skin\":{\"textures\":\"textures/blocks/skin\"}}}");
++        content.putPngImage("textures/blocks/skin.png", new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB));
++        content.putString("models/blocks/test.json", """
++                {"format_version":"1.12.0","minecraft:geometry":[{"description":{"identifier":"geometry.test","texture_width":16,"texture_height":16},
++                 "bones":[{"name":"root","cubes":[{"origin":[0,0,0],"size":%s,"pivot":[2,3,4],"rotation":[12,25,8],"uv":{%s}}]}]}]}
++                """.formatted(size, faces));
++        return new ResourcePackStorage(List.of(new ResourcePack(content)));
 +    }
 +
 +}

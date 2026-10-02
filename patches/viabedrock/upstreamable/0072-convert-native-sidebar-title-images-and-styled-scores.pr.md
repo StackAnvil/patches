@@ -14,4 +14,4 @@ Keep global palette parsing in `TextFormattingDefinitions`, separate from scoreb
 
 Preserve active bold and italic styles across palette color codes, including codes the dependency does not know. Entity metadata tests exercise player and custom actor names, sparse updates, blank names, independent connection palettes, and immutable emitted components. Pack storage finishes before supported entity creation; the protocol rejects replacement pack information within an existing connection.
 
-The converted-pack identity advances to version 9 after correcting equipped attachable selectors. This prevents earlier cached exports with doubled variant names from reaching the item selector or worn renderer. Cache regressions and the full 334-test core suite pass.
+The converted-pack identity advances to version 10 after correcting equipped attachable selectors and adding cutout-plane back faces. This prevents earlier cached exports with doubled variant names or missing plant faces from reaching the client. Cache regressions cover version rollover and reuse.

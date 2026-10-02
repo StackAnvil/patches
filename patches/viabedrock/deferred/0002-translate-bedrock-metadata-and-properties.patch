@@ -1,4 +1,4 @@
-From 265c745f3ce2174e53aa94367654a327e26f9282 Mon Sep 17 00:00:00 2001
+From 9c6ce35a32610ce32fe58fb0b70c3fe34070fa1c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 00:27:08 +0200
 Subject: [PATCH] feat(entities): translate Bedrock metadata and properties
@@ -43,8 +43,7 @@ instead displays its localized entity type label.
 
 Recompute and replace custom-name visibility after either name or visibility
 metadata, using retained values for sparse updates and one final value per
-batch. Preserve null CUSTOM_NAME clearing and the existing player profile
-and team-name fallback. Tests cover both metadata orders, sparse clearing
+batch. Preserve null CUSTOM_NAME clearing and player profile identity. Tests cover both metadata orders, sparse clearing
 and restoring, an absent ordinary NAME, and default player names.
 
 Expose immutable retained scaled actor bounds and publish Interaction dimensions after sparse scale or dimension updates. Target Bedrock 1.26.51.1 functions 141a1c130, 141e15010 and 14289a870 retain unscaled metadata53/54, multiply by actor scale, and clamp collapsed AABBs to .005 blocks. Reject missing or invalid bounds instead of guessing a name height. Tests cover ordering, sparse dimensions, scaling, collapse, and unrelated Java actor types.
@@ -78,9 +77,25 @@ orders, sparse updates, restoration, invalid/missing dimensions, source
 identity and scale/invisibility independence. Together with existing name
 and visibility regressions, 19 tests pass with zero failures or skips.
 Both main and test Checkstyle pass.
+
+Prefer retained authoritative NAME metadata for Java player team labels,
+including changes after spawning, without replacing the stored profile
+username. The target Hive ADD_PLAYER packets contain compact untranslated
+profile text and already-resolved multiline NAME metadata with coin glyphs.
+Java player renderers use the team prefix rather than CUSTOM_NAME, so
+translating metadata alone left the raw compact payload on screen.
+
+Native Bedrock 1.26.51.1 functions 141a14970 and 1446b2f00 retain metadata
+NAME unchanged and skip name rendering when that string is empty. Preserve
+explicit empty clearing with a hidden team label; only an absent NAME uses
+the existing profile fallback. Restore visibility when NAME returns and
+retain per-connection RGB, styles, newlines and custom glyphs. Packet-level
+tests cover initial fallback, metadata precedence, subsequent profile and
+NAME changes, sparse updates, explicit clearing and restoration.
 ---
  .../viabedrock/api/model/entity/Entity.java   |  56 ++
  .../api/model/entity/LivingEntity.java        |   7 +-
+ .../api/model/entity/PlayerEntity.java        |  19 +-
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
  .../data/enums/bedrock/ActorFlags.java        |   6 +-
  .../protocol/model/entity/EntityProperty.java |  40 ++
@@ -97,8 +112,8 @@ Both main and test Checkstyle pass.
  .../ArmorStandMarkerMetadataTest.java         | 177 +++++
  .../rewriter/EntityBodyVisibilityTest.java    | 253 +++++++
  .../rewriter/EntityMetadataRewriterTest.java  | 151 +++++
- .../rewriter/EntityNameFormattingTest.java    | 146 ++++
- 19 files changed, 1803 insertions(+), 68 deletions(-)
+ .../rewriter/EntityNameFormattingTest.java    | 256 +++++++
+ 20 files changed, 1930 insertions(+), 70 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityProperty.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyList.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/EntityPropertyTracker.java
@@ -260,6 +275,56 @@ index 8f927e66..f90269e6 100644
                      default -> throw new IllegalStateException("Unhandled entity attribute: " + attribute.name());
                  })); // attribute id
                  javaAttributes.write(Types.DOUBLE, (double) attribute.computeClampedValue()); // base value
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java
+index 82b9eb73..8b0ddc5f 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java
+@@ -27,6 +27,7 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets
+ import net.raphimc.viabedrock.api.util.StringUtil;
+ import net.raphimc.viabedrock.api.util.TextUtil;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
+ import net.raphimc.viabedrock.protocol.data.enums.java.PlayerTeamMethod;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.TeamCollisionRule;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.TeamVisibility;
+@@ -67,14 +68,19 @@ public class PlayerEntity extends LivingEntity {
+ 
+     public final void updateName(final String name) {
+         this.setName(name);
++        this.updateNameTag();
++    }
+ 
++    private void updateNameTag() {
++        final EntityData metadata = this.entityData.get(ActorDataIds.NAME);
++        final String displayName = metadata == null ? this.name : metadata.value();
+         final PacketWrapper setPlayerTeam = PacketWrapper.create(ClientboundPackets26_3.SET_PLAYER_TEAM, this.user);
+         setPlayerTeam.write(Types.STRING, "vb_" + this.javaId); // team name
+         setPlayerTeam.write(Types.BYTE, (byte) PlayerTeamMethod.CHANGE.ordinal()); // mode
+         setPlayerTeam.write(Types.TAG, TextUtil.stringToNbt("vb_" + this.javaId)); // display name
+-        setPlayerTeam.write(Types.TAG, TextUtil.stringToNbt(name, this.user)); // prefix
++        setPlayerTeam.write(Types.TAG, TextUtil.stringToNbt(displayName, this.user)); // prefix
+         setPlayerTeam.write(Types.TAG, TextUtil.stringToNbt("")); // suffix
+-        setPlayerTeam.write(Types.VAR_INT, TeamVisibility.ALWAYS.ordinal()); // name tag visibility
++        setPlayerTeam.write(Types.VAR_INT, (displayName.isEmpty() ? TeamVisibility.NEVER : TeamVisibility.ALWAYS).ordinal()); // name tag visibility
+         setPlayerTeam.write(Types.VAR_INT, TeamCollisionRule.NEVER.ordinal()); // collision rule
+         setPlayerTeam.write(Types.BOOL_OPTIONAL_VAR_INT, null); // color
+         setPlayerTeam.write(Types.BYTE, (byte) 3); // flags
+@@ -114,6 +120,15 @@ public class PlayerEntity extends LivingEntity {
+         this.abilities = abilities;
+     }
+ 
++    @Override
++    protected boolean translateEntityData(final ActorDataIds id, final EntityData entityData, final List<EntityData> javaEntityData) {
++        final boolean translated = super.translateEntityData(id, entityData, javaEntityData);
++        if (id == ActorDataIds.NAME) {
++            this.updateNameTag();
++        }
++        return translated;
++    }
++
+     @Override
+     protected boolean translateAttribute(final EntityAttribute attribute, final PacketWrapper javaAttributes, final AtomicInteger attributeCount, final List<EntityData> javaEntityData) {
+         return switch (attribute.name()) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 index cd0831e3..9e1ab2ca 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
@@ -2318,10 +2383,10 @@ index 00000000..951e98e2
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityNameFormattingTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityNameFormattingTest.java
 new file mode 100644
-index 00000000..25183917
+index 00000000..d2100b69
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityNameFormattingTest.java
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,256 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2330,19 +2395,29 @@ index 00000000..25183917
 +package net.raphimc.viabedrock.protocol.rewriter;
 +
 +import com.viaversion.nbt.tag.Tag;
++import com.viaversion.viaversion.api.Via;
++import com.viaversion.viaversion.api.ViaManager;
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
 +import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
++import com.viaversion.viaversion.api.protocol.ProtocolManager;
++import com.viaversion.viaversion.api.protocol.packet.PacketType;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
 +import com.viaversion.viaversion.libs.gson.JsonArray;
 +import com.viaversion.viaversion.libs.gson.JsonObject;
 +import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
 +import com.viaversion.viaversion.libs.mcstructs.text.utils.TextUtils;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.ByteBuf;
 +import net.raphimc.viabedrock.api.model.entity.Entity;
 +import net.raphimc.viabedrock.api.model.entity.PlayerEntity;
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 +import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.data.enums.java.generated.TeamVisibility;
 +import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
 +import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
@@ -2353,6 +2428,7 @@ index 00000000..25183917
 +import org.junit.jupiter.api.Test;
 +
 +import java.lang.reflect.Field;
++import java.lang.reflect.InvocationHandler;
 +import java.lang.reflect.Proxy;
 +import java.util.ArrayList;
 +import java.util.HashMap;
@@ -2366,6 +2442,8 @@ index 00000000..25183917
 +
 +    private static final List<String> FIELDS = List.of(EntityDataFields.CUSTOM_NAME, EntityDataFields.CUSTOM_NAME_VISIBLE);
 +    private final Map<Field, Object> oldMappings = new HashMap<>();
++    private final List<PacketWrapper> teamPackets = new ArrayList<>();
++    private Object oldManager;
 +
 +    @BeforeAll
 +    static void initializeTypes() throws Exception {
@@ -2374,12 +2452,35 @@ index 00000000..25183917
 +
 +    @BeforeEach
 +    void installMappings() throws Exception {
++        final Field managerField = Via.class.getDeclaredField("manager");
++        managerField.setAccessible(true);
++        this.oldManager = managerField.get(null);
++        final ProtocolManager protocols = proxy(ProtocolManager.class, (instance, method, args) -> {
++            if (!method.getName().equals("createPacketWrapper")) {
++                return null;
++            }
++            final PacketWrapper packet = new PacketWrapperImpl((PacketType) args[0], (ByteBuf) args[1], (UserConnection) args[2]);
++            return proxy(PacketWrapper.class, (wrapper, operation, values) -> {
++                if (operation.getName().equals("send")) {
++                    if (packet.getPacketType() == ClientboundPackets26_3.SET_PLAYER_TEAM) {
++                        this.teamPackets.add(packet);
++                    }
++                    return null;
++                }
++                return operation.invoke(packet, values);
++            });
++        });
++        managerField.set(null, proxy(ViaManager.class, (instance, method, args) ->
++                method.getName().equals("getProtocolManager") ? protocols : null));
 +        this.replaceMapping("bedrockEntityDataTypes", Map.of());
 +        this.replaceMapping("javaEntityDataFields", Map.of(EntityTypes26_3.PLAYER, FIELDS, EntityTypes26_3.INTERACTION, FIELDS));
 +    }
 +
 +    @AfterEach
 +    void restoreMappings() throws Exception {
++        final Field managerField = Via.class.getDeclaredField("manager");
++        managerField.setAccessible(true);
++        managerField.set(null, this.oldManager);
 +        for (var entry : this.oldMappings.entrySet()) {
 +            entry.getKey().set(BedrockProtocol.MAPPINGS, entry.getValue());
 +        }
@@ -2416,6 +2517,80 @@ index 00000000..25183917
 +        assertEquals(0x8AD22C, component(first).getStyle().getColor().getRgbValue());
 +        assertNull(updateName(green, ""));
 +        assertEquals(0xDEB12D, component(updateName(actor(false, null), "§pA")).getStyle().getColor().getRgbValue());
++    }
++
++    @Test
++    void usesAuthoritativePlayerMetadataWithoutChangingProfileIdentity() throws Exception {
++        final PlayerEntity player = (PlayerEntity) actor(true, palette(0.541, 0.824, 0.173));
++        final String profile = "Profile";
++        player.createTeam();
++        player.updateName(profile);
++        assertEquals(profile, player.name());
++        assertEquals(profile, this.teamPrefix().asUnformattedString());
++        assertEquals(TeamVisibility.ALWAYS.ordinal(), this.teamPackets.get(this.teamPackets.size() - 1).get(Types.VAR_INT, 0));
++
++        final String label = "§l§aTitle\n§p490" + Character.toString(0xE102) + "§r\n§7Action";
++        final Tag customName = updateName(player, label);
++        final TextComponent prefix = this.teamPrefix();
++        assertEquals(component(customName).asUnformattedString(), prefix.asUnformattedString());
++        assertEquals(profile, player.name());
++        final List<TextComponent> styled = parts(prefix);
++        assertEquals(0x55FF55, styled.get(0).getStyle().getColor().getRgbValue());
++        assertEquals(0x8AD22C, styled.get(1).getStyle().getColor().getRgbValue());
++        assertTrue(styled.get(0).getStyle().isBold());
++        assertTrue(styled.get(1).getStyle().isBold());
++        assertFalse(styled.get(styled.size() - 1).getStyle().isBold());
++        assertEquals(2, prefix.asUnformattedString().codePoints().filter(c -> c == '\n').count());
++        assertEquals(1, prefix.asUnformattedString().codePoints().filter(c -> c == 0xE102).count());
++
++        player.updateName("RenamedProfile");
++        assertEquals("RenamedProfile", player.name());
++        assertEquals(prefix.asUnformattedString(), this.teamPrefix().asUnformattedString());
++        final int sent = this.teamPackets.size();
++        player.updateEntityData(new EntityData[]{new EntityData(81, EntityDataTypesBedrock.BYTE, (byte) 1)}, new ArrayList<>());
++        assertEquals(sent, this.teamPackets.size());
++        updateName(player, "§pReplacement");
++        assertEquals("Replacement", this.teamPrefix().asUnformattedString());
++        assertEquals(0x8AD22C, this.teamPrefix().getStyle().getColor().getRgbValue());
++        assertEquals("RenamedProfile", player.name());
++
++        assertNull(updateName(player, ""));
++        assertEquals("", this.teamPrefix().asUnformattedString());
++        assertEquals(TeamVisibility.NEVER.ordinal(), this.teamPackets.get(this.teamPackets.size() - 1).get(Types.VAR_INT, 0));
++        player.updateName("ProfileAfterClear");
++        assertEquals("ProfileAfterClear", player.name());
++        assertEquals("", this.teamPrefix().asUnformattedString());
++        assertEquals(TeamVisibility.NEVER.ordinal(), this.teamPackets.get(this.teamPackets.size() - 1).get(Types.VAR_INT, 0));
++        updateName(player, "§pRestored");
++        assertEquals("Restored", this.teamPrefix().asUnformattedString());
++        assertEquals(TeamVisibility.ALWAYS.ordinal(), this.teamPackets.get(this.teamPackets.size() - 1).get(Types.VAR_INT, 0));
++        assertEquals("ProfileAfterClear", player.name());
++    }
++
++    @Test
++    void keepsMetadataNameWhenProfileInitializationArrivesLater() throws Exception {
++        final PlayerEntity player = (PlayerEntity) actor(true, null);
++        final String originalProfile = player.name();
++        player.createTeam();
++        final String label = "§aVisible";
++        updateName(player, label);
++        final TextComponent prefix = this.teamPrefix();
++        assertEquals(originalProfile, player.name());
++        player.updateName("InitializedProfile");
++        assertEquals("InitializedProfile", player.name());
++        assertEquals(prefix.asUnformattedString(), this.teamPrefix().asUnformattedString());
++        assertEquals(0x55FF55, this.teamPrefix().getStyle().getColor().getRgbValue());
++        assertEquals(TeamVisibility.ALWAYS.ordinal(), this.teamPackets.get(this.teamPackets.size() - 1).get(Types.VAR_INT, 0));
++    }
++
++    private TextComponent teamPrefix() throws Exception {
++        final PacketWrapper team = this.teamPackets.get(this.teamPackets.size() - 1);
++        assertEquals(ClientboundPackets26_3.SET_PLAYER_TEAM, team.getPacketType());
++        return component(team.get(Types.TAG, 1));
++    }
++
++    private static <T> T proxy(final Class<T> type, final InvocationHandler handler) {
++        return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, handler));
 +    }
 +
 +    private static ResourcePackStorage palette(final double r, final double g, final double b) {
