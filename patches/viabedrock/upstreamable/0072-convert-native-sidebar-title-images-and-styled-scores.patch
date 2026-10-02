@@ -1,4 +1,4 @@
-From a3d059bec6499fdde50610ab897b79777f2b94fd Mon Sep 17 00:00:00 2001
+From 3c930aa48db9c937752ae50887c2c71171a386c7 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 12:06:00 +0200
 Subject: [PATCH] feat(scoreboard): convert native sidebar title images and
@@ -9,20 +9,22 @@ Bedrock 1.26.51 resource packs can replace the objective title with a JSON UI im
 Send objective CHANGE packets for repeated display titles without replacing score identities. Hide sidebar numbers while retaining score values for ordering, and send styled score display components separately from raw owners so extended Bedrock formatting survives. Other display slots keep numeric presentation. Invalidate older converted packs when the new metadata becomes available.
 
 Saved protocol 2193 CubeCraft resources declare a 66 by 21 title image and 10-pixel player rows. The native Java 26.3 BlankFormat codec is registry zero with a unit payload. Targeted tests cover wire fields, pack priority, bounded UI parsing, image conversion, and disk cache rollover; captured resources remain private.
+
+Read the bounded static sidebar parent image layout and texture nine-slice metadata. Carry authored alpha, content padding, and bottom-left row offsets into the converted resources. The saved CubeCraft protocol2193 pack declares Black_sb with 6 by 6 base size, two-pixel borders, .5 alpha, padding3/5 and row offsets2/-1. Preserve source pixels and reject unsupported transforms or expressions instead of activating an incorrect custom panel. Semantic conversion tests cover declared layout and fallback.
 ---
  .../model/scoreboard/ScoreboardObjective.java |  22 +-
- .../definition/ScoreboardUiDefinitions.java   | 370 ++++++++++++++++++
+ .../definition/ScoreboardUiDefinitions.java   | 477 ++++++++++++++++++
  .../http/ConvertedResourcePackCache.java      |  22 +-
  .../raphimc/viabedrock/api/util/TextUtil.java |  15 +-
  .../protocol/packet/HudPackets.java           |  38 +-
  .../rewriter/ResourcePackRewriter.java        |   2 +
- .../ScoreboardUiResourceRewriter.java         |  98 +++++
+ .../ScoreboardUiResourceRewriter.java         | 120 +++++
  .../protocol/storage/ResourcePackStorage.java |   6 +
- .../ScoreboardPresentationTest.java           |  72 ++++
- .../ScoreboardUiDefinitionsTest.java          | 275 +++++++++++++
+ .../ScoreboardPresentationTest.java           |  72 +++
+ .../ScoreboardUiDefinitionsTest.java          | 376 ++++++++++++++
  .../http/ConvertedResourcePackCacheTest.java  |  32 ++
  .../protocol/packet/HudPacketsTest.java       |  39 ++
- 12 files changed, 975 insertions(+), 16 deletions(-)
+ 12 files changed, 1205 insertions(+), 16 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ScoreboardUiResourceRewriter.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/scoreboard/ScoreboardPresentationTest.java
@@ -89,10 +91,10 @@ index 34b0825b..cd527ea3 100644
      private void removeEntry0(final UserConnection user, final ScoreboardEntry entry) {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java
 new file mode 100644
-index 00000000..2d319f0c
+index 00000000..a8bf8bc8
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitions.java
-@@ -0,0 +1,370 @@
+@@ -0,0 +1,477 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -290,7 +292,7 @@ index 00000000..2d319f0c
 +            final JsonObject control = entry.getValue().getAsJsonObject();
 +            final String title = visibility(control, entry.getKey(), false);
 +            if ("image".equals(string(control, "type")) && title != null && companion(controls, title)) {
-+                final SidebarImage image = parseImage(storage, control, title, rowHeight);
++                final SidebarImage image = parseImage(storage, node, control, title, rowHeight);
 +                if (image != null && found.putIfAbsent(title, image) != null) {
 +                    throw new IllegalArgumentException("Ambiguous scoreboard image binding");
 +                }
@@ -395,7 +397,7 @@ index 00000000..2d319f0c
 +        return global && views == 1 ? title : null;
 +    }
 +
-+    private static SidebarImage parseImage(final ResourcePackStorage storage, final JsonObject control, final String title, final int rowHeight) {
++    private static SidebarImage parseImage(final ResourcePackStorage storage, final JsonObject parent, final JsonObject control, final String title, final int rowHeight) {
 +        if (!"top_middle".equals(string(control, "anchor_from")) || !"top_middle".equals(string(control, "anchor_to"))
 +                || control.has("visible") && !control.get("visible").getAsBoolean()
 +                || control.has("alpha") && control.get("alpha").getAsDouble() != 1
@@ -407,6 +409,15 @@ index 00000000..2d319f0c
 +        final String path = string(control, "texture");
 +        if (size == null || offset == null || !path.matches("textures/[A-Za-z0-9_./-]+") || path.contains("..")) {
 +            return null;
++        }
++        final PanelBackground background;
++        if ("image".equals(string(parent, "type"))) {
++            background = parseBackground(storage, parent);
++            if (background == null) {
++                return null;
++            }
++        } else {
++            background = null;
 +        }
 +        for (ResourcePack pack : storage.getPackStackTopToBottom()) {
 +            final String fullPath = pack.content().getFullPath(path, "png", "jpg", "tga");
@@ -421,10 +432,105 @@ index 00000000..2d319f0c
 +            if (image == null || image.getImage().getWidth() > 4096 || image.getImage().getHeight() > 4096) {
 +                return null;
 +            }
-+            final String hash = hash(title + "\n" + path + "\n" + Arrays.toString(size) + Arrays.toString(offset) + rowHeight);
-+            return new SidebarImage(title, "viabedrock:scoreboard/" + hash, "viabedrock:textures/scoreboard/" + hash + ".png", size[0], size[1], offset[0], offset[1], rowHeight, fullPath);
++            final String hash = hash(title + "\n" + path + "\n" + Arrays.toString(size) + Arrays.toString(offset) + rowHeight + background);
++            return new SidebarImage(title, "viabedrock:scoreboard/" + hash, "viabedrock:textures/scoreboard/" + hash + ".png", size[0], size[1], offset[0], offset[1], rowHeight, fullPath, background);
 +        }
 +        return null;
++    }
++
++    private static PanelBackground parseBackground(final ResourcePackStorage storage, final JsonObject control) {
++        if (!Set.of("type", "texture", "alpha", "size", "anchor_from", "anchor_to", "controls", "visible", "ignored").containsAll(control.keySet())
++                || !"center".equals(string(control, "anchor_from")) || !"center".equals(string(control, "anchor_to"))
++                || control.has("visible") && !control.get("visible").getAsBoolean()
++                || control.has("ignored") && control.get("ignored").getAsBoolean()) {
++            return null;
++        }
++        final JsonElement size = control.get("size");
++        if (size == null || !size.isJsonArray() || size.getAsJsonArray().size() != 2) {
++            return null;
++        }
++        final Integer paddingX = padding(size.getAsJsonArray().get(0), "100%cm");
++        final Integer paddingY = padding(size.getAsJsonArray().get(1), "100%c");
++        final double alpha = control.has("alpha") ? control.get("alpha").getAsDouble() : 1;
++        final String path = string(control, "texture");
++        if (paddingX == null || paddingY == null || !Double.isFinite(alpha) || alpha <= 0 || alpha > 1
++                || !path.matches("textures/[A-Za-z0-9_./-]+") || path.contains("..")) {
++            return null;
++        }
++        JsonObject list = null;
++        for (final JsonElement wrapped : control.getAsJsonArray("controls")) {
++            if (!wrapped.isJsonObject()) {
++                continue;
++            }
++            for (final JsonElement candidate : wrapped.getAsJsonObject().asMap().values()) {
++                if (candidate.isJsonObject() && !playerFactory(candidate.getAsJsonObject(), 0).isEmpty()) {
++                    if (list != null) {
++                        return null;
++                    }
++                    list = candidate.getAsJsonObject();
++                }
++            }
++        }
++        if (list == null || !Set.of("type", "anchor_from", "anchor_to", "offset", "size", "inherit_max_sibling_width", "controls").containsAll(list.keySet())
++                || !"panel".equals(string(list, "type"))
++                || !"bottom_left".equals(string(list, "anchor_from")) || !"bottom_left".equals(string(list, "anchor_to"))
++                || list.has("bindings") || list.has("ignored") && list.get("ignored").getAsBoolean()) {
++            return null;
++        }
++        final int[] rowOffset = list.has("offset") ? pair(list.get("offset"), -1024, 1024) : new int[]{0, 0};
++        if (rowOffset == null) {
++            return null;
++        }
++        JsonObject metadata = null;
++        for (final ResourcePack pack : storage.getPackStackTopToBottom()) {
++            if (pack.content().contains(path + ".json")) {
++                if (pack.content().get(path + ".json").length > 65536) {
++                    return null;
++                }
++                metadata = pack.content().getJson(path + ".json");
++                break;
++            }
++        }
++        if (metadata == null) {
++            return null;
++        }
++        final int[] baseSize = pair(metadata.get("base_size"), 1, 1024);
++        final JsonArray borderPair = new JsonArray();
++        if (metadata.has("nineslice_size")) {
++            borderPair.add(metadata.get("nineslice_size"));
++            borderPair.add(metadata.get("nineslice_size"));
++        }
++        final int[] border = pair(borderPair, 0, 512);
++        if (baseSize == null || border == null || border[0] * 2 > Math.min(baseSize[0], baseSize[1])) {
++            return null;
++        }
++        for (final ResourcePack pack : storage.getPackStackTopToBottom()) {
++            final String fullPath = pack.content().getFullPath(path, "png", "jpg", "tga");
++            if (fullPath == null) {
++                continue;
++            }
++            if (pack.content().get(fullPath).length > 8388608) {
++                return null;
++            }
++            final Content.LazyImage image = pack.content().getImage(fullPath);
++            if (image == null || image.getImage().getWidth() > 4096 || image.getImage().getHeight() > 4096) {
++                return null;
++            }
++            return new PanelBackground(fullPath, (float) alpha, baseSize[0], baseSize[1], border[0], paddingX, paddingY, rowOffset[0], rowOffset[1]);
++        }
++        return null;
++    }
++
++    private static Integer padding(final JsonElement value, final String size) {
++        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
++            return null;
++        }
++        final var match = Pattern.compile(Pattern.quote(size) + "(?:\\+([0-9]{1,4})px)?").matcher(value.getAsString());
++        if (!match.matches()) {
++            return null;
++        }
++        final int padding = match.group(1) == null ? 0 : Integer.parseInt(match.group(1));
++        return padding <= 1024 ? padding : null;
 +    }
 +
 +    public static int[] pair(final JsonElement value, final int min, final int max) {
@@ -459,7 +565,10 @@ index 00000000..2d319f0c
 +        }
 +    }
 +
-+    public record SidebarImage(String match, String font, String texture, int width, int height, int offsetX, int offsetY, int rowHeight, String sourcePath) {
++    public record PanelBackground(String sourcePath, float alpha, int baseWidth, int baseHeight, int slice, int paddingX, int paddingY, int rowOffsetX, int rowOffsetY) {
++    }
++
++    public record SidebarImage(String match, String font, String texture, int width, int height, int offsetX, int offsetY, int rowHeight, String sourcePath, PanelBackground background) {
 +    }
 +
 +}
@@ -660,10 +769,10 @@ index ccdc3501..4f43f563 100644
          REWRITERS.add(new CustomAttachableResourceRewriter());
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ScoreboardUiResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ScoreboardUiResourceRewriter.java
 new file mode 100644
-index 00000000..10415e9d
+index 00000000..e93d0be1
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ScoreboardUiResourceRewriter.java
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,120 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -747,6 +856,28 @@ index 00000000..10415e9d
 +                entry.addProperty("row_height", image.rowHeight());
 +                entry.addProperty("offset_x", image.offsetX());
 +                entry.addProperty("offset_y", image.offsetY());
++                if (image.background() != null) {
++                    final var background = image.background();
++                    final String backgroundTexture = image.texture().replace(".png", "_background.png");
++                    for (final ResourcePack backgroundPack : storage.getPackStackTopToBottom()) {
++                        if (backgroundPack.content().contains(background.sourcePath())) {
++                            output.putPngImage("assets/viabedrock/" + backgroundTexture.substring("viabedrock:".length()),
++                                    backgroundPack.content().getImage(background.sourcePath()).getImage());
++                            break;
++                        }
++                    }
++                    final JsonObject panel = new JsonObject();
++                    panel.addProperty("texture", backgroundTexture);
++                    panel.addProperty("alpha", background.alpha());
++                    panel.addProperty("base_width", background.baseWidth());
++                    panel.addProperty("base_height", background.baseHeight());
++                    panel.addProperty("slice", background.slice());
++                    panel.addProperty("padding_x", background.paddingX());
++                    panel.addProperty("padding_y", background.paddingY());
++                    panel.addProperty("row_offset_x", background.rowOffsetX());
++                    panel.addProperty("row_offset_y", background.rowOffsetY());
++                    entry.add("background", panel);
++                }
 +                images.add(entry);
 +                break;
 +            }
@@ -873,10 +1004,10 @@ index 00000000..9d0d60d1
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitionsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitionsTest.java
 new file mode 100644
-index 00000000..650bf7e5
+index 00000000..3b493a9b
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/ScoreboardUiDefinitionsTest.java
-@@ -0,0 +1,275 @@
+@@ -0,0 +1,376 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1029,6 +1160,107 @@ index 00000000..650bf7e5
 +        assertTrue(new ResourcePackStorage(List.of(unused)).getScoreboardUi().images().isEmpty());
 +        unused.content().copyFrom(unused.content(), "ui/example.json", "ui/scoreboards.json");
 +        assertNotNull(new ResourcePackStorage(List.of(unused)).getScoreboardUi().image("test"));
++    }
++
++    @Test
++    void declaredPanelPreservesNineSlicePixelsPaddingOpacityAndRowOffsets() {
++        final var pack = backgroundPack();
++        final var storage = new ResourcePackStorage(List.of(pack));
++        final var image = storage.getScoreboardUi().image("panel.title");
++        assertNotNull(image);
++        final var background = image.background();
++        assertEquals(0.5F, background.alpha());
++        assertEquals(2, background.slice());
++        assertEquals(3, background.paddingX());
++        assertEquals(5, background.paddingY());
++        assertEquals(2, background.rowOffsetX());
++        assertEquals(-1, background.rowOffsetY());
++        final var converted = ScoreboardUiResourceRewriter.convert(storage);
++        final var metadata = converted.getJson("assets/viabedrock/scoreboard_ui.json").getAsJsonArray("images").get(0).getAsJsonObject().getAsJsonObject("background");
++        final var pixels = converted.getImage("assets/viabedrock/" + metadata.get("texture").getAsString().substring(11)).getImage();
++        assertEquals(0, pixels.getRGB(0, 0));
++        assertEquals(0xFF000000, pixels.getRGB(3, 3));
++        assertEquals(6, metadata.get("base_width").getAsInt());
++        assertEquals(-1, metadata.get("row_offset_y").getAsInt());
++    }
++
++    @Test
++    void unsupportedPanelTransformsAndNineSliceDimensionsKeepOrdinaryTitles() {
++        for (int invalid : new int[]{0, 1, 2}) {
++            final var pack = backgroundPack();
++            final var file = pack.content().getJson("ui/example.json");
++            final var background = file.getAsJsonObject("scoreboard_sidebar").getAsJsonArray("controls").get(0).getAsJsonObject().getAsJsonObject("background");
++            if (invalid == 0) {
++                background.getAsJsonArray("size").set(0, new JsonPrimitive("100%cm+$padding"));
++            }
++            if (invalid == 1) {
++                background.addProperty("anchor_to", "bottom_left");
++            }
++            if (invalid == 2) {
++                final var texture = pack.content().getJson("textures/ui/panel.json");
++                texture.addProperty("nineslice_size", 4);
++                pack.content().putJson("textures/ui/panel.json", texture);
++            }
++            pack.content().putJson("ui/example.json", file);
++            assertTrue(new ResourcePackStorage(List.of(pack)).getScoreboardUi().images().isEmpty());
++        }
++    }
++
++    private static ResourcePack backgroundPack() {
++        final var sidebar = panel("panel.title", "textures/ui/sample", 66, 21);
++        final var main = new JsonObject();
++        main.addProperty("type", "image");
++        main.addProperty("texture", "textures/ui/panel");
++        main.addProperty("anchor_from", "center");
++        main.addProperty("anchor_to", "center");
++        main.addProperty("alpha", 0.5);
++        final var size = new JsonArray();
++        size.add("100%cm+3px");
++        size.add("100%c+5px");
++        main.add("size", size);
++        main.add("controls", sidebar.getAsJsonArray("controls"));
++        final var lists = new JsonObject();
++        lists.addProperty("type", "panel");
++        lists.addProperty("anchor_from", "bottom_left");
++        lists.addProperty("anchor_to", "bottom_left");
++        final var offset = new JsonArray();
++        offset.add(2);
++        offset.add(-1);
++        lists.add("offset", offset);
++        final var players = new JsonObject();
++        players.addProperty("collection_name", "scoreboard_players");
++        final var factory = new JsonObject();
++        factory.addProperty("control_name", "scoreboard.rows");
++        players.add("factory", factory);
++        final var wrappedPlayers = new JsonObject();
++        wrappedPlayers.add("players", players);
++        final var listControls = new JsonArray();
++        listControls.add(wrappedPlayers);
++        lists.add("controls", listControls);
++        final var wrappedLists = new JsonObject();
++        wrappedLists.add("lists", lists);
++        main.getAsJsonArray("controls").add(wrappedLists);
++        final var wrappedBackground = new JsonObject();
++        wrappedBackground.add("background", main);
++        final var controls = new JsonArray();
++        controls.add(wrappedBackground);
++        sidebar.add("controls", controls);
++        final var pack = pack(sidebar, -1);
++        final var texture = new JsonObject();
++        texture.addProperty("nineslice_size", 2);
++        final var base = new JsonArray();
++        base.add(6);
++        base.add(6);
++        texture.add("base_size", base);
++        pack.content().putJson("textures/ui/panel.json", texture);
++        final var pixels = new BufferedImage(6, 6, BufferedImage.TYPE_INT_ARGB);
++        for (int y = 0; y < 6; y++) {
++            for (int x = 0; x < 6; x++) {
++                pixels.setRGB(x, y, x == 0 && y == 0 ? 0 : 0xFF000000);
++            }
++        }
++        pack.content().putPngImage("textures/ui/panel.png", pixels);
++        return pack;
 +    }
 +
 +    private static void assertEmpty(final JsonObject panel) {
@@ -1262,4 +1494,3 @@ index dfd42cd1..8199a3e7 100644
          private final Map<Long, ScoreboardEntry> entries = new HashMap<>();
 -- 
 2.55.0
-

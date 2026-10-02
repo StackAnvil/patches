@@ -7,3 +7,5 @@ Convert bounded active scoreboard UI image definitions into dedicated fonts, ori
 Native Bedrock 1.26.51.1 UI reader 1403f9760 reads the formatting variables into the shared palette. Font parser 144444200 consumes that palette when formatting is enabled. World nametag draw flags remain unverified, so this change applies server overrides to sidebar text only.
 
 Validation covers actual objective and score packets, title replacement, number format, score ordering, palette priority, bounded UI parsing, metadata emission, and disk cache rollover. Captured server resources and native binaries remain private.
+
+The bounded static panel also carries its original background texture, alpha, nine-slice borders, padding, and bottom-left row offsets. The saved CubeCraft pack declares a 6×6 background, two-pixel borders, alpha 0.5, padding 3×5, and offset (+2,-1). Unsupported layout expressions retain text fallback. Conversion and eight add-on HUD tests pass, including preserved corners and same-pack background validation.

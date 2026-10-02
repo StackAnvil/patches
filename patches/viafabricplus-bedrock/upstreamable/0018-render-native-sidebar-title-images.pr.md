@@ -3,3 +3,5 @@ Render the authored title image for a converted Bedrock sidebar instead of its l
 The recorded protocol 2193 CubeCraft sidebar declares a 66×21 title image, 10-pixel rows, and a right-middle anchor. Preserve styled entry components, number format, order, and original texture content. Reject resources from another pack and stale reload completions. Disconnect clears prior state.
 
 Tests cover resource metadata, image identity, dimensions, layout, and clearing. Local saved-server replay checks verify runtime hooks without repeated public joins. Dynamic JSON UI layouts and unsupported widget forms retain the ordinary title fallback.
+
+The bounded static panel also carries its original background texture, alpha, nine-slice borders, padding, and bottom-left row offsets. The saved CubeCraft pack declares a 6×6 background, two-pixel borders, alpha 0.5, padding 3×5, and offset (+2,-1). Unsupported layout expressions retain text fallback. Conversion and eight add-on HUD tests pass, including preserved corners and same-pack background validation.
