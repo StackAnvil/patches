@@ -1,4 +1,4 @@
-From 3fc7412c340df76464211d9b6ec8181605d6e3cf Mon Sep 17 00:00:00 2001
+From 8b11575bafabb51a909849d1e0b31187503aaab6 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 00:27:08 +0200
 Subject: [PATCH] feat(entities): translate Bedrock metadata and properties
@@ -34,6 +34,18 @@ flags or MoLang state.
 Semantic tests exercise a named zero-scale armor stand, sparse scale and
 both flag-mask updates, incoming ordering, real invisibility, and nonzero
 or negative scale. 19 focused metadata/scale tests pass.
+
+Keep ordinary nametag visibility conditional on a retained nonempty NAME.
+The same protocol 2193 CubeCraft recording contains ten zero-scale armor
+stands with NAME empty and NAMETAG_ALWAYS_SHOW one; native 1.26.51.1 shows
+no label. Clearing Java CUSTOM_NAME while keeping CUSTOM_NAME_VISIBLE true
+instead displays its localized entity type label.
+
+Recompute and replace custom-name visibility after either name or visibility
+metadata, using retained values for sparse updates and one final value per
+batch. Preserve null CUSTOM_NAME clearing and the existing player profile
+and team-name fallback. Tests cover both metadata orders, sparse clearing
+and restoring, an absent ordinary NAME, and default player names.
 ---
  .../viabedrock/api/model/entity/Entity.java   |  35 ++
  .../api/model/entity/LivingEntity.java        |   7 +-
@@ -44,15 +56,15 @@ or negative scale. 19 focused metadata/scale tests pass.
  .../protocol/packet/EntityPackets.java        |  33 +-
  .../protocol/packet/JoinPackets.java          |   2 +-
  .../protocol/packet/OtherPlayerPackets.java   |   5 +-
- .../rewriter/EntityMetadataRewriter.java      | 562 ++++++++++++++++--
+ .../rewriter/EntityMetadataRewriter.java      | 575 ++++++++++++++++--
  .../storage/EntityPropertyTracker.java        |  61 ++
  .../entity_flag_molang_query_mappings.json    |   6 +-
  .../entity/EntityPropertyRenderTest.java      |  74 +++
  .../enums/bedrock/ActorFlagsMappingTest.java  |  27 +
  .../model/entity/EntityPropertyListTest.java  |  79 +++
- .../rewriter/EntityBodyVisibilityTest.java    | 150 +++++
+ .../rewriter/EntityBodyVisibilityTest.java    | 201 ++++++
  .../rewriter/EntityMetadataRewriterTest.java  | 151 +++++
- 17 files changed, 1297 insertions(+), 64 deletions(-)
+ 17 files changed, 1361 insertions(+), 64 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityProperty.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyList.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/EntityPropertyTracker.java
@@ -63,7 +75,7 @@ or negative scale. 19 focused metadata/scale tests pass.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index 80f3d276..edc6fc60 100644
+index 210a0f11..b0324863 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 @@ -32,6 +32,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
@@ -117,7 +129,7 @@ index 80f3d276..edc6fc60 100644
      public void playSound(final String soundEvent) {
          final PacketWrapper levelSoundEvent = PacketWrapper.create(ClientboundBedrockPackets.LEVEL_SOUND_EVENT, this.user);
          levelSoundEvent.write(BedrockTypes.STRING, soundEvent); // event
-@@ -185,6 +204,14 @@ public class Entity {
+@@ -195,6 +214,14 @@ public class Entity {
          return this.javaType;
      }
  
@@ -132,7 +144,7 @@ index 80f3d276..edc6fc60 100644
      public Position3f position() {
          return this.position;
      }
-@@ -287,6 +314,14 @@ public class Entity {
+@@ -297,6 +324,14 @@ public class Entity {
          return this.mountRuntimeId;
      }
  
@@ -545,7 +557,7 @@ index 48767edb..545c61a9 100644
                  entityTracker.applyEntityLink(link);
              }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
-index ed40425a..acb3e35b 100644
+index ed40425a..67d34a50 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
 @@ -17,55 +17,86 @@
@@ -620,6 +632,7 @@ index ed40425a..acb3e35b 100644
 +                final String name = entityData.value();
 +                final Tag javaName = name.isEmpty() ? null : TextUtil.stringToNbt(name);
 +                javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME), VersionedTypes.V26_3.entityDataTypes().optionalComponentType, javaName));
++                updateNameVisibility(entity, javaEntityData);
 +            }
 +            case NAMETAG_ALWAYS_SHOW -> {
 +                if (!shouldTranslateName(entity)) {
@@ -627,8 +640,7 @@ index ed40425a..acb3e35b 100644
                  }
 -                if (bedrockFlags.contains(ActorFlags.INVISIBLE)) {
 -                    javaBitMask |= (1 << 5);
-+                final boolean alwaysShow = readNumber(entityData).intValue() != 0;
-+                javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME_VISIBLE), VersionedTypes.V26_3.entityDataTypes().booleanType, alwaysShow));
++                updateNameVisibility(entity, javaEntityData);
 +            }
 +            case RESERVED_0, RESERVED_092 -> { // Entity flags mask
 +                final Set<ActorFlags> bedrockFlags = entity.entityFlags();
@@ -932,7 +944,7 @@ index ed40425a..acb3e35b 100644
              case AGENT, BALLOON_ANCHOR -> {
              } // Education edition only, ignore
              default -> {
-@@ -649,6 +768,351 @@ public final class EntityMetadataRewriter {
+@@ -649,6 +768,364 @@ public final class EntityMetadataRewriter {
          return true;
      }
  
@@ -1111,6 +1123,19 @@ index ed40425a..acb3e35b 100644
 +            index++;
 +        }
 +        return -1;
++    }
++
++    private static void updateNameVisibility(final Entity entity, final List<EntityData> javaEntityData) {
++        final EntityData name = entity.entityData().get(ActorDataIds.NAME);
++        final EntityData alwaysShow = entity.entityData().get(ActorDataIds.NAMETAG_ALWAYS_SHOW);
++        // Players have a profile/team name even without custom NAME metadata.
++        // Other Java actors fall back to their translated type label when NAME is empty.
++        final boolean hasName = entity.javaType().is(EntityTypes26_3.PLAYER)
++                || name != null && !((String) name.value()).isEmpty();
++        final boolean visible = hasName && alwaysShow != null && readNumber(alwaysShow).intValue() != 0;
++        final int index = entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME_VISIBLE);
++        javaEntityData.removeIf(data -> data.id() == index);
++        javaEntityData.add(new EntityData(index, VersionedTypes.V26_3.entityDataTypes().booleanType, visible));
 +    }
 +
 +    private static void updateSharedFlags(final Entity entity, final List<EntityData> javaEntityData) {
@@ -1568,10 +1593,10 @@ index 00000000..eacc385c
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityBodyVisibilityTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityBodyVisibilityTest.java
 new file mode 100644
-index 00000000..4ee73619
+index 00000000..679b3667
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityBodyVisibilityTest.java
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,201 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1618,7 +1643,7 @@ index 00000000..4ee73619
 +    @BeforeEach
 +    void installMetadataMappings() throws Exception {
 +        this.replaceMapping("bedrockEntityDataTypes", Map.of());
-+        this.replaceMapping("javaEntityDataFields", Map.of(EntityTypes26_3.INTERACTION, FIELDS, EntityTypes26_3.ARMOR_STAND, FIELDS));
++        this.replaceMapping("javaEntityDataFields", Map.of(EntityTypes26_3.INTERACTION, FIELDS, EntityTypes26_3.ARMOR_STAND, FIELDS, EntityTypes26_3.PLAYER, FIELDS));
 +    }
 +
 +    @AfterEach
@@ -1679,6 +1704,57 @@ index 00000000..4ee73619
 +        for (final float scale : new float[]{1, 0.5F, -2}) {
 +            assertEquals((byte) 0, sharedFlags(update(actor, scale(scale))));
 +        }
++    }
++
++    @Test
++    void keepsBlankNamesHiddenForBothMetadataOrders() {
++        for (final boolean nameFirst : new boolean[]{true, false}) {
++            final Entity actor = actor(EntityTypes26_3.ARMOR_STAND);
++            final List<EntityData> result = nameFirst ? update(actor, name(""), alwaysShow(true))
++                    : update(actor, alwaysShow(true), name(""));
++            assertNull(value(result, EntityDataFields.CUSTOM_NAME));
++            assertEquals(false, value(result, EntityDataFields.CUSTOM_NAME_VISIBLE));
++            assertEquals(1, result.stream().filter(data -> data.id() == FIELDS.indexOf(EntityDataFields.CUSTOM_NAME_VISIBLE)).count());
++
++            final List<EntityData> named = nameFirst ? update(actor, name("Label"), alwaysShow(true))
++                    : update(actor, alwaysShow(true), name("Label"));
++            assertNotNull(value(named, EntityDataFields.CUSTOM_NAME));
++            assertEquals(true, value(named, EntityDataFields.CUSTOM_NAME_VISIBLE));
++            assertEquals(1, named.stream().filter(data -> data.id() == FIELDS.indexOf(EntityDataFields.CUSTOM_NAME_VISIBLE)).count());
++        }
++    }
++
++    @Test
++    void recomputesVisibilityForSparseNameAndAlwaysShowUpdates() {
++        final Entity actor = actor(EntityTypes26_3.ARMOR_STAND);
++        assertEquals(false, value(update(actor, alwaysShow(true)), EntityDataFields.CUSTOM_NAME_VISIBLE));
++        assertEquals(true, value(update(actor, name("Label")), EntityDataFields.CUSTOM_NAME_VISIBLE));
++        final List<EntityData> cleared = update(actor, name(""));
++        assertNull(value(cleared, EntityDataFields.CUSTOM_NAME));
++        assertEquals(false, value(cleared, EntityDataFields.CUSTOM_NAME_VISIBLE));
++        assertEquals(false, value(update(actor, alwaysShow(true)), EntityDataFields.CUSTOM_NAME_VISIBLE));
++        assertEquals(true, value(update(actor, name("Restored")), EntityDataFields.CUSTOM_NAME_VISIBLE));
++        assertEquals(false, value(update(actor, alwaysShow(false)), EntityDataFields.CUSTOM_NAME_VISIBLE));
++        assertEquals(false, value(update(actor, name("Replacement")), EntityDataFields.CUSTOM_NAME_VISIBLE));
++        assertEquals(true, value(update(actor, alwaysShow(true)), EntityDataFields.CUSTOM_NAME_VISIBLE));
++    }
++
++    @Test
++    void preservesPlayerProfileNameVisibilityWithoutCustomMetadata() {
++        final Entity player = actor(EntityTypes26_3.PLAYER);
++        assertEquals(true, value(update(player, alwaysShow(true)), EntityDataFields.CUSTOM_NAME_VISIBLE));
++        final List<EntityData> cleared = update(player, name(""));
++        assertNull(value(cleared, EntityDataFields.CUSTOM_NAME));
++        assertEquals(true, value(cleared, EntityDataFields.CUSTOM_NAME_VISIBLE));
++        assertEquals(false, value(update(player, alwaysShow(false)), EntityDataFields.CUSTOM_NAME_VISIBLE));
++    }
++
++    private static EntityData name(final String name) {
++        return new EntityData(ActorDataIds.NAME.getValue(), EntityDataTypesBedrock.STRING, name);
++    }
++
++    private static EntityData alwaysShow(final boolean show) {
++        return new EntityData(ActorDataIds.NAMETAG_ALWAYS_SHOW.getValue(), EntityDataTypesBedrock.BYTE, (byte) (show ? 1 : 0));
 +    }
 +
 +    private void replaceMapping(final String name, final Object replacement) throws Exception {
