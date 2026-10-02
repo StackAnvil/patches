@@ -1,4 +1,4 @@
-From 8f21ed6cb6669c8822191b33b97fce12b44f2867 Mon Sep 17 00:00:00 2001
+From b2b995b3d2d2f262961521985625ba4346d19dbf Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:07 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -236,6 +236,12 @@ Publish immutable passenger/vehicle UUID bindings, vectors and eye offsets on th
 This path requires the add-on's native connection state. Java clients behind ViaProxy retain their ordinary attachment placement when native metadata is not exposed to the client; no approximate vehicle or server-specific offset is introduced.
 
 Place native names at retained scaled AABB height plus .7 blocks, compensating the Java renderer .5-block padding by .2 only when height is known. Bedrock 1.26.51.1 producer 141d55a60 splits LF and cancels the internal actor Y offset against its collision bounds. Cache immutable actor identity and bounds per connection and discard them on removal. Ordinary name_tag_text is unlit; preserve depth-tested/sneaking light and actor body light. Gate multiline and unlit names on direct Bedrock or accepted converted server metadata. ViaProxy Interaction metadata supplies known non-default heights; preserve unknown/default height and other actor attachments. Native line spacing and complete proxy anchors remain outside the verified support.
+
+The official Bedrock 1.26.51.1/protocol 2193 Hive replay renders ordinary name glyphs opaquely over the dark foreground avatar: the Starter Bundle ROI has 462 pixels at RGB (84,255,84), and its following white row has 561 pixels at RGB (255,255,255). The target ordinary name material is unlit, so these saturated foreground values establish the default opaque pass without fitting a screenshot correction factor.
+
+Java 26.3 submits a depth-tested opaque name pass and a see-through pass whose foreground alpha is max((backgroundOpacity + .75) * .5, .5). When an avatar occludes the opaque pass, only the dim overlay remains. Preserve foreground RGB, background color and packed light, but use opaque default glyph alpha for the ordinary native SEE_THROUGH name pass. Keep NORMAL/depth-tested passes and other connections unchanged.
+
+The native actor-specific foreground RGBA getter is not fully traced. This change reproduces the captured default ordinary-name opacity; it does not claim support for every actor fade.
 ---
  build.gradle.kts                              |   6 +
  .../friends/FriendWorldSkinProvider.java      |   8 +
@@ -245,7 +251,7 @@ Place native names at retained scaled AABB height plus .7 blocks, compensating t
  .../render/MixinBedrockActorRenderType.java   |  47 ++++
  .../render/MixinBedrockNameTagMetadata.java   |  33 +++
  .../render/MixinBedrockNameTagRenderer.java   |  54 ++++
- .../features/render/MixinBedrockNameTags.java |  40 +++
+ .../features/render/MixinBedrockNameTags.java |  59 +++++
  .../render/MixinBedrockRidingMetadata.java    |  38 +++
  .../render/MixinBedrockRidingPosition.java    |  27 ++
  .../features/render/MixinCustomEntity.java    |  59 +++++
@@ -259,7 +265,7 @@ Place native names at retained scaled AABB height plus .7 blocks, compensating t
  .../bedrock/render/BedrockEntityRenderer.java | 188 ++++++++++++++
  .../bedrock/render/BedrockGeometry.java       | 215 ++++++++++++++++
  .../bedrock/render/BedrockNameTagAnchors.java |  71 ++++++
- .../bedrock/render/BedrockNameTags.java       |  48 ++++
+ .../bedrock/render/BedrockNameTags.java       |  53 ++++
  .../bedrock/render/BedrockPlayerRenderer.java |  53 ++++
  .../bedrock/render/BedrockPlayerSkins.java    | 236 ++++++++++++++++++
  .../bedrock/render/BedrockRidingAnchors.java  |  71 ++++++
@@ -276,12 +282,12 @@ Place native names at retained scaled AABB height plus .7 blocks, compensating t
  .../bedrock/render/BedrockCubeFacesTest.java  | 182 ++++++++++++++
  .../render/BedrockEntityRendererTest.java     |  50 ++++
  .../render/BedrockNameTagAnchorsTest.java     | 112 +++++++++
- .../bedrock/render/BedrockNameTagsTest.java   |  73 ++++++
+ .../bedrock/render/BedrockNameTagsTest.java   |  88 +++++++
  .../render/BedrockPlayerMaterialsTest.java    |  42 ++++
  .../render/BedrockRidingAnchorsTest.java      | 130 ++++++++++
  .../bedrock/render/BedrockSkinQueueTest.java  |  83 ++++++
  .../render/CustomEntityRenderStoreTest.java   |  36 +++
- 44 files changed, 2859 insertions(+), 1 deletion(-)
+ 44 files changed, 2898 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractClientPlayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorPipelines.java
@@ -618,10 +624,10 @@ index 0000000..b3f2286
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java
 new file mode 100644
-index 0000000..3d2e13f
+index 0000000..9b2b8a6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,59 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -631,21 +637,40 @@ index 0000000..3d2e13f
 +
 +import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 +import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 +import com.mojang.blaze3d.vertex.PoseStack;
 +import com.viaversion.viafabricplus.ViaFabricPlus;
-+import com.viaversion.viafabricplus.bedrock.render.BedrockNameTags;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockNameTagAnchors;
++import com.viaversion.viafabricplus.bedrock.render.BedrockNameTags;
 +import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.Font;
 +import net.minecraft.client.renderer.SubmitNodeCollection;
++import net.minecraft.client.renderer.feature.TextFeatureRenderer;
 +import net.minecraft.client.renderer.state.level.CameraRenderState;
 +import net.minecraft.network.chat.Component;
++import net.minecraft.util.FormattedCharSequence;
 +import net.minecraft.world.phys.Vec3;
 +import net.raphimc.viabedrock.api.BedrockProtocolVersion;
 +import org.jspecify.annotations.Nullable;
++import org.joml.Matrix4f;
 +import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
 +
 +@Mixin(SubmitNodeCollection.class)
 +public abstract class MixinBedrockNameTags {
++    @WrapOperation(method = "submitNameTag", at = @At(value = "INVOKE",
++            target = "Lnet/minecraft/client/renderer/SubmitNodeCollection;nameTag(Lorg/joml/Matrix4f;FFLnet/minecraft/util/FormattedCharSequence;IIILnet/minecraft/client/gui/Font$DisplayMode;)Lnet/minecraft/client/renderer/feature/TextFeatureRenderer$Submit;"))
++    private TextFeatureRenderer.Submit submitNativeNamePart(final Matrix4f pose, final float x, final float y,
++                                                           final FormattedCharSequence name, final int light,
++                                                           final int color, final int background,
++                                                           final Font.DisplayMode mode,
++                                                           final Operation<TextFeatureRenderer.Submit> original) {
++        final boolean nativeContext = BedrockNameTagAnchors.enabled(
++                ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST));
++        return original.call(pose, x, y, name, light,
++                BedrockNameTags.foregroundColor(nativeContext, mode, color), background, mode);
++    }
++
 +    @WrapMethod(method = "submitNameTag")
 +    private void renderServerNameLines(final PoseStack poses, final @Nullable Vec3 attachment,
 +                                      final int offset, final Component name, final boolean seeThrough,
@@ -1795,10 +1820,10 @@ index 0000000..6492b14
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTags.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTags.java
 new file mode 100644
-index 0000000..162a204
+index 0000000..d52aa72
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTags.java
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,53 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1809,6 +1834,7 @@ index 0000000..162a204
 +import java.util.ArrayList;
 +import java.util.List;
 +import java.util.Optional;
++import net.minecraft.client.gui.Font;
 +import net.minecraft.network.chat.Component;
 +import net.minecraft.network.chat.MutableComponent;
 +import net.minecraft.network.chat.Style;
@@ -1816,6 +1842,10 @@ index 0000000..162a204
 +/** Keeps server name components styled while laying out explicit line breaks. */
 +public final class BedrockNameTags {
 +    private BedrockNameTags() {
++    }
++
++    public static int foregroundColor(final boolean nativeContext, final Font.DisplayMode mode, final int color) {
++        return nativeContext && mode == Font.DisplayMode.SEE_THROUGH ? color | 0xFF000000 : color;
 +    }
 +
 +    public static List<Line> layout(final Component name, final int lineHeight, final int baseline) {
@@ -3087,10 +3117,10 @@ index 0000000..462e9d8
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java
 new file mode 100644
-index 0000000..3982614
+index 0000000..ef7481c
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,88 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3101,6 +3131,7 @@ index 0000000..3982614
 +import java.util.ArrayList;
 +import java.util.List;
 +import net.minecraft.ChatFormatting;
++import net.minecraft.client.gui.Font;
 +import net.minecraft.network.chat.Component;
 +import net.minecraft.network.chat.Style;
 +import org.junit.jupiter.api.Test;
@@ -3108,6 +3139,20 @@ index 0000000..3982614
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +final class BedrockNameTagsTest {
++    @Test
++    void preservesForegroundRgbAndRetainsOtherPassesAndConnections() {
++        for (final int color : new int[]{0x2054FF54, 0x80FFFFFF, 0x7F123456, 0xFFABCDEF}) {
++            assertEquals(color | 0xFF000000,
++                    BedrockNameTags.foregroundColor(true, Font.DisplayMode.SEE_THROUGH, color));
++            for (final Font.DisplayMode mode : Font.DisplayMode.values()) {
++                assertEquals(color, BedrockNameTags.foregroundColor(false, mode, color));
++                if (mode != Font.DisplayMode.SEE_THROUGH) {
++                    assertEquals(color, BedrockNameTags.foregroundColor(true, mode, color));
++                }
++            }
++        }
++    }
++
 +    @Test
 +    void leavesSingleLineComponentsAndOffsetsIntact() {
 +        final var name = Component.literal("ordinary").withStyle(ChatFormatting.GOLD);
