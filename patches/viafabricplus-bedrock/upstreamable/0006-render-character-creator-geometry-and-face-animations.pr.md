@@ -16,4 +16,12 @@ Sources: [Persona render controllers](https://github.com/Mojang/bedrock-samples/
 
 Visible animated persona surfaces now use the shared native alpha-test shader. The target's `player_animated` material inherits `entity_alphatest` and adds `USE_UV_ANIM`. Existing CPU frame extraction already produces the selected surface texture, so this draw uses identity UVs. Each surface caches its two immutable dimension materials. Spectator and invisible surfaces retain their existing fallback.
 
+## Saved persona face in a protocol 2193 world
+
+A clean production Java client joins a separate native Bedrock 1.26.51.1 server through NetherNet HTTP. Its saved persona installs local geometry and one animated face surface. The open-eye frame contains both green iris pixels, and its full strip matches the locally saved strip exactly.
+
+An initial screenshot inspection suggested that the eyes were missing. Pixel measurements correct that observation. At the 64 front-face texel centers, rendered RGB matches the uploaded frame within one channel value after fitting three lighting factors. Both iris texels render as RGB 29, 81, 37 from source RGB 35, 99, 45. The fitting checks texture content and placement; it does not validate native lighting.
+
+Temporary private probes replace the layer's material and texture, then restore both. A solid texture verifies the face layer's draw. Four front-face quadrants verify its UV orientation. The generic material leaves the original appearance unchanged. These probes modify only runtime rendering and perform no account appearance writes. Native world lighting, pose, animation phase, and additional facial combinations still need comparison. Probes, images, account data, and server files remain private.
+
 The saved Hive scene includes five animated persona skins. Its skin resource patches supply geometry and animation bindings without material overrides. Numeric pipeline tests cover culling, depth, blending and dimension selection. Private geometry, animation and four-height cape fixtures remain unchanged.
