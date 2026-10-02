@@ -106,13 +106,12 @@ public final class ReplaySelfTest {
         request(playback, 0, List.of(new BlockPosition(1, 0, 2))); // Wrong coordinate does not release it.
         require(!playback.advance(20, emitted::add) && emitted.size() == 1);
         request(playback, 0, offsets.subList(0, 1));
-        require(!playback.advance(100, emitted::add) && emitted.size() == 1); // Every entry must be requested.
-        request(playback, 0, offsets.subList(1, 2));
-        require(!playback.advance(1010, emitted::add) && emitted.size() == 2);
-        require(!playback.advance(1019, emitted::add) && emitted.size() == 2);
-        require(!playback.advance(1020, emitted::add) && emitted.size() == 3);
-        require(!playback.advance(1030, emitted::add) && emitted.size() == 3); // Consumed requests cannot release twice.
-        request(playback, 0, offsets);
+        // A different client can omit an entry in the original client's batch.
+        require(!playback.advance(100, emitted::add) && emitted.size() == 2);
+        require(!playback.advance(109, emitted::add) && emitted.size() == 2);
+        require(!playback.advance(110, emitted::add) && emitted.size() == 3);
+        require(!playback.advance(120, emitted::add) && emitted.size() == 3); // Consumed request cannot release the overlapping batch twice.
+        request(playback, 0, offsets); // A fully matched batch also releases without changing its bytes.
         require(!playback.advance(2030, emitted::add) && emitted.size() == 4);
         require(playback.advance(2040, emitted::add) && emitted.size() == scene.size());
         for (int i = 0; i < scene.size(); i++) require(Arrays.equals(scene.get(i).payload(), emitted.get(i)));

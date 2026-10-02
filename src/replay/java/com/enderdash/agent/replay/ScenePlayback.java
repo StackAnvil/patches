@@ -51,7 +51,7 @@ final class ScenePlayback {
 
     boolean advance(long now, Consumer<byte[]> output) {
         if (waitingSince >= 0) {
-            if (!requested.containsAll(frames.get(cursor).subchunks())) {
+            if (!canRelease(frames.get(cursor))) {
                 if (now - waitingSince >= REQUEST_TIMEOUT) throw new RequestTimeout();
                 return false;
             }
@@ -63,7 +63,7 @@ final class ScenePlayback {
             Frame frame = frames.get(cursor);
             long due = Math.max(0, frame.entry().nanos() - origin);
             if (due > elapsed) break;
-            if (!requested.containsAll(frame.subchunks())) {
+            if (!canRelease(frame)) {
                 waitingSince = now;
                 frozenTime = due;
                 return false;
@@ -75,6 +75,12 @@ final class ScenePlayback {
             cursor++;
         }
         return cursor == frames.size();
+    }
+
+    private boolean canRelease(Frame frame) {
+        // Recorded batch boundaries belong to the recording client. Keep the whole
+        // payload unchanged when at least one reply answers this client's request.
+        return frame.subchunks().isEmpty() || frame.subchunks().stream().anyMatch(requested::contains);
     }
 
     private static int count(ByteBuf body) {
