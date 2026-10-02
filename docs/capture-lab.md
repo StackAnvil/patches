@@ -64,7 +64,9 @@ bun run capture video stop --client bedrock
 bun run capture video compare before after --client bedrock
 ```
 
-The comparison MP4 shows the before recording on the left and the after recording on the right. `videoStart` and `videoStop` are also scenario steps, so a JSON recipe can record exactly the same input sequence in both runs. Videos stay in the ignored capture directory. Review them before sharing because game menus can show account or player details.
+The comparison MP4 shows the before recording on the left and the after recording on the right. `videoStart` and `videoStop` are also scenario steps, so a JSON recipe can record exactly the same input sequence in both runs. Recordings default to 15 frames per second. For blink or strip timing, use `bun run capture video start timing --client bedrock --fps 120`. The rate must be an integer from 1 to 120. A scenario `videoStart` step accepts the same value as `fps`. Higher rates increase CPU use and file size. Session metadata records the requested rate and recorder launch time. Use the video frame timestamps to measure durations. Capture frames can repeat when the client renders more slowly.
+
+Videos stay in the ignored capture directory. Review them before sharing because game menus can show account or player details.
 
 When finished, run:
 

@@ -208,6 +208,8 @@ Targeted tests cover frame boundaries, lifetime phase, cyclic wrapping, random t
 
 A rebuilt Java client uses a private native skin fixture with separate arm and face bindings. All sixteen arm frames follow world render-state age and match the uploaded texture pixels. Blink uploads, duplicate-pass sampling, preview time, renderer lookup, and resource release pass. These checks establish the Java runtime path. Native multiplayer video comparison remains pending.
 
+A live comparison records the same nine-piece slim Alex recipe at 120 fps. The native client shows 15 blinks in 64.5 seconds. The restarted Java client shows 39 in 169 seconds. Both close their eyes for roughly 17 to 200 ms. A read-only Java probe also observes controller transitions and uploaded texture frames during rendering. These recordings verify visible blinking for this recipe. They use independent clocks and different poses. They do not establish matching phase, random sampling, or timing across every face and outfit. Videos, per-frame measurements, and probe data remain private.
+
 Sources: [Persona render controllers](https://github.com/Mojang/bedrock-samples/blob/main/resource_pack/render_controllers/persona.render_controllers.json) and [blink controller](https://github.com/Mojang/bedrock-samples/blob/main/resource_pack/animation_controllers/persona.animation_controllers.json).
 
 ## Built-in persona assets

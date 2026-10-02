@@ -42,7 +42,7 @@ interface Session {
   port: number;
   mode: "regular" | "local";
   gamePid?: number;
-  videos?: Partial<Record<Client, { pid: number; name: string; file: string; startedAt: string; stoppedAt?: string }>>;
+  videos?: Partial<Record<Client, { pid: number; name: string; file: string; startedAt: string; fps?: number; stoppedAt?: string }>>;
   stoppedAt?: string;
 }
 
@@ -67,7 +67,7 @@ type Step =
   | { action: "key"; key: string }
   | { action: "doubleKey"; key: string }
   | { action: "keyHold"; key: string; ms: number }
-  | { action: "videoStart"; name: string }
+  | { action: "videoStart"; name: string; fps?: number }
   | { action: "videoStop" };
 type Client = "bedrock" | "java";
 
@@ -251,8 +251,9 @@ async function stop(): Promise<void> {
   console.log(`Capture ${session.id} stopped.${session.gamePid && alive(session.gamePid) ? " The game remains open." : ""}`);
 }
 
-async function startVideo(name: string, client: Client, windowId?: string): Promise<void> {
+async function startVideo(name: string, client: Client, windowId?: string, fps = 15): Promise<void> {
   checkId(name);
+  if (!Number.isInteger(fps) || fps < 1 || fps > 120) throw new Error("Video frame rate must be an integer from 1 to 120.");
   const session = await load();
   if (session.stoppedAt) throw new Error("Start a capture before recording video.");
   const isolated = await displayEnv();
@@ -263,9 +264,10 @@ async function startVideo(name: string, client: Client, windowId?: string): Prom
   const file = join(capturePath(session.id), `${name}-${client}.mp4`);
   if (existsSync(file)) throw new Error(`Video ${name}-${client}.mp4 already exists. Choose another name.`);
   const log = openSync(join(capturePath(session.id), `${name}-${client}.video.log`), "a", 0o600);
+  const startedAt = new Date().toISOString();
   const child = spawn("ffmpeg", ["-nostdin", "-hide_banner", "-loglevel", "error", "-f", "x11grab",
     "-window_id", String(Number(window.id)), "-video_size", `${window.width}x${window.height}`,
-    "-framerate", "15", "-draw_mouse", "1", "-i", isolated.DISPLAY!,
+    "-framerate", String(fps), "-draw_mouse", "1", "-i", isolated.DISPLAY!,
     "-an", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "24", "-pix_fmt", "yuv420p",
     "-movflags", "+faststart", file], {
     cwd: root, detached: true, env: isolated, stdio: ["ignore", log, log],
@@ -276,7 +278,7 @@ async function startVideo(name: string, client: Client, windowId?: string): Prom
   await Bun.sleep(500);
   if (!alive(child.pid)) throw new Error(`ffmpeg stopped. Read the private ${name}-${client}.video.log.`);
   session.videos ??= {};
-  session.videos[client] = { pid: child.pid, name, file, startedAt: new Date().toISOString() };
+  session.videos[client] = { pid: child.pid, name, file, startedAt, fps };
   await save(session);
   console.log(`Recording ${client}: ${file}`);
 }
@@ -463,7 +465,7 @@ async function scenario(file: string, windowId?: string, client: Client = "bedro
       case "doubleKey": await key(step.key, windowId, client, allowFocus, undefined, true); break;
       case "keyHold": await key(step.key, windowId, client, allowFocus, step.ms); break;
       case "type": await typeText(step.text, windowId, client, allowFocus); break;
-      case "videoStart": await startVideo(step.name, client, windowId); break;
+      case "videoStart": await startVideo(step.name, client, windowId, step.fps); break;
       case "videoStop": await stopVideo(client); break;
       default: throw new Error("Unknown scenario action.");
     }
@@ -572,10 +574,13 @@ async function main(): Promise<void> {
       if (clientInput !== "bedrock" && clientInput !== "java") throw new Error("--client must be bedrock or java.");
       const client: Client = clientInput;
       const windowId = input.indexOf("--window-id") >= 0 ? input[input.indexOf("--window-id") + 1] : undefined;
-      if (action === "start" && input[0]) return startVideo(input[0], client, windowId);
+      if (action === "start" && input[0]) {
+        const fpsIndex = input.indexOf("--fps");
+        return startVideo(input[0], client, windowId, fpsIndex < 0 ? undefined : Number(input[fpsIndex + 1]));
+      }
       if (action === "stop") return stopVideo(client);
       if (action === "compare" && input[0] && input[1]) return compareVideo(input[0], input[1], client);
-      throw new Error("Usage: bun run capture video <start name|stop|compare before after> [--client bedrock|java]");
+      throw new Error("Usage: bun run capture video <start name|stop|compare before after> [--client bedrock|java] [--fps 1..120]");
     }
     case "ui": {
       const [action, ...input] = args;
