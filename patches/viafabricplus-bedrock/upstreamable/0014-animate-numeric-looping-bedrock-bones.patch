@@ -1,4 +1,4 @@
-From 259f266572f633395f90cb5c7b89a266ce04f050 Mon Sep 17 00:00:00 2001
+From b1e5c99289f3232b6a33e77b9ce6d2d28cfaac73 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:56:50 +0200
 Subject: [PATCH] feat(entities): animate Bedrock actor bones and controller
@@ -13,7 +13,7 @@ the shared core evaluator.
 Bind rotation_to_camera, body_y_rotation, life_time and anim_time. Keep
 unsupported query and variable channels omitted independently so a valid
 camera rotation survives an unsupported neighboring position channel.
-Script-variable playback and animation controllers remain outside scope.
+Script-variable playback and controller state transitions remain outside scope.
 
 The saved protocol 2193 CubeCraft banner requires
 query.rotation_to_camera(1) - query.body_y_rotation. Bedrock 1.26.51.1
@@ -26,7 +26,7 @@ Windows executable SHA-256 is
 
 Tests exercise camera quadrants, pitch, zero distance, sparse unsupported
 channels, body-yaw subtraction, and animation time versus lifetime.
-This does not add script-variable playback or animation controllers.
+This does not add script-variable playback or controller state transitions.
 
 Support loop:"hold_on_last_frame", including static poses without an
 animation length, and clamp animation time at the final frame. Multiply
@@ -45,7 +45,7 @@ Native controller parser 141cabf60 initializes those defaults and ENTITY
 vertex DXIL computes normalized UV times scale plus offset. Cache bounded
 immutable per-draw render types so queued draws retain their own UV state.
 Apply this path only to verified USE_UV_ANIM alpha-test families; unknown
-shader effects and animation-controller state remain outside scope.
+shader effects and animation-controller state transitions remain outside scope.
 
 Numerical tests cover held endpoints versus repeat wrapping, static and
 animated multiplicative scale, real root names, parser-to-snapshot-to-draw
@@ -53,17 +53,47 @@ UV evaluation, camera/lifetime changes and independent unsupported inputs.
 A private GPU oracle runs the actual GLSL on a checker texture for signed
 and zero UV scales, offsets and four ordinary/emissive lit/unlit variants.
 Native shader exports and licensed server assets remain private.
+
+Expand explicitly referenced single-state controllers in declaration order,
+including modern script aliases and nested controller aliases. Do not infer
+execution for unreferenced controllers. Require the sole declared initial
+state, reject transitions and state side effects, and omit unsupported
+weighted references independently. Reuse the animation compiler and its
+immutable camera frame rather than adding a separate pose evaluator.
+Bound expansion to depth 16 and 256 references. Reject a cyclic or
+oversized branch atomically while retaining unrelated direct animations.
+The unsupported variable.length center animation must not suppress the
+supported face animation. Tests cover parser-to-selection-to-camera pose,
+ordering, missing references, invalid states, weighted neighbors, cycles,
+depth and fan-out limits, and immutable output.
+
+Retain legacy description.animation_controllers declarations in order.
+The active saved protocol 2193 Hive client entity uses format 1.8.0 with
+face/center animation aliases and a declared single-default-state
+controller, without scripts.animate. Dropping the declaration prevented
+its supported rotation_to_camera bone animation from reaching the draw.
+The final saved pack stack has exactly one definition for this identifier.
+Its entity entry SHA-256 is
+58cf3b66a2ebe76751415ae7f5f9ad81b44464e5ec987f4f22d6e49639cc1f80;
+the containing pack SHA-256 is
+13facb13e8f0aa5ac233253e5deeca0e8c294512ca5f02bb7c38a8fd5da5d028.
+Native Bedrock 1.26.51.1 protocol 2193 renders its labels facing the camera.
+Raw assets and captures stay private; generic tests reproduce the schema.
 ---
  .../render/BedrockActorUvAnimation.java       |  34 ++
- .../render/BedrockEntityAnimation.java        | 339 ++++++++++++++++++
- .../bedrock/render/BedrockEntityRenderer.java |  65 +++-
+ .../render/BedrockAnimationController.java    | 160 +++++++++
+ .../render/BedrockEntityAnimation.java        | 320 ++++++++++++++++++
+ .../bedrock/render/BedrockEntityRenderer.java |  70 +++-
  .../bedrock/render/BedrockGeometry.java       |  15 +-
  .../render/BedrockActorUvAnimationTest.java   |  51 +++
+ .../BedrockAnimationControllerTest.java       | 162 +++++++++
  .../render/BedrockEntityAnimationTest.java    | 201 +++++++++++
- 6 files changed, 695 insertions(+), 10 deletions(-)
+ 8 files changed, 1003 insertions(+), 10 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvAnimation.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimationController.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimation.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvAnimationTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimationControllerTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimationTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvAnimation.java
@@ -106,12 +136,178 @@ index 0000000..a494418
 +            this.scaleU.evaluate(scope, 1F), this.scaleV.evaluate(scope, 1F));
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimationController.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimationController.java
+new file mode 100644
+index 0000000..9154345
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimationController.java
+@@ -0,0 +1,160 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.cube.converter.data.bedrock.BedrockEntityData;
++
++/** Ordered, unconditional animation references from controllers without state transitions. */
++record BedrockAnimationController(List<String> animations) {
++
++    BedrockAnimationController {
++        animations = List.copyOf(animations);
++    }
++
++    private static final int MAX_DEPTH = 16;
++    private static final int MAX_REFERENCES = 256;
++
++    static Map<String, BedrockAnimationController> load(final ResourcePackStorage packs) {
++        final Map<String, BedrockAnimationController> controllers = new HashMap<>();
++        for (var pack : packs.getPackStackBottomToTop()) {
++            for (String path : pack.content().getFilesDeep("animation_controllers/", ".json")) {
++                try {
++                    final JsonObject definitions = pack.content().getJson(path).getAsJsonObject("animation_controllers");
++                    if (definitions == null) {
++                        continue;
++                    }
++                    for (var entry : definitions.entrySet()) {
++                        final BedrockAnimationController controller = entry.getValue().isJsonObject()
++                            ? parse(entry.getValue().getAsJsonObject()) : null;
++                        if (controller == null) {
++                            controllers.remove(entry.getKey());
++                        } else {
++                            controllers.put(entry.getKey(), controller);
++                        }
++                    }
++                } catch (RuntimeException ignored) {
++                    // An invalid file must not prevent other packs from providing controllers.
++                }
++            }
++        }
++        return Map.copyOf(controllers);
++    }
++
++    static BedrockAnimationController parse(final JsonObject json) {
++        try {
++            final JsonObject states = json.getAsJsonObject("states");
++            if (states == null || states.size() != 1) {
++                return null;
++            }
++            final String initial = json.has("initial_state") ? json.get("initial_state").getAsString() : "default";
++            final JsonElement selected = states.get(initial);
++            if (selected == null || !selected.isJsonObject()) {
++                return null;
++            }
++            final JsonObject state = selected.getAsJsonObject();
++            for (String key : state.keySet()) {
++                if (!key.equals("animations") && !key.equals("transitions")) {
++                    return null;
++                }
++            }
++            if (state.has("transitions") && state.getAsJsonArray("transitions").size() != 0) {
++                return null;
++            }
++            final List<String> animations = new ArrayList<>();
++            if (state.has("animations")) {
++                for (JsonElement entry : state.getAsJsonArray("animations")) {
++                    if (entry.isJsonPrimitive() && entry.getAsJsonPrimitive().isString()) {
++                        animations.add(entry.getAsString());
++                    }
++                    // Weighted references need blend evaluation; never run them unconditionally.
++                }
++            }
++            return new BedrockAnimationController(List.copyOf(animations));
++        } catch (RuntimeException ignored) {
++            return null;
++        }
++    }
++
++    static List<BedrockEntityAnimation> select(
++        final Map<String, BedrockEntityAnimation> animations,
++        final Map<String, BedrockAnimationController> controllers,
++        final BedrockEntityData entity
++    ) {
++        final Map<String, String> aliases = new HashMap<>(entity.getAnimations());
++        for (var controller : entity.getAnimationControllers()) {
++            aliases.putIfAbsent(controller.alias(), controller.identifier());
++        }
++        final List<BedrockEntityAnimation> selected = new ArrayList<>();
++        for (var animate : entity.getScripts().animates()) {
++            if (animate.expression().isBlank()) {
++                selectRoot(aliases.get(animate.name()), aliases, animations, controllers, selected);
++            }
++        }
++        for (var controller : entity.getAnimationControllers()) {
++            selectRoot(controller.identifier(), aliases, animations, controllers, selected);
++        }
++        return List.copyOf(selected);
++    }
++
++    private static void selectRoot(
++        final String identifier, final Map<String, String> aliases,
++        final Map<String, BedrockEntityAnimation> animations,
++        final Map<String, BedrockAnimationController> controllers,
++        final List<BedrockEntityAnimation> selected
++    ) {
++        final List<BedrockEntityAnimation> branch = new ArrayList<>();
++        if (expand(identifier, aliases, animations, controllers, branch, new HashSet<>(), new int[1], 0)) {
++            selected.addAll(branch);
++        }
++    }
++
++    private static boolean expand(
++        final String identifier, final Map<String, String> aliases,
++        final Map<String, BedrockEntityAnimation> animations,
++        final Map<String, BedrockAnimationController> controllers,
++        final List<BedrockEntityAnimation> selected, final Set<String> path,
++        final int[] references, final int depth
++    ) {
++        if (++references[0] > MAX_REFERENCES || depth > MAX_DEPTH) {
++            return false;
++        }
++        if (identifier == null) {
++            return true;
++        }
++        final BedrockEntityAnimation animation = animations.get(identifier);
++        if (animation != null) {
++            selected.add(animation);
++            return true;
++        }
++        final BedrockAnimationController controller = controllers.get(identifier);
++        if (controller == null) {
++            return true;
++        }
++        if (!path.add(identifier)) {
++            return false;
++        }
++        try {
++            for (String alias : controller.animations) {
++                if (!expand(aliases.get(alias), aliases, animations, controllers, selected, path, references, depth + 1)) {
++                    return false;
++                }
++            }
++            return true;
++        } finally {
++            path.remove(identifier);
++        }
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimation.java
 new file mode 100644
-index 0000000..ea4f3c8
+index 0000000..debfd32
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimation.java
-@@ -0,0 +1,339 @@
+@@ -0,0 +1,320 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -146,7 +342,6 @@ index 0000000..ea4f3c8
 +import java.util.Set;
 +import net.minecraft.client.model.geom.ModelPart;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
-+import org.cube.converter.data.bedrock.BedrockEntityData;
 +
 +/** Repeating and held bone channels with verified camera and timing MoLang queries. */
 +record BedrockEntityAnimation(float length, boolean holdLastFrame, Map<String, Bone> bones) {
@@ -178,24 +373,6 @@ index 0000000..ea4f3c8
 +            }
 +        }
 +        return Map.copyOf(animations);
-+    }
-+
-+    static List<BedrockEntityAnimation> select(final Map<String, BedrockEntityAnimation> library, final BedrockEntityData entity) {
-+        final List<BedrockEntityAnimation> selected = new ArrayList<>();
-+        for (var animate : entity.getScripts().animates()) {
-+            if (!animate.expression().isBlank()) {
-+                continue;
-+            }
-+            final String identifier = entity.getAnimations().get(animate.name());
-+            if (identifier == null) {
-+                continue;
-+            }
-+            final BedrockEntityAnimation animation = library.get(identifier);
-+            if (animation != null) {
-+                selected.add(animation);
-+            }
-+        }
-+        return List.copyOf(selected);
 +    }
 +
 +    static BedrockEntityAnimation parse(final JsonObject json) {
@@ -452,10 +629,10 @@ index 0000000..ea4f3c8
 +
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
-index 0311c92..1834845 100644
+index 0311c92..64b6895 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
-@@ -47,18 +47,22 @@ import net.raphimc.viabedrock.api.model.entity.CustomEntity;
+@@ -47,18 +47,23 @@ import net.raphimc.viabedrock.api.model.entity.CustomEntity;
  import net.raphimc.viabedrock.api.util.StringUtil;
  import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
  import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
@@ -476,10 +653,11 @@ index 0311c92..1834845 100644
      };
 +    private final Map<String, List<BedrockEntityAnimation>> selectedAnimations = new HashMap<>();
 +    private Map<String, BedrockEntityAnimation> animationLibrary;
++    private Map<String, BedrockAnimationController> animationControllers;
      private ResourcePackStorage currentPacks;
      private BedrockActorMaterialDefinitions materialDefinitions;
  
-@@ -88,12 +92,16 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -88,12 +93,17 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
          }
          state.models = List.of();
          state.scale = 1F;
@@ -493,33 +671,37 @@ index 0311c92..1834845 100644
 +            this.uvAnimations.clear();
 +            this.selectedAnimations.clear();
 +            this.animationLibrary = null;
++            this.animationControllers = null;
              return;
          }
          final RenderData renderData = CustomEntityRenderStore.get(entity.getUUID());
-@@ -106,9 +114,22 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -106,9 +116,25 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
              this.materialDefinitions = BedrockActorMaterialDefinitions.load(packs);
              this.models.clear();
              this.renderTypes.clear();
 +            this.uvAnimations.clear();
 +            this.selectedAnimations.clear();
 +            this.animationLibrary = null;
++            this.animationControllers = null;
          }
          state.models = this.resolveModels(renderData, packs);
          state.scale = renderData.scale();
 +        state.animations = this.selectedAnimations.computeIfAbsent(renderData.identifier(), identifier -> {
 +            final var definition = packs.getEntities().get(identifier);
-+            if (definition == null || definition.entityData().getScripts().animates().isEmpty()) {
++            if (definition == null || (definition.entityData().getScripts().animates().isEmpty()
++                && definition.entityData().getAnimationControllers().isEmpty())) {
 +                return List.of();
 +            }
 +            if (this.animationLibrary == null) {
 +                this.animationLibrary = BedrockEntityAnimation.load(packs);
++                this.animationControllers = BedrockAnimationController.load(packs);
 +            }
-+            return BedrockEntityAnimation.select(this.animationLibrary, definition.entityData());
++            return BedrockAnimationController.select(this.animationLibrary, this.animationControllers, definition.entityData());
 +        });
          state.yaw = entity.getYRot();
      }
  
-@@ -136,27 +157,47 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -136,27 +162,47 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
                  final Model<EntityRenderState> model = this.models.computeIfAbsent(modelKey, _ -> BedrockGeometry.entityModel(geometry, material.getValue()));
                  final var alphaTest = this.materialDefinitions.alphaTest(material.getKey());
                  final RenderType type;
@@ -571,7 +753,7 @@ index 0311c92..1834845 100644
              poseStack.popPose();
          }
          super.submit(renderState, poseStack, nodes, camera);
-@@ -172,17 +213,27 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -172,17 +218,27 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
  
      public static final class State extends EntityRenderState {
          private List<RenderedModel> models = List.of();
@@ -602,7 +784,7 @@ index 0311c92..1834845 100644
  
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
-index 792885b..6f98c47 100644
+index 90f81f1..74facad 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 @@ -59,12 +59,21 @@ public final class BedrockGeometry {
@@ -687,9 +869,177 @@ index 0000000..0b352ea
 +            .evaluate(new BedrockEntityAnimation.Frame(9F, 0F, 0D, 0D, 1D)));
 +    }
 +}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimationControllerTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimationControllerTest.java
+new file mode 100644
+index 0000000..0fbf655
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimationControllerTest.java
+@@ -0,0 +1,162 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import net.minecraft.client.model.geom.ModelPart;
++import org.cube.converter.data.bedrock.BedrockEntityData;
++import org.cube.converter.parser.bedrock.data.impl.BedrockEntityParser;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++
++final class BedrockAnimationControllerTest {
++
++    @Test
++    void legacyControllerSelectsCameraAnimationWithoutUnsupportedSibling() {
++        final var entity = BedrockEntityParser.parse("""
++            {"format_version":"1.8.0","minecraft:client_entity":{"description":{
++              "identifier":"test:label","animations":{
++                "face":"animation.test.face","center":"animation.test.center"},
++              "animation_controllers":[{"default":"controller.animation.test.label"}]}}}
++            """);
++        final var face = BedrockEntityAnimation.parse(json("""
++            {"loop":true,"bones":{"root":{"rotation":[
++              "query.rotation_to_camera(0)","query.rotation_to_camera(1)",0]}}}
++            """));
++        assertNotNull(face);
++        assertNull(BedrockEntityAnimation.parse(json("""
++            {"loop":true,"bones":{"root":{"position":["variable.length * -6",0,0]}}}
++            """)));
++        final var selected = BedrockAnimationController.select(Map.of("animation.test.face", face),
++            Map.of("controller.animation.test.label", controller("face", "center")), entity);
++        assertEquals(List.of(face), selected);
++        assertThrows(UnsupportedOperationException.class, selected::clear);
++        final ModelPart part = new ModelPart(List.of(), Map.of());
++        selected.forEach(animation -> animation.apply(Map.of("root", part)::get,
++            new BedrockEntityAnimation.Frame(2, 0, 1, 1, 1)));
++        assertEquals((float) Math.toRadians(-45), part.yRot, 0.00001F);
++        assertEquals((float) -Math.atan(1 / Math.sqrt(2)), part.xRot, 0.00001F);
++        part.setRotation(0, 0, 0);
++        selected.forEach(animation -> animation.apply(Map.of("root", part)::get,
++            new BedrockEntityAnimation.Frame(2, 0, -1, 0, 1)));
++        assertEquals((float) Math.toRadians(45), part.yRot, 0.00001F);
++    }
++
++    @Test
++    void preservesDirectAndNestedDeclarationOrderWithoutImplicitControllers() {
++        final var first = animation(10);
++        final var second = animation(20);
++        final var entity = entity(Map.of("first", "animation.first", "second", "animation.second",
++            "nested", "controller.nested"), List.of("first"), List.of("controller.root"));
++        final var controllers = Map.of("controller.root", controller("second", "nested", "first"),
++            "controller.nested", controller("first", "second"), "controller.unused", controller("second"));
++        final var library = Map.of("animation.first", first, "animation.second", second);
++        assertEquals(List.of(first, second, first, second, first),
++            BedrockAnimationController.select(library, controllers, entity));
++        assertEquals(List.of(), BedrockAnimationController.select(library, controllers,
++            entity(entity.getAnimations(), List.of(), List.of())));
++        final var modern = entity(Map.of("root", "controller.root", "second", "animation.second"),
++            List.of("root"), List.of());
++        assertEquals(List.of(second), BedrockAnimationController.select(library, controllers, modern));
++    }
++
++    @Test
++    void honorsOnlyStateAndRejectsTransitionsAndStateSideEffects() {
++        assertEquals(List.of("idle"), BedrockAnimationController.parse(json("""
++            {"initial_state":"rest","states":{"rest":{"animations":["idle"],"transitions":[]}}}
++            """)).animations());
++        for (String definition : List.of(
++            "{\"states\":{\"rest\":{\"animations\":[\"idle\"]}}}",
++            "{\"states\":{\"default\":{},\"walking\":{}}}",
++            "{\"states\":{\"default\":{\"transitions\":[{\"default\":\"query.is_alive\"}]}}}",
++            "{\"states\":{\"default\":{\"on_entry\":[\"variable.ready=1\"]}}}",
++            "{\"states\":{\"default\":{\"animations\":3}}}"
++        )) {
++            assertNull(BedrockAnimationController.parse(json(definition)));
++        }
++    }
++
++    @Test
++    void doesNotInventUnconditionalPlaybackForWeightedEntries() {
++        final var parsed = BedrockAnimationController.parse(json("""
++            {"states":{"default":{"animations":["idle",{"walk":"query.modified_move_speed"},"face"]}}}
++            """));
++        assertNotNull(parsed);
++        assertEquals(List.of("idle", "face"), parsed.animations());
++    }
++
++    @Test
++    void rejectsCyclicBranchWithoutRemovingUnrelatedDirectAnimation() {
++        final var pose = animation(15);
++        final var entity = entity(Map.of("idle", "animation.idle", "root", "controller.root", "cycle", "controller.cycle"),
++            List.of("idle"), List.of("controller.root"));
++        final var controllers = Map.of("controller.root", controller("idle", "cycle"),
++            "controller.cycle", controller("root"));
++        assertEquals(List.of(pose), BedrockAnimationController.select(Map.of("animation.idle", pose), controllers, entity));
++    }
++
++    @Test
++    void boundsControllerDepthAndExpansionBeforePublishingBranch() {
++        final var pose = animation(15);
++        final Map<String, String> aliases = new HashMap<>(Map.of("idle", "animation.idle"));
++        final Map<String, BedrockAnimationController> controllers = new HashMap<>();
++        for (int i = 0; i < 20; i++) {
++            aliases.put("level" + i, "controller.level" + i);
++            controllers.put("controller.level" + i, controller("idle", "level" + (i + 1)));
++        }
++        assertEquals(List.of(pose), BedrockAnimationController.select(Map.of("animation.idle", pose), controllers,
++            entity(aliases, List.of("idle"), List.of("controller.level0"))));
++        final List<String> wide = new ArrayList<>();
++        for (int i = 0; i < 300; i++) {
++            wide.add("idle");
++        }
++        assertEquals(List.of(pose), BedrockAnimationController.select(Map.of("animation.idle", pose),
++            Map.of("controller.wide", new BedrockAnimationController(List.copyOf(wide))),
++            entity(aliases, List.of("idle"), List.of("controller.wide"))));
++    }
++
++    private static BedrockEntityData entity(final Map<String, String> animations, final List<String> scripts,
++                                           final List<String> controllers) {
++        final var scriptData = new BedrockEntityData.Scripts(List.of(), List.of(),
++            new BedrockEntityData.Scripts.Scale("1", "1", "1", "1"), scripts.stream()
++                .map(alias -> new BedrockEntityData.Scripts.Animate(alias, "")).toList());
++        return new BedrockEntityData("test:actor", scriptData, List.of(), Map.of(), animations, Map.of(), Map.of(),
++            controllers.stream().map(identifier -> new BedrockEntityData.AnimationController(identifier, identifier)).toList());
++    }
++
++    private static BedrockEntityAnimation animation(final int rotation) {
++        return BedrockEntityAnimation.parse(json("{\"loop\":true,\"bones\":{\"root\":{\"rotation\":[0," + rotation + ",0]}}}"));
++    }
++
++    private static BedrockAnimationController controller(final String... animations) {
++        final JsonArray entries = new JsonArray();
++        for (String animation : animations) {
++            entries.add(animation);
++        }
++        final JsonObject state = new JsonObject();
++        state.add("animations", entries);
++        final JsonObject states = new JsonObject();
++        states.add("default", state);
++        final JsonObject definition = new JsonObject();
++        definition.add("states", states);
++        return BedrockAnimationController.parse(definition);
++    }
++
++    private static JsonObject json(final String value) {
++        return JsonParser.parseString(value).getAsJsonObject();
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimationTest.java
 new file mode 100644
-index 0000000..b98a268
+index 0000000..9aafa37
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityAnimationTest.java
 @@ -0,0 +1,201 @@
@@ -764,9 +1114,9 @@ index 0000000..b98a268
 +        final var entity = new BedrockEntityData("test:mob", scripts, List.of(), Map.of(),
 +            Map.of("idle", "animation.test.idle", "walk", "animation.test.walk"), Map.of(), Map.of());
 +
-+        assertEquals(List.of(animation), BedrockEntityAnimation.select(Map.of(
++        assertEquals(List.of(animation), BedrockAnimationController.select(Map.of(
 +            "animation.test.idle", animation, "animation.test.walk", animation
-+        ), entity));
++        ), Map.of(), entity));
 +    }
 +
 +    @Test
