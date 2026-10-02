@@ -1,4 +1,4 @@
-From a57e97f92ba5e50800d19d6aa7ff6cf1f7666a72 Mon Sep 17 00:00:00 2001
+From c1d4398e19821eb133b5a421b33d2c104a72add0 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1167,6 +1167,21 @@ wheel's complete height before selecting its diamond layout. Shorter
 windows use one row. Align the position label with the actual controls.
 Recalculate the catalog page from the selected item on resize so the
 visible tile and its detail remain associated.
+
+Hover's current official animation uses query.life_time for its steady
+hover. In inspected Bedrock 1.26.51.1, the actor-bound query clock reads
+(actor age ticks + frame alpha) / 20 and preserves monotonic lifetime.
+A native instruction probe reproduces 53 actor and preview clock cases.
+The documentation has a reported lifetime/animation-time discrepancy:
+https://github.com/MicrosoftDocs/minecraft-creator/issues/772
+
+World emotes now receive the same actor query context as the player
+animation graph, instead of substituting elapsed emote time for lifetime.
+Keep the animation's elapsed clock separate. Remove unused sampling
+overloads so every world caller supplies its entity context. Verify Hover
+root position and rotation across independently varied clocks using
+licensed assets. Preview clock and native world phase remain separate
+verification work.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   68 +
@@ -1195,7 +1210,7 @@ visible tile and its detail remain associated.
  .../appearance/BedrockClassicSkinPack.java    |   80 +-
  .../appearance/BedrockEmitterEvents.java      |   74 +
  .../appearance/BedrockEmoteMessages.java      |  124 +
- .../appearance/BedrockEmotePlayback.java      |  471 ++
+ .../appearance/BedrockEmotePlayback.java      |  461 ++
  .../bedrock/appearance/BedrockEmotes.java     |  167 +
  .../appearance/BedrockItemAnimation.java      |  138 +
  .../appearance/BedrockLevelSounds.java        |  164 +
@@ -1293,7 +1308,7 @@ visible tile and its detail remain associated.
  .../BedrockControllerSoundTest.java           |  150 +
  .../appearance/BedrockEmitterEventsTest.java  |  181 +
  .../appearance/BedrockEmoteMessagesTest.java  |   94 +
- .../bedrock/appearance/BedrockEmotesTest.java |  226 +
+ .../bedrock/appearance/BedrockEmotesTest.java |  250 +
  .../appearance/BedrockItemAnimationTest.java  |  297 +
  .../appearance/BedrockLimbSelectionTest.java  |  225 +
  .../appearance/BedrockLimbSideTest.java       |   89 +
@@ -1339,7 +1354,7 @@ visible tile and its detail remain associated.
  .../render/BedrockModelLocatorsTest.java      |  112 +
  .../render/BedrockPlayerActorStateTest.java   |  195 +
  .../render/BedrockPlayerModelTest.java        |  100 +
- 171 files changed, 38612 insertions(+), 92 deletions(-)
+ 171 files changed, 38626 insertions(+), 92 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -15003,10 +15018,10 @@ index 0000000..1e1b478
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java
 new file mode 100644
-index 0000000..1d40653
+index 0000000..79cf1f9
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotePlayback.java
-@@ -0,0 +1,471 @@
+@@ -0,0 +1,461 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -15422,18 +15437,8 @@ index 0000000..1d40653
 +    }
 +
 +    public static Map<String, BedrockBoneAnimation.Transform> sample(
-+            final UUID player, final net.minecraft.world.phys.Vec3 position) {
-+        return sample(player, position, true, null);
-+    }
-+
-+    public static Map<String, BedrockBoneAnimation.Transform> sample(
 +            final UUID player, final net.minecraft.world.phys.Vec3 position,
-+            final boolean eventsEnabled, final java.util.function.Consumer<BedrockAnimationSound> sounds) {
-+        return sample(player, position, eventsEnabled, sounds, null);
-+    }
-+
-+    public static Map<String, BedrockBoneAnimation.Transform> sample(
-+            final UUID player, final net.minecraft.world.phys.Vec3 position, final boolean eventsEnabled,
++            final Map<String, ?> queries, final boolean eventsEnabled,
 +            final java.util.function.Consumer<BedrockAnimationSound> sounds,
 +            final java.util.function.Consumer<BedrockAnimationParticle.Cue> particles) {
 +        Playing playing = PLAYING.get(player);
@@ -15455,7 +15460,7 @@ index 0000000..1d40653
 +            PLAYING.put(player, playing);
 +        }
 +        final var pose =
-+                playing.animation().sample((now - playing.started()) / 1_000_000_000F, Map.of(), eventsEnabled, sounds, particles);
++                playing.animation().sample((now - playing.started()) / 1_000_000_000F, queries, eventsEnabled, sounds, particles);
 +        if (playing.animation().stopped()) PLAYING.remove(player);
 +        return pose;
 +    }
@@ -26130,7 +26135,7 @@ index 0000000..2224643
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 61a2b73..52af9c6 100644
+index 61a2b73..a387c6f 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -19,35 +19,54 @@
@@ -26340,7 +26345,7 @@ index 61a2b73..52af9c6 100644
 +        final boolean eventsEnabled = !Minecraft.getInstance().isPaused();
 +        final Map<String, Object> queries = actorQueries(entity, state);
 +        if (appearance != null) appearance.particleQueries = queries;
-+        final var emote = BedrockEmotePlayback.sample(entity.getUUID(), entity.position(), eventsEnabled, sound -> {
++        final var emote = BedrockEmotePlayback.sample(entity.getUUID(), entity.position(), queries, eventsEnabled, sound -> {
 +            if (actor != null) {
 +                final var cue = actor.soundCue(sound);
 +                if (cue != null) sounds.add(cue);
@@ -33341,10 +33346,10 @@ index 0000000..ff33158
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotesTest.java
 new file mode 100644
-index 0000000..b6f3121
+index 0000000..e90e5d8
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEmotesTest.java
-@@ -0,0 +1,226 @@
+@@ -0,0 +1,250 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -33540,6 +33545,30 @@ index 0000000..b6f3121
 +    }
 +
 +    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_CATALOG_EMOTE_ASSETS", matches = ".+")
++    void samplesHoverWithActorLifetimeIndependentOfEmoteElapsedTime() throws Exception {
++        final String packId = "a203a0d3-be55-2832-1a53-6012e4dc3ec2";
++        final Path directory = Path.of(System.getenv("STACKANVIL_CATALOG_EMOTE_ASSETS"), packId);
++        final Map<String, byte[]> files = new HashMap<>();
++        try (var paths = Files.list(directory)) {
++            for (final Path path : paths.filter(Files::isRegularFile).toList())
++                files.put(path.getFileName().toString(), Files.readAllBytes(path));
++        }
++        final var emote = BedrockEmotes.read(new BedrockMarketplaceAssets.Pack(packId, files));
++        assertEquals(7, emote.animation().length());
++        for (final float lifetime : new float[] {1, 1.075F, 3, 60.5F}) {
++            final var playback = emote.animation().playback();
++            for (float elapsed = 1; elapsed < 5; elapsed += 1F / 60) {
++                final var root = playback.sample(elapsed, Map.of("life_time", lifetime)).get("root");
++                assertEquals(12 - Math.cos(Math.toRadians(lifetime * 180)) * 2,
++                        root.position().y(), 0.0001);
++                assertEquals(392.5 + Math.cos(Math.toRadians(lifetime * 90 - 45)) * 4,
++                        root.rotation().y(), 0.0001);
++            }
++        }
++    }
++
++    @Test
 +    @EnabledIfEnvironmentVariable(named = "STACKANVIL_EMOTE_ASSETS", matches = ".+")
 +    void samplesEveryFrameOfTheTwoOwnedNativeAnimations() throws Exception {
 +        final Path directory = Path.of(System.getenv("STACKANVIL_EMOTE_ASSETS"));
@@ -33552,7 +33581,7 @@ index 0000000..b6f3121
 +                        .entrySet()) {
 +            final Map<String, byte[]> files = new HashMap<>();
 +            try (var paths = Files.list(directory.resolve(entry.getKey()))) {
-+                for (final Path path : paths.toList())
++                for (final Path path : paths.filter(Files::isRegularFile).toList())
 +                    files.put(path.getFileName().toString(), Files.readAllBytes(path));
 +            }
 +            final var emote =

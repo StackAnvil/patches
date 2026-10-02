@@ -1082,3 +1082,15 @@ The emote detail panel now shows Not owned for offers that cannot equip. Locked 
 Live production checks select unowned Robot Dance at 1280 by 694, resize to 640 by 480, and return to the original size. The selected index stays 20. The small layout shows page 21 of 32, with Robot Dance in its single tile. All four buttons remain inside the 320 by 240 GUI and above the footer. At GUI scale 1, the taller layout retains the diamond and the same selected offer. The original scale is restored. Independent HTTPS reads confirm all six original cloud recipes. A fresh production profile load confirms the original active recipe. The dependency build and Prism bundle pass. Captures and account data remain private.
 
 A read-only account loader inspection decodes all 32 current catalog emotes. None declares sound effects, particle effects, or timeline events. Hover uses actor lifetime expressions. These observations guide the next timing comparison; they do not establish complete effect or emote parity.
+
+### Actor queries during world emotes
+
+Hover's official seven-second animation uses actor lifetime for its root motion and limb oscillation. World emotes previously sampled with an empty query map, causing `query.life_time` to use elapsed emote time. Pass the player animation graph's actor context to the world emote sampler. Animation elapsed time remains a separate clock. Remove the unused sampling overloads.
+
+The inspected Bedrock 1.26.51.1 actor-bound clock reads `(actor age ticks + frame alpha) / 20` and preserves monotonic lifetime. An independent instruction probe reruns 53 actor and preview clock cases. A [reported discrepancy in the Molang documentation](https://github.com/MicrosoftDocs/minecraft-creator/issues/772) is a research lead; the target build supplies the clock evidence.
+
+All six emote tests pass with both licensed fixture directories supplied, without failures or skips. Hover's test varies lifetime independently of animation elapsed time and checks steady root position and rotation at 60 samples per second. The existing owned-animation test also handles subdirectories in the collected packs.
+
+The rebuilt production client exercises its public world sampler on the Minecraft thread with Hover's licensed asset. Four supplied actor lifetimes match the authored root motion while emote elapsed time stays near two seconds. Moving the probe actor cancels playback. A fresh production account load confirms the original active recipe. This probe sends no account write. The dependency build, Prism bundle, and north-star patch check pass.
+
+These checks verify query forwarding and authored motion evaluation. They do not compare native multiplayer phase or the full entity renderer. Native preview clock, effect aliases, offscreen actor context, and broader visual parity remain open. Assets, executable instructions, account data, and runtime probes stay private.
