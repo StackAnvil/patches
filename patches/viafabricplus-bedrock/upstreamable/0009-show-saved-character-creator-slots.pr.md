@@ -848,12 +848,35 @@ Production now retains the offset separately from the actor and locator matrices
 
 Independent execution supplies 48 combined native cases. The full leaf dispatcher, factory wrappers, binding setter, initialization gate, and context refresh execute. Resolved actors reach the initialization callback with the child actor context before the source expression. Ordinary requests and requests without bindings use the event frame. Invalid handles retain the source expression without child initialization.
 
-Removed actors and missing actor components follow a separate registry path. They use the parent's base origin for construction, retain its previous binding metadata, and suppress child initialization. Production still needs a Java registry-only actor/locator adapter for this path. The new placement fix covers resolved actors and does not claim that missing path.
+Removed actors and missing actor components follow a separate registry path. They use the parent's base origin for construction, retain its previous binding metadata, and suppress child initialization. The adapter described below now covers this registry path. Native live lifecycle comparisons remain outstanding.
 
 The probe supplies resource lookup, constructor allocation and fields, binding getters, weak registry resolution, level access, variable access, expression callbacks, and string copying. Actor component lookup executes against prepared ECS tables. Actual Molang evaluation, asynchronous loading, complete emitter updates, and visible native playback remain outside these cases.
 
 The 192 native matrix comparisons now exercise the production binding offset adapter directly. Earlier tests added the offset before constructing the attachment. A new child/grandchild regression verifies offset replacement, actor fallback placement, rotation-only matrices, and scaled locator behavior. Native executables, assets, probes, and fixtures remain private.
 
 All 377 fixture-enabled tests pass across 74 suites with no failures, errors, or skips. This includes all 74 particle tests. Fresh license acquisition, extraction, and cache reuse pass. All 16 patches replay.
+
+The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
+
+
+## Retain particle registry components after actor loss
+
+Separate registry binding presence from actor query validity. Native transform helper `FUN_14215b3c0` resolves locators and position/yaw components without an actor object. Its fallback interpolates float32 positions and wrapped yaw, with a different rotation convention from the actor-object helper. It ignores the binding offset. A resolved locator supplies its complete matrix.
+
+Java now samples retained render components when its avatar disappears but the original network actor remains tracked. The network owner identity invalidates removed or replaced actors. The same attachment supplier continues to provide matrices without actor queries or actor bounds. World changes still invalidate the supplier and pending asset work.
+
+Registry-only bound children construct at the parent's base origin and retain its previous binding offset and locator. A missing actor context suppresses child initialization. The source event expression still runs. The combined 48 native dispatcher/context cases now compare these child frames and initialization gates through production code. Invalid asset handles remain outside the Java emitter comparison.
+
+Native emitter update `FUN_142158a40` expires an invalid context before activation and update expressions. Its first-update flag still permits births. Local-position particles remain hidden through render gate `FUN_14215cc90`. Later invalid updates clear their population. World-space particles drain normally. Context recovery does not revive an expired emitter, but it can reveal retained local particles before the next invalid update.
+
+Independent execution supplies 384 complete registry matrix cases. It executes registry handle validation, component lookup, locator caching and matrix copying, yaw wrapping, and position interpolation. Imported float32 sine, cosine, remainder, and byte comparison are supplied. Binding getters and weak registry resolution are supplied. Prepared component tables and initial identity outputs limit these checks.
+
+Another 12 schedules supply 36 native updates. They cover initially missing contexts, actor loss after an update, and context recovery. The native update, expiry flag, first births, age advancement, and population removal execute. Resource/binding getters, query validity, identity transforms, particle allocation and initial values, and creation/update expression receipts are supplied. Motion components are disabled. Eight render-entry cases execute the enabled/context/local-position gate, then stop before resource and frame work.
+
+Production tests compare all 384 matrices exactly as float32. They also compare schedule populations, enabled render gates, initialization suppression, and retained child offsets. The existing query-retention regression now uses world-space particles, because native local-position rendering stops after actor loss. Network state tests cover owner removal and replacement identities.
+
+Live retained-component lifetime, registry locator construction, missing position components, unavailable actor bounds, complete query coverage, asynchronous child dispatch, and native visible output still need comparisons. These checks do not establish complete particle or skin parity. Executables, assets, probes, and fixtures remain private.
+
+All 380 fixture-enabled tests pass across 75 suites with no failures, errors, or skips. This includes all 77 particle tests and network owner replacement checks. Fresh license acquisition, extraction, and cache reuse pass. All 16 patches replay.
 
 The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
