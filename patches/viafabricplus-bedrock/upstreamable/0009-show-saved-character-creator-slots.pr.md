@@ -771,3 +771,25 @@ Production tests compare event order, source coordinates, inherited velocity, an
 All 347 fixture-enabled add-on tests pass after replaying the 16 patches, with no failures, errors, or skips. This includes 58 particle tests, fresh licensed-package extraction, and cache reuse.
 
 The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.
+
+## Play particle level sound events
+
+Resolve `sound_effect.event_name` as a level sound event, as the [Creator reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particleeffectevents?view=minecraft-bedrock-stable) specifies. Particle events pass no block or entity selector. Use `individual_event_sounds` from root `sounds.json`, then resolve the configured catalog sample. Acquire this root file with the official package assets and refresh caches through format seven.
+
+Native dispatcher `FUN_142164cb0` dispatches particles, sound, expression, and log in that order. Unknown event value 614 suppresses only sound. Sound requests retain the event matrix translation, data -1, an empty actor identifier, and baby false. Independent execution supplies 56 prepared leaf cases. Level and Dimension accessors, expression and log boundaries, and sound receipts are supplied. These cases do not execute enum name lookup or audio output.
+
+Native name resolver `FUN_143454f70` uses ASCII lowercase conversion from `FUN_1403201d0`. Production gets accepted names from ViaBedrock's pinned protocol 2193 mappings, including null Java mappings. This establishes the target data source, not independent native verification of every name or numeric value.
+
+Read group defaults and per-event ranges through the inspected generic configuration path. `FUN_1441d0e40` initializes both group ranges to -1. `FUN_1441c9ac0` retains those ranges for string configurations and overrides them for object configurations. `FUN_140acfee0` accepts numbers, booleans, arrays, min/max objects, and numeric strings. Arrays use their first two values, sorting reversed endpoints. Objects clamp max to min. Unsupported scalar conversions produce zero; null fields retain their incoming defaults. Protect production with finite parameter, string, and catalog limits.
+
+Independent execution of the full range reader supplies 34 numeric, boolean, object, and array cases. JSON member/index lookup and string-copy boundaries are supplied. Stringstream parsing follows inspected code and remains outside these execution fixtures. Production rejects malformed range strings rather than reproducing arbitrary failed stream state.
+
+Native scalar samplers `FUN_1441b2ed0` and `FUN_1441b2f80` use two unsigned random draws for varying ranges. Their triangular float32 calculation preserves draw order and skips constant or reversed ranges. The level dispatcher samples pitch before volume. Independent execution supplies 70 sampling cases with supplied random integers. Another nine cases execute the command volume clamp and playback gate in `FUN_1441bf810`. Clamp volume to one before catalog sample multiplication. Suppress requests whose command volume is zero, including absent inherited volume.
+
+Use the existing bounded decoder and shared PCM player for resolved samples. Fresh licensed extraction supplies 6,117 files, including all root sound configurations. An integration test resolves water dripstone, lava dripstone, and honey drip sounds through the official overlays and decodes their PCM. Server root configuration retention belongs to the server effect library patch.
+
+These checks do not establish seeded random generation, native audible mixing, captions, native server comparisons, or a complete level-event context resolver. Executables, licensed assets, probes, and fixtures remain private.
+
+All 365 fixture-enabled add-on tests pass with no failures, errors, or skips across 72 suites. The final particle sound and server override checks also pass after folding server configuration retention into its owning patch. All 16 patches replay. Fresh license acquisition, package extraction, and cache reuse pass with the bundled helper.
+
+The full dependency build and Prism bundle pass against the pinned ViaFabricPlus Jenkins artifacts.

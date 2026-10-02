@@ -23,3 +23,4 @@ components and materials stays separate.
 
 All nine resource library tests pass with the private fixtures. They cover
 missing placeholders, supported emission, image lookup and traversal rejection.
+Retain root `sounds.json` in the bounded server effect library. Particle sound events use its generic configurations before catalog lookup. The pack override test resolves an upper configuration and decodes its sample from a lower pack. This tests Java resource precedence and playback parameters; native server playback remains outside this check.
