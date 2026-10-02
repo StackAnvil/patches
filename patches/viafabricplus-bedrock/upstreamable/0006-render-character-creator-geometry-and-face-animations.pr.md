@@ -8,7 +8,7 @@ The matching blink controller starts with open eyes. Each open-state evaluation 
 
 Targeted tests cover native strip geometry, UV orientation, frame boundaries, cyclic phase, controller transitions, resampling, repeated passes, and reset. The full replayed stack builds. All 116 fixture-enabled add-on tests pass with no skips.
 
-A rebuilt Java client receives a private native skin fixture with separate arm and face bindings. Its world dispatcher selects all sixteen arm frames from render-state age. Every frame matches the texture pixels after upload. Blink uploads, duplicate-pass sampling, the monotonic preview clock, renderer lookup, and resource release also pass. These checks establish the Java runtime path. A native multiplayer video comparison remains pending.
+A rebuilt Java client receives a private native skin fixture with separate arm and face bindings. Its world dispatcher selects all sixteen arm frames from render-state age. Every frame matches the texture pixels after upload. Blink uploads, duplicate-pass sampling, the monotonic preview clock, renderer lookup, and resource release also pass. These checks establish the Java runtime path. The world blink comparison below covers the saved default face. Remote receive and multiplayer phase comparisons remain pending.
 
 Private package assets and research binaries remain outside the repository.
 
@@ -25,3 +25,15 @@ An initial screenshot inspection suggested that the eyes were missing. Pixel mea
 Temporary private probes replace the layer's material and texture, then restore both. A solid texture verifies the face layer's draw. Four front-face quadrants verify its UV orientation. The generic material leaves the original appearance unchanged. These probes modify only runtime rendering and perform no account appearance writes. Native world lighting, pose, animation phase, and additional facial combinations still need comparison. Probes, images, account data, and server files remain private.
 
 The saved Hive scene includes five animated persona skins. Its skin resource patches supply geometry and animation bindings without material overrides. Numeric pipeline tests cover culling, depth, blending and dimension selection. Private geometry, animation and four-height cape fixtures remain unchanged.
+
+## Native and Java world blink comparison
+
+Both clients join the private Bedrock 1.26.51.1 world through NetherNet. The server reports each player spawned. The clients join separately with the same account. Their front views use the saved default persona face.
+
+A 77-second native recording contains 18 complete eye closures. Their measured durations range from approximately 17 to 217 milliseconds. A separate 35-second observation reads the native world actor context after debugger detachment. Its lifetime advances at 1.00027 seconds per second, without rewinds.
+
+The production Java renderer provides 1,247 observations across 45 seconds with the world visible throughout. Its actor lifetime advances at 1.00005 seconds per second. A temporary frame limit of 35 produces a median actual rate of 28 frames per second. The probe restores the original limit of 120 afterward.
+
+All ten Java eye closures match transitions in the renderer trace. Video and trace durations differ by less than 11 milliseconds. The visible closures range from approximately 25 to 183 milliseconds. Analysis uses recorded frame timestamps and decodes frames without duplication. Iris classification uses channel ratios because world lighting changes during the recording.
+
+These observations support the tested world clock and visible blink behavior. They do not establish identical random sequences, multiplayer phase, native lighting, remote receive behavior, or other facial combinations. Recordings, actor addresses, account files, and probes remain private.
