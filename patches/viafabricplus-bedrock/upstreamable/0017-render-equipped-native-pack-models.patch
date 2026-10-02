@@ -1,0 +1,1114 @@
+From 1e3cdbeb9baf09d8548b3f4f197614ec1fcb2180 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 18:26:58 +0200
+Subject: [PATCH] feat(attachables): render equipped native pack models
+
+Bedrock 1.26.51.1 (protocol 2193) sends Hive angel wings as chest
+attachables, separate from player skins. Resolve canonical converted item
+identities and submit their native geometry through a player equipment
+layer instead of expecting the skin renderer to contain worn meshes.
+
+Retain playback per player, slot and item so spawn animations finish.
+Apply ordered bone visibility, third-person Molang context, inherited
+alpha-test materials, authored UVs and same-name owner bone deformation against complete global bind matrices.
+Retry parent setup when existing owner graph scopes load or change, and
+clear connection-owned resources on reload. Suppress duplicate vanilla
+head items only after a supported native head surface is selected.
+
+Native evidence includes Hive chest item 10173 angel_wings_pink, head
+item 10209 axe, six zero-thickness south-facing wing planes, inherited
+DisableCulling and a held spawn scale reaching one after 0.64 seconds.
+Keep those planes unchanged. Explicit binding expressions, non-default
+variants and unverified material families retain the existing fallback.
+Classic owners without a native graph/controller lack a parent variable
+scope; this does not prevent independent equipped wing playback.
+
+Targeted tests cover identity collisions, equipment lifetime, held spawn
+playback, owner context, ordered visibility and animated body binding, including rotated native ancestor rest poses.
+---
+ .../appearance/BedrockActorAnimation.java     |  40 ++-
+ .../bedrock/appearance/BedrockMolang.java     |   5 +
+ .../appearance/BedrockPlayerControllers.java  |  36 ++-
+ .../render/MixinAvatarAnimationRenderer.java  |  18 +-
+ .../render/MixinAvatarAnimationState.java     |  11 +-
+ .../bedrock/render/BedrockAnimatedModel.java  |  79 ++++-
+ .../bedrock/render/BedrockEquipmentCache.java |  41 +++
+ .../BedrockEquippedAttachableLayer.java       |  33 +++
+ .../render/BedrockPlayerAttachables.java      | 270 ++++++++++++++++++
+ .../bedrock/render/BedrockPlayerModel.java    |   6 +
+ .../bedrock/render/BedrockPlayerSkins.java    |  20 +-
+ .../BedrockEquippedAnimationTest.java         |  46 +++
+ .../BedrockPlayerControllersTest.java         |  22 ++
+ .../render/BedrockEquippedAttachableTest.java |  98 +++++++
+ .../render/BedrockPlayerModelTest.java        |  58 ++++
+ 15 files changed, 765 insertions(+), 18 deletions(-)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquipmentCache.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableLayer.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquippedAnimationTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
+index eaddeaa..4aba35f 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
+@@ -24,25 +24,34 @@ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+ public final class BedrockActorAnimation {
+ 
+     public static BedrockActorAnimation serverPlayer(final ResourcePackStorage packs) throws IOException {
++        return serverActor(packs, "entity/", "minecraft:client_entity", "minecraft:player");
++    }
++
++    public static BedrockActorAnimation serverAttachable(final ResourcePackStorage packs, final String identifier) throws IOException {
++        return serverActor(packs, "attachables/", "minecraft:attachable", identifier);
++    }
++
++    private static BedrockActorAnimation serverActor(final ResourcePackStorage packs, final String folder,
++                                                    final String field, final String identifier) throws IOException {
+         final Map<String, JsonObject> animations = new LinkedHashMap<>();
+         final Map<String, ControllerResource> controllers = new LinkedHashMap<>();
+         JsonObject player = null;
+         try {
+             for (final var pack : packs.getPackStackBottomToTop()) {
+-                for (final String path : pack.content().getFilesDeep("entity/", ".json")) {
++                for (final String path : pack.content().getFilesDeep(folder, ".json")) {
+                     final JsonObject description = JsonParser.parseString(pack.content().getString(path)).getAsJsonObject()
+-                            .getAsJsonObject("minecraft:client_entity").getAsJsonObject("description");
+-                    if ("minecraft:player".equals(description.get("identifier").getAsString())) player = description;
++                            .getAsJsonObject(field).getAsJsonObject("description");
++                    if (identifier.equals(description.get("identifier").getAsString())) player = description;
+                 }
+-                for (final String folder : List.of("animations/", "animation_controllers/")) {
+-                    for (final String path : pack.content().getFilesDeep(folder, ".json")) {
++                for (final String resourceFolder : List.of("animations/", "animation_controllers/")) {
++                    for (final String path : pack.content().getFilesDeep(resourceFolder, ".json")) {
+                         final JsonObject document = JsonParser.parseString(pack.content().getString(path)).getAsJsonObject();
+-                        final String field = folder.equals("animations/") ? "animations" : "animation_controllers";
+-                        final JsonObject definitions = document.getAsJsonObject(field);
++                        final String resourceField = resourceFolder.equals("animations/") ? "animations" : "animation_controllers";
++                        final JsonObject definitions = document.getAsJsonObject(resourceField);
+                         if (definitions == null) continue;
+                         final boolean deferred = deferredEntry(document.has("format_version") ? document.get("format_version").getAsString() : "1.10.0");
+                         for (final var entry : definitions.entrySet()) {
+-                            if (field.equals("animations")) animations.put(entry.getKey(), entry.getValue().getAsJsonObject());
++                            if (resourceField.equals("animations")) animations.put(entry.getKey(), entry.getValue().getAsJsonObject());
+                             else controllers.put(entry.getKey(), new ControllerResource(entry.getValue().getAsJsonObject(), deferred));
+                         }
+                         if (animations.size() > 4096 || controllers.size() > 4096) throw new IOException("Too many server actor animation resources");
+@@ -51,7 +60,7 @@ public final class BedrockActorAnimation {
+             }
+             return player == null ? null : new BedrockActorAnimation(player, Map.of(), animations, controllers, BedrockResourceLibrary.serverEffects(packs));
+         } catch (RuntimeException e) {
+-            throw new IOException("Invalid server player animation graph", e);
++            throw new IOException("Invalid server actor animation graph", e);
+         }
+     }
+     @FunctionalInterface
+@@ -59,10 +68,14 @@ public final class BedrockActorAnimation {
+         Object evaluate(List<Object> arguments);
+     }
+ 
+-    public record Frame(Map<String, Object> queries, Map<String, Float> variables) {
++    public record Frame(Map<String, Object> queries, Map<String, Float> variables, Map<String, Object> context) {
++        public Frame(final Map<String, Object> queries, final Map<String, Float> variables) {
++            this(queries, variables, Map.of());
++        }
+         public Frame {
+             queries = Map.copyOf(queries);
+             variables = Map.copyOf(variables);
++            context = Map.copyOf(context);
+         }
+     }
+ 
+@@ -301,6 +314,7 @@ public final class BedrockActorAnimation {
+                     "any_animation_finished",
+                     (Query) _ -> this.queryState != null && this.queryState.anyFinished());
+             this.molang.queries(queries, 0, time, this.delta);
++            this.molang.context(input.context());
+             if (this.active == null) {
+                 this.active = this.create(roots);
+                 this.run(initialize);
+@@ -313,6 +327,12 @@ public final class BedrockActorAnimation {
+             return this.pose;
+         }
+ 
++        /** Runs attachable setup in the parent actor's variable scope. */
++        public void parentSetup(final List<String> expressions, final Map<String, Object> context) throws IOException {
++            this.molang.context(context);
++            this.molang.value(BedrockMolang.Program.script(expressions));
++        }
++
+         private void sound(final BedrockAnimationSound sound) {
+             if (this.soundOutput == null) return;
+             final SoundCue cue = this.soundCue(sound);
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java
+index 236679a..2028010 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java
+@@ -174,6 +174,11 @@ final class BedrockMolang {
+         this.engine.scope().set(name, binding);
+     }
+ 
++    void context(final Map<String, ?> values) {
++        this.binding("context", values);
++        this.engine.scope().set("c", this.engine.scope().get("context"));
++    }
++
+     Value value(final Program program) {
+         this.iterations = 0;
+         try {
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
+index 4816f1e..28e2b34 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
+@@ -47,6 +47,13 @@ public final class BedrockPlayerControllers {
+             final Map<String, Object> queries,
+             final Map<String, Float> variables)
+             throws IOException {
++        return this.select(time, properties, queries, variables, Map.of());
++    }
++
++    public Selection select(final float time, final Map<String, Object> properties,
++                            final Map<String, Object> queries, final Map<String, Float> variables,
++                            final Map<String, Object> context) throws IOException {
++        this.molang.context(context);
+         final Map<String, Object> frame = new HashMap<>(queries);
+         frame.put("life_time", time);
+         frame.put("property", (BedrockActorAnimation.Query) args -> args.isEmpty() ? 0 : properties.getOrDefault(String.valueOf(args.getFirst()), 0));
+@@ -77,17 +84,24 @@ public final class BedrockPlayerControllers {
+             this.molang.binding("array", arrays);
+             final String geometry = this.value(controller.geometryExpression()).getAsString();
+             final String material = controller.materialsMap().containsKey("*") ? this.value(controller.materialsMap().get("*")).getAsString() : "entity_alphatest";
+-            final UvAnimation animation = this.uvAnimations.get(reference.identifier());
+-            final Uv uv = animation == null ? Uv.IDENTITY : new Uv(
++            final var nativeUv = controller.uvAnimation();
++            final UvAnimation animation = this.uvAnimations.getOrDefault(reference.identifier(),
++                    new UvAnimation(nativeUv.offsetU(), nativeUv.offsetV(), nativeUv.scaleU(), nativeUv.scaleV()));
++            final Uv uv = new Uv(
+                     (float) this.value(animation.offsetX()).getAsNumber(), (float) this.value(animation.offsetY()).getAsNumber(),
+                     (float) this.value(animation.scaleX()).getAsNumber(), (float) this.value(animation.scaleY()).getAsNumber());
++            final List<Visibility> visibility = new ArrayList<>();
++            for (final var rule : controller.partVisibility()) {
++                visibility.add(new Visibility(rule.pattern(), this.value(rule.expression()).getAsBoolean()));
++            }
++            final float lightMultiplier = (float) this.value(controller.lightColorMultiplierExpression()).getAsNumber();
+             for (final String expression : controller.textureExpressions()) {
+                 final String texture = this.value(expression).getAsString();
+                 if ((geometry.equals("geometry.humanoid.custom") || geometry.equals("geometry.humanoid.customSlim"))
+                         && (texture.equals("textures/entity/steve") || texture.equals("textures/entity/alex"))) {
+                     body = true;
+                 } else if (!geometry.isBlank() && !texture.isBlank()) {
+-                    surfaces.add(new Surface(reference.identifier(), geometry, texture, material, uv));
++                    surfaces.add(new Surface(reference.identifier(), geometry, texture, material, uv, List.copyOf(visibility), controller.ignoreLighting(), lightMultiplier));
+                 }
+             }
+         }
+@@ -112,10 +126,24 @@ public final class BedrockPlayerControllers {
+         return this.molang.value(program);
+     }
+ 
++    /** Attachable setup runs in the owner's controller variable scope. */
++    public void parentSetup(final List<String> expressions, final Map<String, Object> context) throws IOException {
++        this.molang.context(context);
++        this.run(expressions);
++    }
++
++    public record Visibility(String pattern, boolean visible) {
++        public boolean matches(final String bone) {
++            final String regex = java.util.regex.Pattern.quote(this.pattern).replace("*", "\\E.*\\Q");
++            return bone.matches(regex);
++        }
++    }
++
+     public record UvAnimation(String offsetX, String offsetY, String scaleX, String scaleY) {}
+     public record Uv(float offsetX, float offsetY, float scaleX, float scaleY) {
+         public static final Uv IDENTITY = new Uv(0, 0, 1, 1);
+     }
+-    public record Surface(String controller, String geometry, String texture, String material, Uv uv) {}
++    public record Surface(String controller, String geometry, String texture, String material, Uv uv,
++                          List<Visibility> visibility, boolean ignoreLighting, float lightMultiplier) {}
+     public record Selection(boolean bodyVisible, List<Surface> surfaces) {}
+ }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationRenderer.java
+index a080d1b..0f7bd33 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationRenderer.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationRenderer.java
+@@ -5,9 +5,14 @@
+  */
+ package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
+ 
++import com.viaversion.viafabricplus.bedrock.render.BedrockEquippedAttachableLayer;
+ import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerAnimationState;
++import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerAttachables;
+ import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
+ 
++import net.minecraft.client.model.player.PlayerModel;
++import net.minecraft.client.renderer.entity.EntityRendererProvider;
++import net.minecraft.client.renderer.entity.LivingEntityRenderer;
+ import net.minecraft.client.renderer.entity.player.AvatarRenderer;
+ import net.minecraft.client.renderer.entity.state.AvatarRenderState;
+ import net.minecraft.world.entity.Avatar;
+@@ -18,7 +23,17 @@ import org.spongepowered.asm.mixin.injection.Inject;
+ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+ 
+ @Mixin(AvatarRenderer.class)
+-public abstract class MixinAvatarAnimationRenderer {
++public abstract class MixinAvatarAnimationRenderer extends LivingEntityRenderer<Avatar, AvatarRenderState, PlayerModel> {
++    protected MixinAvatarAnimationRenderer(final EntityRendererProvider.Context context,
++                                          final PlayerModel model, final float shadowRadius) {
++        super(context, model, shadowRadius);
++    }
++
++    @Inject(method = "<init>", at = @At("TAIL"))
++    private void equippedLayer(final CallbackInfo ci) {
++        this.addLayer(new BedrockEquippedAttachableLayer((AvatarRenderer<?>) (Object) this));
++    }
++
+     @Inject(
+             method =
+                     "extractRenderState(Lnet/minecraft/world/entity/Avatar;Lnet/minecraft/client/renderer/entity/state/AvatarRenderState;F)V",
+@@ -30,5 +45,6 @@ public abstract class MixinAvatarAnimationRenderer {
+             final CallbackInfo ci) {
+         ((BedrockPlayerAnimationState) state)
+                 .bedrockAnimationPose(BedrockPlayerSkins.pose(entity, state));
++        ((BedrockPlayerAttachables.State) state).bedrockAttachables(BedrockPlayerAttachables.extract(entity, state));
+     }
+ }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationState.java
+index aa2083a..cbc48ea 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationState.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationState.java
+@@ -7,6 +7,8 @@ package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
+ 
+ import com.viaversion.viafabricplus.bedrock.appearance.BedrockBoneAnimation;
+ import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerAnimationState;
++import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerAttachables;
++import java.util.List;
+ 
+ import net.minecraft.client.renderer.entity.state.AvatarRenderState;
+ 
+@@ -16,7 +18,14 @@ import org.spongepowered.asm.mixin.Unique;
+ import java.util.Map;
+ 
+ @Mixin(AvatarRenderState.class)
+-public abstract class MixinAvatarAnimationState implements BedrockPlayerAnimationState {
++public abstract class MixinAvatarAnimationState implements BedrockPlayerAnimationState, BedrockPlayerAttachables.State {
++    @Unique private List<BedrockPlayerAttachables.Surface> bedrock$attachables = List.of();
++
++    @Override
++    public List<BedrockPlayerAttachables.Surface> bedrockAttachables() { return this.bedrock$attachables; }
++
++    @Override
++    public void bedrockAttachables(final List<BedrockPlayerAttachables.Surface> surfaces) { this.bedrock$attachables = surfaces; }
+     @Unique private Map<String, BedrockBoneAnimation.Transform> bedrock$animationPose = Map.of();
+ 
+     @Override
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
+index ffaf1a4..3946d33 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
+@@ -6,6 +6,7 @@
+ package com.viaversion.viafabricplus.bedrock.render;
+ 
+ import com.viaversion.viafabricplus.bedrock.appearance.BedrockBoneAnimation;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockPlayerControllers;
+ 
+ import net.minecraft.client.model.Model;
+ import net.minecraft.client.model.geom.ModelPart;
+@@ -19,13 +20,16 @@ import org.joml.Vector3f;
+ 
+ import java.util.HashMap;
+ import java.util.Locale;
++import java.util.List;
+ import java.util.Map;
+ 
+ /** A menu model retaining the authored hierarchy, including root and waist pivots. */
+ public final class BedrockAnimatedModel {
+     private final Model.Simple model;
+     private final Map<String, ModelPart> parts;
++    private final Map<ModelPart, String> names = new HashMap<>();
+     private final Map<ModelPart, ModelPart> parents = new HashMap<>();
++    private final Map<ModelPart, Matrix4f> bindMatrices = new HashMap<>();
+ 
+     BedrockAnimatedModel(
+             final ModelPart root,
+@@ -33,13 +37,14 @@ public final class BedrockAnimatedModel {
+             final BedrockGeometryModel geometry) {
+         this.model = new Model.Simple(root, RenderTypes::entityTranslucent);
+         final Map<String, ModelPart> normalized = new HashMap<>();
+-        parts.forEach((name, part) -> normalized.put(normalize(name), part));
++        parts.forEach((name, part) -> { normalized.put(normalize(name), part); this.names.put(part, name); });
+         this.parts = Map.copyOf(normalized);
+         for (final var definition : geometry.getParents()) {
+             final ModelPart child = parts.get(definition.getName());
+             final ModelPart parent = parts.get(definition.getParent());
+             if (parent != null) this.parents.put(child, parent);
+         }
++        this.parts.values().forEach(part -> this.global(part, this.bindMatrices));
+     }
+ 
+     public Model.Simple model() {
+@@ -189,6 +194,78 @@ public final class BedrockAnimatedModel {
+         target.jacket.loadPose(target.body.storePose());
+     }
+ 
++    /** Applies the owner's bind-to-current deformation to matching attachable bones. */
++    void bind(final Map<String, Matrix4f> deformations) {
++        final Map<ModelPart, Matrix4f> original = new HashMap<>();
++        this.parts.values().forEach(part -> this.global(part, original));
++        final Map<ModelPart, Matrix4f> desired = new HashMap<>();
++        this.parts.forEach((name, part) -> {
++            final Matrix4f deformation = deformations.get(name);
++            if (deformation != null) desired.put(part, new Matrix4f(deformation).mul(original.get(part)));
++        });
++        final Map<ModelPart, Matrix4f> resolved = new HashMap<>();
++        this.parts.values().forEach(part -> this.bind(part, desired, resolved));
++    }
++
++    private void bind(final ModelPart part, final Map<ModelPart, Matrix4f> desired,
++                      final Map<ModelPart, Matrix4f> resolved) {
++        if (resolved.containsKey(part)) return;
++        final ModelPart parent = this.parents.get(part);
++        if (parent != null) this.bind(parent, desired, resolved);
++        final Matrix4f target = desired.get(part);
++        if (target != null) {
++            final Matrix4f local = parent == null ? new Matrix4f(target)
++                    : new Matrix4f(resolved.get(parent)).invert().mul(target);
++            final Vector3f position = local.getTranslation(new Vector3f());
++            final Vector3f rotation = local.getUnnormalizedRotation(new Quaternionf()).normalize().getEulerAnglesZYX(new Vector3f());
++            final Vector3f scale = local.getScale(new Vector3f());
++            part.setPos(position.x, position.y, position.z);
++            part.setRotation(rotation.x, rotation.y, rotation.z);
++            part.xScale = scale.x;
++            part.yScale = scale.y;
++            part.zScale = scale.z;
++        }
++        this.global(part, resolved);
++    }
++
++    /** Native animated owners retain the complete authored parent hierarchy in their bind matrices. */
++    Map<String, Matrix4f> deformations() {
++        final Map<ModelPart, Matrix4f> current = new HashMap<>();
++        final Map<String, Matrix4f> result = new HashMap<>();
++        this.parts.forEach((name, part) -> result.put(name, new Matrix4f(this.global(part, current))
++                .mul(new Matrix4f(this.bindMatrices.get(part)).invert())));
++        return Map.copyOf(result);
++    }
++
++    static Map<String, Matrix4f> deformations(final PlayerModel owner) {
++        if (owner instanceof BedrockPlayerModel nativeOwner) {
++            final Map<String, Matrix4f> animated = nativeOwner.animatedDeformations();
++            if (animated != null) return animated;
++        }
++        final Map<String, ModelPart> bones = Map.of("head", owner.head, "body", owner.body,
++                "rightarm", owner.rightArm, "leftarm", owner.leftArm, "rightleg", owner.rightLeg, "leftleg", owner.leftLeg);
++        final Map<String, Matrix4f> result = new HashMap<>();
++        bones.forEach((name, bone) -> {
++            final var rest = bone.getInitialPose();
++            final Matrix4f bind = new Matrix4f().translate(rest.x(), rest.y(), rest.z())
++                    .rotateZYX(rest.zRot(), rest.yRot(), rest.xRot()).scale(rest.xScale(), rest.yScale(), rest.zScale());
++            final Matrix4f current = new Matrix4f().translate(bone.x, bone.y, bone.z)
++                    .rotateZYX(bone.zRot, bone.yRot, bone.xRot).scale(bone.xScale, bone.yScale, bone.zScale);
++            result.put(name, current.mul(bind.invert()));
++        });
++        return Map.copyOf(result);
++    }
++
++    void visibility(final List<BedrockPlayerControllers.Visibility> rules) {
++        this.parts.forEach((name, part) -> {
++            boolean visible = true;
++            for (final var rule : rules) if (rule.matches(this.names.get(part))) visible = rule.visible();
++            // Hide this bone's authored surfaces without implicitly hiding independently controlled descendants.
++            for (int cube = 0; part.hasChild("cube_" + cube); cube++) part.getChild("cube_" + cube).visible = visible;
++            if (part.hasChild("mesh")) part.getChild("mesh").visible = visible;
++        });
++    }
++
+     private Matrix4f global(final ModelPart part, final Map<ModelPart, Matrix4f> matrices) {
+         final Matrix4f cached = matrices.get(part);
+         if (cached != null) return cached;
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquipmentCache.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquipmentCache.java
+new file mode 100644
+index 0000000..ec577f7
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquipmentCache.java
+@@ -0,0 +1,41 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import java.util.EnumMap;
++import java.util.Map;
++import java.util.function.Supplier;
++import net.minecraft.world.entity.EquipmentSlot;
++
++/** Retains one native playback lifetime per occupied equipment slot and item identity. */
++final class BedrockEquipmentCache<T> {
++    private final Map<EquipmentSlot, Entry<T>> slots = new EnumMap<>(EquipmentSlot.class);
++
++    Entry<T> update(final EquipmentSlot slot, final BedrockPlayerAttachables.ItemIdentity identity,
++                    final float age, final Supplier<T> create) {
++        if (identity == null) {
++            this.slots.remove(slot);
++            return null;
++        }
++        final Entry<T> existing = this.slots.get(slot);
++        if (existing != null && existing.identity().equals(identity)) return existing;
++        final T value = create.get();
++        if (value == null) {
++            this.slots.remove(slot);
++            return null;
++        }
++        final Entry<T> replacement = new Entry<>(identity, age, value);
++        this.slots.put(slot, replacement);
++        return replacement;
++    }
++
++    record Entry<T>(BedrockPlayerAttachables.ItemIdentity identity, float started, T value) {
++        float elapsed(final float age) {
++            return Float.isFinite(age) && Float.isFinite(this.started) ? Math.max(0, age - this.started) / 20F : 0;
++        }
++    }
++
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableLayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableLayer.java
+new file mode 100644
+index 0000000..47771a6
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableLayer.java
+@@ -0,0 +1,33 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.mojang.blaze3d.vertex.PoseStack;
++import net.minecraft.client.model.player.PlayerModel;
++import net.minecraft.client.renderer.SubmitNodeCollector;
++import net.minecraft.client.renderer.entity.layers.RenderLayer;
++import net.minecraft.client.renderer.entity.player.AvatarRenderer;
++import net.minecraft.client.renderer.entity.state.AvatarRenderState;
++import net.minecraft.client.renderer.texture.OverlayTexture;
++
++/** Submits the immutable equipped selection alongside the owner model's current pose. */
++public final class BedrockEquippedAttachableLayer extends RenderLayer<AvatarRenderState, PlayerModel> {
++    public BedrockEquippedAttachableLayer(final AvatarRenderer<?> parent) {
++        super(parent);
++    }
++
++    @Override
++    public void submit(final PoseStack poses, final SubmitNodeCollector collector, final int light,
++                       final AvatarRenderState state, final float yaw, final float pitch) {
++        if (!(state instanceof BedrockPlayerAttachables.State nativeState) || state.isSpectator) return;
++        final var deformations = BedrockAnimatedModel.deformations(this.getParentModel());
++        for (final var surface : nativeState.bedrockAttachables()) {
++            collector.order(1).submitModel(surface.model(),
++                    new BedrockPlayerAttachables.Draw(deformations, surface.selection(), surface.pose()), poses,
++                    surface.renderType(), light, OverlayTexture.NO_OVERLAY, state.outlineColor);
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
+new file mode 100644
+index 0000000..c23eecf
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
+@@ -0,0 +1,270 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.mojang.blaze3d.platform.NativeImage;
++import com.viaversion.viafabricplus.ViaFabricPlus;
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockActorAnimation;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockBoneAnimation;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockPlayerControllers;
++
++import java.io.IOException;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.Set;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Optional;
++import java.util.WeakHashMap;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.model.Model;
++import net.minecraft.client.model.player.PlayerModel;
++import net.minecraft.client.renderer.entity.state.AvatarRenderState;
++import net.minecraft.client.renderer.rendertype.RenderType;
++import net.minecraft.client.renderer.rendertype.RenderTypes;
++import net.minecraft.client.renderer.texture.DynamicTexture;
++import net.minecraft.core.component.DataComponents;
++import net.minecraft.resources.Identifier;
++import net.minecraft.world.entity.Avatar;
++import net.minecraft.world.entity.EquipmentSlot;
++import net.minecraft.world.item.ItemStack;
++import net.raphimc.viabedrock.api.util.StringUtil;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.joml.Matrix4f;
++
++/** Native equipped pack models, with independent equipment lifetimes and connection-owned resources. */
++public final class BedrockPlayerAttachables {
++    private static final List<EquipmentSlot> SLOTS = List.of(EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET);
++    private static final Map<Avatar, BedrockEquipmentCache<Equipped>> EQUIPPED = new WeakHashMap<>();
++    private static final Map<String, Optional<Resource>> RESOURCES = new HashMap<>();
++    private static final Map<String, Identifier> TEXTURES = new HashMap<>();
++    private static final Set<String> EXPLICIT_BINDINGS = new HashSet<>();
++    private static final Map<MaterialKey, RenderType> RENDER_TYPES = new LinkedHashMap<>(16, 0.75F, true) {
++        @Override
++        protected boolean removeEldestEntry(final Map.Entry<MaterialKey, RenderType> eldest) { return this.size() > 256; }
++    };
++    private static ResourcePackStorage currentPacks;
++    private static Object currentLevel;
++    private static BedrockActorMaterialDefinitions materials;
++
++    private BedrockPlayerAttachables() {
++    }
++
++    public static List<Surface> extract(final Avatar entity, final AvatarRenderState state) {
++        final var connection = ViaFabricPlus.api().userConnection();
++        final ResourcePackStorage packs = connection == null ? null : connection.get(ResourcePackStorage.class);
++        if (packs == null || !packs.isLoadedOnJavaClient() || packs.getAttachables() == null) {
++            if (currentPacks != null) clear();
++            return List.of();
++        }
++        if (packs != currentPacks || entity.level() != currentLevel) {
++            clear();
++            currentPacks = packs;
++            currentLevel = entity.level();
++            materials = BedrockActorMaterialDefinitions.load(packs);
++            explicitBindings(packs);
++        }
++        final BedrockEquipmentCache<Equipped> equipment = EQUIPPED.computeIfAbsent(entity, _ -> new BedrockEquipmentCache<>());
++        final List<Surface> result = new ArrayList<>();
++        final Map<String, Object> queries = new HashMap<>(BedrockPlayerSkins.actorQueries(entity, state));
++        queries.put("is_invisible", state.isInvisible);
++        queries.put("is_owner_identifier_any", (BedrockActorAnimation.Query) names -> names.contains("minecraft:player"));
++        final var actor = BedrockPlayerActorState.state(connection, entity.getUUID());
++        final Map<String, Object> properties = actor == null ? Map.of() : actor.properties();
++        for (final EquipmentSlot slot : SLOTS) {
++            final ItemIdentity identity = identify(entity.getItemBySlot(slot), packs);
++            final var entry = equipment.update(slot, identity != null && identity.variant().equals("default") ? identity : null, state.ageInTicks, () -> {
++                final Resource resource = RESOURCES.computeIfAbsent(identity.identifier(), _ -> load(identity.identifier(), packs)).orElse(null);
++                return resource == null ? null : new Equipped(resource,
++                        new BedrockPlayerControllers(resource.definition, packs.getRenderControllers().renderControllers()),
++                        resource.animation == null ? null : resource.animation.playback());
++            });
++            if (entry == null) continue;
++            final Equipped equipped = entry.value();
++            final Map<String, Object> context = Map.of("is_first_person", 0F);
++            try {
++                equipped.ownerScope = BedrockPlayerSkins.parentSetup(entity.getUUID(),
++                        equipped.resource.definition.getScripts().parentSetup(), context, equipped.ownerScope);
++                final float elapsed = entry.elapsed(state.ageInTicks);
++                final Map<String, Float> variables = Map.of("is_first_person", 0F);
++                final Map<String, BedrockBoneAnimation.Transform> pose = equipped.playback == null ? Map.of()
++                        : equipped.playback.sample(elapsed, new BedrockActorAnimation.Frame(queries, variables, context), false, null);
++                final var selection = equipped.controllers.select(elapsed, properties, queries, variables, context);
++                for (final var selected : selection.surfaces()) {
++                    final var controller = packs.getRenderControllers().renderControllers().get(selected.controller());
++                    if (controller == null || !controller.materialsMap().keySet().equals(Set.of("*"))) continue;
++                    final var geometry = packs.getModels().entityModels().get(selected.geometry());
++                    final Identifier texture = texture(selected.texture(), packs);
++                    final var material = materials.alphaTest(selected.material()).orElse(null);
++                    if (geometry == null || texture == null || material == null || EXPLICIT_BINDINGS.contains(selected.geometry())) continue;
++                    final Model<Draw> model = equipped.resource.models.computeIfAbsent(selected.geometry(), _ -> model(geometry));
++                    result.add(new Surface(slot, model, texture, selected, pose, renderType(texture, selected, material)));
++                }
++            } catch (IOException | RuntimeException invalid) {
++                if (!equipped.failed) ViaFabricPlusBedrock.impl().logger().warn("Could not evaluate equipped attachable {}", identity.identifier(), invalid);
++                equipped.failed = true;
++            }
++        }
++        if (result.stream().anyMatch(surface -> surface.slot() == EquipmentSlot.HEAD)) state.headItem.clear();
++        return List.copyOf(result);
++    }
++
++    private static void explicitBindings(final ResourcePackStorage packs) {
++        for (final var pack : packs.getPackStackBottomToTop()) {
++            for (final String path : pack.content().getFilesDeep("models/entity/", ".json")) {
++                try {
++                    final var document = pack.content().getJson(path);
++                    if (document.has("minecraft:geometry")) {
++                        for (final var value : document.getAsJsonArray("minecraft:geometry")) {
++                            final var geometry = value.getAsJsonObject();
++                            binding(geometry.getAsJsonObject("description").get("identifier").getAsString(), geometry);
++                        }
++                    } else {
++                        for (final var entry : document.entrySet()) if (entry.getKey().startsWith("geometry.") && entry.getValue().isJsonObject())
++                            binding(entry.getKey(), entry.getValue().getAsJsonObject());
++                    }
++                } catch (RuntimeException invalid) {
++                    ViaFabricPlusBedrock.impl().logger().warn("Could not inspect attachable geometry bindings {}", path, invalid);
++                }
++            }
++        }
++    }
++
++    private static void binding(final String identifier, final com.viaversion.viaversion.libs.gson.JsonObject geometry) {
++        EXPLICIT_BINDINGS.remove(identifier);
++        final var bones = geometry.getAsJsonArray("bones");
++        if (bones != null) for (final var bone : bones) if (bone.getAsJsonObject().has("binding")) {
++            EXPLICIT_BINDINGS.add(identifier);
++            break;
++        }
++    }
++
++    static ItemIdentity identify(final ItemStack stack, final ResourcePackStorage packs) {
++        if (stack == null || stack.isEmpty()) return null;
++        final Identifier model = stack.get(DataComponents.ITEM_MODEL);
++        final var data = stack.get(DataComponents.CUSTOM_MODEL_DATA);
++        return identify(model, data == null ? List.of() : data.strings(), packs.getAttachables().attachables().keySet());
++    }
++
++    static ItemIdentity identify(final Identifier model, final List<String> variants, final Set<String> identifiers) {
++        if (model == null || !model.getNamespace().equals("viabedrock") || !model.getPath().startsWith("attachables/")) return null;
++        String identifier = null;
++        for (final String candidate : identifiers) {
++            if (!model.getPath().equals("attachables/" + StringUtil.makeIdentifierValueSafe(candidate))) continue;
++            // A lossy safe-path collision is not enough evidence to choose one native item.
++            if (identifier != null) return null;
++            identifier = candidate;
++        }
++        return identifier == null ? null : new ItemIdentity(identifier, variants.isEmpty() ? "default" : variants.getFirst());
++    }
++
++    private static Optional<Resource> load(final String identifier, final ResourcePackStorage packs) {
++        try {
++            final var definition = packs.getAttachables().attachables().get(identifier).attachableData();
++            return Optional.of(new Resource(definition, BedrockActorAnimation.serverAttachable(packs, identifier)));
++        } catch (IOException | RuntimeException invalid) {
++            ViaFabricPlusBedrock.impl().logger().warn("Could not load equipped attachable {}", identifier, invalid);
++            return Optional.empty();
++        }
++    }
++
++    private static Model<Draw> model(final org.cube.converter.model.impl.bedrock.BedrockGeometryModel geometry) {
++        final BedrockAnimatedModel animated = BedrockGeometry.animatedModel(geometry, Map.of());
++        return new Model<>(animated.model().root(), RenderTypes::entityCutout) {
++            @Override
++            public void setupAnim(final Draw draw) {
++                animated.pose(draw.pose());
++                animated.bind(draw.deformations());
++                animated.visibility(draw.selection().visibility());
++            }
++        };
++    }
++
++    private static Identifier texture(final String path, final ResourcePackStorage packs) {
++        final Identifier cached = TEXTURES.get(path);
++        if (cached != null) return cached;
++        for (final var pack : packs.getPackStackTopToBottom()) {
++            final var image = pack.content().getShortnameImage(path);
++            if (image == null) continue;
++            final var pixels = image.getImage();
++            if (pixels == null || pixels.getWidth() < 1 || pixels.getHeight() < 1 || pixels.getWidth() > 4096 || pixels.getHeight() > 4096) return null;
++            final NativeImage nativeImage = new NativeImage(pixels.getWidth(), pixels.getHeight(), false);
++            for (int y = 0; y < pixels.getHeight(); y++) for (int x = 0; x < pixels.getWidth(); x++) {
++                final int argb = pixels.getRGB(x, y);
++                nativeImage.setPixelABGR(x, y, (argb & 0xFF00FF00) | ((argb & 0xFF) << 16) | ((argb >>> 16) & 0xFF));
++            }
++            final Identifier id = Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "attachables/" + TEXTURES.size());
++            Minecraft.getInstance().getTextureManager().register(id, new DynamicTexture(id::toString, nativeImage));
++            TEXTURES.put(path, id);
++            return id;
++        }
++        return null;
++    }
++
++    private static RenderType renderType(final Identifier texture, final BedrockPlayerControllers.Surface selection,
++                                         final BedrockActorMaterialDefinitions.AlphaTest material) {
++        final MaterialKey key = new MaterialKey(texture, material, selection.ignoreLighting(), selection.lightMultiplier(),
++                selection.uv(), BedrockActorRenderTypes.usesNetherLighting());
++        return RENDER_TYPES.computeIfAbsent(key, value -> {
++            final var uv = value.uv();
++            return BedrockActorRenderTypes.create(value.texture(), value.material().cull(), value.ignoreLighting(), value.material().emissive(),
++                    value.multiplier(), new BedrockActorUvTransform(uv.offsetX(), uv.offsetY(), uv.scaleX(), uv.scaleY()), value.nether());
++        });
++    }
++
++    public static void clear() {
++        EQUIPPED.clear();
++        RESOURCES.clear();
++        if (!TEXTURES.isEmpty()) TEXTURES.values().forEach(Minecraft.getInstance().getTextureManager()::release);
++        RENDER_TYPES.clear();
++        EXPLICIT_BINDINGS.clear();
++        TEXTURES.clear();
++        currentPacks = null;
++        currentLevel = null;
++        materials = null;
++    }
++
++    public interface State {
++        List<Surface> bedrockAttachables();
++        void bedrockAttachables(List<Surface> surfaces);
++    }
++
++    record ItemIdentity(String identifier, String variant) {}
++    public record Surface(EquipmentSlot slot, Model<Draw> model, Identifier texture, BedrockPlayerControllers.Surface selection,
++                          Map<String, BedrockBoneAnimation.Transform> pose, RenderType renderType) {}
++    public record Draw(Map<String, Matrix4f> deformations, BedrockPlayerControllers.Surface selection,
++                       Map<String, BedrockBoneAnimation.Transform> pose) {}
++
++    private record MaterialKey(Identifier texture, BedrockActorMaterialDefinitions.AlphaTest material,
++                               boolean ignoreLighting, float multiplier, BedrockPlayerControllers.Uv uv, boolean nether) {}
++
++    private static final class Resource {
++        private final org.cube.converter.data.bedrock.BedrockAttachableData definition;
++        private final BedrockActorAnimation animation;
++        private final Map<String, Model<Draw>> models = new HashMap<>();
++        private Resource(final org.cube.converter.data.bedrock.BedrockAttachableData definition, final BedrockActorAnimation animation) {
++            this.definition = definition;
++            this.animation = animation;
++        }
++    }
++
++    private static final class Equipped {
++        private final Resource resource;
++        private final BedrockPlayerControllers controllers;
++        private final BedrockActorAnimation.Playback playback;
++        private Object ownerScope;
++        private boolean failed;
++        private Equipped(final Resource resource,
++                         final BedrockPlayerControllers controllers, final BedrockActorAnimation.Playback playback) {
++            this.resource = resource;
++            this.controllers = controllers;
++            this.playback = playback;
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModel.java
+index 2224643..4cf95ab 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModel.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModel.java
+@@ -10,6 +10,7 @@ import net.minecraft.client.model.player.PlayerModel;
+ import net.minecraft.client.renderer.entity.state.AvatarRenderState;
+ 
+ import java.util.Map;
++import org.joml.Matrix4f;
+ 
+ /** Applies native actor and emote poses to the authored bone hierarchy. */
+ final class BedrockPlayerModel extends PlayerModel {
+@@ -40,4 +41,9 @@ final class BedrockPlayerModel extends PlayerModel {
+         this.children.clear();
+         this.children.put("animated", this.animated.model().root());
+     }
++    /** Uses global bind/current transforms only while the native hierarchy is the rendered tree. */
++    Map<String, Matrix4f> animatedDeformations() {
++        return this.children.get("animated") == this.animated.model().root() ? this.animated.deformations() : null;
++    }
++
+ }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
+index 5cb3d1c..842d374 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
+@@ -495,7 +495,7 @@ public final class BedrockPlayerSkins {
+         return pose;
+     }
+ 
+-    private static Map<String, Object> actorQueries(final Avatar entity, final AvatarRenderState state) {
++    static Map<String, Object> actorQueries(final Avatar entity, final AvatarRenderState state) {
+         final Map<String, Object> queries = new HashMap<>();
+         queries.put("life_time", state.ageInTicks / 20F);
+         queries.put("is_alive", entity.isAlive());
+@@ -710,9 +710,27 @@ public final class BedrockPlayerSkins {
+     public static void rendererContext(final EntityRendererProvider.Context context) {
+         rendererContext = context;
+         rendererEpoch++;
++        BedrockPlayerAttachables.clear();
+     }
+ 
++    /** Returns the actual owner scope token; absent or newly replaced scopes are retried by equipment extraction. */
++    static Object parentSetup(final UUID player, final List<String> expressions,
++                              final Map<String, Object> context, final Object previousScope) throws IOException {
++        final Appearance appearance = APPEARANCES.get(player);
++        if (appearance == null) return null;
++        final var playback = actor(appearance);
++        if (playback == null && appearance.serverControllers == null) return null;
++        final var scope = new ParentScope(playback, appearance.serverControllers);
++        if (scope.equals(previousScope)) return scope;
++        if (playback != null) playback.parentSetup(expressions, context);
++        if (appearance.serverControllers != null) appearance.serverControllers.parentSetup(expressions, context);
++        return scope;
++    }
++
++    private record ParentScope(BedrockActorAnimation.Playback actor, BedrockPlayerControllers controllers) {}
++
+     public static void clear() {
++        BedrockPlayerAttachables.clear();
+         APPEARANCES.values().forEach(BedrockPlayerSkins::release);
+         APPEARANCES.clear();
+         PLAYER_BY_TEXTURE.clear();
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquippedAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquippedAnimationTest.java
+new file mode 100644
+index 0000000..226d011
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquippedAnimationTest.java
+@@ -0,0 +1,46 @@
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++
++final class BedrockEquippedAnimationTest {
++    @Test
++    void resolvesPackAttachableGraphAndKeepsHeldSpawnScaleAcrossFrames() throws Exception {
++        final var content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"name\":\"test\",\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":[1,0,0]}}");
++        content.putString("attachables/worn.json", """
++            {"format_version":"1.10.0","minecraft:attachable":{"description":{"identifier":"test:worn",
++             "materials":{"default":"entity_alphatest"},"textures":{"default":"textures/worn"},"geometry":{"default":"geometry.worn"},
++             "animations":{"spawn":"animation.worn.spawn","idle":"animation.worn.idle"},
++             "scripts":{"pre_animation":["v.first=c.is_first_person;"],"animate":["spawn",{"idle":"!v.first"}]},"render_controllers":[]}}}
++            """);
++        content.putString("animations/worn.json", """
++            {"format_version":"1.8.0","animations":{
++             "animation.worn.spawn":{"loop":"hold_on_last_frame","animation_length":0.64,
++              "bones":{"wing":{"scale":{"0":[0,1,0],"0.64":[1,1,1]}}}},
++             "animation.worn.idle":{"loop":true,"bones":{"wing":{"rotation":[0,"math.cos(q.anim_time*100)*6",0]}}}}}
++            """);
++        final var packs = new ResourcePackStorage(List.of(new ResourcePack(content)));
++        final var graph = BedrockActorAnimation.serverAttachable(packs, "test:worn");
++        assertNotNull(graph);
++        final var playback = graph.playback();
++        final var frame = new BedrockActorAnimation.Frame(Map.of(), Map.of(), Map.of("is_first_person", 0));
++        assertEquals(0, playback.sample(0, frame).get("wing").scale().x());
++        assertEquals(.5F, playback.sample(.32F, frame).get("wing").scale().x(), .0001F);
++        final var settled = playback.sample(1, frame).get("wing");
++        assertEquals(1, settled.scale().x());
++        assertEquals(1, playback.sample(2, frame).get("wing").scale().x());
++        assertNotEquals(settled.rotation().y(), playback.sample(2, frame).get("wing").rotation().y());
++        // A new equipment instance starts its own spawn rather than inheriting the old item's clock.
++        assertEquals(0, graph.playback().sample(0, frame).get("wing").scale().x());
++        assertNull(BedrockActorAnimation.serverAttachable(packs, "test:absent"));
++    }
++
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllersTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllersTest.java
+index 578bd60..258503c 100644
+--- a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllersTest.java
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllersTest.java
+@@ -57,6 +57,28 @@ class BedrockPlayerControllersTest {
+         assertFalse(controllers.select(2, Map.of("visible", false), Map.of(), Map.of()).bodyVisible());
+     }
+ 
++    @Test
++    void evaluatesAttachableContextVisibilityAndParentSetupInPersistentScopes() throws Exception {
++        final var entity = new BedrockEntityData("test:worn", new BedrockEntityData.Scripts(List.of(),
++                List.of("v.first_person=c.is_first_person;"), new BedrockEntityData.Scripts.Scale("1", "1", "1", "1"), List.of()),
++                List.of(new BedrockEntityData.RenderController("test:controller", "")), Map.of("default", "entity_alphatest"), Map.of(),
++                Map.of("default", "textures/worn"), Map.of("default", "geometry.worn"));
++        final var controller = new BedrockRenderController("test:controller", Map.of("*", "Material.default"), "Geometry.default",
++                List.of("Texture.default"), List.of(), List.of(), List.of(), false, "1", BedrockRenderController.UvAnimation.IDENTITY,
++                List.of(new BedrockRenderController.BoneVisibility("*", "!v.first_person && !q.is_invisible"),
++                        new BedrockRenderController.BoneVisibility("detail", "v.parent_value == 7")));
++        final var renderer = new BedrockPlayerControllers(entity, Map.of(controller.identifier(), controller));
++        renderer.parentSetup(List.of("v.parent_value = context.parent_value;"), Map.of("parent_value", 7));
++        final var thirdPerson = renderer.select(0, Map.of(), Map.of("is_invisible", false), Map.of(), Map.of("is_first_person", 0));
++        assertTrue(thirdPerson.surfaces().getFirst().visibility().getFirst().visible());
++        assertTrue(thirdPerson.surfaces().getFirst().visibility().getLast().visible());
++        final var firstPerson = renderer.select(1, Map.of(), Map.of("is_invisible", false), Map.of(), Map.of("is_first_person", 1));
++        assertFalse(firstPerson.surfaces().getFirst().visibility().getFirst().visible());
++        assertTrue(firstPerson.surfaces().getFirst().visibility().getLast().visible());
++        final var invisible = renderer.select(2, Map.of(), Map.of("is_invisible", true), Map.of(), Map.of("is_first_person", 0));
++        assertFalse(invisible.surfaces().getFirst().visibility().getFirst().visible());
++    }
++
+     private static BedrockPlayerControllers controllers(final boolean combined) {
+         final var scripts = new BedrockEntityData.Scripts(List.of("v.show_hat = 0;"), List.of(
+                 "v.visible = q.mark_variant != 255;",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java
+new file mode 100644
+index 0000000..d9f0c69
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java
+@@ -0,0 +1,98 @@
++package com.viaversion.viafabricplus.bedrock.render;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import net.minecraft.resources.Identifier;
++import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++import org.joml.Matrix4f;
++import org.joml.Vector3f;
++import org.junit.jupiter.api.Test;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockPlayerControllers;
++
++final class BedrockEquippedAttachableTest {
++    @Test
++    void resolvesCanonicalPackIdentityAndRetainsTheSelectedVariant() {
++        final var model = Identifier.fromNamespaceAndPath("viabedrock", "attachables/test/wearable");
++        final var first = BedrockPlayerAttachables.identify(model, List.of(), Set.of("test:wearable"));
++        assertEquals(new BedrockPlayerAttachables.ItemIdentity("test:wearable", "default"), first);
++        final var alternate = BedrockPlayerAttachables.identify(model, List.of("alternate"), Set.of("test:wearable"));
++        assertEquals("alternate", alternate.variant());
++        assertNotEquals(first, alternate);
++        assertNull(BedrockPlayerAttachables.identify(model, List.of(), Set.of("test:other")));
++        assertNull(BedrockPlayerAttachables.identify(Identifier.fromNamespaceAndPath("minecraft", model.getPath()), List.of(), Set.of("test:wearable")));
++        assertNull(BedrockPlayerAttachables.identify(model, List.of(), Set.of("test:wearable", "test/wearable")));
++    }
++
++    @Test
++    void retainsSlotPlaybackAcrossFramesAndResetsOnReplacementUnequipAndNewConnectionCache() {
++        final var cache = new BedrockEquipmentCache<Object>();
++        final var first = new BedrockPlayerAttachables.ItemIdentity("test:first", "default");
++        final var second = new BedrockPlayerAttachables.ItemIdentity("test:second", "default");
++        final var chest = net.minecraft.world.entity.EquipmentSlot.CHEST;
++        final var initial = cache.update(chest, first, 40, Object::new);
++        assertSame(initial, cache.update(chest, first, 60, () -> fail("Stable equipment must retain its playback")));
++        assertEquals(1, initial.elapsed(60));
++        assertEquals(0, initial.elapsed(20));
++        final var head = cache.update(net.minecraft.world.entity.EquipmentSlot.HEAD, first, 80, Object::new);
++        assertNotSame(initial.value(), head.value());
++        final var replacement = cache.update(chest, second, 90, Object::new);
++        assertNotSame(initial.value(), replacement.value());
++        assertEquals(0, replacement.elapsed(90));
++        assertNull(cache.update(chest, null, 100, () -> fail("Unequip must not allocate playback")));
++        assertNotSame(replacement.value(), cache.update(chest, second, 110, Object::new).value());
++        assertNotSame(head.value(), new BedrockEquipmentCache<>().update(net.minecraft.world.entity.EquipmentSlot.HEAD, first, 120, Object::new).value());
++    }
++
++    @Test
++    void inheritsOneOwnerBodyDeformationAndRetainsLocalChildPivots() throws Exception {
++        final var model = BedrockGeometry.animatedModel(geometry(), Map.of());
++        final var body = model.model().root().getChild("root").getChild("waist").getChild("body");
++        final var wing = body.getChild("wing");
++        final var deformation = new Matrix4f().translate(2, 3, 4).rotateY((float) Math.PI / 2).scale(2);
++        for (int frame = 0; frame < 3; frame++) {
++            model.pose(Map.of());
++            model.bind(Map.of("body", deformation));
++            final var locator = new BedrockModelLocators.Locator("wing", 0, 0, 0, 0, 0, 0, false);
++            final var actual = model.locatorTransform(locator).getTranslation(new Vector3f());
++            final var expected = deformation.transformPosition(new Vector3f(4, 0, 2), new Vector3f());
++            assertEquals(expected.x, actual.x, .0001F);
++            assertEquals(expected.y, actual.y, .0001F);
++            assertEquals(expected.z, actual.z, .0001F);
++            assertEquals(4, wing.x);
++            assertEquals(2, wing.z);
++        }
++        model.pose(Map.of());
++        model.bind(Map.of());
++        assertEquals(0, body.x);
++        assertEquals(-12, body.y);
++    }
++
++    @Test
++    void appliesOrderedSurfaceVisibilityWithoutHidingControlledChildBones() throws Exception {
++        final var model = BedrockGeometry.animatedModel(geometry(), Map.of());
++        final var body = model.model().root().getChild("root").getChild("waist").getChild("body");
++        final var wing = body.getChild("wing");
++        model.visibility(List.of(new BedrockPlayerControllers.Visibility("*", false), new BedrockPlayerControllers.Visibility("wing", true)));
++        assertFalse(body.getChild("cube_0").visible);
++        assertTrue(wing.getChild("cube_0").visible);
++        model.visibility(List.of(new BedrockPlayerControllers.Visibility("w*", false)));
++        assertTrue(body.getChild("cube_0").visible);
++        assertFalse(wing.getChild("cube_0").visible);
++        model.visibility(List.of());
++        assertTrue(wing.getChild("cube_0").visible);
++    }
++
++    private static BedrockGeometryModel geometry() throws Exception {
++        return BedrockGeometryModel.fromJson("""
++            {"minecraft:geometry":[{"description":{"identifier":"geometry.worn","texture_width":64,"texture_height":64},
++             "bones":[{"name":"root","pivot":[0,0,0]},
++              {"name":"waist","parent":"root","pivot":[0,12,0]},
++              {"name":"body","parent":"waist","pivot":[0,24,0],"cubes":[{"origin":[-1,20,-1],"size":[2,4,2],"uv":[0,0]}]},
++              {"name":"wing","parent":"body","pivot":[4,24,2],"cubes":[{"origin":[4,20,2],"size":[8,8,0],"uv":{"south":{"uv":[0,0],"uv_size":[8,8]}}}]}]}]}
++            """).getFirst();
++    }
++
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModelTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModelTest.java
+index 6de66e6..290e41b 100644
+--- a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModelTest.java
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModelTest.java
+@@ -84,6 +84,64 @@ final class BedrockPlayerModelTest {
+         }
+     }
+ 
++    @Test
++    void transfersNativeRootWaistAndBodyPoseToAnEquippedHierarchy() throws Exception {
++        final var geometry = BedrockGeometryModel.fromJson("""
++            {"minecraft:geometry":[{"description":{"identifier":"geometry.owner","texture_width":64,"texture_height":64},
++             "bones":[{"name":"root","pivot":[0,0,0]},
++              {"name":"waist","parent":"root","pivot":[0,12,0]},
++              {"name":"body","parent":"waist","pivot":[0,24,0]},
++              {"name":"wing","parent":"body","pivot":[4,24,2]}]}]}
++            """).getFirst();
++        final var owner = BedrockGeometry.playerModel(geometry, false);
++        final State state = new State();
++        state.pose = BedrockBoneAnimation.parse(JsonParser.parseString("""
++            {"bones":{"root":{"position":[0,3,0]},"waist":{"rotation":[0,0,20]},"body":{"rotation":[30,45,0]}}}
++            """).getAsJsonObject()).playback().sample(0, Map.of());
++        owner.setupAnim(state);
++        final var attached = BedrockGeometry.animatedModel(geometry, Map.of());
++        attached.pose(Map.of());
++        attached.bind(BedrockAnimatedModel.deformations(owner));
++        final var actual = attached.locatorTransform(new BedrockModelLocators.Locator("body", 0, 0, 0, 0, 0, 0, false));
++        final var expected = new org.joml.Matrix4f().translate(owner.body.x, owner.body.y, owner.body.z)
++                .rotateZYX(owner.body.zRot, owner.body.yRot, owner.body.xRot).scale(owner.body.xScale, owner.body.yScale, owner.body.zScale);
++        assertTrue(expected.equals(actual, .0001F));
++    }
++
++    @Test
++    void removesAuthoredAncestorBindRotationsOnlyForTheActiveNativeTree() throws Exception {
++        final var geometry = BedrockGeometryModel.fromJson("""
++            {"minecraft:geometry":[{"description":{"identifier":"geometry.rest","texture_width":64,"texture_height":64},
++             "bones":[{"name":"root","pivot":[0,0,0],"rotation":[5,25,10]},
++              {"name":"waist","parent":"root","pivot":[0,12,0],"rotation":[20,0,15]},
++              {"name":"body","parent":"waist","pivot":[0,24,0],"rotation":[0,10,0]}]}]}
++            """).getFirst();
++        final var owner = BedrockGeometry.playerModel(geometry, false);
++        final State state = new State();
++        state.pose = BedrockBoneAnimation.parse(JsonParser.parseString("""
++            {"bones":{"root":{"position":[0,0,0]}}}
++            """).getAsJsonObject()).playback().sample(0, Map.of());
++        owner.setupAnim(state);
++        final var resting = BedrockAnimatedModel.deformations(owner);
++        for (final var deformation : resting.values()) assertTrue(new org.joml.Matrix4f().equals(deformation, .0001F));
++
++        final var bindModel = BedrockGeometry.animatedModel(geometry, Map.of());
++        final var bindBody = bindModel.locatorTransform(new BedrockModelLocators.Locator("body", 0, 0, 0, 0, 0, 0, false));
++        state.pose = BedrockBoneAnimation.parse(JsonParser.parseString("""
++            {"bones":{"root":{"position":[0,3,0]},"body":{"rotation":[10,20,0]}}}
++            """).getAsJsonObject()).playback().sample(0, Map.of());
++        owner.setupAnim(state);
++        final var currentBody = new org.joml.Matrix4f().translate(owner.body.x, owner.body.y, owner.body.z)
++                .rotateZYX(owner.body.zRot, owner.body.yRot, owner.body.xRot).scale(owner.body.xScale, owner.body.yScale, owner.body.zScale);
++        assertTrue(currentBody.mul(new org.joml.Matrix4f(bindBody).invert())
++                .equals(BedrockAnimatedModel.deformations(owner).get("body"), .0001F));
++
++        state.pose = Map.of();
++        owner.setupAnim(state);
++        assertNull(((BedrockPlayerModel) owner).animatedDeformations());
++        assertEquals(6, BedrockAnimatedModel.deformations(owner).size());
++    }
++
+     private static final class State extends AvatarRenderState implements BedrockPlayerAnimationState {
+         private Map<String, BedrockBoneAnimation.Transform> pose = Map.of();
+ 
+-- 
+2.55.0
