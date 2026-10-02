@@ -1,4 +1,4 @@
-From aff0663e94051cf83fff83c3188f96a5aaf15be0 Mon Sep 17 00:00:00 2001
+From 3b1a51cc933061919a5690e692ecbe0408188991 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1130,6 +1130,18 @@ Consume bounded private helper output before reporting an early process
 exit, so loader errors do not become misleading closed-stdin failures.
 Keep payloads and credentials out of diagnostics, and package both helper
 variants with independent checksums for local builds and release CI.
+
+Expose Default for arms and legs without requiring users to find each
+equipped offer. Clear only the selected limb side through the existing
+profile hash guard and account readback. Share the side masking logic
+with piece replacement so free-source flags, tints and the opposite
+side survive both paths.
+
+Native Bedrock 1.26.51.1 removes the right Coin Stacks leg visually when
+Default is selected for Right, leaving the left leg visible on return
+to the Dressing Room. Its local recipe cache still records both legs;
+this observation does not establish native persistence or cloud sync.
+The Java account operation explicitly saves and verifies its recipe.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   68 +
@@ -1152,7 +1164,7 @@ variants with independent checksums for local builds and release CI.
  .../appearance/BedrockBoneAnimation.java      |  535 ++
  .../bedrock/appearance/BedrockBrArchive.java  |   73 +
  .../appearance/BedrockBuiltinAssets.java      |  436 ++
- .../appearance/BedrockCharacterProfiles.java  | 1345 ++++
+ .../appearance/BedrockCharacterProfiles.java  | 1394 ++++
  .../appearance/BedrockClassicAssets.java      |   85 +
  .../appearance/BedrockClassicModel.java       |    1 +
  .../appearance/BedrockClassicSkinPack.java    |   80 +-
@@ -1230,7 +1242,7 @@ variants with independent checksums for local builds and release CI.
  .../render/BedrockPlayerAnimationState.java   |   16 +
  .../bedrock/render/BedrockPlayerModel.java    |   43 +
  .../bedrock/render/BedrockPlayerSkins.java    |  413 +-
- .../screen/BedrockCharacterSlotsScreen.java   | 1382 ++++
+ .../screen/BedrockCharacterSlotsScreen.java   | 1379 ++++
  .../screen/BedrockClassicSkinPackScreen.java  |    2 +-
  .../screen/BedrockDressingRoomScreen.java     |   49 +-
  .../screen/BedrockEmotePreviewScreen.java     |  163 +
@@ -1238,7 +1250,7 @@ variants with independent checksums for local builds and release CI.
  .../screen/BedrockOwnedSkinPacksScreen.java   |  292 +
  .../bedrock/settings/BedrockSettings.java     |    6 +
  .../character-presets.json                    |  632 ++
- .../viafabricplus-bedrock/lang/en_us.json     |  103 +-
+ .../viafabricplus-bedrock/lang/en_us.json     |  104 +-
  .../licenses/brarchive-extractor.txt          |   21 +
  .../licenses/vgmstream.txt                    |   23 +
  .../persona-package.json                      |    7 +
@@ -1258,7 +1270,7 @@ variants with independent checksums for local builds and release CI.
  .../appearance/BedrockEmoteMessagesTest.java  |   94 +
  .../bedrock/appearance/BedrockEmotesTest.java |  141 +
  .../appearance/BedrockItemAnimationTest.java  |  297 +
- .../appearance/BedrockLimbSelectionTest.java  |  182 +
+ .../appearance/BedrockLimbSelectionTest.java  |  225 +
  .../appearance/BedrockLimbSideTest.java       |   89 +
  .../BedrockMarketplaceTransactionsTest.java   |  189 +
  .../appearance/BedrockMolangColorTest.java    |  110 +
@@ -1302,7 +1314,7 @@ variants with independent checksums for local builds and release CI.
  .../render/BedrockModelLocatorsTest.java      |  112 +
  .../render/BedrockPlayerActorStateTest.java   |  195 +
  .../render/BedrockPlayerModelTest.java        |  100 +
- 171 files changed, 38328 insertions(+), 92 deletions(-)
+ 171 files changed, 38418 insertions(+), 92 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -13100,10 +13112,10 @@ index 0000000..668e61f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
 new file mode 100644
-index 0000000..8a26466
+index 0000000..27be8a3
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCharacterProfiles.java
-@@ -0,0 +1,1345 @@
+@@ -0,0 +1,1394 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -13135,6 +13147,7 @@ index 0000000..8a26466
 +import java.util.Optional;
 +import java.util.UUID;
 +import java.util.concurrent.CompletableFuture;
++import java.util.function.Predicate;
 +import java.util.regex.Pattern;
 +import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
 +
@@ -13414,6 +13427,25 @@ index 0000000..8a26466
 +            if (item.matches(id)) mask |= BedrockLimbSide.fromRecipe(id).mask();
 +        }
 +        return (mask & side.mask()) == side.mask();
++    }
++
++    public static boolean canResetLimb(final Slot slot, final Category category,
++                                      final List<WardrobeItem> items, final BedrockLimbSide side) {
++        if (!slot.occupied() || !(category == Category.ARMS || category == Category.LEGS)
++            || items.isEmpty() || items.stream().anyMatch(item ->
++                !(category == Category.ARMS ? "persona_arms" : "persona_legs").equals(item.type()))) return false;
++        final List<String> equipped = slot.pieceIds().stream()
++            .filter(id -> items.stream().anyMatch(item -> item.matches(id))).toList();
++        return equipped.stream().allMatch(BedrockLimbSide::supportsSides)
++            && equipped.stream().anyMatch(id -> (BedrockLimbSide.fromRecipe(id).mask() & side.mask()) != 0);
++    }
++
++    public static CompletableFuture<AccountWardrobe> resetLimb(final BedrockAuthManager account,
++                                                               final int slotNumber, final String expectedProfileHash,
++                                                               final Category category, final List<WardrobeItem> items,
++                                                               final BedrockLimbSide side) {
++        return updateProfile(account, slotNumber, expectedProfileHash,
++            current -> limbResetRequest(current, slotNumber, category, items, side));
 +    }
 +
 +    public static CompletableFuture<AccountWardrobe> changeEmote(final BedrockAuthManager account, final int slotNumber,
@@ -13730,24 +13762,20 @@ index 0000000..8a26466
 +        final JsonArray entries = array(object(edited, "personaCollection"), "universalApp");
 +        JsonObject source = null;
 +        JsonElement previousColors = null;
-+        final JsonArray kept = new JsonArray();
 +        for (final JsonElement element : entries) {
 +            final JsonObject entry = element.getAsJsonObject();
 +            final String id = string(entry, "id");
 +            final boolean category = categoryItems.stream().anyMatch(item -> item.matches(id));
 +            if (!category || remove && !selectedItem.matches(id)) {
-+                kept.add(entry);
 +                continue;
 +            }
 +            if (selectedItem.matches(id)) source = entry.deepCopy();
 +            final int mask = BedrockLimbSide.fromRecipe(id).mask();
 +            if ((mask & side.mask()) != 0 && entry.has("col")) previousColors = entry.get("col");
-+            final int remaining = mask & ~side.mask();
-+            if (remaining != 0) {
-+                entry.addProperty("id", BedrockLimbSide.fromMask(remaining).recipe(id));
-+                kept.add(entry);
-+            }
 +        }
++        final JsonArray kept = withoutLimbSide(entries,
++            id -> categoryItems.stream().anyMatch(item -> item.matches(id))
++                && (!remove || selectedItem.matches(id)), side);
 +        if (!remove) {
 +            if (source == null) source = recipeFor(wardrobe, selectedItem).deepCopy();
 +            source.addProperty("id", side.recipe(string(source, "id")));
@@ -13757,6 +13785,39 @@ index 0000000..8a26466
 +        }
 +        object(edited, "personaCollection").add("universalApp", kept);
 +        return editRequest(wardrobe, slotNumber, edited);
++    }
++
++    static JsonObject limbResetRequest(final AccountWardrobe wardrobe, final int slotNumber,
++                                       final Category category, final List<WardrobeItem> items,
++                                       final BedrockLimbSide side) throws IOException {
++        if (slotNumber < 1 || slotNumber > wardrobe.slots().size()
++            || !canResetLimb(wardrobe.slots().get(slotNumber - 1), category, items, side)) {
++            throw new IOException("This character has no removable piece on the selected limbs");
++        }
++        final JsonObject edited = wardrobe.slots().get(slotNumber - 1).profile().deepCopy();
++        final JsonObject collection = object(edited, "personaCollection");
++        collection.add("universalApp", withoutLimbSide(array(collection, "universalApp"),
++            id -> items.stream().anyMatch(item -> item.matches(id)), side));
++        return editRequest(wardrobe, slotNumber, edited);
++    }
++
++    private static JsonArray withoutLimbSide(final JsonArray entries, final Predicate<String> matches,
++                                             final BedrockLimbSide side) throws IOException {
++        final JsonArray kept = new JsonArray();
++        for (final JsonElement element : entries) {
++            final JsonObject entry = element.getAsJsonObject().deepCopy();
++            final String id = string(entry, "id");
++            if (!matches.test(id)) {
++                kept.add(entry);
++                continue;
++            }
++            final int remaining = BedrockLimbSide.fromRecipe(id).mask() & ~side.mask();
++            if (remaining != 0) {
++                entry.addProperty("id", BedrockLimbSide.fromMask(remaining).recipe(id));
++                kept.add(entry);
++            }
++        }
++        return kept;
 +    }
 +
 +    static JsonObject emoteChangeRequest(final AccountWardrobe wardrobe, final int slotNumber,
@@ -26533,10 +26594,10 @@ index 61a2b73..52af9c6 100644
  
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
 new file mode 100644
-index 0000000..97e186f
+index 0000000..91a91c6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
-@@ -0,0 +1,1382 @@
+@@ -0,0 +1,1379 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -26635,6 +26696,7 @@ index 0000000..97e186f
 +    private Button wardrobeTab;
 +    private Button sizeTab;
 +    private Button previousItem;
++    private Button resetLimb;
 +    private Button nextItem;
 +    private Button useSlot;
 +    private Button deleteSlot;
@@ -26739,6 +26801,8 @@ index 0000000..97e186f
 +        this.deleteSlot = Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.delete"),
 +            _ -> this.deleteSelectedSlot()).build();
 +        this.editPiece = Button.builder(Component.empty(), _ -> this.changePiece()).build();
++        this.resetLimb = Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.default_limb"),
++            _ -> this.resetLimb()).build();
 +        this.previewEmote = Button.builder(Component.translatable("bedrock_emote.viafabricplus.preview"),
 +            _ -> new BedrockEmotePreviewScreen(this.items.get(this.selectedItem)).open(this)).build();
 +        this.colorButton = Button.builder(Component.empty(), _ -> this.toggleColors()).build();
@@ -26748,7 +26812,7 @@ index 0000000..97e186f
 +            _ -> this.refresh()).build();
 +        this.presetBackButton = Button.builder(Component.translatable("bedrock_character_slots.viafabricplus.back"),
 +            _ -> this.changeView(View.SLOTS)).build();
-+        this.addFooter(this.previousItem, this.nextItem, this.useSlot, this.deleteSlot, this.editPiece,
++        this.addFooter(this.previousItem, this.nextItem, this.useSlot, this.deleteSlot, this.editPiece, this.resetLimb,
 +            this.colorButton, this.refreshButton, this.presetBackButton, this.previewEmote);
 +        if (this.items != null) {
 +            this.itemPage = Math.min(this.itemPage, Math.max(0, (this.items.size() - 1) / this.pageSize()));
@@ -27362,8 +27426,10 @@ index 0000000..97e186f
 +        this.refreshButton.active = !this.loading && !this.saving && ViaFabricPlusBedrock.impl().account().get() != null;
 +        final boolean canEditSides = this.isLimbCategory() && this.wardrobe != null
 +            && this.items != null && !this.items.isEmpty()
-+            && BedrockCharacterProfiles.canEditLimbSides(this.wardrobe, this.wardrobe.slots().get(this.selectedSlot),
-+                this.items, this.items.get(this.selectedItem));
++            && (BedrockCharacterProfiles.canEditLimbSides(this.wardrobe, this.wardrobe.slots().get(this.selectedSlot),
++                this.items, this.items.get(this.selectedItem))
++                || BedrockCharacterProfiles.canResetLimb(this.wardrobe.slots().get(this.selectedSlot),
++                    this.category, this.items, BedrockLimbSide.BOTH));
 +        if (this.isLimbCategory() && !canEditSides) {
 +            this.limbSide = BedrockLimbSide.BOTH;
 +        }
@@ -27418,6 +27484,11 @@ index 0000000..97e186f
 +        this.useSlot.visible = this.view == View.SLOTS;
 +        this.deleteSlot.visible = this.view == View.SLOTS;
 +        this.editPiece.visible = this.view == View.WARDROBE || this.view == View.COLORS;
++        this.resetLimb.visible = this.view == View.WARDROBE && this.isLimbCategory();
++        this.resetLimb.active = !this.saving && !this.loading && !this.itemsLoading && this.wardrobe != null
++            && this.items != null && this.loadedCategory == this.category
++            && BedrockCharacterProfiles.canResetLimb(this.wardrobe.slots().get(this.selectedSlot),
++                this.category, this.items, this.limbSide);
 +        this.colorButton.visible = this.view == View.COLORS || (this.colorsLoading || !this.availableColors.isEmpty())
 +            && (this.view == View.SLOTS || this.view == View.WARDROBE);
 +        this.colorChannelButton.visible = this.view == View.COLORS && this.colorOrigin == View.WARDROBE
@@ -27479,7 +27550,7 @@ index 0000000..97e186f
 +            this.editPiece.active = false;
 +        }
 +        final List<Button> footer = List.of(this.previousItem, this.nextItem, this.useSlot, this.deleteSlot,
-+                this.editPiece, this.colorButton, this.refreshButton, this.presetBackButton, this.previewEmote)
++                this.editPiece, this.resetLimb, this.colorButton, this.refreshButton, this.presetBackButton, this.previewEmote)
 +            .stream().filter(button -> button.visible).toList();
 +        final int buttonWidth = Math.min(120, (this.width - 24 - (footer.size() - 1) * 4) / footer.size());
 +        int x = (this.width - footer.size() * buttonWidth - (footer.size() - 1) * 4) / 2;
@@ -27510,7 +27581,7 @@ index 0000000..97e186f
 +            return;
 +        }
 +        final Slot slot = this.wardrobe.slots().get(this.selectedSlot);
-+        this.saveSize(account, slot, BedrockCharacterProfiles.changeArmSize(
++        this.saveCharacterEdit(account, slot, BedrockCharacterProfiles.changeArmSize(
 +            account, slot.number(), slot.profileHash(), armSize));
 +    }
 +
@@ -27523,36 +27594,8 @@ index 0000000..97e186f
 +            return;
 +        }
 +        final Slot slot = this.wardrobe.slots().get(this.selectedSlot);
-+        this.saveSize(account, slot, BedrockCharacterProfiles.changeHeight(
++        this.saveCharacterEdit(account, slot, BedrockCharacterProfiles.changeHeight(
 +            account, slot.number(), slot.profileHash(), height));
-+    }
-+
-+    private void saveSize(final BedrockAuthManager account, final Slot slot,
-+                          final CompletableFuture<AccountWardrobe> operation) {
-+        this.saving = true;
-+        this.editFailed = false;
-+        this.acquisitionFailed = false;
-+        this.updateControls();
-+        operation.whenComplete((loaded, error) -> this.minecraft.execute(() -> {
-+            if (this.minecraft.gui.screen() != this) {
-+                return;
-+            }
-+            this.saving = false;
-+            if (error != null) {
-+                this.editFailed = true;
-+                ViaFabricPlusBedrock.impl().logger().warn("Could not change Bedrock character size", error);
-+            } else {
-+                this.wardrobe = loaded;
-+                if (loaded.activeSlot() == slot.number()) {
-+                    this.loadAvatar(account);
-+                    if (this.personaSelected) {
-+                        this.refreshPersona(account);
-+                        return;
-+                    }
-+                }
-+            }
-+            this.updateControls();
-+        }));
 +    }
 +
 +    private void changePiece() {
@@ -27579,10 +27622,6 @@ index 0000000..97e186f
 +            }
 +            return;
 +        }
-+        this.saving = true;
-+        this.editFailed = false;
-+        this.acquisitionFailed = false;
-+        this.updateControls();
 +        final var operation = this.category == Category.EMOTES
 +            ? BedrockCharacterProfiles.changeEmote(account, slot.number(), slot.profileHash(),
 +                this.items, item, this.selectedEmoteSlot, remove)
@@ -27591,6 +27630,25 @@ index 0000000..97e186f
 +            : this.isLimbCategory()
 +                ? BedrockCharacterProfiles.changeLimb(account, slot.number(), slot.profileHash(), this.items, item, this.limbSide, remove)
 +                : BedrockCharacterProfiles.changePiece(account, slot.number(), slot.profileHash(), this.items, item, remove);
++        this.saveCharacterEdit(account, slot, operation);
++    }
++
++    private void resetLimb() {
++        final BedrockAuthManager account = ViaFabricPlusBedrock.impl().account().get();
++        if (account == null || this.wardrobe == null || this.items == null || this.saving
++            || this.loading || this.itemsLoading || this.loadedCategory != this.category) return;
++        final Slot slot = this.wardrobe.slots().get(this.selectedSlot);
++        if (!BedrockCharacterProfiles.canResetLimb(slot, this.category, this.items, this.limbSide)) return;
++        this.saveCharacterEdit(account, slot, BedrockCharacterProfiles.resetLimb(account, slot.number(),
++            slot.profileHash(), this.category, this.items, this.limbSide));
++    }
++
++    private void saveCharacterEdit(final BedrockAuthManager account, final Slot slot,
++                                 final CompletableFuture<AccountWardrobe> operation) {
++        this.saving = true;
++        this.editFailed = false;
++        this.acquisitionFailed = false;
++        this.updateControls();
 +        operation
 +            .whenComplete((loaded, error) -> this.minecraft.execute(() -> {
 +                if (this.minecraft.gui.screen() != this) {
@@ -29304,7 +29362,7 @@ index 0000000..9a72958
 +  ]
 +}
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
-index 4a503d3..18782fa 100644
+index 4a503d3..b7a4c2f 100644
 --- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 +++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 @@ -9,6 +9,7 @@
@@ -29315,18 +29373,19 @@ index 4a503d3..18782fa 100644
    "bedrock_settings.viafabricplus.experimental_features": "Enable experimental features (may be unstable)",
  
    "bedrock_account.viafabricplus.notice": "Your browser should have opened.\nClosing this screen will cancel the process!",
-@@ -27,6 +28,10 @@
+@@ -27,6 +28,11 @@
    "bedrock_lan.viafabricplus.scan_failed": "Could not scan the LAN",
    "screen.viafabricplus.bedrock_party": "Bedrock Party",
    "screen.viafabricplus.bedrock_dressing_room": "Bedrock Dressing Room",
 +  "bedrock_character_slots.viafabricplus.limb_both": "Both",
++  "bedrock_character_slots.viafabricplus.default_limb": "Default",
 +  "bedrock_character_slots.viafabricplus.limb_left": "Left",
 +  "bedrock_character_slots.viafabricplus.limb_right": "Right",
 +  "screen.viafabricplus.bedrock_character_slots": "Bedrock Character Creator",
    "screen.viafabricplus.accept_invite": "Accept an invitation code",
  
    "bedrock_dressing_room.viafabricplus.steve": "Steve",
-@@ -45,9 +50,77 @@
+@@ -45,9 +51,77 @@
    "bedrock_dressing_room.viafabricplus.pack_skin_number": "Skin %s of %s",
    "bedrock_dressing_room.viafabricplus.import_cape": "Import cape",
    "bedrock_dressing_room.viafabricplus.remove_cape": "Remove cape",
@@ -29404,7 +29463,7 @@ index 4a503d3..18782fa 100644
  
    "bedrock_realms.viafabricplus.warning": "This feature requires a Bedrock Edition account to be set in the settings!",
    "bedrock_realms.viafabricplus.availability_check": "Checking availability...",
-@@ -255,5 +328,33 @@
+@@ -255,5 +329,33 @@
    "minecraftauth_library.viafabricplus.playfabtoken": "Obtained PlayFab Token",
    "minecraftauth_library.viafabricplus.minecraftsession": "Obtained Minecraft Session",
    "minecraftauth_library.viafabricplus.minecraftmultiplayertoken": "Obtained Minecraft Multiplayer Token",
@@ -33598,10 +33657,10 @@ index 0000000..e9e56b7
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLimbSelectionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLimbSelectionTest.java
 new file mode 100644
-index 0000000..986691b
+index 0000000..b008a10
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockLimbSelectionTest.java
-@@ -0,0 +1,182 @@
+@@ -0,0 +1,225 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -33616,8 +33675,51 @@ index 0000000..986691b
 +
 +import java.util.List;
 +import java.util.UUID;
++import java.io.IOException;
 +
 +final class BedrockLimbSelectionTest {
++    @ParameterizedTest
++    @CsvSource({"ARMS, false", "ARMS, true", "LEGS, false", "LEGS, true"})
++    void resetsOneSideThenBothWithoutChangingOtherPieces(
++            final BedrockCharacterProfiles.Category category, final boolean free) throws Exception {
++        final var type = category == BedrockCharacterProfiles.Category.ARMS ? "persona_arms" : "persona_legs";
++        final var item = item(type, free);
++        final var other = item(type, !free);
++        final var base = BedrockPersonaProfileTest.starterSlot(BedrockCharacterProfiles.Starter.STEVE).profile();
++        final var both = change(base, List.of(item, other), item, BedrockLimbSide.BOTH, false);
++        final var equipped = piece(both, item, BedrockLimbSide.BOTH);
++        equipped.add("col", JsonParser.parseString("[\"#ff112233\",\"#0\",\"#0\",\"#0\"]"));
++        final var before = both.deepCopy();
++        final var wardrobe = new BedrockCharacterProfiles.AccountWardrobe(List.of(slot(both)), 1, 1, base);
++        assertTrue(BedrockCharacterProfiles.canResetLimb(slot(both), category, List.of(item, other), BedrockLimbSide.RIGHT));
++        final var left = reset(wardrobe, category, List.of(item, other), BedrockLimbSide.RIGHT);
++        assertTrue(BedrockCharacterProfiles.limbEquipped(slot(left), item, BedrockLimbSide.LEFT));
++        assertEquals(equipped.get("col"), piece(left, item, BedrockLimbSide.LEFT).get("col"));
++        assertFalse(BedrockCharacterProfiles.limbEquipped(slot(left), item, BedrockLimbSide.RIGHT));
++        assertEquals(before, both);
++        assertFalse(BedrockCharacterProfiles.canResetLimb(slot(left), category, List.of(item, other), BedrockLimbSide.RIGHT));
++
++        final var split = change(left, List.of(item, other), other, BedrockLimbSide.RIGHT, false);
++        final var splitWardrobe = new BedrockCharacterProfiles.AccountWardrobe(List.of(slot(split)), 1, 1, base);
++        final var restored = reset(splitWardrobe, category, List.of(item, other), BedrockLimbSide.BOTH);
++        assertEquals(base, restored);
++        assertFalse(BedrockCharacterProfiles.canResetLimb(slot(restored), category, List.of(item, other), BedrockLimbSide.BOTH));
++        assertThrows(IOException.class, () -> reset(splitWardrobe, BedrockCharacterProfiles.Category.HAIRS,
++            List.of(item, other), BedrockLimbSide.BOTH));
++        piece(both, item, BedrockLimbSide.BOTH).addProperty("id", item.packId() + "/unknown");
++        assertFalse(BedrockCharacterProfiles.canResetLimb(slot(both), category, List.of(item, other), BedrockLimbSide.RIGHT));
++        final var unsupported = new BedrockCharacterProfiles.AccountWardrobe(List.of(slot(both)), 1, 1, base);
++        assertThrows(IOException.class, () -> reset(unsupported, category, List.of(item, other), BedrockLimbSide.RIGHT));
++    }
++
++    private static JsonObject reset(final BedrockCharacterProfiles.AccountWardrobe wardrobe,
++                                    final BedrockCharacterProfiles.Category category,
++                                    final List<BedrockCharacterProfiles.WardrobeItem> items,
++                                    final BedrockLimbSide side) throws IOException {
++        return BedrockCharacterProfiles.limbResetRequest(wardrobe, 1, category, items, side)
++            .getAsJsonArray("appearanceObjects").get(1).getAsJsonObject().getAsJsonObject("personaAppearance");
++    }
++
 +    @ParameterizedTest
 +    @CsvSource({
 +        "persona_arms, false, false", "persona_arms, false, true",
