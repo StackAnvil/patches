@@ -1,4 +1,4 @@
-From f40f92cbae4dc5c003dc050c83fd8c319f45b850 Mon Sep 17 00:00:00 2001
+From d600af0f9a0b2016b94a0a6b5c648022b5776e15 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 12:56:10 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -79,10 +79,16 @@ VarInts. Both encodings produce the same Java wire bytes, but ViaBackwards
 reads HolderSet objects while translating UPDATE_RECIPES for older Java
 clients. Raw fields disconnected Java 26.2 clients during Geyser login.
 The regression test covers typed translation reads and direct wire bytes.
+
+Use the shared Java slot resolver for pickup clicks. Small external
+screens otherwise remap the first player inventory cells into the
+player crafting or armor slots after selecting the inventory container.
+A native 1.26.51.1 ViaProxy merchant test exposed the rejected placement;
+keep all click modes on the same screen-relative slot mapping.
 ---
  build.gradle                                  |    3 +-
  .../api/model/container/ChestContainer.java   |   52 +-
- .../api/model/container/Container.java        |  962 +++++++++-
+ .../api/model/container/Container.java        |  907 ++++++++-
  .../api/model/container/HorseContainer.java   |   55 +
  .../model/container/block/AnvilContainer.java |  178 ++
  .../container/block/BeaconContainer.java      |  238 +++
@@ -124,7 +130,7 @@ The regression test covers typed translation reads and direct wire bytes.
  .../protocol/types/item/BedrockItemType.java  |   12 +-
  .../data/bedrock/item_stack_sizes.json        |  267 +++
  .../viabedrock/data/custom/block_tags.json    |   16 +-
- .../api/model/container/ContainerTest.java    |   99 +
+ .../api/model/container/ContainerTest.java    |  116 ++
  .../model/container/HorseContainerTest.java   |   53 +
  .../block/EnchantmentContainerTest.java       |  120 ++
  .../container/block/LecternContainerTest.java |   84 +
@@ -138,7 +144,7 @@ The regression test covers typed translation reads and direct wire bytes.
  .../storage/InventoryRequestTrackerTest.java  |  330 ++++
  .../storage/InventoryTrackerTest.java         |  124 ++
  .../storage/StonecutterRecipePacketTest.java  |   53 +
- 58 files changed, 8464 insertions(+), 844 deletions(-)
+ 58 files changed, 8426 insertions(+), 844 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/AnvilContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/BeaconContainer.java
@@ -258,7 +264,7 @@ index a37f1b07..74185260 100644
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
-index 26f17241..28a10ef2 100644
+index 26f17241..6a31d0fb 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 @@ -21,13 +21,28 @@ import com.viaversion.viaversion.api.connection.UserConnection;
@@ -325,7 +331,7 @@ index 26f17241..28a10ef2 100644
          this.user = user;
          this.containerId = containerId;
          this.type = type;
-@@ -61,7 +92,776 @@ public abstract class Container {
+@@ -61,7 +92,721 @@ public abstract class Container {
          this.validBlockTags = validBlockTags;
      }
  
@@ -402,74 +408,19 @@ index 26f17241..28a10ef2 100644
 +
 +    private ItemStackRequestAction handlePickupClick(
 +            final ClickContext clickContext, final short javaSlot, final byte button) {
-+        Container container = clickContext.container;
-+        int bedrockSlot = clickContext.bedrockSlot;
 +        final BedrockItem cursorItem = clickContext.inventoryTracker.getHudContainer().getItem(0);
-+
 +        if (javaSlot == -999) {
 +            return this.dropCursorItem(clickContext.inventoryTracker, button);
 +        }
-+
-+        if (!(container instanceof InventoryContainer)
-+                && (javaSlot < 0 || javaSlot >= container.getItems().length)) {
-+            final Container inventoryContainer = clickContext.inventoryTracker.getInventoryContainer();
-+            final int invSlot =
-+                    inventoryContainer.bedrockSlot(
-+                            javaSlot - container.getItems().length + 9); // Map to inventory slot
-+            if (invSlot < 0 || invSlot >= inventoryContainer.getItems().length) {
-+                ViaBedrock.getPlatform()
-+                        .getLogger()
-+                        .log(
-+                                Level.WARNING,
-+                                "Tried to handle click for "
-+                                        + container.type()
-+                                        + ", but slot was out of bounds ("
-+                                        + javaSlot
-+                                        + ")");
-+                return null;
-+            }
-+
-+            bedrockSlot = invSlot;
-+            container = inventoryContainer;
-+            clickContext.container = container;
-+            clickContext.bedrockSlot = bedrockSlot;
-+            clickContext.snapshot(container);
++        final SlotRef destination = this.resolveJavaSlot(clickContext.inventoryTracker, javaSlot);
++        if (destination == null) {
++            return null;
 +        }
-+
-+        if (container instanceof InventoryContainer) {
-+            if (javaSlot >= 0 && javaSlot < 5) {
-+                final Container hudContainer = clickContext.inventoryTracker.getHudContainer();
-+                final int hudSlot = hudContainer.bedrockSlot(javaSlot);
-+
-+                bedrockSlot = hudSlot;
-+                container = hudContainer;
-+                clickContext.container = container;
-+                clickContext.bedrockSlot = hudSlot;
-+                clickContext.snapshot(container);
-+
-+                // TODO: Crafting
-+            } else if (javaSlot >= 5 && javaSlot < 9) {
-+                // Armor slots
-+                final Container armorContainer = clickContext.inventoryTracker.getArmorContainer();
-+                final int armorSlot = armorContainer.bedrockSlot(javaSlot);
-+
-+                bedrockSlot = armorSlot;
-+                container = armorContainer;
-+                clickContext.container = armorContainer;
-+                clickContext.bedrockSlot = armorSlot;
-+                clickContext.snapshot(armorContainer);
-+            } else if (javaSlot == 45) {
-+                // Offhand
-+                final Container offhandContainer = clickContext.inventoryTracker.getOffhandContainer();
-+                final int offhandSlot = offhandContainer.bedrockSlot(javaSlot);
-+
-+                bedrockSlot = offhandSlot;
-+                container = offhandContainer;
-+                clickContext.container = offhandContainer;
-+                clickContext.bedrockSlot = offhandSlot;
-+                clickContext.snapshot(offhandContainer);
-+            }
-+        }
++        final Container container = destination.container();
++        final int bedrockSlot = destination.bedrockSlot();
++        clickContext.container = container;
++        clickContext.bedrockSlot = bedrockSlot;
++        clickContext.snapshot(container);
 +
 +        final BedrockItem item = container.getItem(bedrockSlot);
 +        if (item.isEmpty() && cursorItem.isEmpty()) {
@@ -1103,7 +1054,7 @@ index 26f17241..28a10ef2 100644
          return false;
      }
  
-@@ -80,7 +880,11 @@ public abstract class Container {
+@@ -80,7 +825,11 @@ public abstract class Container {
      }
  
      public BedrockItem getItem(final int slot) {
@@ -1116,7 +1067,7 @@ index 26f17241..28a10ef2 100644
      }
  
      public BedrockItem[] getItems() {
-@@ -88,29 +892,119 @@ public abstract class Container {
+@@ -88,29 +837,119 @@ public abstract class Container {
      }
  
      public boolean setItem(final int slot, final BedrockItem item) {
@@ -1243,7 +1194,7 @@ index 26f17241..28a10ef2 100644
      public int javaSlot(final int slot) {
          return slot;
      }
-@@ -147,7 +1041,51 @@ public abstract class Container {
+@@ -147,7 +986,51 @@ public abstract class Container {
          }
      }
  
@@ -9980,10 +9931,10 @@ index fbc16b4b..a02f9294 100644
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/ContainerTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/ContainerTest.java
 new file mode 100644
-index 00000000..cd2e4bc5
+index 00000000..842727a2
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/container/ContainerTest.java
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,116 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -10080,6 +10031,23 @@ index 00000000..cd2e4bc5
 +        final EnchantmentContainer enchantment = new EnchantmentContainer(user, (byte) 3, null, null);
 +        assertEquals(14, ((Container) enchantment).resolveJavaSlot(tracker, (short) 0).bedrockSlot());
 +        assertEquals(15, ((Container) enchantment).resolveJavaSlot(tracker, (short) 1).bedrockSlot());
++    }
++
++    @Test
++    void inventoryCellsInSmallScreensUseInventorySlotsInsteadOfPlayerCraftingSlots() {
++        final InventoryTracker tracker = new InventoryTracker(null);
++        for (final int size : new int[]{2, 3}) {
++            final Container screen = new Container(null, (byte) 2, ContainerType.CONTAINER, null, null, size) { };
++            for (short cell = 0; cell < 36; cell++) {
++                final Container.SlotRef slot = screen.resolveJavaSlot(tracker, (short) (size + cell));
++                assertSame(tracker.getInventoryContainer(), slot.container());
++                assertEquals(cell < 27 ? cell + 9 : cell - 27, slot.bedrockSlot());
++            }
++        }
++        final InventoryContainer player = tracker.getInventoryContainer();
++        assertSame(tracker.getHudContainer(), ((Container) player).resolveJavaSlot(tracker, (short) 1).container());
++        assertSame(tracker.getArmorContainer(), ((Container) player).resolveJavaSlot(tracker, (short) 5).container());
++        assertSame(tracker.getOffhandContainer(), ((Container) player).resolveJavaSlot(tracker, (short) 45).container());
 +    }
 +
 +}

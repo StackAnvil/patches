@@ -1,0 +1,1680 @@
+From f49f81bcf97d20ef3ee44d69cdecc0ca5cc643e4 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Fri, 2 Oct 2026 23:16:46 +0200
+Subject: [PATCH] feat(trading): translate Bedrock merchant inventories in core
+
+Open Java merchant screens from UpdateTrade, decode native NBT offers,
+and submit selection, input placement, and result crafting through the
+server-authoritative inventory request queue. Keep this in ViaBedrock
+so direct connections and ViaProxy use the same implementation.
+
+Preserve resolved costs separately from base prices, wildcard ingredient
+damage, block states, result NBT, tiers, stock, and experience. Wait for
+responses before subsequent transfers, restore rejected predictions,
+and avoid double-counting stock when newer offers arrive first.
+
+Native Bedrock 1.26.51.1 build 51061372, protocol 2193, confirms that
+UpdateTrade alone opens the screen with Size=0 and trading-player=-1.
+Its accepted requests use ingredient names 47/48 at slots 4/5 and
+CreatedOutput slot 50 with the request ID. Hero of the Village confirms
+buyA.Count is the resolved price and buyCountA is the base price.
+
+Return trade inputs and the cursor before sending ContainerClose, as the
+native client does. Serialize each return behind inventory responses so
+new destination stack IDs are known before the next transfer. Closing
+rejects further trade clicks; a full inventory drops only the overflow.
+---
+ .../api/model/container/Container.java        |  11 +-
+ .../model/container/MerchantPlacement.java    | 169 +++++++
+ .../container/entity/MerchantContainer.java   | 438 ++++++++++++++++++
+ .../viabedrock/protocol/BedrockProtocol.java  |   1 +
+ .../viabedrock/protocol/model/TradeOffer.java | 109 +++++
+ .../protocol/packet/InventoryPackets.java     |  11 +
+ .../protocol/packet/TradePackets.java         | 174 +++++++
+ .../storage/InventoryRequestTracker.java      |  36 ++
+ .../protocol/storage/InventoryTracker.java    |  18 +
+ .../container/MerchantPlacementTest.java      | 130 ++++++
+ .../entity/MerchantContainerTest.java         |  72 +++
+ .../protocol/model/TradeOfferTest.java        |  93 ++++
+ .../protocol/packet/TradePacketTest.java      | 171 +++++++
+ .../storage/InventoryRequestTrackerTest.java  |   7 +-
+ 14 files changed, 1433 insertions(+), 7 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/MerchantPlacement.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/entity/MerchantContainer.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/TradeOffer.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/TradePackets.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/MerchantPlacementTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/entity/MerchantContainerTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/TradeOfferTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/TradePacketTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
+index 309ce162..5b53269c 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
+@@ -662,8 +662,7 @@ public abstract class Container {
+         return action == null ? List.of() : List.of(action);
+     }
+ 
+-    // TODO: Move this to per-class override?
+-    private List<QuickMoveRange> quickMoveRanges(final short javaSlot, final SlotRef source) {
++    protected List<QuickMoveRange> quickMoveRanges(final short javaSlot, final SlotRef source) {
+         final InventoryTracker inventoryTracker = this.user.get(InventoryTracker.class);
+         final InventoryContainer inventory = inventoryTracker.getInventoryContainer();
+         if (this instanceof InventoryContainer) {
+@@ -1054,10 +1053,12 @@ public abstract class Container {
+         }
+     }
+ 
+-    record SlotRef(Container container, int bedrockSlot) { }
++    protected record SlotRef(Container container, int bedrockSlot) { }
+ 
+-    private record QuickMoveRange(
+-            Container container, int startJavaSlot, int endJavaSlot, boolean backwards) { }
++    protected record QuickMoveRange(
++            Container container, int startJavaSlot, int endJavaSlot, boolean backwards) {
++        public QuickMoveRange { }
++    }
+ 
+     private static final class QuickCraftState {
+         private final int mode;
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/MerchantPlacement.java b/src/main/java/net/raphimc/viabedrock/api/model/container/MerchantPlacement.java
+new file mode 100644
+index 00000000..66e40643
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/container/MerchantPlacement.java
+@@ -0,0 +1,169 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.container;
++
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.TradeOffer;
++
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.List;
++import java.util.function.ToIntFunction;
++
++public final class MerchantPlacement {
++
++    private MerchantPlacement() {
++    }
++
++    public static Plan plan(final TradeOffer offer, final BedrockItem[] inputs,
++                            final BedrockItem[] inventory, final ToIntFunction<BedrockItem> maxStack) {
++        final BedrockItem[] nextInputs = copy(inputs);
++        final BedrockItem[] nextInventory = copy(inventory);
++        final List<Transfer> transfers = new ArrayList<>();
++        for (int input = 0; input < 2; input++) {
++            final TradeOffer.Ingredient ingredient = input == 0 ? offer.first() : offer.second();
++            final BedrockItem item = inputs[input];
++            if (!item.isEmpty() && item.netId() == null) {
++                return null;
++            }
++            if (item.isEmpty() || ingredient != null && ingredient.matches(item)) {
++                continue;
++            }
++            final ReturnedInput returned = returnInput(item, inventory, maxStack, false);
++            if (returned == null) {
++                return null;
++            }
++            for (final ReturnTransfer transfer : returned.transfers()) {
++                transfers.add(new Transfer(false, input, transfer.destination(), transfer.amount()));
++            }
++            nextInputs[input] = BedrockItem.empty();
++            // Wait for authoritative IDs before returning another input into
++            // a destination that this request has just created.
++            return new Plan(List.copyOf(transfers), nextInputs, returned.inventory(), true);
++        }
++
++        final int limit = Math.min(255, Math.max(0, offer.maxUses() - offer.uses()));
++        int crafts = limit;
++        final int[] targets = new int[2];
++        for (int input = 0; input < 2; input++) {
++            final TradeOffer.Ingredient ingredient = input == 0 ? offer.first() : offer.second();
++            if (ingredient == null) {
++                continue;
++            }
++            int available = inputs[input].amount();
++            for (final BedrockItem item : inventory) {
++                if (item.netId() != null && matchesInto(ingredient, item, inputs[input])) {
++                    available += item.amount();
++                }
++            }
++            targets[input] = Math.min(available, maxStack.applyAsInt(ingredient.item()));
++            crafts = Math.min(crafts, available / ingredient.item().amount());
++            crafts = Math.min(crafts, maxStack.applyAsInt(ingredient.item()) / ingredient.item().amount());
++        }
++        if (offer.second() != null && offer.first().matches(offer.second().item())
++                && offer.second().matches(offer.first().item())) {
++            int shared = inputs[0].amount() + inputs[1].amount();
++            for (final BedrockItem item : inventory) {
++                if (item.netId() != null && offer.first().matches(item)) {
++                    shared += item.amount();
++                }
++            }
++            crafts = Math.min(crafts, shared / (offer.first().item().amount() + offer.second().item().amount()));
++            targets[0] = Math.max(inputs[0].amount(), crafts * offer.first().item().amount());
++            targets[1] = Math.max(inputs[1].amount(), crafts * offer.second().item().amount());
++        }
++
++        boolean repeat = false;
++        // Fill the more constrained ingredient first when only it requires NBT.
++        final int[] order = offer.second() != null && offer.second().item().tag() != null
++                && offer.first().item().tag() == null ? new int[]{1, 0} : new int[]{0, 1};
++        for (final int input : order) {
++            final TradeOffer.Ingredient ingredient = input == 0 ? offer.first() : offer.second();
++            if (ingredient == null) {
++                continue;
++            }
++            final int required = targets[input];
++            final int missing = required - nextInputs[input].amount();
++            if (missing <= 0) {
++                continue;
++            }
++            int source = -1;
++            for (int slot = 0; slot < nextInventory.length; slot++) {
++                final BedrockItem item = nextInventory[slot];
++                if (item.netId() != null && matchesInto(ingredient, item, nextInputs[input])
++                        && (source < 0 || item.amount() > nextInventory[source].amount())) {
++                    source = slot;
++                }
++            }
++            if (source < 0) {
++                continue;
++            }
++            final BedrockItem item = nextInventory[source];
++            final int amount = Math.min(missing, item.amount());
++            transfers.add(new Transfer(true, source, input, amount));
++            final BedrockItem placed = nextInputs[input].isEmpty() ? item.copy() : nextInputs[input].copy();
++            placed.setAmount(nextInputs[input].amount() + amount);
++            nextInputs[input] = placed;
++            nextInventory[source] = remaining(item, amount);
++            repeat |= amount < missing;
++        }
++        return new Plan(List.copyOf(transfers), nextInputs, nextInventory, repeat);
++    }
++
++    public static ReturnedInput returnInput(final BedrockItem item, final BedrockItem[] inventory,
++                                           final ToIntFunction<BedrockItem> maxStack, final boolean dropOverflow) {
++        if (item.netId() == null) {
++            return null;
++        }
++        final BedrockItem[] next = copy(inventory);
++        final List<ReturnTransfer> transfers = new ArrayList<>();
++        int remaining = item.amount();
++        for (final boolean merge : new boolean[]{true, false}) {
++            for (int slot = 0; slot < next.length && remaining > 0; slot++) {
++                final BedrockItem target = next[slot];
++                if (merge ? target.isEmpty() || target.isDifferent(item) || target.netId() == null : !target.isEmpty()) {
++                    continue;
++                }
++                final int amount = Math.min(remaining, maxStack.applyAsInt(item) - target.amount());
++                if (amount <= 0) {
++                    continue;
++                }
++                transfers.add(new ReturnTransfer(slot, amount));
++                final BedrockItem placed = target.isEmpty() ? item.copy() : target.copy();
++                placed.setAmount(target.amount() + amount);
++                next[slot] = placed;
++                remaining -= amount;
++            }
++        }
++        return remaining > 0 && !dropOverflow ? null : new ReturnedInput(List.copyOf(transfers), next, remaining);
++    }
++
++    private static boolean matchesInto(final TradeOffer.Ingredient ingredient,
++                                       final BedrockItem item, final BedrockItem target) {
++        return ingredient.matches(item) && (target.isEmpty() || !target.isDifferent(item));
++    }
++
++    private static BedrockItem[] copy(final BedrockItem[] items) {
++        return Arrays.stream(items).map(BedrockItem::copy).toArray(BedrockItem[]::new);
++    }
++
++    private static BedrockItem remaining(final BedrockItem item, final int amount) {
++        final BedrockItem copy = item.copy();
++        copy.setAmount(item.amount() - amount);
++        return copy.isEmpty() ? BedrockItem.empty() : copy;
++    }
++
++    public record ReturnTransfer(int destination, int amount) { }
++
++    public record ReturnedInput(List<ReturnTransfer> transfers, BedrockItem[] inventory, int dropped) { }
++
++    public record Transfer(boolean fromInventory, int source, int destination, int amount) {
++    }
++
++    public record Plan(List<Transfer> transfers, BedrockItem[] inputs, BedrockItem[] inventory, boolean repeat) {
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/entity/MerchantContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/entity/MerchantContainer.java
+new file mode 100644
+index 00000000..24917234
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/container/entity/MerchantContainer.java
+@@ -0,0 +1,438 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.container.entity;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
++import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
++import net.raphimc.viabedrock.api.model.container.Container;
++import net.raphimc.viabedrock.api.model.container.MerchantPlacement;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.TextProcessingEventOrigin;
++import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.FullContainerName;
++import net.raphimc.viabedrock.protocol.model.TradeOffer;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestSlotInfo;
++import net.raphimc.viabedrock.protocol.packet.TradePackets;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import net.raphimc.viabedrock.protocol.storage.InventoryRequestStorage;
++import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++
++import java.util.ArrayList;
++import java.util.List;
++
++public final class MerchantContainer extends Container {
++
++    private final long traderId;
++    private final boolean newTradeUi;
++    private final boolean economy;
++    private List<TradeOffer> offers;
++    private int tier;
++    private int experience;
++    private int selected;
++    private long offerRevision;
++    private PendingTrade pendingTrade;
++    private boolean closing;
++    private boolean closeQueued;
++    private Integer closingRequestId;
++
++    public MerchantContainer(final UserConnection user, final byte containerId, final TextComponent title,
++                             final long traderId, final boolean newTradeUi, final boolean economy,
++                             final int tier, final List<TradeOffer> offers) {
++        super(user, containerId, ContainerType.TRADE, title, null, 3);
++        this.traderId = traderId;
++        this.newTradeUi = newTradeUi;
++        this.economy = economy;
++        this.replaceOffers(tier, offers);
++    }
++
++    @Override
++    public FullContainerName getFullContainerName(final int slot) {
++        final ContainerEnumName name = switch (slot) {
++            case 4 -> this.newTradeUi ? ContainerEnumName.Trade2Ingredient1Container : ContainerEnumName.TradeIngredient1Container;
++            case 5 -> this.newTradeUi ? ContainerEnumName.Trade2Ingredient2Container : ContainerEnumName.TradeIngredient2Container;
++            case 50 -> this.newTradeUi ? ContainerEnumName.Trade2ResultPreviewContainer : ContainerEnumName.TradeResultPreviewContainer;
++            default -> throw new IllegalArgumentException("Invalid trade slot: " + slot);
++        };
++        return new FullContainerName(name, null);
++    }
++
++    @Override
++    public int javaSlot(final int slot) {
++        return switch (slot) {
++            case 4 -> 0;
++            case 5 -> 1;
++            case 50 -> 2;
++            default -> -1;
++        };
++    }
++
++    @Override
++    public int bedrockSlot(final int slot) {
++        return switch (slot) {
++            case 0 -> 4;
++            case 1 -> 5;
++            case 2 -> 50;
++            default -> -1;
++        };
++    }
++
++    @Override
++    protected int itemIndex(final int slot) {
++        return this.javaSlot(slot);
++    }
++
++    @Override
++    protected void onSlotChanged(final int slot, final BedrockItem oldItem, final BedrockItem newItem) {
++        if (slot < 2) {
++            this.refreshOutput();
++        }
++    }
++
++    private void refreshOutput() {
++        final TradeOffer offer = this.selectedOffer();
++        this.items[2] = offer != null && offer.crafts(this.items[0], this.items[1], this.tier) > 0
++                ? offer.result().copy() : BedrockItem.empty();
++    }
++
++    public void replaceOffers(final int tier, final List<TradeOffer> offers) {
++        this.tier = Math.max(0, tier);
++        this.offers = List.copyOf(offers);
++        this.offerRevision++;
++        if (this.selected >= this.offers.size()) {
++            this.selected = 0;
++        }
++        this.refreshOutput();
++    }
++
++    public void updateActorState(final Entity actor) {
++        boolean changed = false;
++        final EntityData tierData = actor.entityData().get(ActorDataIds.TRADE_TIER);
++        if (tierData != null && tierData.value() instanceof Number number && this.tier != number.intValue()) {
++            this.tier = Math.max(0, number.intValue());
++            this.refreshOutput();
++            changed = true;
++        }
++        final EntityData data = actor.entityData().get(ActorDataIds.TRADE_EXPERIENCE);
++        if (data != null && data.value() instanceof Number number && this.experience != number.intValue()) {
++            this.experience = Math.max(0, number.intValue());
++            changed = true;
++        }
++        if (changed) {
++            TradePackets.sendOffers(this.user, this);
++        }
++    }
++
++    @Override
++    public boolean handleClick(final int revision, final short slot, final byte button, final ContainerInput action) {
++        if (this.closing) {
++            return false;
++        }
++        if (slot == 2) {
++            return this.takeResult(revision, button, action);
++        }
++        final boolean handled = super.handleClick(revision, slot, button, action);
++        if (handled) {
++            this.refreshOutput();
++            PacketFactory.sendJavaContainerSetContent(this.user, this);
++        }
++        return handled;
++    }
++
++    @Override
++    protected List<QuickMoveRange> quickMoveRanges(final short javaSlot, final SlotRef source) {
++        final InventoryTracker inventory = this.user.get(InventoryTracker.class);
++        if (source.container() != inventory.getInventoryContainer()) {
++            return super.quickMoveRanges(javaSlot, source);
++        }
++        final TradeOffer offer = this.selectedOffer();
++        if (offer == null || !offer.available(this.tier)) {
++            return List.of();
++        }
++        final BedrockItem item = source.container().getItem(source.bedrockSlot());
++        final List<QuickMoveRange> ranges = new ArrayList<>(2);
++        if (offer.first().matches(item)) {
++            ranges.add(new QuickMoveRange(this, 0, 1, false));
++        }
++        if (offer.second() != null && offer.second().matches(item)) {
++            ranges.add(new QuickMoveRange(this, 1, 2, false));
++        }
++        return ranges;
++    }
++
++    @Override
++    public boolean handleButtonClick(final int button) {
++        if (this.closing || button < 0 || button >= this.offers.size()) {
++            return false;
++        }
++        this.selected = button;
++        this.refreshOutput();
++        final TradeOffer offer = this.selectedOffer();
++        if (!offer.available(this.tier)) {
++            PacketFactory.sendJavaContainerSetContent(this.user, this);
++            return true;
++        }
++        final InventoryTracker inventory = this.user.get(InventoryTracker.class);
++        final Container player = inventory.getInventoryContainer();
++        final MerchantPlacement.Plan plan = MerchantPlacement.plan(offer,
++                new BedrockItem[]{this.items[0], this.items[1]}, player.getItems(),
++                this.user.get(ItemRewriter.class)::maxStackSize);
++        if (plan == null) {
++            PacketFactory.sendJavaContainerSetContent(this.user, this);
++            return true;
++        }
++        if (!plan.transfers().isEmpty()) {
++            final List<ItemStackRequestAction> actions = new ArrayList<>();
++            for (final MerchantPlacement.Transfer transfer : plan.transfers()) {
++                final Container from = transfer.fromInventory() ? player : this;
++                final Container to = transfer.fromInventory() ? this : player;
++                final int source = transfer.fromInventory() ? transfer.source() : this.bedrockSlot(transfer.source());
++                final int destination = transfer.fromInventory() ? this.bedrockSlot(transfer.destination()) : transfer.destination();
++                final BedrockItem target = to.getItem(destination);
++                actions.add(new ItemStackRequestAction.PlaceAction(transfer.amount(),
++                        from.requestSlotInfo(source, from.getItem(source).netId()),
++                        to.requestSlotInfo(destination, target.isEmpty() ? 0 : target.netId())));
++            }
++            final InventoryRequestTracker requests = this.user.get(InventoryRequestTracker.class);
++            final ItemStackRequestInfo request = new ItemStackRequestInfo(requests.nextRequestId(), actions,
++                    List.of(), TextProcessingEventOrigin.unknown);
++            requests.addRequest(new InventoryRequestStorage(request, 0, inventory.getHudContainer().copy(),
++                    List.of(this.copy(), player.copy())));
++            player.setItems(plan.inventory());
++            this.setItem(4, plan.inputs()[0]);
++            this.setItem(5, plan.inputs()[1]);
++            PacketFactory.sendBedrockInventoryRequest(this.user, new ItemStackRequestInfo[]{request});
++            if (plan.repeat()) {
++                requests.queueButtonClick(this, button);
++            }
++        }
++        PacketFactory.sendJavaContainerSetContent(this.user, this);
++        return true;
++    }
++
++    private boolean takeResult(final int revision, final byte button, final ContainerInput action) {
++        if (action != ContainerInput.PICKUP && action != ContainerInput.QUICK_MOVE
++                || action == ContainerInput.PICKUP && button != 0 || this.pendingTrade != null) {
++            return false;
++        }
++        final TradeOffer offer = this.selectedOffer();
++        if (offer == null) {
++            return false;
++        }
++        final InventoryTracker inventory = this.user.get(InventoryTracker.class);
++        final Container target = action == ContainerInput.QUICK_MOVE ? inventory.getInventoryContainer() : inventory.getHudContainer();
++        final int maximum = this.user.get(ItemRewriter.class).maxStackSize(offer.result());
++        final int destination = action == ContainerInput.QUICK_MOVE ? this.resultDestination(target, offer.result(), maximum) : 0;
++        if (destination < 0) {
++            return false;
++        }
++        final BedrockItem current = target.getItem(destination);
++        if (!current.isEmpty() && (current.isDifferent(offer.result()) || current.netId() == null)) {
++            return false;
++        }
++        final int available = offer.crafts(this.items[0], this.items[1], this.tier);
++        final int capacity = (maximum - current.amount()) / offer.result().amount();
++        final int crafts = Math.min(Math.min(available, capacity), action == ContainerInput.QUICK_MOVE ? 255 : 1);
++        if (crafts <= 0 || this.items[0].netId() == null || offer.second() != null && this.items[1].netId() == null) {
++            return false;
++        }
++
++        final InventoryRequestTracker requests = this.user.get(InventoryRequestTracker.class);
++        final int requestId = requests.nextRequestId();
++        final List<ItemStackRequestAction> actions = this.resultActions(offer, crafts, requestId,
++                target.requestSlotInfo(destination, current.isEmpty() ? 0 : current.netId()));
++        final ItemStackRequestInfo request = new ItemStackRequestInfo(requestId, actions, List.of(), TextProcessingEventOrigin.unknown);
++        requests.addRequest(new InventoryRequestStorage(request, revision, inventory.getHudContainer().copy(),
++                action == ContainerInput.QUICK_MOVE ? List.of(this.copy(), target.copy()) : List.of(this.copy())));
++        this.trackResultRequest(requestId, offer, crafts, revision, action == ContainerInput.QUICK_MOVE);
++        this.setItem(4, this.itemAfterRemovingAmount(this.items[0], offer.first().item().amount() * crafts));
++        if (offer.second() != null) {
++            this.setItem(5, this.itemAfterRemovingAmount(this.items[1], offer.second().item().amount() * crafts));
++        }
++        final BedrockItem placed = current.isEmpty() ? offer.result().copy() : current.copy();
++        placed.setAmount(current.amount() + offer.result().amount() * crafts);
++        target.setItem(destination, placed);
++        PacketFactory.sendBedrockInventoryRequest(this.user, new ItemStackRequestInfo[]{request});
++        return true;
++    }
++
++    public List<ItemStackRequestAction> resultActions(final TradeOffer offer, final int crafts, final int requestId,
++                                                     final ItemStackRequestSlotInfo destination) {
++        final List<ItemStackRequestAction> actions = new ArrayList<>();
++        actions.add(new ItemStackRequestAction.CraftRecipeAction(offer.networkId(), crafts));
++        actions.add(new ItemStackRequestAction.CraftResultsDeprecatedAction(List.of(offer.result().copy()), crafts));
++        actions.add(new ItemStackRequestAction.ConsumeAction(offer.first().item().amount() * crafts,
++                this.requestSlotInfo(4, this.items[0].netId())));
++        if (offer.second() != null) {
++            actions.add(new ItemStackRequestAction.ConsumeAction(offer.second().item().amount() * crafts,
++                    this.requestSlotInfo(5, this.items[1].netId())));
++        }
++        actions.add(new ItemStackRequestAction.PlaceAction(offer.result().amount() * crafts,
++                new ItemStackRequestSlotInfo(new FullContainerName(ContainerEnumName.CreatedOutputContainer, null),
++                        (byte) 50, requestId), destination));
++        return List.copyOf(actions);
++    }
++
++    void trackResultRequest(final int requestId, final TradeOffer offer, final int crafts,
++                            final int revision, final boolean quickMove) {
++        this.pendingTrade = new PendingTrade(requestId, offer.networkId(), crafts, this.offerRevision, revision, quickMove);
++    }
++
++    public boolean handleResponse(final int requestId, final boolean success) {
++        if (this.closingRequestId != null && this.closingRequestId == requestId) {
++            this.closingRequestId = null;
++            if (success) {
++                this.queueClose();
++            } else {
++                BedrockProtocol.kickForIllegalState(this.user, "Trade items could not be returned. Reconnect to synchronize your inventory.");
++            }
++            return false;
++        }
++        if (this.closing && !success) {
++            this.closeQueued = false; // A rejected request clears the interaction queue.
++            this.queueClose();
++        }
++        final PendingTrade pending = this.pendingTrade;
++        if (pending == null || pending.requestId() != requestId) {
++            return false;
++        }
++        this.pendingTrade = null;
++        final boolean changed = success && pending.offerRevision() == this.offerRevision;
++        if (changed) {
++            this.offers = this.offers.stream().map(offer -> offer.networkId() == pending.networkId()
++                    ? offer.used(pending.crafts()) : offer).toList();
++        }
++        this.refreshOutput();
++        if (success && pending.quickMove() && !this.closing) {
++            this.user.get(InventoryRequestTracker.class).queueMerchantResult(this, pending.networkId(), pending.javaRevision());
++        }
++        return changed;
++    }
++
++    public boolean continueQuickMove(final int networkId, final int revision) {
++        final TradeOffer offer = this.selectedOffer();
++        if (offer != null && offer.networkId() == networkId) {
++            this.takeResult(revision, (byte) 0, ContainerInput.QUICK_MOVE);
++        }
++        // Exhausted stock, full inventory, or a changed selection ends the
++        // continuation without discarding subsequent user interactions.
++        return true;
++    }
++
++    public void beginClose() {
++        if (this.closing) {
++            return;
++        }
++        this.closing = true;
++        final InventoryRequestTracker requests = this.user.get(InventoryRequestTracker.class);
++        requests.clearQueuedScreenInteractions();
++        if (requests.hasPending() || requests.isWaitingForLegacyOffhand()) {
++            this.queueClose();
++        } else {
++            this.handleClose();
++        }
++    }
++
++    private void queueClose() {
++        if (!this.closeQueued) {
++            this.closeQueued = this.user.get(InventoryRequestTracker.class).queueMerchantClose(this);
++        }
++    }
++
++    public boolean handleClose() {
++        this.closeQueued = false;
++        final InventoryTracker inventory = this.user.get(InventoryTracker.class);
++        final Container player = inventory.getInventoryContainer();
++        for (int index = 0; index < 3; index++) {
++            final Container source = index == 2 ? inventory.getHudContainer() : this;
++            final int slot = index == 2 ? 0 : this.bedrockSlot(index);
++            final BedrockItem item = source.getItem(slot);
++            if (item.isEmpty()) {
++                continue;
++            }
++            final MerchantPlacement.ReturnedInput returned = MerchantPlacement.returnInput(item, player.getItems(),
++                    this.user.get(ItemRewriter.class)::maxStackSize, true);
++            if (returned == null) {
++                BedrockProtocol.kickForIllegalState(this.user, "Trade items could not be synchronized. Reconnect to refresh your inventory.");
++                return true;
++            }
++            final List<ItemStackRequestAction> actions = new ArrayList<>();
++            for (final MerchantPlacement.ReturnTransfer transfer : returned.transfers()) {
++                final BedrockItem destination = player.getItem(transfer.destination());
++                actions.add(new ItemStackRequestAction.PlaceAction(transfer.amount(), source.requestSlotInfo(slot, item.netId()),
++                        player.requestSlotInfo(transfer.destination(), destination.isEmpty() ? 0 : destination.netId())));
++            }
++            if (returned.dropped() > 0) {
++                actions.add(new ItemStackRequestAction.DropAction(returned.dropped(), source.requestSlotInfo(slot, item.netId()), false));
++            }
++            final InventoryRequestTracker requests = this.user.get(InventoryRequestTracker.class);
++            final ItemStackRequestInfo request = new ItemStackRequestInfo(requests.nextRequestId(), actions, List.of(), TextProcessingEventOrigin.unknown);
++            requests.addRequest(new InventoryRequestStorage(request, 0, inventory.getHudContainer().copy(), List.of(this.copy(), player.copy())));
++            this.closingRequestId = request.requestId();
++            player.setItems(returned.inventory());
++            source.setItem(slot, BedrockItem.empty());
++            PacketFactory.sendBedrockInventoryRequest(this.user, new ItemStackRequestInfo[]{request});
++            return true;
++        }
++        inventory.markPendingClose(this);
++        PacketFactory.sendBedrockContainerClose(this.user, this.containerId, ContainerType.NONE);
++        return true;
++    }
++
++    public boolean isClosing() {
++        return this.closing;
++    }
++
++    private int resultDestination(final Container inventory, final BedrockItem result, final int maximum) {
++        for (final boolean merge : new boolean[]{true, false}) {
++            for (int slot = 0; slot < inventory.size(); slot++) {
++                final BedrockItem item = inventory.getItem(slot);
++                if (merge ? !item.isEmpty() && !item.isDifferent(result) && item.netId() != null
++                        && maximum - item.amount() >= result.amount() : item.isEmpty()) {
++                    return slot;
++                }
++            }
++        }
++        return -1;
++    }
++
++    public TradeOffer selectedOffer() {
++        return this.offers.isEmpty() ? null : this.offers.get(this.selected);
++    }
++
++    public long traderId() {
++        return this.traderId;
++    }
++
++    public List<TradeOffer> offers() {
++        return this.offers;
++    }
++
++    public int tier() {
++        return this.tier;
++    }
++
++    public int experience() {
++        return this.experience;
++    }
++
++    public boolean economy() {
++        return this.economy;
++    }
++
++    private record PendingTrade(int requestId, int networkId, int crafts, long offerRevision, int javaRevision, boolean quickMove) {
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+index c1f9a86f..b5b16544 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+@@ -115,6 +115,7 @@ public class BedrockProtocol
+         EntityPackets.register(this);
+         HudPackets.register(this);
+         InventoryPackets.register(this);
++        TradePackets.register(this);
+         NpcDialoguePackets.register(this);
+         WorldEffectPackets.register(this);
+         UnhandledPackets.register(this);
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/TradeOffer.java b/src/main/java/net/raphimc/viabedrock/protocol/model/TradeOffer.java
+new file mode 100644
+index 00000000..e1c0b2c5
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/TradeOffer.java
+@@ -0,0 +1,109 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.Tag;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.function.Function;
++
++public record TradeOffer(int networkId, int tier, Ingredient first, Ingredient second,
++                         BedrockItem result, int uses, int maxUses, int experience) {
++
++    public static List<TradeOffer> read(final CompoundTag data,
++                                       final Function<CompoundTag, BedrockItem> decoder) {
++        final var recipes = data.getListTag("Recipes", CompoundTag.class);
++        if (recipes == null || recipes.size() > 1024) {
++            throw new IllegalArgumentException("Invalid trade recipe list");
++        }
++        final List<TradeOffer> offers = new ArrayList<>(recipes.size());
++        for (final CompoundTag recipe : recipes) {
++            final Ingredient first = ingredient(recipe.getCompoundTag("buyA"), recipe.getInt("buyCountA"), decoder);
++            final Ingredient second = ingredient(recipe.getCompoundTag("buyB"), recipe.getInt("buyCountB"), decoder);
++            final CompoundTag resultTag = recipe.getCompoundTag("sell");
++            if (first == null || resultTag == null) {
++                throw new IllegalArgumentException("Trade has no cost or result");
++            }
++            final BedrockItem result = decoder.apply(resultTag);
++            final int networkId = recipe.getInt("netId");
++            if (result.isEmpty() || networkId == 0) {
++                throw new IllegalArgumentException("Trade has an invalid result or recipe ID");
++            }
++            result.setData(resultTag.getShort("Damage"));
++            offers.add(new TradeOffer(networkId, Math.max(0, recipe.getInt("tier")), first, second,
++                    result, Math.max(0, recipe.getInt("uses")), Math.max(0, recipe.getInt("maxUses")),
++                    Math.max(0, recipe.getInt("traderExp"))));
++        }
++        return List.copyOf(offers);
++    }
++
++    private static Ingredient ingredient(final CompoundTag tag, final int baseCount,
++                                         final Function<CompoundTag, BedrockItem> decoder) {
++        if (tag == null) {
++            return null;
++        }
++        final BedrockItem item = decoder.apply(tag);
++        if (item.isEmpty()) {
++            throw new IllegalArgumentException("Trade has an invalid ingredient");
++        }
++        final short damage = tag.getShort("Damage");
++        final boolean wildcard = damage == Short.MAX_VALUE;
++        item.setData(wildcard ? 0 : damage);
++        return new Ingredient(item, wildcard, baseCount > 0 ? baseCount : item.amount());
++    }
++
++    public boolean available(final int traderTier) {
++        return this.tier <= traderTier && this.uses < this.maxUses;
++    }
++
++    public TradeOffer used(final int count) {
++        return new TradeOffer(this.networkId, this.tier, this.first, this.second, this.result,
++                (int) Math.min(this.maxUses, (long) this.uses + count), this.maxUses, this.experience);
++    }
++
++    public int crafts(final BedrockItem firstItem, final BedrockItem secondItem, final int traderTier) {
++        if (!this.available(traderTier) || !this.first.matches(firstItem)
++                || (this.second == null ? !secondItem.isEmpty() : !this.second.matches(secondItem))) {
++            return 0;
++        }
++        final int firstCrafts = firstItem.amount() / this.first.item.amount();
++        final int secondCrafts = this.second == null ? Integer.MAX_VALUE : secondItem.amount() / this.second.item.amount();
++        return Math.min(this.maxUses - this.uses, Math.min(firstCrafts, secondCrafts));
++    }
++
++    public record Ingredient(BedrockItem item, boolean wildcardDamage, int baseCount) {
++
++        public boolean matches(final BedrockItem candidate) {
++            return !candidate.isEmpty() && candidate.identifier() == this.item.identifier()
++                    && (this.wildcardDamage || candidate.data() == this.item.data())
++                    && (this.item.blockRuntimeId() == 0 || candidate.blockRuntimeId() == this.item.blockRuntimeId())
++                    && includes(candidate.tag(), this.item.tag());
++        }
++
++        private static boolean includes(final CompoundTag actual, final CompoundTag required) {
++            if (required == null || required.isEmpty()) {
++                return true;
++            }
++            if (actual == null) {
++                return false;
++            }
++            for (final var entry : required.entrySet()) {
++                final Tag value = actual.get(entry.getKey());
++                if (entry.getValue() instanceof CompoundTag nested) {
++                    if (!(value instanceof CompoundTag compound) || !includes(compound, nested)) {
++                        return false;
++                    }
++                } else if (!entry.getValue().equals(value)) {
++                    return false;
++                }
++            }
++            return true;
++        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+index 3a243d49..d7d6476d 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+@@ -66,6 +66,7 @@ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
+ import net.raphimc.viabedrock.api.model.container.ChestContainer;
+ import net.raphimc.viabedrock.api.model.container.Container;
++import net.raphimc.viabedrock.api.model.container.entity.MerchantContainer;
+ import net.raphimc.viabedrock.api.model.container.HorseContainer;
+ import net.raphimc.viabedrock.api.model.container.block.*;
+ import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
+@@ -218,6 +219,11 @@ public final class InventoryPackets {
+                     final BlockPosition containerPosition =
+                             screenType != type ? null : position;
+ 
++                    if (screenType == ContainerType.TRADE) {
++                        // Offers and the merchant window arrive together in UPDATE_TRADE.
++                        wrapper.cancel();
++                        return;
++                    }
+                     if (inventoryTracker.isAnyScreenOpen()) {
+                         ViaBedrock.getPlatform()
+                                 .getLogger()
+@@ -1323,6 +1329,11 @@ public final class InventoryPackets {
+                                         inventoryTracker.setCurrentContainerClosed(false);
+                                         return;
+                                     }
++                                    if (container instanceof MerchantContainer merchant) {
++                                        wrapper.cancel();
++                                        merchant.beginClose();
++                                        return;
++                                    }
+                                     inventoryTracker.markPendingClose(container);
+                                 });
+                     }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/TradePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/TradePackets.java
+new file mode 100644
+index 00000000..3b7f3d81
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/TradePackets.java
+@@ -0,0 +1,174 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.item.Item;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
++import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.api.model.container.entity.MerchantContainer;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.api.util.TextUtil;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.TradeOffer;
++import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++import java.util.List;
++import java.util.function.Function;
++import java.util.logging.Level;
++
++public final class TradePackets {
++
++    private TradePackets() {
++    }
++
++    public static void register(final BedrockProtocol protocol) {
++        protocol.registerClientbound(ClientboundBedrockPackets.UPDATE_TRADE, ClientboundPackets26_3.OPEN_SCREEN, wrapper -> {
++            final Update update = Update.read(wrapper);
++            final InventoryTracker inventory = wrapper.user().get(InventoryTracker.class);
++            final EntityTracker entities = wrapper.user().get(EntityTracker.class);
++            final Entity actor = entities.getEntityByUid(update.traderId());
++            final MerchantContainer current = inventory.getCurrentContainer() instanceof MerchantContainer merchant ? merchant : null;
++            if (current != null && current.isClosing()) {
++                wrapper.cancel();
++                return;
++            }
++            if (update.type() != ContainerType.TRADE || actor == null
++                    || update.playerId() != -1 && update.playerId() != entities.getClientPlayer().uniqueId()
++                    || current == null && inventory.isAnyScreenOpen()
++                    || current != null && (current.containerId() != update.containerId() || current.traderId() != update.traderId())) {
++                wrapper.cancel();
++                PacketFactory.sendBedrockContainerClose(wrapper.user(), update.containerId(), ContainerType.NONE);
++                return;
++            }
++            final List<TradeOffer> offers;
++            try {
++                offers = TradeOffer.read(update.data(), tag -> readItem(wrapper.user(), tag));
++            } catch (final IllegalArgumentException exception) {
++                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Could not read Bedrock trade offers", exception);
++                wrapper.cancel();
++                PacketFactory.sendBedrockContainerClose(wrapper.user(), update.containerId(), ContainerType.NONE);
++                return;
++            }
++            final MerchantContainer merchant;
++            if (current != null) {
++                merchant = current;
++                merchant.replaceOffers(update.tier(), offers);
++            } else {
++                merchant = new MerchantContainer(wrapper.user(), update.containerId(),
++                        TextUtil.stringToTextComponent(wrapper.user().get(ResourcePackStorage.class)
++                                .getTexts().translate(update.title())), update.traderId(), update.newTradeUi(),
++                        update.economy(), update.tier(), offers);
++                inventory.setCurrentContainer(merchant);
++                wrapper.write(Types.VAR_INT, Byte.toUnsignedInt(merchant.javaContainerId()));
++                wrapper.write(Types.VAR_INT, BedrockProtocol.MAPPINGS.getJavaMenuId("minecraft:merchant"));
++                wrapper.write(Types.TAG, TextUtil.textComponentToNbt(merchant.title()));
++                wrapper.send(BedrockProtocol.class);
++            }
++            wrapper.cancel();
++            merchant.updateActorState(actor);
++            sendOffers(wrapper.user(), merchant);
++            PacketFactory.sendJavaContainerSetContent(wrapper.user(), merchant);
++        });
++        protocol.registerServerbound(ServerboundPackets26_3.SELECT_TRADE, null, wrapper -> {
++            wrapper.cancel();
++            final int selection = wrapper.read(Types.VAR_INT);
++            final InventoryTracker inventory = wrapper.user().get(InventoryTracker.class);
++            if (!(inventory.getCurrentContainer() instanceof MerchantContainer merchant)
++                    || merchant.isClosing() || inventory.getPendingCloseContainer() != null) {
++                return;
++            }
++            final InventoryRequestTracker requests = wrapper.user().get(InventoryRequestTracker.class);
++            if (requests.isRecoveringLegacyOffhand()) {
++                return;
++            }
++            if (requests.hasPending() || requests.isWaitingForLegacyOffhand()) {
++                requests.queueButtonClick(merchant, selection);
++            } else if (!merchant.handleButtonClick(selection)) {
++                PacketFactory.sendJavaContainerSetContent(wrapper.user(), merchant);
++            }
++        });
++    }
++
++    private static BedrockItem readItem(final UserConnection user, final CompoundTag tag) {
++        final BedrockItem item = user.get(ItemRewriter.class).bedrockItemStack(tag);
++        final CompoundTag block = tag.getCompoundTag("Block");
++        if (block != null) {
++            item.setBlockRuntimeId(user.get(BlockStateRewriter.class).bedrockId(block));
++        }
++        return item;
++    }
++
++    public static void sendOffers(final UserConnection user, final MerchantContainer merchant) {
++        final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.MERCHANT_OFFERS, user);
++        packet.write(Types.VAR_INT, Byte.toUnsignedInt(merchant.javaContainerId()));
++        packet.write(Types.VAR_INT, merchant.offers().size());
++        for (final TradeOffer offer : merchant.offers()) {
++            writeOffer(packet, offer, merchant.tier(), user.get(ItemRewriter.class)::javaItem);
++        }
++        packet.write(Types.VAR_INT, merchant.economy() ? merchant.tier() + 1 : 0);
++        packet.write(Types.VAR_INT, merchant.experience());
++        packet.write(Types.BOOLEAN, merchant.economy());
++        packet.write(Types.BOOLEAN, merchant.economy());
++        packet.send(BedrockProtocol.class);
++    }
++
++    static void writeOffer(final PacketWrapper packet, final TradeOffer offer, final int tier,
++                           final Function<BedrockItem, Item> convert) {
++        final BedrockItem baseCost = offer.first().item().copy();
++        baseCost.setAmount(offer.first().baseCount());
++        packet.write(VersionedTypes.V26_3.itemCost, convert.apply(baseCost));
++        packet.write(VersionedTypes.V26_3.item, convert.apply(offer.result()));
++        // Java supports a price modifier only for the first cost. Keep the native
++        // resolved amount for a discounted second ingredient.
++        packet.write(VersionedTypes.V26_3.optionalItemCost,
++                offer.second() == null ? null : convert.apply(offer.second().item()));
++        packet.write(Types.BOOLEAN, !offer.available(tier));
++        packet.write(Types.INT, offer.uses());
++        packet.write(Types.INT, offer.maxUses());
++        packet.write(Types.INT, offer.experience());
++        packet.write(Types.INT, offer.first().item().amount() - offer.first().baseCount());
++        packet.write(Types.FLOAT, 0F);
++        packet.write(Types.INT, 0);
++    }
++
++    record Update(byte containerId, ContainerType type, int tier, long traderId, long playerId,
++                  String title, boolean newTradeUi, boolean economy, CompoundTag data) {
++
++        static Update read(final PacketWrapper wrapper) {
++            final byte id = wrapper.read(Types.BYTE);
++            final ContainerType type = ContainerType.getByValue(wrapper.read(Types.UNSIGNED_BYTE));
++            wrapper.read(BedrockTypes.VAR_INT); // legacy size, zero for native economy trades
++            final int tier = wrapper.read(BedrockTypes.VAR_INT);
++            final long trader = wrapper.read(BedrockTypes.VAR_LONG);
++            final long player = wrapper.read(BedrockTypes.VAR_LONG);
++            final String title = wrapper.read(BedrockTypes.STRING);
++            final boolean newUi = wrapper.read(Types.BOOLEAN);
++            final boolean economy = wrapper.read(Types.BOOLEAN);
++            final var tag = wrapper.read(BedrockTypes.NETWORK_TAG);
++            if (!(tag instanceof CompoundTag compound)) {
++                throw new IllegalArgumentException("Trade data is not a compound");
++            }
++            return new Update(id, type, tier, trader, player, title, newUi, economy, compound);
++        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
+index f45d4f77..6cee275d 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
+@@ -28,6 +28,7 @@ import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectOpenHashMap;
+ 
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.model.container.Container;
++import net.raphimc.viabedrock.api.model.container.entity.MerchantContainer;
+ import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
+ import net.raphimc.viabedrock.api.util.PacketFactory;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+@@ -41,6 +42,7 @@ import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseContaine
+ import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseInfo;
+ import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseSlotInfo;
+ import net.raphimc.viabedrock.protocol.packet.InventoryPackets;
++import net.raphimc.viabedrock.protocol.packet.TradePackets;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
+ import java.util.ArrayDeque;
+@@ -249,6 +251,14 @@ public class InventoryRequestTracker extends StoredObject {
+         this.closeTemporaryInventoryIfIdle();
+     }
+ 
++    public boolean queueMerchantClose(final MerchantContainer container) {
++        return this.queueInteraction(new QueuedMerchantClose(container));
++    }
++
++    public boolean queueMerchantResult(final MerchantContainer container, final int networkId, final int revision) {
++        return this.queueInteraction(new QueuedMerchantResult(container, networkId, revision));
++    }
++
+     public boolean queueButtonClick(final Container container, final int button) {
+         return this.queueInteraction(new QueuedButtonClick(container, button));
+     }
+@@ -444,6 +454,16 @@ public class InventoryRequestTracker extends StoredObject {
+             changed.addAll(this.applySuccessfulResponse(response, request));
+         }
+ 
++        if (tracker.getCurrentContainer() instanceof MerchantContainer merchant) {
++            if (merchant.handleResponse(response.requestId(), response.result() == ItemStackNetResult.Success)) {
++                TradePackets.sendOffers(this.user(), merchant);
++            }
++            if (merchant.isClosing()) {
++                changed.remove(merchant);
++            } else {
++                changed.add(merchant);
++            }
++        }
+         tracker.getInventoryContainer().updateCraftingOutput();
+         if (response.result() == ItemStackNetResult.Success) {
+             this.drainQueuedInteractions();
+@@ -714,6 +734,22 @@ public class InventoryRequestTracker extends StoredObject {
+         }
+     }
+ 
++    private record QueuedMerchantClose(MerchantContainer container) implements QueuedInteraction {
++
++        @Override
++        public boolean apply() {
++            return this.container.handleClose();
++        }
++    }
++
++    private record QueuedMerchantResult(MerchantContainer container, int networkId, int revision) implements QueuedInteraction {
++
++        @Override
++        public boolean apply() {
++            return this.container.continueQuickMove(this.networkId, this.revision);
++        }
++    }
++
+     private record QueuedButtonClick(Container container, int button) implements QueuedInteraction {
+ 
+         @Override
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryTracker.java
+index 89dbfc51..84983ff4 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryTracker.java
+@@ -26,6 +26,7 @@ import com.viaversion.viaversion.libs.fastutil.ints.IntObjectPair;
+ import net.lenni0451.mcstructs_bedrock.forms.Form;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.model.container.Container;
++import net.raphimc.viabedrock.api.model.container.entity.MerchantContainer;
+ import net.raphimc.viabedrock.api.model.container.dynamic.BundleContainer;
+ import net.raphimc.viabedrock.api.model.container.player.ArmorContainer;
+ import net.raphimc.viabedrock.api.model.container.player.HudContainer;
+@@ -256,6 +257,18 @@ public class InventoryTracker extends StoredObject {
+ 
+     public void tick() {
+         this.user().get(InventoryRequestTracker.class).tick();
++        if (this.currentContainer instanceof MerchantContainer merchant) {
++            if (merchant.isClosing()) {
++                return;
++            }
++            final EntityTracker entities = this.user().get(EntityTracker.class);
++            final var actor = entities.getEntityByUid(merchant.traderId());
++            if (actor == null || actor.position().distanceTo(entities.getClientPlayer().position()) > 6) {
++                this.forceCloseCurrentContainer();
++                return;
++            }
++            merchant.updateActorState(actor);
++        }
+         if (this.currentContainer != null && this.currentContainer.position() != null) {
+             if (this.currentContainer.type() == ContainerType.INVENTORY) {
+                 return;
+@@ -350,6 +363,11 @@ public class InventoryTracker extends StoredObject {
+     }
+ 
+     private void forceCloseCurrentContainer() {
++        if (this.currentContainer instanceof MerchantContainer merchant) {
++            PacketFactory.sendJavaContainerClose(this.user(), merchant.javaContainerId());
++            merchant.beginClose();
++            return;
++        }
+         this.markPendingClose(this.currentContainer);
+         PacketFactory.sendJavaContainerClose(
+                 this.user(), this.pendingCloseContainer.javaContainerId());
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/MerchantPlacementTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/MerchantPlacementTest.java
+new file mode 100644
+index 00000000..e25dc602
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/container/MerchantPlacementTest.java
+@@ -0,0 +1,130 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.container;
++
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.TradeOffer;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class MerchantPlacementTest {
++
++    @Test
++    void returnsAnOldInputIntoExistingStacksBeforeFillingTheNextOffer() {
++        final BedrockItem[] inputs = {stack(2, 40, 11), BedrockItem.empty()};
++        final BedrockItem[] inventory = {stack(2, 50, 12), BedrockItem.empty(), stack(1, 64, 13)};
++        final var plan = MerchantPlacement.plan(offer(24, null), inputs, inventory, item -> 64);
++        assertNotNull(plan);
++        assertTrue(plan.repeat());
++        assertEquals(2, plan.transfers().size());
++        assertEquals(14, plan.transfers().get(0).amount());
++        assertEquals(26, plan.transfers().get(1).amount());
++        assertEquals(64, plan.inventory()[0].amount());
++        assertEquals(26, plan.inventory()[1].amount());
++        assertTrue(plan.inputs()[0].isEmpty());
++        assertEquals(40, inputs[0].amount());
++        assertEquals(50, inventory[0].amount());
++    }
++
++    @Test
++    void refusesToClearInputsWhenThereIsNoInventoryCapacity() {
++        final BedrockItem[] inputs = {stack(2, 40, 11), BedrockItem.empty()};
++        final BedrockItem[] inventory = {stack(2, 64, 12), stack(1, 64, 13)};
++        assertNull(MerchantPlacement.plan(offer(24, null), inputs, inventory, item -> 64));
++        assertEquals(40, inputs[0].amount());
++    }
++
++    @Test
++    void combinesSeveralSourceStacksAcrossAcknowledgedRequests() {
++        final BedrockItem[] inputs = BedrockItem.emptyArray(2);
++        final BedrockItem[] inventory = {stack(1, 16, 10), stack(1, 20, 11), stack(1, 12, 12)};
++        final var first = MerchantPlacement.plan(offer(24, null), inputs, inventory, item -> 64);
++        assertNotNull(first);
++        assertEquals(20, first.inputs()[0].amount());
++        assertTrue(first.repeat());
++        first.inputs()[0].setNetId(15); // A split stack receives its authoritative ID.
++        final var second = MerchantPlacement.plan(offer(24, null), first.inputs(), first.inventory(), item -> 64);
++        assertEquals(36, second.inputs()[0].amount());
++        assertTrue(second.repeat());
++        final var third = MerchantPlacement.plan(offer(24, null), second.inputs(), second.inventory(), item -> 64);
++        assertEquals(48, third.inputs()[0].amount());
++        assertFalse(third.repeat());
++        assertEquals(2, offer(24, null).crafts(third.inputs()[0], third.inputs()[1], 0));
++    }
++
++    @Test
++    void allocatesOneSharedSourceBetweenBothTradeIngredients() {
++        final var second = new TradeOffer.Ingredient(new BedrockItem(1), true, 1);
++        final var plan = MerchantPlacement.plan(offer(1, second), BedrockItem.emptyArray(2),
++                new BedrockItem[]{stack(1, 20, 10)}, item -> 64);
++        assertNotNull(plan);
++        assertEquals(10, plan.inputs()[0].amount());
++        assertEquals(10, plan.inputs()[1].amount());
++        assertTrue(plan.inventory()[0].isEmpty());
++        assertFalse(plan.repeat());
++    }
++
++    @Test
++    void doesNotMergeDifferentDamageVariantsIntoTheSameInput() {
++        final BedrockItem existing = stack(1, 24, 10);
++        existing.setData(1);
++        final var plan = MerchantPlacement.plan(offer(24, null), new BedrockItem[]{existing, BedrockItem.empty()},
++                new BedrockItem[]{stack(1, 64, 11)}, item -> 64);
++        assertNotNull(plan);
++        assertTrue(plan.transfers().isEmpty());
++        assertEquals(24, plan.inputs()[0].amount());
++    }
++
++    @Test
++    void fillsNativeInputCapacityEvenWhenThePriceDoesNotDivideTheStack() {
++        for (final int count : new int[]{5, 64}) {
++            final var plan = MerchantPlacement.plan(offer(24, null), BedrockItem.emptyArray(2),
++                    new BedrockItem[]{stack(1, count, 10)}, item -> 64);
++            assertNotNull(plan);
++            assertEquals(count, plan.inputs()[0].amount());
++            assertTrue(plan.inventory()[0].isEmpty());
++            assertFalse(plan.repeat());
++        }
++    }
++
++    @Test
++    void closingReturnsWhatFitsAndDropsOnlyTheOverflow() {
++        final BedrockItem input = stack(2, 40, 11);
++        final BedrockItem[] inventory = {stack(2, 50, 12), stack(1, 64, 13)};
++        final var returned = MerchantPlacement.returnInput(input, inventory, item -> 64, true);
++        assertNotNull(returned);
++        assertEquals(14, returned.transfers().get(0).amount());
++        assertEquals(26, returned.dropped());
++        assertEquals(64, returned.inventory()[0].amount());
++        assertEquals(50, inventory[0].amount());
++        assertEquals(40, input.amount());
++        assertNull(MerchantPlacement.returnInput(input, inventory, item -> 64, false));
++    }
++
++    @Test
++    void closingSplitsAcrossDestinationsWithoutUsingUnconfirmedStacks() {
++        final BedrockItem input = stack(2, 40, 11);
++        final BedrockItem[] inventory = {stack(2, 50, 12), BedrockItem.empty()};
++        final var returned = MerchantPlacement.returnInput(input, inventory, item -> 64, true);
++        assertNotNull(returned);
++        assertEquals(2, returned.transfers().size());
++        assertEquals(26, returned.inventory()[1].amount());
++        assertEquals(0, returned.dropped());
++        input.setNetId(null);
++        assertNull(MerchantPlacement.returnInput(input, inventory, item -> 64, true));
++    }
++
++    private static TradeOffer offer(final int firstCount, final TradeOffer.Ingredient second) {
++        final var first = new TradeOffer.Ingredient(new BedrockItem(1, (short) 0, (byte) firstCount), true, firstCount);
++        return new TradeOffer(4925, 0, first, second, new BedrockItem(3), 0, 16, 2);
++    }
++
++    private static BedrockItem stack(final int id, final int amount, final int networkId) {
++        return new BedrockItem(id, (short) 0, (byte) amount, null, new String[0], new String[0], 0, 0, networkId);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/entity/MerchantContainerTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/entity/MerchantContainerTest.java
+new file mode 100644
+index 00000000..cc691416
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/container/entity/MerchantContainerTest.java
+@@ -0,0 +1,72 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.container.entity;
++
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.TradeOffer;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class MerchantContainerTest {
++
++    @Test
++    void acceptedResultsAdvanceStockOnceAndRefreshThePreview() {
++        final TradeOffer offer = offer(14);
++        final MerchantContainer merchant = merchant(offer);
++        merchant.setItem(4, new BedrockItem(1, (short) 0, (byte) 64));
++        merchant.trackResultRequest(-3, offer, 2, 0, false);
++        assertFalse(merchant.handleResponse(-5, true));
++        assertEquals(14, merchant.selectedOffer().uses());
++        assertTrue(merchant.handleResponse(-3, true));
++        assertEquals(16, merchant.selectedOffer().uses());
++        assertTrue(merchant.getItem(50).isEmpty());
++        assertFalse(merchant.handleResponse(-3, true));
++        assertEquals(16, merchant.selectedOffer().uses());
++    }
++
++    @Test
++    void rejectedResultsPreserveStockAfterSnapshotRestoration() {
++        final TradeOffer offer = offer(0);
++        final MerchantContainer merchant = merchant(offer);
++        final BedrockItem input = new BedrockItem(1, (short) 0, (byte) 24);
++        input.setNetId(14);
++        merchant.setItem(4, input);
++        final var snapshot = merchant.copy();
++        merchant.trackResultRequest(-3, offer, 1, 0, false);
++        merchant.setItem(4, BedrockItem.empty());
++        merchant.setItems(snapshot.getItems());
++        assertFalse(merchant.handleResponse(-3, false));
++        assertEquals(0, merchant.selectedOffer().uses());
++        assertEquals(24, merchant.getItem(4).amount());
++        assertEquals(14, merchant.getItem(4).netId());
++        assertEquals(3, merchant.getItem(50).identifier());
++    }
++
++    @Test
++    void authoritativeOfferUpdatesPreventDoubleCountingAcceptedTrades() {
++        final TradeOffer offer = offer(0);
++        final MerchantContainer merchant = merchant(offer);
++        merchant.trackResultRequest(-3, offer, 2, 0, false);
++        merchant.replaceOffers(1, List.of(offer.used(2)));
++        assertFalse(merchant.handleResponse(-3, true));
++        assertEquals(2, merchant.selectedOffer().uses());
++        assertEquals(1, merchant.tier());
++    }
++
++    private static MerchantContainer merchant(final TradeOffer offer) {
++        return new MerchantContainer(null, (byte) 2, null, -42, true, true, 0, List.of(offer));
++    }
++
++    private static TradeOffer offer(final int uses) {
++        return new TradeOffer(4925, 0,
++                new TradeOffer.Ingredient(new BedrockItem(1, (short) 0, (byte) 24), true, 24),
++                null, new BedrockItem(3), uses, 16, 2);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/TradeOfferTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/TradeOfferTest.java
+new file mode 100644
+index 00000000..4bd85d66
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/TradeOfferTest.java
+@@ -0,0 +1,93 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.ListTag;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class TradeOfferTest {
++
++    @Test
++    void decodesDiscountedCostsWildcardDamageAndTaggedResults() {
++        final CompoundTag first = item((byte) 16, Short.MAX_VALUE);
++        final CompoundTag second = item((byte) 1, (short) 3);
++        final CompoundTag result = item((byte) 1, (short) 5);
++        final CompoundTag enchant = new CompoundTag();
++        enchant.putShort("id", (short) 39);
++        enchant.putShort("lvl", (short) 3);
++        final CompoundTag resultData = new CompoundTag();
++        resultData.put("ench", new ListTag<>(List.of(enchant)));
++        result.put("tag", resultData);
++        final CompoundTag recipe = new CompoundTag();
++        recipe.put("buyA", first);
++        recipe.putInt("buyCountA", 24);
++        recipe.put("buyB", second);
++        recipe.putInt("buyCountB", 2);
++        recipe.put("sell", result);
++        recipe.putInt("netId", 4925);
++        recipe.putInt("tier", 1);
++        recipe.putInt("uses", 2);
++        recipe.putInt("maxUses", 16);
++        recipe.putInt("traderExp", 2);
++        final CompoundTag root = new CompoundTag();
++        root.put("Recipes", new ListTag<>(List.of(recipe)));
++
++        final TradeOffer offer = TradeOffer.read(root, tag -> new BedrockItem(9, (short) 0,
++                tag.getByte("Count"), tag.getCompoundTag("tag"))).get(0);
++
++        assertEquals(16, offer.first().item().amount());
++        assertEquals(24, offer.first().baseCount());
++        assertTrue(offer.first().wildcardDamage());
++        assertEquals(0, offer.first().item().data());
++        assertEquals(3, offer.second().item().data());
++        assertEquals(5, offer.result().data());
++        assertEquals(resultData, offer.result().tag());
++        assertFalse(offer.available(0));
++        assertTrue(offer.available(1));
++        assertFalse(offer.used(14).available(1));
++        assertEquals(16, offer.used(Integer.MAX_VALUE).uses());
++    }
++
++    @Test
++    void matchesRequiredTagsWithoutRejectingAdditionalItemData() {
++        final CompoundTag required = new CompoundTag();
++        final CompoundTag display = new CompoundTag();
++        display.putString("Name", "Trade name");
++        required.put("display", display);
++        final var ingredient = new TradeOffer.Ingredient(new BedrockItem(7, (short) 2, (byte) 4, required), true, 4);
++        final CompoundTag actual = required.copy();
++        actual.putInt("RepairCost", 2);
++        final BedrockItem stack = new BedrockItem(7, (short) 20, (byte) 8, actual);
++        assertTrue(ingredient.matches(stack));
++        stack.tag().getCompoundTag("display").putString("Name", "Different");
++        assertFalse(ingredient.matches(stack));
++        assertFalse(ingredient.matches(new BedrockItem(8, (short) 0, (byte) 8)));
++    }
++
++    @Test
++    void capsCraftsByBothIngredientsStockAndUnlockedTier() {
++        final var first = new TradeOffer.Ingredient(new BedrockItem(1, (short) 0, (byte) 16), true, 24);
++        final var second = new TradeOffer.Ingredient(new BedrockItem(2), false, 1);
++        final TradeOffer offer = new TradeOffer(7, 1, first, second, new BedrockItem(3), 2, 5, 10);
++        assertEquals(2, offer.crafts(new BedrockItem(1, (short) 5, (byte) 64), new BedrockItem(2, (short) 0, (byte) 2), 1));
++        assertEquals(3, offer.crafts(new BedrockItem(1, (short) 0, (byte) 64), new BedrockItem(2, (short) 0, (byte) 64), 1));
++        assertEquals(0, offer.crafts(new BedrockItem(1, (short) 0, (byte) 64), BedrockItem.empty(), 1));
++        assertEquals(0, offer.crafts(new BedrockItem(1, (short) 0, (byte) 64), new BedrockItem(2), 0));
++    }
++
++    private static CompoundTag item(final byte count, final short damage) {
++        final CompoundTag tag = new CompoundTag();
++        tag.putByte("Count", count);
++        tag.putShort("Damage", damage);
++        return tag;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/TradePacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/TradePacketTest.java
+new file mode 100644
+index 00000000..6aa0c233
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/TradePacketTest.java
+@@ -0,0 +1,171 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
++import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
++import com.viaversion.viaversion.libs.mcstructs.text.components.StringComponent;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.container.entity.MerchantContainer;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.TextProcessingEventOrigin;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.FullContainerName;
++import net.raphimc.viabedrock.protocol.model.TradeOffer;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestSlotInfo;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import net.raphimc.viabedrock.protocol.types.InventoryTypes;
++import net.raphimc.viabedrock.protocol.types.inventory.ItemStackRequestResultType;
++import net.raphimc.viabedrock.protocol.types.inventory.ItemStackRequestType;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class TradePacketTest {
++
++    @Test
++    void readsNativeZeroSizeWithSignedActorIdsAndNetworkNbt() throws Exception {
++        final var bytes = Unpooled.buffer();
++        final CompoundTag offers = new CompoundTag();
++        final CompoundTag recipe = new CompoundTag();
++        recipe.putInt("netId", 4925);
++        offers.put("Recipes", new ListTag<>(List.of(recipe)));
++        try {
++            bytes.writeByte(2);
++            bytes.writeByte(15);
++            BedrockTypes.VAR_INT.write(bytes, 0);
++            BedrockTypes.VAR_INT.write(bytes, 1);
++            BedrockTypes.VAR_LONG.write(bytes, -8589934485L);
++            BedrockTypes.VAR_LONG.write(bytes, -1L);
++            BedrockTypes.STRING.write(bytes, "entity.villager.librarian");
++            bytes.writeBoolean(true);
++            bytes.writeBoolean(true);
++            BedrockTypes.NETWORK_TAG.write(bytes, offers);
++            final var packet = new PacketWrapperImpl(ClientboundBedrockPackets.UPDATE_TRADE, bytes, null);
++            final var update = TradePackets.Update.read(packet);
++            assertEquals(2, update.containerId());
++            assertEquals(ContainerType.TRADE, update.type());
++            assertEquals(1, update.tier());
++            assertEquals(-8589934485L, update.traderId());
++            assertEquals(-1L, update.playerId());
++            assertTrue(update.newTradeUi());
++            assertTrue(update.economy());
++            assertEquals(offers, update.data());
++            assertEquals(0, bytes.readableBytes());
++        } finally {
++            bytes.release();
++        }
++    }
++
++    @Test
++    void encodesResolvedPriceThroughTheJavaCostModifierAndLocksHigherTiers() throws Exception {
++        Class.forName(StructuredDataKey.class.getName());
++        final var packet = new PacketWrapperImpl(0, null, null);
++        final var offer = offer(16, 24, 1);
++        TradePackets.writeOffer(packet, offer, 0,
++                item -> new StructuredItem(item.identifier(), item.amount(), new StructuredDataContainer()));
++        final var bytes = Unpooled.buffer();
++        try {
++            packet.writeToBuffer(bytes);
++            assertEquals(0, Types.VAR_INT.read(bytes));
++            assertEquals(24, VersionedTypes.V26_3.itemCost.read(bytes).amount());
++            assertEquals(3, VersionedTypes.V26_3.item.read(bytes).identifier());
++            assertNull(VersionedTypes.V26_3.optionalItemCost.read(bytes));
++            assertTrue(bytes.readBoolean());
++            assertEquals(0, bytes.readInt());
++            assertEquals(16, bytes.readInt());
++            assertEquals(2, bytes.readInt());
++            assertEquals(-8, bytes.readInt());
++            assertEquals(0F, bytes.readFloat());
++            assertEquals(0, bytes.readInt());
++            assertEquals(0, bytes.readableBytes());
++        } finally {
++            bytes.release();
++        }
++    }
++
++    @Test
++    void translatesTradeInputSlotsAndWritesTheNativeSettlementSequence() throws Exception {
++        final TradeOffer offer = offer(24, 24, 0);
++        final MerchantContainer merchant = new MerchantContainer(null, (byte) 2, new StringComponent(""),
++                -8589934485L, true, true, 0, List.of(offer));
++        final BedrockItem input = new BedrockItem(1, (short) 0, (byte) 64);
++        input.setNetId(14);
++        merchant.setItem(4, input);
++        assertEquals(0, merchant.javaSlot(4));
++        assertEquals(1, merchant.javaSlot(5));
++        assertEquals(50, merchant.bedrockSlot(2));
++        assertEquals(ContainerEnumName.Trade2Ingredient1Container, merchant.getFullContainerName(4).name());
++        assertFalse(merchant.ownsBedrockSlot(new FullContainerName(ContainerEnumName.Trade2Ingredient2Container, null), 4));
++        assertEquals(3, merchant.getItem(50).identifier());
++
++        final var target = new ItemStackRequestSlotInfo(new FullContainerName(ContainerEnumName.CombinedHotbarAndInventoryContainer, null),
++                (byte) 1, 0);
++        final List<ItemStackRequestAction> actions = merchant.resultActions(offer, 2, -5, target);
++        final var request = new ItemStackRequestInfo(-5, actions, List.of(), TextProcessingEventOrigin.unknown);
++        final var codec = new ItemStackRequestType(new ItemStackRequestResultType(id -> "minecraft:emerald", 0));
++        final var bytes = Unpooled.buffer();
++        try {
++            codec.write(bytes, request);
++            assertEquals(-5, BedrockTypes.VAR_INT.read(bytes));
++            assertEquals(4, BedrockTypes.UNSIGNED_VAR_INT.read(bytes));
++            assertEquals(10, BedrockTypes.UNSIGNED_VAR_INT.read(bytes));
++            assertEquals(12, bytes.readUnsignedByte());
++            assertEquals(4925, BedrockTypes.UNSIGNED_VAR_INT.read(bytes));
++            assertEquals(2, bytes.readUnsignedByte());
++            assertEquals(17, BedrockTypes.UNSIGNED_VAR_INT.read(bytes));
++            assertEquals(19, bytes.readUnsignedByte());
++            assertEquals(1, BedrockTypes.UNSIGNED_VAR_INT.read(bytes));
++            assertEquals(1, BedrockTypes.UNSIGNED_VAR_INT.read(bytes));
++            assertEquals(1, bytes.readUnsignedByte());
++            assertEquals("minecraft:emerald", BedrockTypes.STRING.read(bytes));
++            assertEquals(0, BedrockTypes.VAR_INT.read(bytes));
++            assertEquals(1, bytes.readUnsignedShortLE());
++            assertEquals(0, BedrockTypes.UNSIGNED_VAR_INT.read(bytes));
++            final int length = BedrockTypes.UNSIGNED_VAR_INT.read(bytes);
++            bytes.skipBytes(length);
++            assertEquals(2, bytes.readUnsignedByte());
++            assertEquals(5, BedrockTypes.UNSIGNED_VAR_INT.read(bytes));
++            assertEquals(5, bytes.readUnsignedByte());
++            assertEquals(48, bytes.readUnsignedByte());
++            final var consumed = InventoryTypes.ITEM_STACK_REQUEST_SLOT.read(bytes);
++            assertEquals(ContainerEnumName.Trade2Ingredient1Container, consumed.container().name());
++            assertEquals(4, consumed.slot());
++            assertEquals(14, consumed.stackNetworkId());
++            assertEquals(1, BedrockTypes.UNSIGNED_VAR_INT.read(bytes));
++            assertEquals(1, bytes.readUnsignedByte());
++            assertEquals(2, bytes.readUnsignedByte());
++            final var source = InventoryTypes.ITEM_STACK_REQUEST_SLOT.read(bytes);
++            assertEquals(ContainerEnumName.CreatedOutputContainer, source.container().name());
++            assertEquals(50, source.slot());
++            assertEquals(-5, source.stackNetworkId());
++            assertEquals(target, InventoryTypes.ITEM_STACK_REQUEST_SLOT.read(bytes));
++            assertEquals(0, BedrockTypes.UNSIGNED_VAR_INT.read(bytes));
++            assertEquals(-1, bytes.readIntLE());
++            assertEquals(0, bytes.readableBytes());
++        } finally {
++            bytes.release();
++        }
++    }
++
++    private static TradeOffer offer(final int cost, final int base, final int tier) {
++        return new TradeOffer(4925, tier, new TradeOffer.Ingredient(new BedrockItem(1, (short) 0, (byte) cost), true, base),
++                null, new BedrockItem(3), 0, 16, 2);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java
+index 87c83f49..c6d4c587 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java
+@@ -20,6 +20,7 @@ package net.raphimc.viabedrock.protocol.storage;
+ import com.viaversion.nbt.tag.CompoundTag;
+ import com.viaversion.viaversion.api.connection.UserConnection;
+ import net.raphimc.viabedrock.api.model.container.Container;
++import net.raphimc.viabedrock.api.model.container.entity.MerchantContainer;
+ import net.raphimc.viabedrock.api.model.container.block.CraftingTableContainer;
+ import net.raphimc.viabedrock.api.model.container.block.EnchantmentContainer;
+ import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
+@@ -248,11 +249,13 @@ class InventoryRequestTrackerTest {
+         storage.put(InventoryTracker.class, inventory);
+         final Container[] containers = {
+             new CraftingTableContainer(user, (byte) 5, null, null),
+-            new EnchantmentContainer(user, (byte) 6, null, null)
++            new EnchantmentContainer(user, (byte) 6, null, null),
++            new MerchantContainer(user, (byte) 8, null, -42, true, true, 0, List.of())
+         };
+         for (final Container container : containers) {
+             inventory.setCurrentContainer(container);
+-            final int slot = container instanceof CraftingTableContainer ? 32 : 14;
++            final int slot = container instanceof CraftingTableContainer ? 32
++                    : container instanceof MerchantContainer ? 4 : 14;
+             final InventoryRequestStorage request = new InventoryRequestStorage(
+                     new ItemStackRequestInfo(-3, List.of(), List.of(), TextProcessingEventOrigin.unknown),
+                     0, inventory.getHudContainer().copy(), List.of(container.copy()));
+-- 
+2.55.0
