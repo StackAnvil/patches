@@ -12,6 +12,7 @@ import { artifact } from "../prism.ts";
 import { activeDisplay, displayEnv, stopDisplay } from "../lab/display.ts";
 import { inspectJournal } from "./journal.ts";
 import { requireNativeOfflineReplay, requireNativeReplayProcessNamespaces, type NativeOfflineProof } from "./native-offline.ts";
+import { prepareNativeReplayPrefix } from "./native-prefix.ts";
 import { verifyRendering, type SceneFeatures, type RenderAudit } from "./verification.ts";
 
 const execute = promisify(execFile);
@@ -184,11 +185,14 @@ async function launchNative(directory: string, bind: number, nativeHome?: string
     await writeFile(join(runtime, "settings.json"), JSON.stringify(settings), { mode: 0o600 });
     await writeFile(marker, source, { mode: 0o600 });
   } else if ((await readFile(marker, "utf8")) !== source) throw new Error("The native recorder profile belongs to a different source installation.");
-  const temporary = join(runtime, "compatdata/pfx/drive_c/users/steamuser/AppData/Local/Temp/Minecraft Bedrock/minecraftpe");
+  const replayPrefix = offline ? await prepareNativeReplayPrefix({
+    privateRoot, directory, sourcePrefix: process.env.BOL_WINEPREFIX || join(runtime, "compatdata/pfx"), port: bind,
+  }) : undefined;
+  const temporary = join(replayPrefix ?? join(runtime, "compatdata/pfx"), "drive_c/users/steamuser/AppData/Local/Temp/Minecraft Bedrock/minecraftpe");
   for (const name of ["packcache/resource", "ResPackDownloads"]) {
     const cache = join(temporary, name);
     if (!existsSync(cache)) continue;
-    if (!(await realpath(cache)).startsWith(`${await realpath(runtime)}/`)) throw new Error("The native server pack cache escapes the private profile.");
+    if (!(await realpath(cache)).startsWith(`${await realpath(replayPrefix ?? runtime)}/`)) throw new Error("The native server pack cache escapes the private profile.");
     for (const entry of await readdir(cache)) await rm(join(cache, entry), { recursive: true, force: true });
   }
   const app = join(root, ".stackanvil/tools/bedrock-on-linux/squashfs-root");
@@ -196,7 +200,7 @@ async function launchNative(directory: string, bind: number, nativeHome?: string
   if (!existsSync(python)) throw new Error("Prepare BedrockOnLinux with bun run capture prepare-launcher first.");
   const log = join(directory, "native-client.log");
   const child = service(python, [join(app, "usr/bin/bedrock-on-linux"), "play"], root, log,
-    { ...isolated, BOL_HOME: runtime, APPDIR: app, PULSE_SINK: "stackanvil_silent" });
+    { ...isolated, BOL_HOME: runtime, APPDIR: app, PULSE_SINK: "stackanvil_silent", ...(replayPrefix ? { BOL_WINEPREFIX: replayPrefix } : {}) });
   if (!child.pid) throw new Error("The native client did not start.");
   nativeClient = { pid: child.pid, directory };
   const until = Date.now() + 90_000;
