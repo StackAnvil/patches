@@ -1,4 +1,4 @@
-From 7e05c28f84956dfa0282a1db284a057041c5fda6 Mon Sep 17 00:00:00 2001
+From fdbb1f87387a84e2caa2fd8e1e4eab35d89c8098 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 12:56:10 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -73,6 +73,12 @@ Use authoritative requests for hand swaps when negotiated by START_GAME. Queue o
 Allocate legacy inventory transaction IDs with a separate negative even counter. Static analysis of the matching Bedrock 1.26.51.1 executable confirms allocation starts at -4 and decreases by two; item-stack requests use the independent odd sequence. Keep native captures and disassembly private.
 
 Process temporary player inventory CLOSE acknowledgements without forwarding another Java screen close. Java owns its creative and player screen; forwarding the native acknowledgement prematurely closes it and causes subsequent inputs to affect the wrong UI. Keep genuine server-initiated closures intact.
+
+Write stonecutter ingredients as typed HolderSet fields instead of raw
+VarInts. Both encodings produce the same Java wire bytes, but ViaBackwards
+reads HolderSet objects while translating UPDATE_RECIPES for older Java
+clients. Raw fields disconnected Java 26.2 clients during Geyser login.
+The regression test covers typed translation reads and direct wire bytes.
 ---
  build.gradle                                  |    3 +-
  .../api/model/container/ChestContainer.java   |   52 +-
@@ -110,7 +116,7 @@ Process temporary player inventory CLOSE acknowledgements without forwarding ano
  .../protocol/packet/WorldPackets.java         |   12 +
  .../protocol/rewriter/ItemRewriter.java       |  280 ++-
  .../protocol/rewriter/ItemStackSizes.java     |   59 +
- .../protocol/storage/CraftingDataTracker.java |  202 ++
+ .../protocol/storage/CraftingDataTracker.java |  206 ++
  .../storage/InventoryRequestRecovery.java     |   80 +
  .../storage/InventoryRequestStorage.java      |  100 +
  .../storage/InventoryRequestTracker.java      |  487 +++++
@@ -131,7 +137,8 @@ Process temporary player inventory CLOSE acknowledgements without forwarding ano
  .../InventoryRequestTrackerQueueTest.java     |  136 ++
  .../storage/InventoryRequestTrackerTest.java  |  330 ++++
  .../storage/InventoryTrackerTest.java         |  124 ++
- 57 files changed, 8405 insertions(+), 841 deletions(-)
+ .../storage/StonecutterRecipePacketTest.java  |   53 +
+ 58 files changed, 8462 insertions(+), 841 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/AnvilContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/BeaconContainer.java
@@ -166,6 +173,7 @@ Process temporary player inventory CLOSE acknowledgements without forwarding ano
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerQueueTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryTrackerTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/StonecutterRecipePacketTest.java
 
 diff --git a/build.gradle b/build.gradle
 index 4cc0760e..4dc057a0 100644
@@ -8436,10 +8444,10 @@ index 00000000..e4ef0e45
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
 new file mode 100644
-index 00000000..c035b91f
+index 00000000..73165b00
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
-@@ -0,0 +1,202 @@
+@@ -0,0 +1,206 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -8453,6 +8461,7 @@ index 00000000..c035b91f
 +
 +import com.viaversion.viaversion.api.connection.StoredObject;
 +import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.HolderSet;
 +import com.viaversion.viaversion.api.minecraft.item.Item;
 +import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 +import com.viaversion.viaversion.api.type.Types;
@@ -8629,14 +8638,17 @@ index 00000000..c035b91f
 +        packet.write(Types.VAR_INT, 0); // property sets
 +        packet.write(Types.VAR_INT, entries.size());
 +        for (final StonecutterEntry entry : entries) {
-+            packet.write(Types.VAR_INT, 2); // one input item
-+            packet.write(Types.VAR_INT, entry.inputId());
-+            packet.write(
-+                    Types.VAR_INT,
-+                    BedrockProtocol.MAPPINGS.getJavaSlotDisplayId("minecraft:item_stack"));
-+            packet.write(VersionedTypes.V26_3.itemTemplate, entry.output());
++            writeStonecutterRecipe(packet, entry.inputId(),
++                    BedrockProtocol.MAPPINGS.getJavaSlotDisplayId("minecraft:item_stack"), entry.output());
 +        }
 +        packet.send(BedrockProtocol.class);
++    }
++
++    static void writeStonecutterRecipe(final PacketWrapper packet, final int inputId,
++            final int outputDisplayId, final Item output) {
++        packet.write(Types.HOLDER_SET, HolderSet.of(new int[]{inputId}));
++        packet.write(Types.VAR_INT, outputDisplayId);
++        packet.write(VersionedTypes.V26_3.itemTemplate, output);
 +    }
 +
 +    private record StonecutterEntry(int inputId, Item output) { }
@@ -11473,6 +11485,65 @@ index 00000000..9574382a
 +        assertSame(tracker.getHudContainer(), tracker.getContainerClientboundSlot(
 +                tracker.getHudContainer().containerId(), 14,
 +                new FullContainerName(ContainerEnumName.EnchantingMaterialContainer, null), null));
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/StonecutterRecipePacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/StonecutterRecipePacketTest.java
+new file mode 100644
+index 00000000..40a78714
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/StonecutterRecipePacketTest.java
+@@ -0,0 +1,53 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
++import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import io.netty.buffer.Unpooled;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertSame;
++
++class StonecutterRecipePacketTest {
++
++    @Test
++    void ingredientSupportsTypedTranslationAndDirectWireEncoding() throws ClassNotFoundException {
++        // Match ViaVersion's component initialization order outside its platform bootstrap.
++        Class.forName(StructuredDataKey.class.getName());
++        final var packet = new PacketWrapperImpl(0, null, null);
++        final var output = new StructuredItem(320, 2, new StructuredDataContainer());
++        CraftingDataTracker.writeStonecutterRecipe(packet, 319, 4, output);
++        packet.resetReader();
++
++        // ViaBackwards reads typed fields before the packet reaches the wire.
++        assertArrayEquals(new int[]{319}, packet.passthrough(Types.HOLDER_SET).ids());
++        assertEquals(4, packet.passthrough(Types.VAR_INT));
++        assertSame(output, packet.passthrough(VersionedTypes.V26_3.itemTemplate));
++
++        final var buffer = Unpooled.buffer();
++        try {
++            packet.writeToBuffer(buffer);
++            assertEquals(0, Types.VAR_INT.readPrimitive(buffer)); // packet id
++            assertEquals(2, Types.VAR_INT.readPrimitive(buffer)); // one explicit holder id
++            assertEquals(319, Types.VAR_INT.readPrimitive(buffer));
++            assertEquals(4, Types.VAR_INT.readPrimitive(buffer));
++            final var decodedOutput = VersionedTypes.V26_3.itemTemplate.read(buffer);
++            assertEquals(output.identifier(), decodedOutput.identifier());
++            assertEquals(output.amount(), decodedOutput.amount());
++            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
++        }
 +    }
 +
 +}
