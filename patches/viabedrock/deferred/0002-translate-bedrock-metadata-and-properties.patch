@@ -1,4 +1,4 @@
-From 01943a2d18f164e6d1efb66d46bfff423fca6b00 Mon Sep 17 00:00:00 2001
+From 5d3d4b5a206cde1b6fdb008c6dfd4e9262a76dd3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 00:27:08 +0200
 Subject: [PATCH] feat(entities): translate Bedrock metadata and properties
@@ -15,30 +15,51 @@ Resolve bool, int, float and enum wire properties to named values before
 notifying the actor renderer. Preserve previous values for omitted
 properties and reject invalid enum indices and non-finite floats.
 Semantic tests cover sparse typed updates and pre-animation selection.
+
+Treat retained native SCALE zero as an invisible Java body while preserving
+its independently transmitted name and NAMETAG_ALWAYS_SHOW metadata. The
+recorded protocol 2193 CubeCraft scene contains 36 minecraft:armor_stand
+hologram carriers with FLOAT metadata 38 equal to zero, no INVISIBLE flag,
+and BYTE metadata 81 equal to one. The target Bedrock 1.26.51.1 renders
+these names without their collapsed meshes. Java's living scale attribute
+cannot represent zero, and the previous translation skipped that value.
+
+Regenerate shared flags on sparse scale updates as well as either native
+flag mask. Replace the shared-flags entry within each outgoing batch so
+scale/flag ordering produces one final value. Restore ordinary visibility
+when scale becomes nonzero, retaining a real native INVISIBLE flag and all
+unrelated shared flags. Never write the derived visibility into native
+flags or MoLang state.
+
+Semantic tests exercise a named zero-scale armor stand, sparse scale and
+both flag-mask updates, incoming ordering, real invisibility, and nonzero
+or negative scale. 19 focused metadata/scale tests pass.
 ---
  .../viabedrock/api/model/entity/Entity.java   |  35 ++
  .../api/model/entity/LivingEntity.java        |   7 +-
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
  .../data/enums/bedrock/ActorFlags.java        |   6 +-
  .../protocol/model/entity/EntityProperty.java |  40 ++
- .../model/entity/EntityPropertyList.java      | 121 +++++
+ .../model/entity/EntityPropertyList.java      | 121 ++++
  .../protocol/packet/EntityPackets.java        |  33 +-
  .../protocol/packet/JoinPackets.java          |   2 +-
  .../protocol/packet/OtherPlayerPackets.java   |   5 +-
- .../rewriter/EntityMetadataRewriter.java      | 507 +++++++++++++++++-
- .../storage/EntityPropertyTracker.java        |  61 +++
+ .../rewriter/EntityMetadataRewriter.java      | 562 ++++++++++++++++--
+ .../storage/EntityPropertyTracker.java        |  61 ++
  .../entity_flag_molang_query_mappings.json    |   6 +-
  .../entity/EntityPropertyRenderTest.java      |  74 +++
  .../enums/bedrock/ActorFlagsMappingTest.java  |  27 +
  .../model/entity/EntityPropertyListTest.java  |  79 +++
- .../rewriter/EntityMetadataRewriterTest.java  | 151 ++++++
- 16 files changed, 1113 insertions(+), 43 deletions(-)
+ .../rewriter/EntityBodyVisibilityTest.java    | 149 +++++
+ .../rewriter/EntityMetadataRewriterTest.java  | 151 +++++
+ 17 files changed, 1296 insertions(+), 64 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityProperty.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyList.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/EntityPropertyTracker.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/EntityPropertyRenderTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/ActorFlagsMappingTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyListTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityBodyVisibilityTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
@@ -524,10 +545,10 @@ index 48767edb..545c61a9 100644
                  entityTracker.applyEntityLink(link);
              }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
-index ed40425a..c02a5946 100644
+index ed40425a..acb3e35b 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
-@@ -17,29 +17,66 @@
+@@ -17,55 +17,86 @@
   */
  package net.raphimc.viabedrock.protocol.rewriter;
  
@@ -576,10 +597,26 @@ index ed40425a..c02a5946 100644
          final EntityTracker entityTracker = user.get(EntityTracker.class);
  
          switch (id) {
+-            case RESERVED_0, RESERVED_092 -> { // Entity flags mask
+-                final Set<ActorFlags> bedrockFlags = entity.entityFlags();
+-                byte javaBitMask = 0; // https://minecraft.wiki/w/Java_Edition_protocol/Entity_metadata#Entity
+-                if (bedrockFlags.contains(ActorFlags.ONFIRE)) {
+-                    javaBitMask |= (1 << 0);
+-                }
+-                if (bedrockFlags.contains(ActorFlags.SNEAKING)) {
+-                    javaBitMask |= (1 << 1);
+-                }
+-                if (bedrockFlags.contains(ActorFlags.RIDING)) {
+-                    javaBitMask |= (1 << 2);
+-                }
+-                if (bedrockFlags.contains(ActorFlags.SPRINTING)) {
+-                    javaBitMask |= (1 << 3);
 +            case NAME -> {
 +                if (!shouldTranslateName(entity)) {
 +                    break;
-+                }
+                 }
+-                if (bedrockFlags.contains(ActorFlags.SWIMMING)) {
+-                    javaBitMask |= (1 << 4);
 +                final String name = entityData.value();
 +                final Tag javaName = name.isEmpty() ? null : TextUtil.stringToNbt(name);
 +                javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME), VersionedTypes.V26_3.entityDataTypes().optionalComponentType, javaName));
@@ -587,26 +624,28 @@ index ed40425a..c02a5946 100644
 +            case NAMETAG_ALWAYS_SHOW -> {
 +                if (!shouldTranslateName(entity)) {
 +                    break;
-+                }
+                 }
+-                if (bedrockFlags.contains(ActorFlags.INVISIBLE)) {
+-                    javaBitMask |= (1 << 5);
 +                final boolean alwaysShow = readNumber(entityData).intValue() != 0;
 +                javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.CUSTOM_NAME_VISIBLE), VersionedTypes.V26_3.entityDataTypes().booleanType, alwaysShow));
 +            }
-             case RESERVED_0, RESERVED_092 -> { // Entity flags mask
-                 final Set<ActorFlags> bedrockFlags = entity.entityFlags();
-                 byte javaBitMask = 0; // https://minecraft.wiki/w/Java_Edition_protocol/Entity_metadata#Entity
-@@ -67,6 +104,23 @@ public final class EntityMetadataRewriter {
- 
-                 javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SHARED_FLAGS), VersionedTypes.V26_3.entityDataTypes().byteType, javaBitMask));
- 
++            case RESERVED_0, RESERVED_092 -> { // Entity flags mask
++                final Set<ActorFlags> bedrockFlags = entity.entityFlags();
++                updateSharedFlags(entity, javaEntityData);
++
 +                if (entity.javaType().isOrHasParent(EntityTypes26_3.LIVING_ENTITY)) {
 +                    javaEntityData.add(livingUseMetadata(entity));
-+                }
+                 }
+-                if (bedrockFlags.contains(ActorFlags.GLIDING)) {
+-                    javaBitMask |= (byte) (1 << 7);
 +
 +                if (entity.javaType().is(EntityTypes26_3.END_CRYSTAL)) {
 +                    final boolean showBottom = bedrockFlags.contains(ActorFlags.SHOW_BOTTOM);
 +                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SHOW_BOTTOM), VersionedTypes.V26_3.entityDataTypes().booleanType, showBottom));
-+                }
-+
+                 }
+ 
+-                javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SHARED_FLAGS), VersionedTypes.V26_3.entityDataTypes().byteType, javaBitMask));
 +                if (entity.javaType().isOrHasParent(EntityTypes26_3.ABSTRACT_ARROW)) {
 +                    byte arrowBitMask = 0;
 +                    if (bedrockFlags.contains(ActorFlags.CRITICAL)) {
@@ -614,11 +653,10 @@ index ed40425a..c02a5946 100644
 +                    }
 +                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.FLAGS), VersionedTypes.V26_3.entityDataTypes().byteType, arrowBitMask));
 +                }
-+
+ 
                  javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.SILENT), VersionedTypes.V26_3.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.SILENT)));
                  javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.NO_GRAVITY), VersionedTypes.V26_3.entityDataTypes().booleanType, !bedrockFlags.contains(ActorFlags.HAS_GRAVITY)));
- 
-@@ -79,6 +133,16 @@ public final class EntityMetadataRewriter {
+@@ -79,6 +110,16 @@ public final class EntityMetadataRewriter {
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.MOB_FLAGS), VersionedTypes.V26_3.entityDataTypes().byteType, mobBitMask));
                  }
  
@@ -635,7 +673,7 @@ index ed40425a..c02a5946 100644
                  if (entity.javaType().is(EntityTypes26_3.ALLAY)) {
                      final boolean dancing = bedrockFlags.contains(ActorFlags.DANCING);
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.DANCING), VersionedTypes.V26_3.entityDataTypes().booleanType, dancing));
-@@ -87,6 +151,13 @@ public final class EntityMetadataRewriter {
+@@ -87,6 +128,13 @@ public final class EntityMetadataRewriter {
                  if (entity.javaType().isOrHasParent(EntityTypes26_3.ABSTRACT_AGEABLE)) {
                      final boolean isBaby = bedrockFlags.contains(ActorFlags.BABY);
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.BABY), VersionedTypes.V26_3.entityDataTypes().booleanType, isBaby));
@@ -649,7 +687,7 @@ index ed40425a..c02a5946 100644
                  }
  
                  if (entity.javaType().is(EntityTypes26_3.AXOLOTL)) {
-@@ -95,36 +166,31 @@ public final class EntityMetadataRewriter {
+@@ -95,36 +143,31 @@ public final class EntityMetadataRewriter {
                  }
  
                  if (entity.javaType().is(EntityTypes26_3.BEE)) {
@@ -695,7 +733,7 @@ index ed40425a..c02a5946 100644
                          sniffingState = 2;
                      } else if (bedrockFlags.contains(ActorFlags.SNIFFING)) {
                          sniffingState = 3;
-@@ -132,18 +198,20 @@ public final class EntityMetadataRewriter {
+@@ -132,18 +175,20 @@ public final class EntityMetadataRewriter {
                          sniffingState = 4;
                      } else if (bedrockFlags.contains(ActorFlags.DIGGING)) {
                          sniffingState = 5;
@@ -720,7 +758,7 @@ index ed40425a..c02a5946 100644
                  if (entity.javaType().is(EntityTypes26_3.TURTLE)) { //TODO: Test
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.HAS_EGG), VersionedTypes.V26_3.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.IS_PREGNANT)));
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.LAYING_EGG), VersionedTypes.V26_3.entityDataTypes().booleanType, bedrockFlags.contains(ActorFlags.LAYING_EGG)));
-@@ -165,8 +233,13 @@ public final class EntityMetadataRewriter {
+@@ -165,8 +210,13 @@ public final class EntityMetadataRewriter {
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.FLAGS), VersionedTypes.V26_3.entityDataTypes().byteType, tamableBitMask));
                  }
  
@@ -736,7 +774,7 @@ index ed40425a..c02a5946 100644
                  }
  
                  if (entity.javaType().is(EntityTypes26_3.BOGGED)) {
-@@ -182,6 +255,12 @@ public final class EntityMetadataRewriter {
+@@ -182,6 +232,12 @@ public final class EntityMetadataRewriter {
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.IS_IGNITED), VersionedTypes.V26_3.entityDataTypes().booleanType, ignited));
                  }
  
@@ -749,7 +787,7 @@ index ed40425a..c02a5946 100644
                  if (entity.javaType().is(EntityTypes26_3.ZOGLIN)) {
                      final boolean isBaby = bedrockFlags.contains(ActorFlags.BABY);
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.BABY), VersionedTypes.V26_3.entityDataTypes().booleanType, isBaby));
-@@ -210,6 +289,14 @@ public final class EntityMetadataRewriter {
+@@ -210,6 +266,14 @@ public final class EntityMetadataRewriter {
                  final int variant = readNumber(entityData).intValue();
  
                  switch (entity.javaType()) {
@@ -764,7 +802,7 @@ index ed40425a..c02a5946 100644
                      case WOLF -> {
                          final int javaVariant = switch (variant) {
                              case 0 -> 4; // PALE
-@@ -244,8 +331,7 @@ public final class EntityMetadataRewriter {
+@@ -244,8 +308,7 @@ public final class EntityMetadataRewriter {
                          javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.VARIANT), VersionedTypes.V26_3.entityDataTypes().frogVariantType, javaVariant));
                      }
                      case TROPICAL_FISH -> {
@@ -774,7 +812,7 @@ index ed40425a..c02a5946 100644
                      }
                      case PUFFERFISH -> {
                      } // For some reason bedrock sends the puffed state here as well as in the PUFFED_STATE Actor ID so we ignore this one
-@@ -267,6 +353,17 @@ public final class EntityMetadataRewriter {
+@@ -267,6 +330,17 @@ public final class EntityMetadataRewriter {
                          };
                          javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.VARIANT), VersionedTypes.V26_3.entityDataTypes().varIntType, javaVariant));
                      }
@@ -792,7 +830,7 @@ index ed40425a..c02a5946 100644
                      case MOOSHROOM -> {
                          final int javaVariant = switch (variant) {
                              case 0 -> 0; // RED
-@@ -301,13 +398,12 @@ public final class EntityMetadataRewriter {
+@@ -301,13 +375,12 @@ public final class EntityMetadataRewriter {
                  final int javaColorIndex = readNumber(entityData).intValue();
  
                  switch (entity.javaType()) {
@@ -809,7 +847,7 @@ index ed40425a..c02a5946 100644
                      }
                      default -> {
                          if (javaColorIndex != 0) { // For some reason bedrock seems to send color index 0 for many entities that don't have colors
-@@ -316,6 +412,31 @@ public final class EntityMetadataRewriter {
+@@ -316,6 +389,31 @@ public final class EntityMetadataRewriter {
                      }
                  }
              }
@@ -841,7 +879,7 @@ index ed40425a..c02a5946 100644
              case OWNER -> {
                  final long ownerId = readNumber(entityData).longValue();
                  if (ownerId == -1) {
-@@ -489,7 +610,6 @@ public final class EntityMetadataRewriter {
+@@ -489,7 +587,6 @@ public final class EntityMetadataRewriter {
                  javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.LEFT_LEG_POSE), VersionedTypes.V26_3.entityDataTypes().rotationsType, leftLegPose));
                  javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.RIGHT_LEG_POSE), VersionedTypes.V26_3.entityDataTypes().rotationsType, rightLegPose));
              }
@@ -849,7 +887,7 @@ index ed40425a..c02a5946 100644
              case PUFFED_STATE -> {
                  final int javaPuffedState = readNumber(entityData).intValue();
                  if (entity.javaType().is(EntityTypes26_3.PUFFERFISH)) {
-@@ -554,7 +674,7 @@ public final class EntityMetadataRewriter {
+@@ -554,7 +651,7 @@ public final class EntityMetadataRewriter {
              }
              case DATA_WAITING -> {
                  if (entity.javaType().is(EntityTypes26_3.AREA_EFFECT_CLOUD)) {
@@ -858,7 +896,7 @@ index ed40425a..c02a5946 100644
                      javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.WAITING), VersionedTypes.V26_3.entityDataTypes().booleanType, isWaiting));
                  } else {
                      ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received DATA_WAITING for non-AREA_EFFECT_CLOUD entity " + entity.type());
-@@ -567,6 +687,14 @@ public final class EntityMetadataRewriter {
+@@ -567,6 +664,14 @@ public final class EntityMetadataRewriter {
                      ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received DATA_PARTICLE for non-AREA_EFFECT_CLOUD entity " + entity.type());
                  }
              }
@@ -873,7 +911,7 @@ index ed40425a..c02a5946 100644
              case INV -> {
                  if (entity.javaType().is(EntityTypes26_3.WITHER)) {
                      final int invulnerabilityTicks = readNumber(entityData).intValue();
-@@ -639,6 +767,19 @@ public final class EntityMetadataRewriter {
+@@ -639,6 +744,20 @@ public final class EntityMetadataRewriter {
                      ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received TARGET for non-GUARDIAN entity " + entity.type() + " with non-zero value " + targetId);
                  }
              }
@@ -888,12 +926,13 @@ index ed40425a..c02a5946 100644
 +            }
 +            case RESERVED_038 -> { // SCALE
 +                final float scale = readNumber(entityData).floatValue();
++                updateSharedFlags(entity, javaEntityData);
 +                updateScale(entity, scale, javaEntityData);
 +            }
              case AGENT, BALLOON_ANCHOR -> {
              } // Education edition only, ignore
              default -> {
-@@ -649,6 +790,316 @@ public final class EntityMetadataRewriter {
+@@ -649,6 +768,351 @@ public final class EntityMetadataRewriter {
          return true;
      }
  
@@ -1072,6 +1111,41 @@ index ed40425a..c02a5946 100644
 +            index++;
 +        }
 +        return -1;
++    }
++
++    private static void updateSharedFlags(final Entity entity, final List<EntityData> javaEntityData) {
++        final int index = entity.getJavaEntityDataIndex(EntityDataFields.SHARED_FLAGS);
++        javaEntityData.removeIf(data -> data.id() == index);
++        javaEntityData.add(new EntityData(index, VersionedTypes.V26_3.entityDataTypes().byteType, sharedFlags(entity)));
++    }
++
++    static byte sharedFlags(final Entity entity) {
++        final Set<ActorFlags> bedrockFlags = entity.entityFlags();
++        byte javaBitMask = 0; // https://minecraft.wiki/w/Java_Edition_protocol/Entity_metadata#Entity
++        if (bedrockFlags.contains(ActorFlags.ONFIRE)) {
++            javaBitMask |= (1 << 0);
++        }
++        if (bedrockFlags.contains(ActorFlags.SNEAKING)) {
++            javaBitMask |= (1 << 1);
++        }
++        if (bedrockFlags.contains(ActorFlags.RIDING)) {
++            javaBitMask |= (1 << 2);
++        }
++        if (bedrockFlags.contains(ActorFlags.SPRINTING)) {
++            javaBitMask |= (1 << 3);
++        }
++        if (bedrockFlags.contains(ActorFlags.SWIMMING)) {
++            javaBitMask |= (1 << 4);
++        }
++        // Native zero scale collapses the actor body; Java living scale clamps above zero.
++        if (bedrockFlags.contains(ActorFlags.INVISIBLE) || entity.scale() == 0F) {
++            javaBitMask |= (1 << 5);
++        }
++        if (bedrockFlags.contains(ActorFlags.GLIDING)) {
++            javaBitMask |= (byte) (1 << 7);
++        }
++
++        return javaBitMask;
 +    }
 +
 +    static boolean shouldTranslateName(final Entity entity) {
@@ -1491,6 +1565,161 @@ index 00000000..eacc385c
 +        assertTrue(EntityPropertyList.fromTag(root).isEmpty());
 +    }
 +
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityBodyVisibilityTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityBodyVisibilityTest.java
+new file mode 100644
+index 00000000..3596c9c1
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityBodyVisibilityTest.java
+@@ -0,0 +1,149 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
++import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
++import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Field;
++import java.lang.reflect.Proxy;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class EntityBodyVisibilityTest {
++
++    private final Map<Field, Object> previousMappings = new HashMap<>();
++    private static final List<String> FIELDS = List.of(EntityDataFields.SHARED_FLAGS, EntityDataFields.SILENT,
++            EntityDataFields.NO_GRAVITY, EntityDataFields.LIVING_ENTITY_FLAGS,
++            EntityDataFields.CUSTOM_NAME, EntityDataFields.CUSTOM_NAME_VISIBLE);
++
++    @BeforeAll
++    static void initializeStructuredDataKeys() throws Exception {
++        // ViaVersion's key/type initialization must start with the key registry.
++        Class.forName("com.viaversion.viaversion.api.minecraft.data.StructuredDataKey");
++    }
++
++    @BeforeEach
++    void installMetadataMappings() throws Exception {
++        this.replaceMapping("bedrockEntityDataTypes", Map.of());
++        this.replaceMapping("javaEntityDataFields", Map.of(EntityTypes26_3.INTERACTION, FIELDS, EntityTypes26_3.ARMOR_STAND, FIELDS));
++    }
++
++    @AfterEach
++    void restoreMetadataMappings() throws Exception {
++        for (final var entry : this.previousMappings.entrySet()) {
++            entry.getKey().set(BedrockProtocol.MAPPINGS, entry.getValue());
++        }
++    }
++
++    @Test
++    void hidesZeroScaleArmorStandBodyWithoutSuppressingItsAlwaysVisibleName() {
++        final Entity actor = actor(EntityTypes26_3.ARMOR_STAND);
++        final List<EntityData> result = update(actor, flags(0), scale(0),
++                new EntityData(ActorDataIds.NAME.getValue(), EntityDataTypesBedrock.STRING, "First line\nSecond line"),
++                new EntityData(ActorDataIds.NAMETAG_ALWAYS_SHOW.getValue(), EntityDataTypesBedrock.BYTE, (byte) 1));
++        assertEquals((byte) 32, sharedFlags(result));
++        assertNotNull(value(result, EntityDataFields.CUSTOM_NAME));
++        assertEquals(true, value(result, EntityDataFields.CUSTOM_NAME_VISIBLE));
++        assertFalse(actor.entityFlags().contains(ActorFlags.INVISIBLE));
++    }
++
++    @Test
++    void refreshesSparseScaleChangesAndRetainsUnrelatedNativeFlags() {
++        final Entity actor = actor(EntityTypes26_3.INTERACTION);
++        final long sprint = 1L << ActorFlags.SPRINTING.getValue();
++        assertEquals((byte) 8, sharedFlags(update(actor, flags(sprint))));
++        assertEquals((byte) 40, sharedFlags(update(actor, scale(0))));
++        assertEquals((byte) 40, sharedFlags(update(actor, flags(sprint))));
++        assertEquals((byte) 40, sharedFlags(update(actor, new EntityData(ActorDataIds.RESERVED_092.getValue(), EntityDataTypesBedrock.LONG, 0L))));
++        assertEquals((byte) 8, sharedFlags(update(actor, scale(2))));
++        assertEquals((byte) 8, EntityMetadataRewriter.sharedFlags(actor));
++    }
++
++    @Test
++    void preservesRealInvisibilityWhenScaleBecomesPositive() {
++        final Entity actor = actor(EntityTypes26_3.INTERACTION);
++        final long invisible = 1L << ActorFlags.INVISIBLE.getValue();
++        assertEquals((byte) 32, sharedFlags(update(actor, flags(invisible), scale(0))));
++        assertEquals((byte) 32, sharedFlags(update(actor, scale(1))));
++        assertEquals((byte) 0, sharedFlags(update(actor, flags(0))));
++    }
++
++    @Test
++    void usesFinalVisibilityForBothMetadataOrdersAndEmitsOneSharedFlagsValue() {
++        for (final boolean flagsFirst : new boolean[]{true, false}) {
++            final Entity actor = actor(EntityTypes26_3.INTERACTION);
++            update(actor, scale(0));
++            final EntityData flag = flags(1L << ActorFlags.SNEAKING.getValue());
++            final List<EntityData> result = flagsFirst ? update(actor, flag, scale(3)) : update(actor, scale(3), flag);
++            assertEquals((byte) 2, sharedFlags(result));
++            assertEquals(1, result.stream().filter(data -> data.id() == 0).count());
++        }
++    }
++
++    @Test
++    void leavesNonzeroAndNegativeScaleVisibilityUnchanged() {
++        final Entity actor = actor(EntityTypes26_3.INTERACTION);
++        for (final float scale : new float[]{1, 0.5F, -2}) {
++            assertEquals((byte) 0, sharedFlags(update(actor, scale(scale))));
++        }
++    }
++
++    private void replaceMapping(final String name, final Object replacement) throws Exception {
++        final Field field = BedrockProtocol.MAPPINGS.getClass().getDeclaredField(name);
++        field.setAccessible(true);
++        this.previousMappings.put(field, field.get(BedrockProtocol.MAPPINGS));
++        field.set(BedrockProtocol.MAPPINGS, replacement);
++    }
++
++    private static Entity actor(final EntityTypes26_3 type) {
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, arguments) -> {
++                    if (method.getName().equals("get")) {
++                        return null;
++                    }
++                    throw new AssertionError("Unexpected connection operation: " + method.getName());
++                });
++        return new Entity(user, 1, 2, type.identifier(), 3, null, type);
++    }
++
++    private static List<EntityData> update(final Entity actor, final EntityData... data) {
++        final List<EntityData> result = new ArrayList<>();
++        actor.updateEntityData(data, result);
++        return result;
++    }
++
++    private static EntityData scale(final float scale) {
++        return new EntityData(ActorDataIds.RESERVED_038.getValue(), EntityDataTypesBedrock.FLOAT, scale);
++    }
++
++    private static EntityData flags(final long flags) {
++        return new EntityData(ActorDataIds.RESERVED_0.getValue(), EntityDataTypesBedrock.LONG, flags);
++    }
++
++    private static byte sharedFlags(final List<EntityData> data) {
++        return (byte) value(data, EntityDataFields.SHARED_FLAGS);
++    }
++
++    private static Object value(final List<EntityData> data, final String field) {
++        return data.stream().filter(entry -> entry.id() == FIELDS.indexOf(field)).findFirst().orElseThrow().getValue();
++    }
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriterTest.java
 new file mode 100644
