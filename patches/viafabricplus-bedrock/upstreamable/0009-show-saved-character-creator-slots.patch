@@ -1,4 +1,4 @@
-From e023a2ade73521049aaf382956afa0c62335a8eb Mon Sep 17 00:00:00 2001
+From 99a8618a2bf11c5ccd4f252abfc172ddb01f4646 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1247,6 +1247,14 @@ licensed hand and sleeve selection inside Java's hand submission with
 exception-safe scope restoration. Persona skins also load the native
 graph. Native arm drawing transforms, held-item transforms, and full
 first-person motion comparisons remain incomplete.
+
+Bind first-person equip heights and authored arm offsets before graph sampling.
+Native 1.26.51.1 build 51061372 renderFirstPerson at 0x1447ca170
+interpolates each hand's height independently, stores offhand height in
+context, and subtracts each authored arm pivot Y from 22. Keep these
+values separate from Java's inverse swap transform. Private executable
+probes cover 343 height pairs and 100 arm-pivot pairs. This supplies graph
+inputs; native camera and item drawing still require integration.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   68 +
@@ -1344,6 +1352,7 @@ first-person motion comparisons remain incomplete.
  .../sound/MixinBedrockSoundEngine.java        |   50 +
  .../sound/MixinBedrockSoundManager.java       |   16 +
  .../bedrock/render/BedrockAnimatedModel.java  |  210 +
+ .../render/BedrockFirstPersonInput.java       |   32 +
  .../bedrock/render/BedrockGeometry.java       |   18 +-
  .../render/BedrockGeometryQueries.java        |   59 +
  .../bedrock/render/BedrockModelLocators.java  |   92 +
@@ -1351,7 +1360,7 @@ first-person motion comparisons remain incomplete.
  .../render/BedrockPlayerAnimationState.java   |   16 +
  .../bedrock/render/BedrockPlayerModel.java    |   43 +
  .../bedrock/render/BedrockPlayerRenderer.java |    7 +-
- .../bedrock/render/BedrockPlayerSkins.java    |  514 +-
+ .../bedrock/render/BedrockPlayerSkins.java    |  520 +-
  .../render/BedrockWalkingAnimation.java       |   29 +
  .../screen/BedrockCharacterSlotsScreen.java   | 1401 ++++
  .../screen/BedrockClassicSkinPackScreen.java  |   83 +-
@@ -1426,12 +1435,13 @@ first-person motion comparisons remain incomplete.
  .../appearance/BedrockSoundEventTest.java     |  268 +
  .../appearance/BedrockSoundFileTest.java      |  108 +
  .../render/BedrockAnimatedModelTest.java      |   55 +
+ .../render/BedrockFirstPersonInputTest.java   |   88 +
  .../render/BedrockGeometryQueriesTest.java    |   99 +
  .../render/BedrockModelLocatorsTest.java      |  112 +
  .../render/BedrockPlayerActorStateTest.java   |  195 +
  .../render/BedrockPlayerModelTest.java        |  100 +
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 183 files changed, 40435 insertions(+), 110 deletions(-)
+ 185 files changed, 40561 insertions(+), 110 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -1520,6 +1530,7 @@ first-person motion comparisons remain incomplete.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockSoundEngine.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockSoundManager.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInput.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometryQueries.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocators.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerActorState.java
@@ -1593,6 +1604,7 @@ first-person motion comparisons remain incomplete.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEventTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundFileTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModelTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInputTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometryQueriesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelLocatorsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerActorStateTest.java
@@ -26003,7 +26015,7 @@ index 0000000..aa2083a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFirstPersonVisibility.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFirstPersonVisibility.java
 new file mode 100644
-index 0000000..925b7fc
+index 0000000..48e9dd6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFirstPersonVisibility.java
 @@ -0,0 +1,27 @@
@@ -26030,7 +26042,7 @@ index 0000000..925b7fc
 +    private void nativeVisibility(final float partialTick, final PoseStack poses, final SubmitNodeCollector collector,
 +                                  final PlayerRenderState player, final FirstPersonHandsAndItemsRenderState items,
 +                                  final Operation<Void> original) {
-+        BedrockPlayerSkins.submitFirstPerson(partialTick, player.avatarRenderState,
++        BedrockPlayerSkins.submitFirstPerson(partialTick, player.avatarRenderState, items,
 +                () -> original.call(partialTick, poses, collector, player, items));
 +    }
 +}
@@ -26538,6 +26550,44 @@ index 0000000..ffaf1a4
 +        return normalized.equals("hip") ? "waist" : normalized;
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInput.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInput.java
+new file mode 100644
+index 0000000..6e85f4d
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInput.java
+@@ -0,0 +1,32 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockActorAnimation;
++import java.util.HashMap;
++import java.util.List;
++
++/** Supplies the native hand renderer's inputs to its independent actor graph. */
++final class BedrockFirstPersonInput {
++    private BedrockFirstPersonInput() {
++    }
++
++    static BedrockActorAnimation.Frame bind(final BedrockActorAnimation.Frame actor,
++                                            final float oldMainHeight, final float mainHeight,
++                                            final float oldOffHeight, final float offHeight,
++                                            final float partialTick) {
++        final var variables = new HashMap<>(actor.variables());
++        final var context = new HashMap<>(actor.context());
++        variables.put("player_arm_height", oldMainHeight + (mainHeight - oldMainHeight) * partialTick);
++        context.put("player_offhand_arm_height", oldOffHeight + (offHeight - oldOffHeight) * partialTick);
++        final var query = actor.queries().get("get_default_bone_pivot");
++        if (query instanceof BedrockActorAnimation.Query pivot) {
++            variables.put("short_arm_offset_right", 22F - ((Number) pivot.evaluate(List.of("rightarm", 1))).floatValue());
++            variables.put("short_arm_offset_left", 22F - ((Number) pivot.evaluate(List.of("leftarm", 1))).floatValue());
++        }
++        return new BedrockActorAnimation.Frame(actor.queries(), variables, context);
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
 index 088f2ac..90f81f1 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
@@ -26920,10 +26970,10 @@ index f00c62a..5ddf747 100644
      }
  
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 61a2b73..df4410f 100644
+index 61a2b73..d60670f 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-@@ -19,35 +19,58 @@
+@@ -19,35 +19,59 @@
  package com.viaversion.viafabricplus.bedrock.render;
  
  import com.mojang.blaze3d.platform.NativeImage;
@@ -26957,6 +27007,7 @@ index 61a2b73..df4410f 100644
  import net.minecraft.client.renderer.entity.EntityRendererProvider;
  import net.minecraft.client.renderer.entity.player.AvatarRenderer;
 +import net.minecraft.client.renderer.entity.state.AvatarRenderState;
++import net.minecraft.client.renderer.state.level.FirstPersonHandsAndItemsRenderState;
  import net.minecraft.client.renderer.texture.DynamicTexture;
  import net.minecraft.core.ClientAsset;
 +import net.minecraft.core.registries.BuiltInRegistries;
@@ -26993,7 +27044,7 @@ index 61a2b73..df4410f 100644
  
  /** Owns client textures and geometry for Bedrock player appearances. */
  public final class BedrockPlayerSkins {
-@@ -60,6 +83,7 @@ public final class BedrockPlayerSkins {
+@@ -60,6 +84,7 @@ public final class BedrockPlayerSkins {
      private static final BedrockSkinQueue PENDING = new BedrockSkinQueue();
      private static volatile EntityRendererProvider.Context rendererContext;
      private static volatile long rendererEpoch;
@@ -27001,7 +27052,7 @@ index 61a2b73..df4410f 100644
  
      private BedrockPlayerSkins() {
      }
-@@ -91,6 +115,16 @@ public final class BedrockPlayerSkins {
+@@ -91,6 +116,16 @@ public final class BedrockPlayerSkins {
      }
  
      public record Preview(UUID id, PlayerSkin skin) implements AutoCloseable {
@@ -27018,7 +27069,7 @@ index 61a2b73..df4410f 100644
          @Override
          public void close() {
              final Appearance appearance = APPEARANCES.remove(this.id);
-@@ -115,24 +149,51 @@ public final class BedrockPlayerSkins {
+@@ -115,24 +150,51 @@ public final class BedrockPlayerSkins {
          }
          final Identifier bodyId = textureId(playerUuid, "body");
          register(bodyId, skin.skinData());
@@ -27076,7 +27127,7 @@ index 61a2b73..df4410f 100644
          PLAYER_BY_TEXTURE.put(bodyId, playerUuid);
          return playerSkin;
      }
-@@ -163,7 +224,8 @@ public final class BedrockPlayerSkins {
+@@ -163,7 +225,8 @@ public final class BedrockPlayerSkins {
  
      public static AvatarRenderer<?> renderer(final UUID playerUuid) {
          final Appearance appearance = APPEARANCES.get(playerUuid);
@@ -27086,7 +27137,7 @@ index 61a2b73..df4410f 100644
              return null;
          }
          if (appearance.renderer == null || appearance.rendererEpoch != rendererEpoch) {
-@@ -171,13 +233,319 @@ public final class BedrockPlayerSkins {
+@@ -171,13 +234,324 @@ public final class BedrockPlayerSkins {
                  BedrockGeometry.playerModel(surface.geometry().model(), appearance.slim, surface.geometry().meshes()),
                  surface.texture())).toList();
              appearance.renderer = new BedrockPlayerRenderer(rendererContext,
@@ -27203,17 +27254,20 @@ index 61a2b73..df4410f 100644
 +
 +    /** Keeps native visibility local to Java's hand submission, including nested submissions and failures. */
 +    public static void submitFirstPerson(final float partialTick, final AvatarRenderState state,
++                                         final FirstPersonHandsAndItemsRenderState items,
 +                                         final Runnable submission) {
 +        final FirstPersonFrame previous = firstPersonFrame;
 +        try {
-+            firstPersonFrame = firstPersonFrame(state, partialTick);
++            firstPersonFrame = firstPersonFrame(state, items, partialTick);
 +            submission.run();
 +        } finally {
 +            firstPersonFrame = previous;
 +        }
 +    }
 +
-+    private static FirstPersonFrame firstPersonFrame(final AvatarRenderState state, final float partialTick) {
++    private static FirstPersonFrame firstPersonFrame(final AvatarRenderState state,
++                                                     final FirstPersonHandsAndItemsRenderState items,
++                                                     final float partialTick) {
 +        final var player = Minecraft.getInstance().player;
 +        if (player == null || state == null || state.skin == null || state.skin.body() == null) return null;
 +        final Appearance appearance = APPEARANCES.get(player.getUUID());
@@ -27228,9 +27282,11 @@ index 61a2b73..df4410f 100644
 +        queries.put("is_spectator", state.isSpectator);
 +        final Geometry geometry = geometry(appearance, true);
 +        if (geometry != null) queries.putAll(geometry.queries());
++        final var frame = BedrockFirstPersonInput.bind(
++                new BedrockActorAnimation.Frame(queries, actorVariables(player, state, true), Map.of("is_first_person", 1)),
++                items.oldMainHandHeight, items.mainHandHeight, items.oldOffHandHeight, items.offHandHeight, partialTick);
 +        appearance.firstPersonActor.sample((System.nanoTime() - appearance.started) / 1_000_000_000F,
-+                new BedrockActorAnimation.Frame(queries, actorVariables(player, state, true),
-+                        Map.of("is_first_person", 1)), false, null, null);
++                frame, false, null, null);
 +        return new FirstPersonFrame(appearance.bodyId, appearance.firstPersonActor.visibility());
 +    }
 +
@@ -27407,7 +27463,7 @@ index 61a2b73..df4410f 100644
      public static AvatarRenderer<?> renderer(final PlayerSkin skin, final float ageInTicks) {
          if (skin == null || skin.body() == null) {
              return null;
-@@ -197,10 +565,49 @@ public final class BedrockPlayerSkins {
+@@ -197,10 +571,49 @@ public final class BedrockPlayerSkins {
      public static Model.Simple previewModel(final Identifier texture) {
          final UUID id = PLAYER_BY_TEXTURE.get(texture);
          final Appearance appearance = id == null ? null : APPEARANCES.get(id);
@@ -27460,7 +27516,7 @@ index 61a2b73..df4410f 100644
      }
  
      /** Supplies the additional animated surfaces in the same pose as a menu's primary skin. */
-@@ -210,14 +617,19 @@ public final class BedrockPlayerSkins {
+@@ -210,14 +623,19 @@ public final class BedrockPlayerSkins {
          if (appearance == null || appearance.surfaces.isEmpty()) return List.of();
          if (appearance.previewSurfaces == null)
              appearance.previewSurfaces = appearance.surfaces.stream().map(surface -> new PreviewSurface(
@@ -27482,7 +27538,7 @@ index 61a2b73..df4410f 100644
  
      public static void rendererContext(final EntityRendererProvider.Context context) {
          rendererContext = context;
-@@ -243,7 +655,8 @@ public final class BedrockPlayerSkins {
+@@ -243,7 +661,8 @@ public final class BedrockPlayerSkins {
      }
  
      private static Identifier textureId(final UUID playerUuid, final String kind) {
@@ -27492,7 +27548,7 @@ index 61a2b73..df4410f 100644
      }
  
      private static boolean supportedImage(final BufferedImage image) {
-@@ -269,7 +682,10 @@ public final class BedrockPlayerSkins {
+@@ -269,7 +688,10 @@ public final class BedrockPlayerSkins {
  
      static String geometryName(final String resourcePatch, final String binding) {
          try {
@@ -27504,7 +27560,7 @@ index 61a2b73..df4410f 100644
              final var name = geometry.get(binding);
              return name != null && name.isJsonPrimitive() && name.getAsJsonPrimitive().isString()
                  ? name.getAsString() : "";
-@@ -295,7 +711,7 @@ public final class BedrockPlayerSkins {
+@@ -295,7 +717,7 @@ public final class BedrockPlayerSkins {
              final List<BedrockGeometryModel> models = BedrockGeometryModel.fromJson(data);
              final BedrockGeometryModel model = models.stream().filter(value -> value.getIdentifier().equals(name)).findFirst()
                  .orElseGet(() -> models.isEmpty() ? null : models.getFirst());
@@ -27513,7 +27569,7 @@ index 61a2b73..df4410f 100644
          } catch (RuntimeException e) {
              LOGGER.warn("Failed to parse Bedrock player geometry", e);
              return null;
-@@ -322,7 +738,8 @@ public final class BedrockPlayerSkins {
+@@ -322,7 +744,8 @@ public final class BedrockPlayerSkins {
              final Map<Integer, JsonObject> animatedModels = new HashMap<>();
              for (final var entry : models) {
                  final JsonObject model = entry.getAsJsonObject();
@@ -27523,7 +27579,7 @@ index 61a2b73..df4410f 100644
                  if (name.equals(identifier)) {
                      if (body != null) {
                          return null;
-@@ -361,7 +778,8 @@ public final class BedrockPlayerSkins {
+@@ -361,7 +784,8 @@ public final class BedrockPlayerSkins {
                  final JsonObject model = animatedModels.get(type);
                  final var animation = animationByType.get(type);
                  if (model == null) {
@@ -27533,7 +27589,7 @@ index 61a2b73..df4410f 100644
                          return null;
                      }
                      continue;
-@@ -376,7 +794,8 @@ public final class BedrockPlayerSkins {
+@@ -376,7 +800,8 @@ public final class BedrockPlayerSkins {
                  BedrockGeometry.playerModel(parsed, false, meshes);
                  surfaces.add(new Surface(parsed, Map.copyOf(meshes), animation));
              }
@@ -27543,7 +27599,7 @@ index 61a2b73..df4410f 100644
                  if (!coverage.getOrDefault(part, false)) {
                      return null;
                  }
-@@ -387,7 +806,7 @@ public final class BedrockPlayerSkins {
+@@ -387,7 +812,7 @@ public final class BedrockPlayerSkins {
                  return null;
              }
              BedrockGeometry.playerModel(parsedBody, false, bodyMeshes);
@@ -27552,7 +27608,7 @@ index 61a2b73..df4410f 100644
          } catch (RuntimeException e) {
              LOGGER.warn("Failed to parse Bedrock persona geometry", e);
              return null;
-@@ -424,12 +843,21 @@ public final class BedrockPlayerSkins {
+@@ -424,12 +849,21 @@ public final class BedrockPlayerSkins {
                      }
                  }
              }
@@ -27577,7 +27633,7 @@ index 61a2b73..df4410f 100644
              }
          }
          return meshes;
-@@ -451,7 +879,13 @@ public final class BedrockPlayerSkins {
+@@ -451,7 +885,13 @@ public final class BedrockPlayerSkins {
          return vector;
      }
  
@@ -27592,7 +27648,7 @@ index 61a2b73..df4410f 100644
          Surface face() {
              return this.surfaces.stream().filter(surface -> surface.animation().type() == 1).findFirst().orElse(null);
          }
-@@ -467,13 +901,21 @@ public final class BedrockPlayerSkins {
+@@ -467,13 +907,21 @@ public final class BedrockPlayerSkins {
          private final PlayerSkin skin;
          private final long started = System.nanoTime();
          private final Geometry geometry;
@@ -43350,6 +43406,100 @@ index 0000000..b1a8fd7
 +        model.pose(Map.of());
 +        assertEquals(24, root.y);
 +        assertEquals(0, waist.zRot);
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInputTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInputTest.java
+new file mode 100644
+index 0000000..5c3c516
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInputTest.java
+@@ -0,0 +1,88 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockActorAnimation;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.Map;
++import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++final class BedrockFirstPersonInputTest {
++    @Test
++    void preservesActorScopeAndUsesAuthoredPivotsForIndependentHands() throws Exception {
++        final var actor = new BedrockActorAnimation.Frame(pivots(19.25F, 24F),
++                Map.of("attack_time", .25F), Map.of("is_first_person", 1));
++        final var hands = BedrockFirstPersonInput.bind(actor, .1F, .9F, .8F, .2F, .5F);
++        assertEquals(.25F, hands.variables().get("attack_time"));
++        assertEquals(.5F, hands.variables().get("player_arm_height"), .00001F);
++        assertEquals(.5F, ((Number) hands.context().get("player_offhand_arm_height")).floatValue(), .00001F);
++        assertEquals(1, hands.context().get("is_first_person"));
++        assertEquals(2.75F, hands.variables().get("short_arm_offset_right"));
++        assertEquals(-2F, hands.variables().get("short_arm_offset_left"));
++        assertEquals(actor.queries(), hands.queries());
++        assertFalse(actor.variables().containsKey("player_arm_height"));
++        assertFalse(actor.context().containsKey("player_offhand_arm_height"));
++        assertFalse(hands.variables().containsKey("player_offhand_arm_height"));
++    }
++
++    @Test
++    void distinguishesUnavailableGeometryFromADataModelWithoutArms() throws Exception {
++        final var absent = BedrockFirstPersonInput.bind(new BedrockActorAnimation.Frame(Map.of(), Map.of()), 0, 1, 0, 1, .5F);
++        assertFalse(absent.variables().containsKey("short_arm_offset_right"));
++        final var model = BedrockGeometryModel.fromJson("""
++                {"minecraft:geometry":[{"description":{"identifier":"geometry.empty","texture_width":64,"texture_height":64},"bones":[]}]}
++                """).getFirst();
++        final var empty = BedrockFirstPersonInput.bind(new BedrockActorAnimation.Frame(BedrockGeometryQueries.of(model), Map.of()), 0, 1, 0, 1, .5F);
++        assertEquals(22F, empty.variables().get("short_arm_offset_right"));
++        assertEquals(22F, empty.variables().get("short_arm_offset_left"));
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_FIRST_PERSON_INPUTS", matches = ".+")
++    void matchesTargetExecutableHeightAndArmOffsetResults() throws Exception {
++        final var fixture = json(Files.readString(Path.of(System.getenv("STACKANVIL_FIRST_PERSON_INPUTS"))));
++        for (final var entry : fixture.getAsJsonArray("heights")) {
++            final var row = entry.getAsJsonObject();
++            final var frame = BedrockFirstPersonInput.bind(new BedrockActorAnimation.Frame(Map.of(), Map.of()),
++                    bits(row, "main_old"), bits(row, "main"), bits(row, "off_old"), bits(row, "off"), bits(row, "alpha"));
++            assertEquals(row.get("main_result").getAsInt(), Float.floatToRawIntBits(frame.variables().get("player_arm_height")));
++            assertEquals(row.get("off_result").getAsInt(), Float.floatToRawIntBits(((Number) frame.context().get("player_offhand_arm_height")).floatValue()));
++        }
++        for (final var entry : fixture.getAsJsonArray("arms")) {
++            final var row = entry.getAsJsonObject();
++            final var actor = new BedrockActorAnimation.Frame(pivots(row.get("right").getAsFloat(), row.get("left").getAsFloat()), Map.of());
++            final var frame = BedrockFirstPersonInput.bind(actor, 0, 0, 0, 0, 0);
++            assertEquals(row.get("right_result").getAsInt(), Float.floatToRawIntBits(frame.variables().get("short_arm_offset_right")));
++            assertEquals(row.get("left_result").getAsInt(), Float.floatToRawIntBits(frame.variables().get("short_arm_offset_left")));
++        }
++    }
++
++    private static Map<String, Object> pivots(final float right, final float left) throws Exception {
++        final var model = BedrockGeometryModel.fromJson("""
++                {"minecraft:geometry":[{"description":{"identifier":"geometry.hands","texture_width":64,"texture_height":64},
++                 "bones":[{"name":"body","pivot":[0,24,0],"rotation":[20,40,0]},
++                  {"name":"rightarm","parent":"body","pivot":[-5,%s,0]},
++                  {"name":"leftarm","parent":"body","pivot":[5,%s,0]}]}]}
++                """.formatted(right, left)).getFirst();
++        return BedrockGeometryQueries.of(model);
++    }
++
++    private static float bits(final JsonObject row, final String name) {
++        return Float.intBitsToFloat(row.get(name).getAsInt());
++    }
++
++    private static JsonObject json(final String value) {
++        return JsonParser.parseString(value).getAsJsonObject();
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometryQueriesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometryQueriesTest.java

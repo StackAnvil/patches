@@ -1258,3 +1258,17 @@ The matching private library passes 144 equipment, use, charged, and spectator c
 A rebuilt Java 26.3 client connected through ViaProxy passed a controlled live submission probe. Production queries and the licensed graph selected arms and sleeves for six equipment and spectator states. The renderer submitted no model parts for hidden hands. Nested scopes and exceptional submissions restored the previous frame. The probe used temporary client appearances and restored held items and appearance ownership. It did not write account recipes or purchase content.
 
 The final add-on build reports 499 tests, no failures or errors, and 101 optional skips. All four visibility tests pass with the licensed fixture enabled. The server pack override test also passes. The client bundle and north-star PR check pass. Native camera transforms, held-item transforms, and visible motion comparison remain unfinished.
+
+### First-person equip heights and arm offsets
+
+Bedrock 1.26.51.1 build 51061372 sets four pose inputs in `renderFirstPerson` at `0x1447ca170`. Main-hand height uses `v.player_arm_height`. Offhand height uses `c.player_offhand_arm_height`. Each value interpolates the previous and current equip heights with frame alpha. The native path does not invert these values or apply Java's swap scale.
+
+The same renderer computes each short-arm offset as 22 minus the authored arm pivot Y. It skips this block when geometry is unavailable. A loaded model without an arm uses a zero pivot and produces an offset of 22. The binding preserves other actor variables, queries, and context values. It samples the existing separate first-person graph.
+
+Private probes execute the target's height arithmetic at `0x1447ca5b1`, right-arm offset at `0x1447cad3b`, and left-arm offset at `0x1447cadea`. The fixture covers 343 height combinations and 100 pivot combinations. The optional `STACKANVIL_FIRST_PERSON_INPUTS` test compares raw float bits against these native results. Portable tests cover preserved scopes, authored pivots, and unavailable versus empty geometry.
+
+These bindings use Java's equip clock. They do not establish native equip update timing, camera transforms, item transforms, or visible first-person pose parity. The hand renderer still needs native graph drawing.
+
+The rebuilt Java 26.3 client passes a private live ViaProxy probe. Six equipment and spectator states receive different main-hand and offhand heights in their correct Molang scopes. Hidden hands submit no geometry. Independent playback, nested calls, and exception restoration still pass. The probe restores the player's held items and client appearance.
+
+All four build targets pass. The add-on suite reports 502 tests, no failures or errors, and 101 optional skips with the input and visibility fixtures enabled. The core suite reports 385 tests, no failures or errors, and one optional skip. The client bundle and north-star PR check pass.
