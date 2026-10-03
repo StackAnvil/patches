@@ -1,4 +1,4 @@
-From cd59923a39acc3403dfa17115086e182a7a9ec8c Mon Sep 17 00:00:00 2001
+From 5c22f51fdba6a0473e2bc9ca633b4d381b5d8c5c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1283,6 +1283,17 @@ Bedrock 1.26.51.1 build 51061372 runs this arithmetic in 0x1404c4400.
 Private executable probes cover 435 cases and 948 retained frames at four
 frame schedules. Projection, walking bob, first-person graph drawing, and
 held-item transforms remain separate work.
+
+Reproduce target-build PlayerBob smoothing, swimming and ground gates,
+riding reset, airborne Mob tilt, and first-person view translation and
+rotation. Native 1.26.51.1 functions 14900c6c0, 14900e360, 1401ef976 and
+1446bd990 establish the rules. The bob coefficient is 0.08, the sideways
+factor is 0.65, and airborne tilt uses atan(-velocityY * 0.2) * 15 with
+0.4 smoothing. Share the native sine lookup with Molang expressions.
+Only replace the first-person bob when the submitted skin has a native
+actor graph; preserve Java world bob and the ordinary-player fallback.
+Velocity remains the translated Java player's motion, and native camera
+projection and complete hand/item geometry submission remain separate.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   68 +
@@ -1321,7 +1332,7 @@ held-item transforms remain separate work.
  .../BedrockMarketplaceTransactions.java       |  253 +
  .../bedrock/appearance/BedrockMolang.java     |  432 ++
  .../appearance/BedrockMolangColor.java        |   40 +
- .../bedrock/appearance/BedrockMolangMath.java |  235 +
+ .../bedrock/appearance/BedrockMolangMath.java |  222 +
  .../appearance/BedrockMolangParser.java       |  193 +
  .../appearance/BedrockOwnedSkinPacks.java     |  162 +
  .../appearance/BedrockPackageHelper.java      |  179 +
@@ -1362,6 +1373,7 @@ held-item transforms remain separate work.
  .../bedrock/appearance/BedrockSoundEvent.java |  174 +
  .../bedrock/appearance/BedrockSoundFile.java  |   94 +
  .../appearance/BedrockSoundPlayback.java      |  257 +
+ .../appearance/BedrockTrigonometry.java       |   30 +
  .../ViaFabricPlusEmoteProvider.java           |   40 +
  .../appearance/ViaFabricPlusSkinProvider.java |   16 +-
  .../access/IBedrockChannelAccess.java         |   12 +
@@ -1370,10 +1382,11 @@ held-item transforms remain separate work.
  .../MixinBedrockParticleRenderType.java       |   19 +
  .../render/MixinAvatarAnimationRenderer.java  |   34 +
  .../render/MixinAvatarAnimationState.java     |   31 +
+ .../MixinBedrockFirstPersonBobbing.java       |   29 +
  .../MixinBedrockFirstPersonVisibility.java    |   42 +
  .../MixinBedrockModelPartTransforms.java      |   34 +
  .../render/MixinBedrockPlayerActorState.java  |   43 +
- .../render/MixinBedrockWalkingAnimation.java  |   32 +
+ .../render/MixinBedrockWalkingAnimation.java  |   35 +
  .../render/MixinMinecraftSkinLifecycle.java   |    6 +
  .../features/render/MixinOptionsEmote.java    |   34 +
  .../features/sound/MixinBedrockChannel.java   |   15 +
@@ -1392,8 +1405,9 @@ held-item transforms remain separate work.
  .../render/BedrockPlayerAnimationState.java   |   16 +
  .../bedrock/render/BedrockPlayerModel.java    |   43 +
  .../bedrock/render/BedrockPlayerRenderer.java |    7 +-
- .../bedrock/render/BedrockPlayerSkins.java    |  531 +-
- .../render/BedrockWalkingAnimation.java       |   29 +
+ .../bedrock/render/BedrockPlayerSkins.java    |  544 +-
+ .../bedrock/render/BedrockViewBobbing.java    |   51 +
+ .../render/BedrockWalkingAnimation.java       |   35 +
  .../screen/BedrockCharacterSlotsScreen.java   | 1401 ++++
  .../screen/BedrockClassicSkinPackScreen.java  |   83 +-
  .../screen/BedrockDressingRoomScreen.java     |   63 +-
@@ -1408,7 +1422,7 @@ held-item transforms remain separate work.
  .../licenses/vgmstream.txt                    |   23 +
  .../persona-package.json                      |    7 +
  .../persona-piece-types.json                  |   67 +
- .../viafabricplus-bedrock.mixins.json         |   15 +-
+ .../viafabricplus-bedrock.mixins.json         |   16 +-
  .../appearance/BedrockActorAnimationTest.java |  646 ++
  .../BedrockActorVisibilityTest.java           |  142 +
  .../BedrockAnimationParticleTest.java         |  104 +
@@ -1475,8 +1489,9 @@ held-item transforms remain separate work.
  .../render/BedrockModelTransformsTest.java    |   97 +
  .../render/BedrockPlayerActorStateTest.java   |  195 +
  .../render/BedrockPlayerModelTest.java        |  100 +
+ .../render/BedrockViewBobbingTest.java        |   93 +
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 192 files changed, 41011 insertions(+), 110 deletions(-)
+ 196 files changed, 41224 insertions(+), 110 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -1549,6 +1564,7 @@ held-item transforms remain separate work.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEvent.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundFile.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlayback.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockTrigonometry.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusEmoteProvider.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockChannelAccess.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockSoundEngine.java
@@ -1556,6 +1572,7 @@ held-item transforms remain separate work.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/particle/MixinBedrockParticleRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationState.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFirstPersonBobbing.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFirstPersonVisibility.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockModelPartTransforms.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockPlayerActorState.java
@@ -1575,6 +1592,7 @@ held-item transforms remain separate work.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerActorState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAnimationState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModel.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbing.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWalkingAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCharacterSlotsScreen.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockEmotePreviewScreen.java
@@ -1651,6 +1669,7 @@ held-item transforms remain separate work.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockModelTransformsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerActorStateTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerModelTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbingTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWalkingAnimationTest.java
 
 diff --git a/.gitignore b/.gitignore
@@ -17751,10 +17770,10 @@ index 0000000..8b30df4
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangMath.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangMath.java
 new file mode 100644
-index 0000000..8a6c8de
+index 0000000..c85fcd5
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangMath.java
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,222 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -17771,11 +17790,13 @@ index 0000000..8a6c8de
 +import java.util.Locale;
 +import java.util.Map;
 +
++import static com.viaversion.viafabricplus.bedrock.appearance.BedrockTrigonometry.cosine;
++import static com.viaversion.viafabricplus.bedrock.appearance.BedrockTrigonometry.sine;
++
 +/** Math functions added after Mocha's standard library, using Bedrock 1.26.51 float arithmetic. */
 +final class BedrockMolangMath {
 +    private static final float PI = (float) Math.PI;
 +    private static final float TAU = 2F * PI;
-+    private static final float[] SINE = sineTable();
 +    private static final Map<String, ObjectProperty> FUNCTIONS = functions();
 +
 +    private BedrockMolangMath() {}
@@ -17974,21 +17995,6 @@ index 0000000..8a6c8de
 +        return sine((phase - .075F) * TAU / .3F);
 +    }
 +
-+    private static float sine(final float radians) {
-+        return SINE[(int) (radians * 10430.378F) & 65535];
-+    }
-+
-+    private static float cosine(final float radians) {
-+        return SINE[(int) (radians * 10430.378F + 16384F) & 65535];
-+    }
-+
-+    private static float[] sineTable() {
-+        final float[] values = new float[65536];
-+        final float step = TAU / values.length;
-+        for (int index = 0; index < values.length; index++)
-+            values[index] = (float) Math.sin(index * step);
-+        return values;
-+    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangParser.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangParser.java
 new file mode 100644
@@ -25791,6 +25797,42 @@ index 0000000..7fe1451
 +        @Override public void close() { this.pcm = null; }
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockTrigonometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockTrigonometry.java
+new file mode 100644
+index 0000000..a3b2ac9
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockTrigonometry.java
+@@ -0,0 +1,30 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++/** The native float lookup shared by actor expressions and view bobbing. */
++public final class BedrockTrigonometry {
++    private static final float[] SINE = sineTable();
++
++    private BedrockTrigonometry() {}
++
++    public static float sine(final float radians) {
++        return SINE[(int) (radians * 10430.378F) & 65535];
++    }
++
++    public static float cosine(final float radians) {
++        return SINE[(int) (radians * 10430.378F + 16384F) & 65535];
++    }
++
++    private static float[] sineTable() {
++        final float[] values = new float[65536];
++        final float step = (2F * (float) Math.PI) / values.length;
++        for (int index = 0; index < values.length; index++) {
++            values[index] = (float) Math.sin(index * step);
++        }
++        return values;
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusEmoteProvider.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusEmoteProvider.java
 new file mode 100644
 index 0000000..40873b8
@@ -26055,6 +26097,41 @@ index 0000000..aa2083a
 +        this.bedrock$animationPose = pose;
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFirstPersonBobbing.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFirstPersonBobbing.java
+new file mode 100644
+index 0000000..231b90e
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFirstPersonBobbing.java
+@@ -0,0 +1,29 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.llamalad7.mixinextras.sugar.Local;
++import com.mojang.blaze3d.vertex.PoseStack;
++import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
++import net.minecraft.client.renderer.GameRenderer;
++import net.minecraft.client.renderer.state.level.CameraRenderState;
++import net.minecraft.client.renderer.state.level.PlayerRenderState;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++@Mixin(GameRenderer.class)
++public abstract class MixinBedrockFirstPersonBobbing {
++    @WrapOperation(method = "renderItemInHand", at = @At(value = "INVOKE",
++            target = "Lnet/minecraft/client/renderer/GameRenderer;bobView(Lnet/minecraft/client/renderer/state/level/CameraRenderState;Lcom/mojang/blaze3d/vertex/PoseStack;)V"))
++    private void nativeBobbing(final GameRenderer renderer, final CameraRenderState camera, final PoseStack poses,
++                              final Operation<Void> original, @Local(argsOnly = true) final PlayerRenderState player) {
++        if (!BedrockPlayerSkins.firstPersonBobbing(player.avatarRenderState, poses, camera.cameraEntityPartialTicks)) {
++            original.call(renderer, camera, poses);
++        }
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFirstPersonVisibility.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFirstPersonVisibility.java
 new file mode 100644
 index 0000000..3fc0f25
@@ -26194,10 +26271,10 @@ index 0000000..1606651
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockWalkingAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockWalkingAnimation.java
 new file mode 100644
-index 0000000..fba2fe9
+index 0000000..95fa67a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockWalkingAnimation.java
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,35 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -26228,6 +26305,9 @@ index 0000000..fba2fe9
 +        final AbstractClientPlayer player = (AbstractClientPlayer) (Object) this;
 +        this.bedrockWalkingAnimation.tick((float) player.getX() - (float) player.xo,
 +                (float) player.getZ() - (float) player.zo);
++        final var velocity = player.getDeltaMovement();
++        this.bedrockWalkingAnimation.tickView((float) velocity.x, (float) velocity.y, (float) velocity.z,
++                player.onGround(), player.isSwimming(), player.isAlive(), player.isPassenger());
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftSkinLifecycle.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftSkinLifecycle.java
@@ -27213,14 +27293,15 @@ index f00c62a..5ddf747 100644
      }
  
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 61a2b73..d538261 100644
+index 61a2b73..0964cac 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-@@ -19,35 +19,59 @@
+@@ -19,35 +19,60 @@
  package com.viaversion.viafabricplus.bedrock.render;
  
  import com.mojang.blaze3d.platform.NativeImage;
 -import com.viaversion.viafabricplus.bedrock.appearance.BedrockClassicOptions;
++import com.mojang.blaze3d.vertex.PoseStack;
  import com.viaversion.viafabricplus.ViaFabricPlus;
  import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockActorAnimation;
@@ -27287,7 +27368,7 @@ index 61a2b73..d538261 100644
  
  /** Owns client textures and geometry for Bedrock player appearances. */
  public final class BedrockPlayerSkins {
-@@ -60,6 +84,7 @@ public final class BedrockPlayerSkins {
+@@ -60,6 +85,7 @@ public final class BedrockPlayerSkins {
      private static final BedrockSkinQueue PENDING = new BedrockSkinQueue();
      private static volatile EntityRendererProvider.Context rendererContext;
      private static volatile long rendererEpoch;
@@ -27295,7 +27376,7 @@ index 61a2b73..d538261 100644
  
      private BedrockPlayerSkins() {
      }
-@@ -91,6 +116,16 @@ public final class BedrockPlayerSkins {
+@@ -91,6 +117,16 @@ public final class BedrockPlayerSkins {
      }
  
      public record Preview(UUID id, PlayerSkin skin) implements AutoCloseable {
@@ -27312,7 +27393,7 @@ index 61a2b73..d538261 100644
          @Override
          public void close() {
              final Appearance appearance = APPEARANCES.remove(this.id);
-@@ -115,24 +150,51 @@ public final class BedrockPlayerSkins {
+@@ -115,24 +151,51 @@ public final class BedrockPlayerSkins {
          }
          final Identifier bodyId = textureId(playerUuid, "body");
          register(bodyId, skin.skinData());
@@ -27370,7 +27451,7 @@ index 61a2b73..d538261 100644
          PLAYER_BY_TEXTURE.put(bodyId, playerUuid);
          return playerSkin;
      }
-@@ -163,7 +225,8 @@ public final class BedrockPlayerSkins {
+@@ -163,7 +226,8 @@ public final class BedrockPlayerSkins {
  
      public static AvatarRenderer<?> renderer(final UUID playerUuid) {
          final Appearance appearance = APPEARANCES.get(playerUuid);
@@ -27380,7 +27461,7 @@ index 61a2b73..d538261 100644
              return null;
          }
          if (appearance.renderer == null || appearance.rendererEpoch != rendererEpoch) {
-@@ -171,13 +234,334 @@ public final class BedrockPlayerSkins {
+@@ -171,13 +235,346 @@ public final class BedrockPlayerSkins {
                  BedrockGeometry.playerModel(surface.geometry().model(), appearance.slim, surface.geometry().meshes()),
                  surface.texture())).toList();
              appearance.renderer = new BedrockPlayerRenderer(rendererContext,
@@ -27540,6 +27621,18 @@ index 61a2b73..d538261 100644
 +    public static float firstPersonRotation(final boolean pitch, final float fallback) {
 +        final var frame = firstPersonFrame;
 +        return frame == null ? fallback : pitch ? frame.camera.pitch() : frame.camera.yaw();
++    }
++
++    /** Applies native bobbing only when the submitted player uses our native actor graph. */
++    public static boolean firstPersonBobbing(final AvatarRenderState state, final PoseStack poses, final float partialTick) {
++        final var player = Minecraft.getInstance().player;
++        if (!(player instanceof BedrockWalkingAnimation.Provider walking)
++                || state == null || state.skin == null || state.skin.body() == null) return false;
++        final Appearance appearance = APPEARANCES.get(player.getUUID());
++        if (actor(appearance) == null || !state.skin.body().id().equals(appearance.bodyId)) return false;
++        final var animation = walking.bedrockWalkingAnimation();
++        poses.mulPose(animation.viewBobbing.matrix(animation.sample(partialTick), partialTick));
++        return true;
 +    }
 +
 +    static HandVisibility firstPersonHand(final Identifier texture, final boolean right, final boolean hasSleeve) {
@@ -27716,7 +27809,7 @@ index 61a2b73..d538261 100644
      public static AvatarRenderer<?> renderer(final PlayerSkin skin, final float ageInTicks) {
          if (skin == null || skin.body() == null) {
              return null;
-@@ -197,10 +581,49 @@ public final class BedrockPlayerSkins {
+@@ -197,10 +594,49 @@ public final class BedrockPlayerSkins {
      public static Model.Simple previewModel(final Identifier texture) {
          final UUID id = PLAYER_BY_TEXTURE.get(texture);
          final Appearance appearance = id == null ? null : APPEARANCES.get(id);
@@ -27769,7 +27862,7 @@ index 61a2b73..d538261 100644
      }
  
      /** Supplies the additional animated surfaces in the same pose as a menu's primary skin. */
-@@ -210,14 +633,19 @@ public final class BedrockPlayerSkins {
+@@ -210,14 +646,19 @@ public final class BedrockPlayerSkins {
          if (appearance == null || appearance.surfaces.isEmpty()) return List.of();
          if (appearance.previewSurfaces == null)
              appearance.previewSurfaces = appearance.surfaces.stream().map(surface -> new PreviewSurface(
@@ -27791,7 +27884,7 @@ index 61a2b73..d538261 100644
  
      public static void rendererContext(final EntityRendererProvider.Context context) {
          rendererContext = context;
-@@ -243,7 +671,8 @@ public final class BedrockPlayerSkins {
+@@ -243,7 +684,8 @@ public final class BedrockPlayerSkins {
      }
  
      private static Identifier textureId(final UUID playerUuid, final String kind) {
@@ -27801,7 +27894,7 @@ index 61a2b73..d538261 100644
      }
  
      private static boolean supportedImage(final BufferedImage image) {
-@@ -269,7 +698,10 @@ public final class BedrockPlayerSkins {
+@@ -269,7 +711,10 @@ public final class BedrockPlayerSkins {
  
      static String geometryName(final String resourcePatch, final String binding) {
          try {
@@ -27813,7 +27906,7 @@ index 61a2b73..d538261 100644
              final var name = geometry.get(binding);
              return name != null && name.isJsonPrimitive() && name.getAsJsonPrimitive().isString()
                  ? name.getAsString() : "";
-@@ -295,7 +727,7 @@ public final class BedrockPlayerSkins {
+@@ -295,7 +740,7 @@ public final class BedrockPlayerSkins {
              final List<BedrockGeometryModel> models = BedrockGeometryModel.fromJson(data);
              final BedrockGeometryModel model = models.stream().filter(value -> value.getIdentifier().equals(name)).findFirst()
                  .orElseGet(() -> models.isEmpty() ? null : models.getFirst());
@@ -27822,7 +27915,7 @@ index 61a2b73..d538261 100644
          } catch (RuntimeException e) {
              LOGGER.warn("Failed to parse Bedrock player geometry", e);
              return null;
-@@ -322,7 +754,8 @@ public final class BedrockPlayerSkins {
+@@ -322,7 +767,8 @@ public final class BedrockPlayerSkins {
              final Map<Integer, JsonObject> animatedModels = new HashMap<>();
              for (final var entry : models) {
                  final JsonObject model = entry.getAsJsonObject();
@@ -27832,7 +27925,7 @@ index 61a2b73..d538261 100644
                  if (name.equals(identifier)) {
                      if (body != null) {
                          return null;
-@@ -361,7 +794,8 @@ public final class BedrockPlayerSkins {
+@@ -361,7 +807,8 @@ public final class BedrockPlayerSkins {
                  final JsonObject model = animatedModels.get(type);
                  final var animation = animationByType.get(type);
                  if (model == null) {
@@ -27842,7 +27935,7 @@ index 61a2b73..d538261 100644
                          return null;
                      }
                      continue;
-@@ -376,7 +810,8 @@ public final class BedrockPlayerSkins {
+@@ -376,7 +823,8 @@ public final class BedrockPlayerSkins {
                  BedrockGeometry.playerModel(parsed, false, meshes);
                  surfaces.add(new Surface(parsed, Map.copyOf(meshes), animation));
              }
@@ -27852,7 +27945,7 @@ index 61a2b73..d538261 100644
                  if (!coverage.getOrDefault(part, false)) {
                      return null;
                  }
-@@ -387,7 +822,7 @@ public final class BedrockPlayerSkins {
+@@ -387,7 +835,7 @@ public final class BedrockPlayerSkins {
                  return null;
              }
              BedrockGeometry.playerModel(parsedBody, false, bodyMeshes);
@@ -27861,7 +27954,7 @@ index 61a2b73..d538261 100644
          } catch (RuntimeException e) {
              LOGGER.warn("Failed to parse Bedrock persona geometry", e);
              return null;
-@@ -424,12 +859,21 @@ public final class BedrockPlayerSkins {
+@@ -424,12 +872,21 @@ public final class BedrockPlayerSkins {
                      }
                  }
              }
@@ -27886,7 +27979,7 @@ index 61a2b73..d538261 100644
              }
          }
          return meshes;
-@@ -451,7 +895,13 @@ public final class BedrockPlayerSkins {
+@@ -451,7 +908,13 @@ public final class BedrockPlayerSkins {
          return vector;
      }
  
@@ -27901,7 +27994,7 @@ index 61a2b73..d538261 100644
          Surface face() {
              return this.surfaces.stream().filter(surface -> surface.animation().type() == 1).findFirst().orElse(null);
          }
-@@ -467,13 +917,22 @@ public final class BedrockPlayerSkins {
+@@ -467,13 +930,22 @@ public final class BedrockPlayerSkins {
          private final PlayerSkin skin;
          private final long started = System.nanoTime();
          private final Geometry geometry;
@@ -27925,12 +28018,69 @@ index 61a2b73..d538261 100644
          private List<PreviewSurface> previewSurfaces;
          private long rendererEpoch;
  
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbing.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbing.java
+new file mode 100644
+index 0000000..cccd7cb
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbing.java
+@@ -0,0 +1,51 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockTrigonometry;
++import org.joml.Matrix4f;
++
++/** Bedrock 1.26.51 PlayerBob and Mob tilt, sampled independently of Java's bob. */
++final class BedrockViewBobbing {
++    private float bob;
++    private float previousBob;
++    private float tilt;
++    private float previousTilt;
++
++    void tick(final float velocityX, final float velocityY, final float velocityZ, final boolean onGround,
++              final boolean swimming, final boolean alive, final boolean riding) {
++        this.previousBob = this.bob;
++        float target = 0;
++        if (onGround && !swimming && alive) {
++            final float speed = (float) Math.sqrt(velocityX * velocityX + velocityZ * velocityZ);
++            target = speed <= 0.1F ? speed : 0.1F;
++        }
++        this.bob += (target - this.bob) * 0.08F;
++        if (riding) {
++            this.previousBob = this.bob;
++            this.bob = 0;
++        }
++        this.previousTilt = this.tilt;
++        final float targetTilt = !onGround && alive ? (float) Math.atan(velocityY * -0.2F) * 15F : 0;
++        this.tilt += (targetTilt - this.tilt) * 0.4F;
++    }
++
++    Matrix4f matrix(final float walkingDistance, final float frameAlpha) {
++        return transform(new Matrix4f(), walkingDistance,
++                (this.bob - this.previousBob) * frameAlpha + this.previousBob,
++                (this.tilt - this.previousTilt) * frameAlpha + this.previousTilt);
++    }
++
++    static Matrix4f transform(final Matrix4f matrix, final float walkingDistance, final float bob, final float tilt) {
++        final float phase = -walkingDistance * (float) Math.PI;
++        final float sine = BedrockTrigonometry.sine(phase);
++        final float radians = (float) Math.PI / 180F;
++        return matrix.translate(sine * bob * 0.65F, -Math.abs(BedrockTrigonometry.cosine(phase) * bob), 0)
++                .rotateZ(sine * bob * 3F * radians)
++                .rotateX(Math.abs(bob * BedrockTrigonometry.cosine(phase - 0.2F)) * 5F * radians)
++                .rotateX(tilt * radians);
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWalkingAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWalkingAnimation.java
 new file mode 100644
-index 0000000..41f214f
+index 0000000..0888be7
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockWalkingAnimation.java
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,35 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -27940,12 +28090,18 @@ index 0000000..41f214f
 +
 +/** Native walking distance, independent of Java's local hand bob and limb swing. */
 +public final class BedrockWalkingAnimation {
++    final BedrockViewBobbing viewBobbing = new BedrockViewBobbing();
 +    private float distance;
 +    private float previousDistance;
 +
 +    public void tick(final float deltaX, final float deltaZ) {
 +        this.previousDistance = this.distance;
 +        this.distance += (float) Math.sqrt(deltaX * deltaX + deltaZ * deltaZ);
++    }
++
++    public void tickView(final float velocityX, final float velocityY, final float velocityZ, final boolean onGround,
++                         final boolean swimming, final boolean alive, final boolean riding) {
++        this.viewBobbing.tick(velocityX, velocityY, velocityZ, onGround, swimming, alive, riding);
 +    }
 +
 +    public float sample(final float frameAlpha) {
@@ -31358,10 +31514,10 @@ index 0000000..a91a83e
 +  "f76b43c4-052c-ec24-bbc9-389f8b612668": "persona_top"
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 87ffba8..4a12536 100644
+index 87ffba8..0a04e09 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -55,9 +55,16 @@
+@@ -55,9 +55,17 @@
      "features.render.MixinCustomEntity",
      "features.render.MixinBedrockRidingMetadata",
      "features.render.MixinBedrockRidingPosition",
@@ -31374,11 +31530,12 @@ index 87ffba8..4a12536 100644
 +    "features.render.MixinAvatarAnimationRenderer",
 +    "features.render.MixinBedrockWalkingAnimation",
 +    "features.render.MixinBedrockFirstPersonVisibility",
++    "features.render.MixinBedrockFirstPersonBobbing",
 +    "features.render.MixinBedrockModelPartTransforms",
      "features.render.MixinPlayerSkinWidget",
      "features.render.MixinGuiSkinRenderer",
      "features.movement.MixinEntity",
-@@ -66,7 +73,13 @@
+@@ -66,7 +74,13 @@
      "features.movement.MixinHoneyBlock",
      "features.movement.MixinLivingEntity",
      "features.movement.MixinLocalPlayer",
@@ -44564,6 +44721,105 @@ index 0000000..6de66e6
 +        public void bedrockAnimationPose(final Map<String, BedrockBoneAnimation.Transform> pose) {
 +            this.pose = pose;
 +        }
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbingTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbingTest.java
+new file mode 100644
+index 0000000..0c92c0e
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockViewBobbingTest.java
+@@ -0,0 +1,93 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++import com.google.gson.JsonParser;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import org.joml.Matrix4f;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++final class BedrockViewBobbingTest {
++    @Test
++    void samplesNativeSidewaysOffsetAndSeparateAirborneTilt() {
++        final var view = new BedrockViewBobbing();
++        view.tick(.3F, .42F, .4F, true, false, true, false);
++        final var matrix = view.matrix(.3F, .5F);
++        assertEquals(-.0021033855F, matrix.m30(), 1E-9F);
++        assertEquals(-.002350955F, matrix.m31(), 1E-9F);
++        assertEquals(-.0001694354F, matrix.m01(), 1E-9F);
++        assertEquals(.00014496568F, matrix.m12(), 1E-9F);
++        final var airborne = new BedrockViewBobbing();
++        airborne.tick(0, .42F, 0, false, false, true, false);
++        final var tilt = airborne.matrix(0, 1);
++        assertEquals(0F, tilt.m30(), 0F);
++        assertEquals(0F, tilt.m31(), 0F);
++        assertEquals(-.008775744F, tilt.m12(), 1E-7F);
++        final var dead = new BedrockViewBobbing();
++        dead.tick(.3F, .42F, .4F, false, false, false, false);
++        assertTrue(new Matrix4f().equals(dead.matrix(.3F, 1), 0F));
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_WALK_BOB", matches = ".+")
++    void matchesExecutableBobAndTiltComponentUpdates() throws Exception {
++        final var fixture = fixture();
++        for (final var entry : fixture.getAsJsonArray("updates")) {
++            final var row = entry.getAsJsonObject();
++            final var view = new BedrockViewBobbing();
++            set(view, "bob", row.get("current").getAsFloat());
++            set(view, "tilt", row.get("tilt").getAsFloat());
++            final var velocity = row.getAsJsonArray("velocity");
++            view.tick(velocity.get(0).getAsFloat(), velocity.get(1).getAsFloat(), velocity.get(2).getAsFloat(),
++                    row.get("ground").getAsBoolean(), row.get("swimming").getAsBoolean(),
++                    row.get("health").getAsFloat() > 0, row.get("riding").getAsBoolean());
++            assertEquals(row.getAsJsonArray("bob").get(0).getAsInt(), Float.floatToRawIntBits(get(view, "bob")));
++            assertEquals(row.getAsJsonArray("bob").get(1).getAsInt(), Float.floatToRawIntBits(get(view, "previousBob")));
++            assertEquals(Float.intBitsToFloat(row.get("tilt_result").getAsInt()), get(view, "tilt"), 1E-6F);
++            assertEquals(row.get("tilt").getAsFloat(), get(view, "previousTilt"));
++        }
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_WALK_BOB", matches = ".+")
++    void matchesExecutableMatrixCompositionWithExistingCameraTransforms() throws Exception {
++        for (final var entry : fixture().getAsJsonArray("matrices")) {
++            final var row = entry.getAsJsonObject();
++            final var values = new float[16];
++            for (int i = 0; i < values.length; i++) values[i] = row.getAsJsonArray("input").get(i).getAsFloat();
++            final float alpha = row.get("alpha").getAsFloat();
++            final float previous = row.get("previous").getAsFloat();
++            final float oldTilt = row.get("old_tilt").getAsFloat();
++            BedrockViewBobbing.transform(new Matrix4f().set(values), row.get("distance").getAsFloat() * .6F,
++                    (row.get("amplitude").getAsFloat() - previous) * alpha + previous,
++                    (row.get("tilt").getAsFloat() - oldTilt) * alpha + oldTilt).get(values);
++            for (int i = 0; i < values.length; i++) {
++                assertEquals(row.getAsJsonArray("result").get(i).getAsFloat(), values[i], 2E-6F);
++            }
++        }
++    }
++
++    private static com.google.gson.JsonObject fixture() throws Exception {
++        return JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_WALK_BOB")))).getAsJsonObject();
++    }
++
++    private static void set(final BedrockViewBobbing view, final String name, final float value) throws Exception {
++        final var field = BedrockViewBobbing.class.getDeclaredField(name);
++        field.setAccessible(true);
++        field.setFloat(view, value);
++    }
++
++    private static float get(final BedrockViewBobbing view, final String name) throws Exception {
++        final var field = BedrockViewBobbing.class.getDeclaredField(name);
++        field.setAccessible(true);
++        return field.getFloat(view);
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWalkingAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockWalkingAnimationTest.java
