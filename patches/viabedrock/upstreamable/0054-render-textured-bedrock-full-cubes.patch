@@ -1,4 +1,4 @@
-From 7e7734771191300587625008496f7fe23b90f47d Mon Sep 17 00:00:00 2001
+From 83e3a84caa1debe7c44268372b8642580276af6d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:38:26 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -134,6 +134,8 @@ a block bone for user culling rules. Native transparent built-in cubes
 remain outside the custom voxel comparison, while an authored custom
 geometry with a default opposite rule occludes the same half-grid.
 Keep both cases distinct in compiled participation metadata.
+
+Omit faces whose cutout or blended material has no visible pixels after alpha conversion. Java 26.3 assigns zero-area UV ranges to opaque rendering, which showed dark faces for fully transparent neighbors beside the pinned native culling fixture. Keep opaque materials visible and compile authored culling participation before omitting any faces, so invisible geometry retains its physical boxes and voxel coverage. Resolve the actual sprite on copied back faces and mixed material elements.
 ---
  .../api/model/CustomBlockCulling.java         | 206 +++++++
  .../api/model/CustomBlockProperties.java      | 105 ++++
@@ -151,25 +153,26 @@ Keep both cases distinct in compiled participation metadata.
  .../protocol/rewriter/BlockStateRewriter.java |  60 +-
  .../rewriter/ResourcePackRewriter.java        |   2 +
  .../CustomBlockCullingCompiler.java           | 162 ++++++
- .../resourcepack/CustomBlockModel.java        | 516 ++++++++++++++++++
- .../CustomBlockResourceRewriter.java          | 206 +++++++
- .../CustomBlockStateDefinitions.java          | 153 ++++++
+ .../resourcepack/CustomBlockModel.java        | 542 ++++++++++++++++++
+ .../CustomBlockResourceRewriter.java          | 233 ++++++++
+ .../CustomBlockStateDefinitions.java          | 153 +++++
  .../protocol/storage/ChunkTracker.java        |  33 +-
  .../storage/CustomBlockPackStorage.java       | 103 ++++
  .../protocol/storage/ResourcePackStorage.java |  49 ++
- .../protocol/storage/VoxelShapeRegistry.java  | 125 +++++
+ .../protocol/storage/VoxelShapeRegistry.java  | 125 ++++
  .../api/model/CustomBlockCullingTest.java     |  54 ++
  .../api/model/CustomBlockPropertiesTest.java  |  50 ++
  .../http/ConvertedResourcePackCacheTest.java  |  16 +
  .../rewriter/CustomBlockBoneGeometryTest.java | 177 ++++++
- .../CustomBlockModelSelectionTest.java        | 368 +++++++++++++
+ .../CustomBlockModelSelectionTest.java        | 368 ++++++++++++
  .../CustomBlockPlaneGeometryTest.java         | 170 ++++++
  .../CustomBlockCullingCompilerTest.java       | 140 +++++
- .../CustomBlockStateDefinitionsTest.java      | 218 ++++++++
+ .../CustomBlockMaterialVisibilityTest.java    | 106 ++++
+ .../CustomBlockStateDefinitionsTest.java      | 218 +++++++
  .../protocol/storage/ChunkTrackerTest.java    |  23 +
  .../storage/CustomBlockPackStorageTest.java   | 168 ++++++
  .../storage/VoxelShapeRegistryTest.java       | 130 +++++
- 34 files changed, 3608 insertions(+), 21 deletions(-)
+ 35 files changed, 3767 insertions(+), 21 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockCulling.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockVisual.java
@@ -188,6 +191,7 @@ Keep both cases distinct in compiled participation metadata.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockPlaneGeometryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockCullingCompilerTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockMaterialVisibilityTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitionsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorageTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistryTest.java
@@ -1431,10 +1435,10 @@ index 000000000..5a7981fc9
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
 new file mode 100644
-index 000000000..bf2d3a61b
+index 000000000..e29a19934
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
-@@ -0,0 +1,516 @@
+@@ -0,0 +1,542 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1502,6 +1506,7 @@ index 000000000..bf2d3a61b
 +        final Map<String, String> textureMethods = new LinkedHashMap<>();
 +        final Map<Direction, String> directionMethods = new LinkedHashMap<>();
 +        final Map<String, Boolean> faceDimming = new LinkedHashMap<>();
++        final Map<String, Boolean> visibleSprites = new LinkedHashMap<>();
 +        boolean opaque = true;
 +        boolean ao = true;
 +        String renderMethod = "opaque";
@@ -1528,6 +1533,7 @@ index 000000000..bf2d3a61b
 +            textureBindings.put(binding, texture.getValue());
 +            textureMethods.put(binding, method);
 +            textureIds.put(direction, image == null ? vanillaTexture : "viabedrock:block/custom/slot_" + javaState + '/' + binding);
++            visibleSprites.put(textureIds.get(direction), CustomBlockResourceRewriter.hasVisiblePixels(image, method));
 +            directionMethods.put(direction, method);
 +            faceDimming.put(face, !(material.get("face_dimming") instanceof NumberTag value) || value.asInt() != 0);
 +            opaque &= method.equals("opaque") || !method.equals("blend") && CustomBlockResourceRewriter.hasOpaquePixels(image);
@@ -1565,6 +1571,7 @@ index 000000000..bf2d3a61b
 +        CustomBlockCullingCompiler.apply(storage, state, geometryTag, fullCube, model, transformation);
 +        transformModel(model, transformation);
 +        applyFaceMaterials(model, faceDimming, directionMethods);
++        omitInvisibleFaces(model, visibleSprites);
 +        final boolean occluding = fullCube && opaque && transformation.identity();
 +        return new CustomBlockVisual(state, javaState, textureBindings.values().iterator().next(), JsonUtil.sort(model, Comparator.naturalOrder()).toString(), renderMethod,
 +                boxes(components.getCompoundTag("minecraft:collision_box"), false, transformation),
@@ -1572,6 +1579,29 @@ index 000000000..bf2d3a61b
 +                light(components, "minecraft:light_emission", "emission", 0),
 +                light(components, "minecraft:block_light_filter", "lightLevel",
 +                        light(components, "minecraft:light_dampening", "lightLevel", 15)), textureBindings, textureMethods);
++    }
++
++    private static void omitInvisibleFaces(final JsonObject model, final Map<String, Boolean> visibleSprites) {
++        final JsonObject textures = model.getAsJsonObject("textures");
++        final JsonArray elements = new JsonArray();
++        for (JsonElement value : model.getAsJsonArray("elements")) {
++            final JsonObject element = value.getAsJsonObject();
++            final JsonObject faces = element.getAsJsonObject("faces");
++            for (String direction : List.copyOf(faces.keySet())) {
++                final String binding = faces.getAsJsonObject(direction).get("texture").getAsString();
++                final JsonElement material = binding.startsWith("#") ? textures.get(binding.substring(1)) : new JsonPrimitive(binding);
++                final String sprite = material instanceof JsonObject reference ? reference.get("sprite").getAsString() : material.getAsString();
++                if (!visibleSprites.getOrDefault(sprite, true)) {
++                    faces.remove(direction);
++                }
++            }
++            if (!faces.isEmpty()) {
++                elements.add(element);
++            }
++        }
++        // Culling participation was compiled from the authored geometry before this pass.
++        // Invisible materials still contribute their native voxel slices and physical boxes.
++        model.add("elements", elements);
 +    }
 +
 +    private static void addPlaneBackFaces(final JsonObject element, final Map<Direction, String> methods, final Set<String> authoredFaces) {
@@ -1953,10 +1983,10 @@ index 000000000..bf2d3a61b
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java
 new file mode 100644
-index 000000000..366e69a6d
+index 000000000..08f58f84a
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,233 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -2065,6 +2095,29 @@ index 000000000..366e69a6d
 +        return path == null ? null : findImage(storage, path);
 +    }
 +
++    public static boolean hasVisiblePixels(final Content.LazyImage texture, final String method) {
++        if (texture == null || method.equals("opaque")) {
++            return true;
++        }
++        final BufferedImage image;
++        try {
++            image = texture.getImage();
++        } catch (final RuntimeException e) {
++            return true;
++        }
++        if (image == null) {
++            return true;
++        }
++        for (int y = 0; y < image.getHeight(); y++) {
++            for (int x = 0; x < image.getWidth(); x++) {
++                if (materialAlpha(image.getRGB(x, y), method) != 0) {
++                    return true;
++                }
++            }
++        }
++        return false;
++    }
++
 +    /** Vanilla terrain assets are available in the Java client even when omitted from the server pack. */
 +    public static String vanillaTexture(final String texture) {
 +        final String renamed = switch (texture) {
@@ -2117,11 +2170,15 @@ index 000000000..366e69a6d
 +        for (int y = 0; y < source.getHeight(); y++) {
 +            for (int x = 0; x < source.getWidth(); x++) {
 +                final int pixel = source.getRGB(x, y);
-+                final int alpha = method.equals("opaque") ? 255 : method.startsWith("alpha_test") ? (pixel >>> 24 >= 128 ? 255 : 0) : pixel >>> 24;
++                final int alpha = materialAlpha(pixel, method);
 +                result.setRGB(x, y, (pixel & 0xFFFFFF) | alpha << 24);
 +            }
 +        }
 +        return result;
++    }
++
++    private static int materialAlpha(final int pixel, final String method) {
++        return method.equals("opaque") ? 255 : method.startsWith("alpha_test") ? (pixel >>> 24 >= 128 ? 255 : 0) : pixel >>> 24;
 +    }
 +
 +    private static Content convert(final ResourcePackStorage storage, final Map<String, Integer> assignments) {
@@ -3483,7 +3540,7 @@ index 000000000..5abcd9e0b
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockPlaneGeometryTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockPlaneGeometryTest.java
 new file mode 100644
-index 000000000..68188746e
+index 000000000..dfcb667a9
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockPlaneGeometryTest.java
 @@ -0,0 +1,170 @@
@@ -3648,7 +3705,7 @@ index 000000000..68188746e
 +        final InMemoryContent content = new InMemoryContent();
 +        content.putString("manifest.json", "{\"format_version\":3,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":\"1.0.0\",\"name\":\"test\"}}");
 +        content.putString("textures/terrain_texture.json", "{\"texture_data\":{\"skin\":{\"textures\":\"textures/blocks/skin\"}}}");
-+        content.putPngImage("textures/blocks/skin.png", new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB));
++        content.putPngImage("textures/blocks/skin.png", new BufferedImage(16, 16, BufferedImage.TYPE_INT_RGB));
 +        content.putString("models/blocks/test.json", """
 +                {"format_version":"1.12.0","minecraft:geometry":[{"description":{"identifier":"geometry.test","texture_width":16,"texture_height":16},
 +                 "bones":[{"name":"root","cubes":[{"origin":[0,0,0],"size":%s,"pivot":[2,3,4],"rotation":[12,25,8],"uv":{%s}}]}]}]}
@@ -3800,6 +3857,118 @@ index 000000000..0cc309b77
 +        materials.put("*", material);
 +        result.put("minecraft:material_instances", materials);
 +        return result;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockMaterialVisibilityTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockMaterialVisibilityTest.java
+new file mode 100644
+index 000000000..93b635019
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockMaterialVisibilityTest.java
+@@ -0,0 +1,106 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.api.model.CustomBlockCulling;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import net.raphimc.viabedrock.protocol.storage.VoxelShapeRegistry;
++import org.junit.jupiter.api.Test;
++
++import java.awt.image.BufferedImage;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class CustomBlockMaterialVisibilityTest {
++
++    @Test
++    void omitsInvisibleFacesWithoutRemovingPhysicalBoxesOrAuthoredVoxelParticipation() {
++        final ResourcePackStorage storage = storage(new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB));
++        for (String method : List.of("alpha_test", "alpha_test_single_sided", "blend")) {
++            final var visual = CustomBlockModel.compile(storage, "test:block", 42, components(method));
++            assertNotNull(visual);
++            assertTrue(JsonParser.parseString(visual.modelJson()).getAsJsonObject().getAsJsonArray("elements").isEmpty());
++            assertEquals(1, visual.collisionBoxes().size());
++            assertEquals(1, visual.selectionBoxes().size());
++            final var culling = CustomBlockCulling.decode(CustomBlockCulling.encode(Map.of(42, visual))).get(42);
++            assertEquals(Set.of(CustomBlockCulling.Direction.SOUTH), culling.directions());
++            assertEquals(List.of(new CustomBlockCulling.Rectangle(0, 0, 1, 1)), culling.slice(CustomBlockCulling.Direction.SOUTH));
++            assertEquals(16, CustomBlockResourceRewriter.terrainTexture(storage, "skin").getImage().getWidth());
++        }
++    }
++
++    @Test
++    void appliesVisibilityToTheActualSpriteAndPreservesOpaqueAndPartiallyVisibleMaterials() {
++        final ResourcePackStorage invisible = storage(new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB));
++        final CompoundTag components = components("alpha_test");
++        final CompoundTag opaque = components.getCompoundTag("minecraft:material_instances").getCompoundTag("*").copy();
++        opaque.putString("render_method", "opaque");
++        components.getCompoundTag("minecraft:material_instances").put("up", opaque);
++        final var mixed = CustomBlockModel.compile(invisible, "test:block", 42, components);
++        assertNotNull(mixed);
++        final var elements = JsonParser.parseString(mixed.modelJson()).getAsJsonObject().getAsJsonArray("elements");
++        assertEquals(1, elements.size());
++        assertEquals(Set.of("up"), elements.get(0).getAsJsonObject().getAsJsonObject("faces").keySet());
++
++        final BufferedImage pixels = new BufferedImage(16, 16, BufferedImage.TYPE_INT_ARGB);
++        pixels.setRGB(4, 4, 0x7F123456);
++        final ResourcePackStorage faint = storage(pixels);
++        final var texture = CustomBlockResourceRewriter.terrainTexture(faint, "skin");
++        assertFalse(CustomBlockResourceRewriter.hasVisiblePixels(texture, "alpha_test"));
++        assertTrue(CustomBlockResourceRewriter.hasVisiblePixels(texture, "blend"));
++        final var blended = CustomBlockModel.compile(faint, "test:block", 42, components("blend"));
++        assertNotNull(blended);
++        assertEquals(6, JsonParser.parseString(blended.modelJson()).getAsJsonObject().getAsJsonArray("elements")
++                .get(0).getAsJsonObject().getAsJsonObject("faces").size());
++        pixels.setRGB(4, 4, 0x80123456);
++        assertTrue(CustomBlockResourceRewriter.hasVisiblePixels(CustomBlockResourceRewriter.terrainTexture(storage(pixels), "skin"), "alpha_test"));
++        assertTrue(CustomBlockResourceRewriter.hasVisiblePixels(null, "alpha_test"));
++    }
++
++    private static CompoundTag components(final String method) {
++        final CompoundTag result = new CompoundTag();
++        final CompoundTag geometry = new CompoundTag();
++        geometry.putString("identifier", "geometry.test");
++        geometry.putString("culling", "test:cull");
++        geometry.putString("culling_shape", "test:unit");
++        result.put("minecraft:geometry", geometry);
++        final CompoundTag material = new CompoundTag();
++        material.putString("texture", "skin");
++        material.putString("render_method", method);
++        final CompoundTag materials = new CompoundTag();
++        materials.put("*", material);
++        result.put("minecraft:material_instances", materials);
++        return result;
++    }
++
++    private static ResourcePackStorage storage(final BufferedImage pixels) {
++        final InMemoryContent content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":3,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":\"1.0.0\",\"name\":\"test\"}}");
++        content.putString("textures/terrain_texture.json", "{\"texture_data\":{\"skin\":{\"textures\":\"textures/blocks/skin\"}}}");
++        content.putPngImage("textures/blocks/skin.png", pixels);
++        content.putString("models/blocks/test.json", """
++            {"format_version":"1.12.0","minecraft:geometry":[{"description":{"identifier":"geometry.test","texture_width":16,"texture_height":16},
++            "bones":[{"name":"body","cubes":[{"origin":[-4,0,-4],"size":[8,8,8],"uv":[0,0]}]}]}]}
++            """);
++        content.putString("block_culling/test.json", """
++            {"format_version":"1.21.80","minecraft:block_culling_rules":{"description":{"identifier":"test:cull"},"rules":[
++            {"direction":"south","cull_against_full_and_opaque":false,"geometry_part":{"bone":"body"}}]}}
++            """);
++        final var storage = new ResourcePackStorage(List.of(new ResourcePack(content)));
++        final var shape = new VoxelShapeRegistry.Shape(1, 1, 1, new byte[]{1}, List.of(0F, 1F), List.of(0F, 1F), List.of(0F, 1F));
++        storage.setVoxelShapes(new VoxelShapeRegistry.Snapshot(List.of(shape), Map.of("test:unit", 0), 1));
++        return storage;
 +    }
 +
 +}

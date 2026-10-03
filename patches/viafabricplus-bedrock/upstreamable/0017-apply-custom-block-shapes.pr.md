@@ -33,7 +33,7 @@ VoxelShapes describes native rendering culling.
 Core now compiles custom culling rules from that registry.
 Vanilla partial-block mapping and broader native comparisons remain incomplete.
 This transport carries physical properties independently.
-The full stack passes 426 core tests, 526 add-on tests, and 16 converter tests.
+The full stack passes 428 core tests, 526 add-on tests, and 16 converter tests.
 Core has one optional fixture skip, and the add-on has 109 optional fixture skips.
 All suites have zero failures and errors, and core Checkstyle passes.
 
@@ -55,6 +55,7 @@ Reload preserves the descriptors, and disconnect clears them.
 
 Native local-world comparison confirms the tested conditions and neighbor-removal behavior.
 Broader native rendering parity remains incomplete.
-Two transparent neighbor permutations leave dark faces on Java that the native comparison does not show.
+Core now omits faces whose cutout or blended material has no visible pixels.
+Direct and ViaProxy comparisons remove the earlier transparent-neighbor artifacts while preserving voxel participation.
 Native vanilla partial-block slices and alternative terrain renderers remain incomplete.
 These results do not establish full voxel-culling parity.

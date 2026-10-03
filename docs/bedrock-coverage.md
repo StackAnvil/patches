@@ -153,7 +153,7 @@ The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and
 | R2 | Server particle dispatch | Incomplete | Retain actor identity and Molang variables, then route effects into native playback through both connection routes. |
 | R3 | Particle runtime | Incomplete | Complete components, actor contexts, child effects, concurrency, and visible lifecycle comparisons. |
 | R4 | Server audio | Incomplete | Retain handles, loops, playback position, and range behavior. Complete supported controls, captions, and audible comparisons. |
-| R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties through ViaProxy. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Complete rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, and directional light occlusion. |
+| R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties through ViaProxy. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, and directional light occlusion. |
 | R6 | Equipped attachables | Incomplete | Transport graphs through ViaProxy. Complete variants, explicit bindings, per-bone materials, and material families. |
 
 The attachable matrix tests establish supported same-name affine bindings.
@@ -196,7 +196,7 @@ The goal remains active while any required row is incomplete or unverified.
 ## Latest validation
 
 The complete stack build passes after replaying the block transport, voxel registry, and custom culling changes into their owning patches.
-The core suite reports 426 tests with one optional fixture skip.
+The core suite reports 428 tests with one optional fixture skip.
 The add-on suite reports 526 tests with 109 optional fixture skips.
 The converter suite reports 16 tests without skips.
 All three suites have zero failures and errors.
@@ -223,6 +223,10 @@ Neighbor removal restores all four cubes through flat and ambient-occlusion terr
 ViaProxy reload preserves culling descriptors, and disconnect clears them.
 Native local-world comparison confirms these conditions and neighbor-removal behavior.
 Broader native visual parity remains incomplete.
-Two transparent neighbor permutations leave dark faces on Java that the native comparison does not show.
+Core now omits faces whose cutout or blended material has no visible pixels.
+Direct and ViaProxy comparisons remove the earlier transparent-neighbor artifacts while preserving voxel participation.
+The same core fix omits invisible geometry with the add-on disabled.
+That ordinary-Java comparison still shows holes in neighboring terrain from carrier-state occlusion.
+The add-on path does not show those holes.
 Numerical tests also preserve holes while compacting dense voxel slices.
 These results do not complete G3.

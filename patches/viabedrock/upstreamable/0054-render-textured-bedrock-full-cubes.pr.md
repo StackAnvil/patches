@@ -73,7 +73,7 @@ Core now compiles authored culling rules and transformed face slices.
 Native vanilla partial-block mapping and broader rendering parity remain incomplete.
 
 The final full stack builds successfully.
-Core reports 426 tests with one optional fixture skip.
+Core reports 428 tests with one optional fixture skip.
 The add-on reports 526 tests with 109 optional fixture skips.
 The converter reports 16 tests without skips.
 All suites have zero failures and errors, and core Checkstyle passes.
@@ -103,7 +103,10 @@ These client results require the add-on.
 Ordinary Java clients retain the generated geometry, but cannot evaluate the native conditional rules.
 Native local-world comparison confirms the tested conditions and neighbor-removal behavior.
 Broader native visual parity remains incomplete.
-Two transparent neighbor permutations leave dark faces on Java that the native comparison does not show.
+The earlier Java comparison exposed dark faces on two fully transparent neighbor permutations.
+Core now omits faces whose material has no visible pixels after alpha conversion.
+Authored culling participation and physical properties remain intact.
+Direct and ViaProxy comparisons remove those artifacts while retaining the native conditional result.
 Vanilla partial-block slices, runtime registry replacement, and alternative terrain renderers remain incomplete.
 
 Target-native content diagnostics reject an explicitly authored `default` condition.
@@ -115,3 +118,20 @@ Its implicit opaque-neighbor rules remain separate from authored voxel participa
 Native comparisons retain the yellow voxel fixture beside that transparent built-in cube.
 An authored custom neighbor with a default opposite rule hides it.
 Both sides need default participation before the client compares their slices.
+
+## Invisible materials
+
+Java 26.3 computes terrain transparency from each sprite and face UV range.
+A zero-area range reports opaque even when the whole sprite is transparent.
+The private target fixture exposed this behavior after geometry conversion clamped some UVs to the texture boundary.
+
+Core omits fully invisible cutout and blended materials after compiling culling participation.
+Opaque materials remain visible because their alpha conversion discards source transparency.
+Mixed elements and copied back faces resolve their actual sprite before omission.
+Unknown vanilla images remain conservative.
+Tests preserve collision, selection, default voxel participation, partial alpha, and visible faces.
+Direct and ViaProxy add-on comparisons match the tested native visibility without the earlier dark faces.
+A ViaProxy client with the add-on disabled also omits the invisible neighbor geometry.
+Its carrier states still occlude adjacent terrain and leave visible holes.
+The add-on path corrects those physical occlusion properties.
+This does not establish ordinary-Java physical parity, general UV sampling, or material parity.
