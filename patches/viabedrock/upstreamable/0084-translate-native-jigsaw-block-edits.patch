@@ -1,0 +1,198 @@
+From 014b4d24217d6f56fcdec33f134ced8776fa14ca Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 23:19:14 +0200
+Subject: [PATCH] feat(jigsaw): translate native block settings and edit
+ requests
+
+Preserve both signed priority fields in Java block entity data and translate Java 26.3 jigsaw settings into a complete Bedrock BlockActorData compound. Copy the server snapshot so pending edits do not mutate authoritative state, retain unknown fields, and reject targets that are no longer jigsaw blocks.
+
+Bedrock 1.26.51.1 build 51061372 exposes both priorities and the aligned/rollable joint in its native editor. Reopening preserves negative selection and positive placement priorities. A protocol 2193 server persists a complete BlockActorData request with custom names, replacement state, joint, and both priorities. Jigsaw worldgen rules and structure generation remain separate work.
+---
+ .../viabedrock/protocol/BedrockProtocol.java  |  1 +
+ .../protocol/packet/JigsawPackets.java        | 71 +++++++++++++++++++
+ .../JigsawBlockEntityRewriter.java            |  3 +
+ .../protocol/packet/JigsawPacketsTest.java    | 60 ++++++++++++++++
+ 4 files changed, 135 insertions(+)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/JigsawPackets.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/JigsawPacketsTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+index 087b9056c..3c9f58c44 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+@@ -107,6 +107,7 @@ public class BedrockProtocol
+         InputPermissionPackets.register(this);
+         OtherPlayerPackets.register(this);
+         WorldPackets.register(this);
++        JigsawPackets.register(this);
+         VoxelShapePackets.register(this);
+         MapPackets.register(this);
+         EntityPackets.register(this);
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JigsawPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JigsawPackets.java
+new file mode 100644
+index 000000000..9392a3614
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JigsawPackets.java
+@@ -0,0 +1,71 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
++import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
++import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
++import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++public final class JigsawPackets {
++
++    public static void register(final BedrockProtocol protocol) {
++        protocol.registerServerbound(ServerboundPackets26_3.SET_JIGSAW_BLOCK, ServerboundBedrockPackets.BLOCK_ENTITY_DATA, wrapper -> {
++            final BlockPosition position = wrapper.read(Types.BLOCK_POSITION1_14);
++            final String name = wrapper.read(Types.STRING);
++            final String target = wrapper.read(Types.STRING);
++            final String pool = wrapper.read(Types.STRING);
++            final String finalState = wrapper.read(Types.STRING);
++            final String joint = wrapper.read(Types.STRING);
++            final int selectionPriority = wrapper.read(Types.VAR_INT);
++            final int placementPriority = wrapper.read(Types.VAR_INT);
++
++            final ChunkTracker chunks = wrapper.user().get(ChunkTracker.class);
++            final BedrockBlockEntity blockEntity = chunks.getBlockEntity(position);
++            final String blockTag = wrapper.user().get(BlockStateRewriter.class).tag(chunks.getBlockState(position));
++            if (!CustomBlockTags.JIGSAW.equals(blockTag) || blockEntity == null
++                    || !"JigsawBlock".equals(blockEntity.tag().getString("id"))
++                    || !("aligned".equals(joint) || "rollable".equals(joint))) {
++                wrapper.cancel();
++                return;
++            }
++
++            writeUpdate(wrapper, position, blockEntity.tag(), name, target, pool, finalState,
++                    joint, selectionPriority, placementPriority);
++        });
++    }
++
++    static void writeUpdate(final PacketWrapper wrapper, final BlockPosition position, final CompoundTag original,
++                            final String name, final String target, final String pool, final String finalState,
++                            final String joint, final int selectionPriority, final int placementPriority) {
++        // Send a complete compound without changing the authoritative snapshot before the server accepts it.
++        final CompoundTag updated = original.copy();
++        updated.putInt("x", position.x());
++        updated.putInt("y", position.y());
++        updated.putInt("z", position.z());
++        updated.putString("name", name);
++        updated.putString("target", target);
++        updated.putString("target_pool", pool);
++        updated.putString("final_state", finalState);
++        updated.putString("joint", joint);
++        updated.putInt("selection_priority", selectionPriority);
++        updated.putInt("placement_priority", placementPriority);
++        wrapper.write(BedrockTypes.BLOCK_POSITION, position);
++        wrapper.write(BedrockTypes.NETWORK_TAG, updated);
++    }
++
++    private JigsawPackets() {
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/JigsawBlockEntityRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/JigsawBlockEntityRewriter.java
+index 25a7bdac0..310a7e24e 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/JigsawBlockEntityRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/blockentity/JigsawBlockEntityRewriter.java
+@@ -18,6 +18,7 @@
+ package net.raphimc.viabedrock.protocol.rewriter.blockentity;
+ 
+ import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.IntTag;
+ import com.viaversion.nbt.tag.StringTag;
+ import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.minecraft.blockentity.BlockEntity;
+@@ -37,6 +38,8 @@ public class JigsawBlockEntityRewriter implements BlockEntityRewriter.Rewriter {
+         this.copy(bedrockTag, javaTag, "target_pool", "pool", StringTag.class);
+         this.copy(bedrockTag, javaTag, "final_state", StringTag.class);
+         this.copy(bedrockTag, javaTag, "joint", StringTag.class);
++        this.copy(bedrockTag, javaTag, "selection_priority", IntTag.class);
++        this.copy(bedrockTag, javaTag, "placement_priority", IntTag.class);
+ 
+         return new BlockEntityImpl(bedrockBlockEntity.packedXZ(), bedrockBlockEntity.y(), -1, javaTag);
+     }
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/JigsawPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/JigsawPacketsTest.java
+new file mode 100644
+index 000000000..bcceb1baf
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/JigsawPacketsTest.java
+@@ -0,0 +1,60 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class JigsawPacketsTest {
++
++    @Test
++    void preservesAuthoritativeDataWhileEncodingSignedPrioritiesAndPosition() throws Exception {
++        final CompoundTag original = new CompoundTag();
++        original.putString("id", "JigsawBlock");
++        original.putInt("BlockEntityVersion", 3);
++        original.putInt("selection_priority", -7);
++        original.putInt("placement_priority", 13);
++        final CompoundTag extension = new CompoundTag();
++        extension.putLong("revision", Long.MAX_VALUE);
++        original.put("extension", extension);
++        final CompoundTag snapshot = original.copy();
++        final BlockPosition position = new BlockPosition(-87, 120, 34);
++        final PacketWrapper wrapper = new PacketWrapperImpl(ServerboundBedrockPackets.BLOCK_ENTITY_DATA, null, null);
++        JigsawPackets.writeUpdate(wrapper, position, original, "minecraft:empty", "minecraft:empty",
++                "minecraft:empty", "minecraft:air", "rollable", Integer.MIN_VALUE, Integer.MAX_VALUE);
++
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            wrapper.writeToBuffer(buffer);
++            assertEquals(ServerboundBedrockPackets.BLOCK_ENTITY_DATA.getId(), Types.VAR_INT.read(buffer));
++            assertEquals(position, BedrockTypes.BLOCK_POSITION.read(buffer));
++            final CompoundTag decoded = (CompoundTag) BedrockTypes.NETWORK_TAG.read(buffer);
++            assertEquals(position.x(), decoded.getInt("x"));
++            assertEquals(position.y(), decoded.getInt("y"));
++            assertEquals(position.z(), decoded.getInt("z"));
++            assertEquals(Integer.MIN_VALUE, decoded.getInt("selection_priority"));
++            assertEquals(Integer.MAX_VALUE, decoded.getInt("placement_priority"));
++            assertEquals(original.get("id"), decoded.get("id"));
++            assertEquals(original.get("BlockEntityVersion"), decoded.get("BlockEntityVersion"));
++            assertEquals(extension, decoded.get("extension"));
++            assertEquals(snapshot, original);
++            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
++        }
++    }
++
++}
+-- 
+2.55.0
+
+

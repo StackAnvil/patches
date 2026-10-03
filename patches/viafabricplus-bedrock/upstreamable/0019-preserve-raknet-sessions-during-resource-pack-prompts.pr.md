@@ -37,3 +37,11 @@ Pausing the private server produces a disconnect after 30 seconds.
 The rebuilt ViaProxy route retains Java's TCP timeout handler and opens the native cartography screen.
 Pausing its Bedrock backend closes the connection after 30 seconds.
 Other transports and platforms remain unverified.
+
+## Reported joining failure
+
+A subsequent 0.3.0 report shows `ReadTimeoutException` and an interrupted `ProcessImpl.waitFor` during built-in image acquisition.
+That release does not contain this timeout patch.
+Disconnect cancels the resource-pack task, which can interrupt its package helper.
+The report is consistent with the tested timeout failure; its exact platform and acquisition state remain unverified.
+[StackAnvil 0.3.1](https://github.com/StackAnvil/patches/releases/tag/stack-v0.3.1) includes both timeout and transport-disconnect fixes.

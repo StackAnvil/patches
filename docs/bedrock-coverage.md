@@ -74,10 +74,17 @@ The [source guide](bedrock-development-sources.md) defines the version and enum 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
 | I1 | Cartography creation, extension, cloning, locking, locator conversion, and naming | Incomplete | Core implements recipes, crafting, locking, naming, state transport, and metadata refresh. The add-on renders inline naming and previews through ViaProxy. Verify remaining operations and direct connections. |
-| I2 | Structure and jigsaw editors | Incomplete | Implement screens, requests, structure responses, and jigsaw data. |
+| I2 | Structure and jigsaw editors | Incomplete | Jigsaw settings and edit requests work in core on tested direct and ViaProxy routes. Complete normal opening, permission/rejection flows, structure responses, generation, and jigsaw data. |
 | I3 | Stonecutter recipe updates | Incomplete | Handle server recipe selection and complete result and close behavior. |
 | I4 | Trading and loom | Implemented | Preserve their tested request and response paths. Complete remaining native and inventory edge comparisons. |
 | I5 | Every container operation | Incomplete | Audit bulk transfer, acknowledgments, rejection recovery, closing, reconciliation, and legacy inventory paths. |
+
+The [jigsaw edit patch](../patches/viabedrock/upstreamable/0084-translate-native-jigsaw-block-edits.pr.md) preserves both signed priorities and translates complete block-entity updates in core.
+The native editor retains priorities `-7` and `13` after reopening.
+A direct Java edit persists `-19` and `31` across a ViaProxy reconnect.
+A ViaProxy edit persists `-23` and `37` in the dedicated server's saved block entity.
+The probe opens the standard Java screen directly; normal interaction, container opening, and rejection flows remain unverified.
+Jigsaw data and generation remain incomplete.
 
 Native protocol 2193 captures establish cartography input slots 12 and 13, result slot 50, and `CraftRecipeOptional` requests.
 Cloning produces two maps and consumes one item from each input.
@@ -243,8 +250,8 @@ The goal remains active while any required row is incomplete or unverified.
 
 The complete stack build passes with the input permissions and HUD visibility changes.
 The effect-icon correction also passes the complete core suite and applies independently to the pinned upstream base.
-The core suite reports 441 tests with one optional fixture skip.
-The add-on suite reports 529 tests with 109 optional fixture skips.
+The core suite reports 445 tests with one optional fixture skip.
+The add-on suite reports 530 tests with 109 optional fixture skips.
 The converter suite reports 16 tests without skips.
 All three suites have zero failures and errors.
 Core Checkstyle passes.
@@ -292,3 +299,8 @@ The core now retains that refresh while dispatching unrelated ready columns.
 The pinned upstream scheduler also contains the faulty removal order.
 The reported chunk-loading slowdown remains unverified until its server and timing can be compared.
 Existing Hive captures and BDS measurements do not establish broader server compatibility or loading performance.
+
+A 0.3.0 joining report shows a Java read timeout and an interrupted package helper during built-in image acquisition.
+That release lacks the direct-session timeout fix.
+The error sequence is consistent with the tested connection timeout; the affected user's exact environment remains unverified.
+[Release 0.3.1](https://github.com/StackAnvil/patches/releases/tag/stack-v0.3.1) includes the timeout and transport-disconnect fixes.
