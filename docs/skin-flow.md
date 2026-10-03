@@ -232,7 +232,7 @@ Sources: [Persona render controllers](https://github.com/Mojang/bedrock-samples/
 
 ## Built-in persona assets
 
-The add-on bundles an Xodus-based package helper. First use opens Microsoft Store sign-in when no Store session exists. Sign in with the selected Bedrock account. The helper checks the Xbox user ID before requesting the package license.
+The add-on bundles an Xodus-based package helper. Available caches and Store credentials load first. Missing credentials show an in-game prompt with **Sign in** and **Continue without it**. The Store setting defaults to **Ask** and remembers the decision for this game session. The helper checks the Xbox user ID before requesting the package license. Unavailable optional images do not reject server resource-pack loading.
 
 Flatpak launches the bundled helper through `flatpak-spawn --host`. The launcher must permit access to `org.freedesktop.Flatpak`, and the host must provide WebKitGTK. The helper keeps the client display and exits with its launcher. A private Prism comparison exposed missing WebKitGTK inside the sandbox. Denied host access now produces a startup error instead of a broken pipe. This path uses the bundled helper and its own Store session. It does not read an installed Bedrock game.
 
@@ -250,7 +250,7 @@ A live Flatpak client acquired the package through the permitted host bridge, us
 
 The rebuilt client prepares this recipe with `geometry.persona.body` and `geometry.persona.face`. Its body uses local assets instead of the GLTF fallback. After accounting for atlas padding, all 16,384 body texels match the previous service model texture. The local preview renders the body and animated face. The appearance store accepts native six-digit RGB and eight-digit ARGB recipe colors. It preserves those values in saved models and `SkinData`. These checks cover this recipe. Matching camera, pose, lighting, animation phase, and native wire formatting still need verification.
 
-A live Java test used the bundled helper to obtain the official license and acquire the expanded libraries. It unpacked the archives and reused the versioned cache. Earlier fixture tests sample all four emotes and decode face masks. No downloaded content or credentials enter the repository. Fresh interactive Store sign-in and the Windows and macOS helper builds still need runtime verification.
+A live Java test used the bundled helper to obtain the official license and acquire the expanded libraries. It unpacked the archives and reused the versioned cache. Earlier fixture tests sample all four emotes and decode face masks. No downloaded content or credentials enter the repository. Fresh interactive Store sign-in needs runtime verification on Linux, macOS, and Windows 11. The official Minecraft Launcher with Fabric also needs a comparison.
 
 The matching base library contains 4,761 FSB5 sound banks: 4,691 use FADPCM, and 70 use PCM16. Its particle archive contains 114 compiled MCB definitions and one text definition. Cache storage preserves these bytes. The asset loader decodes sound banks and particle definitions on demand. Animation effect dispatch remains incomplete.
 
@@ -264,7 +264,7 @@ Sound files resolve within each pack before falling back to lower packs. This le
 
 Particle decoding supports MCB formats 1.26.10 and 1.26.30 and text JSON. Java declarations describe their 70 reachable binary layouts. The reader preserves optional fields, tagged values, component identities, and source order. It rejects unsupported versions, malformed data, and excessive complexity. Private comparisons match 115 base definitions and 108 overlay definitions against the [reference decoder](https://github.com/LPaicen/brarchive-extractor/blob/503a8ce7ad94030241a3590c926ac36f72169c71/src/mcb-decoder.ts). Production decoding needs neither exported schemas nor an external decoder. The package helper now acquires the overlays. Particle playback has partial component coverage.
 
-Local add-on builds require Rust 1.98.1, Protobuf, and the platform's WebView build libraries. Linux sign-in requires WebKitGTK 4.1. Release and full-stack CI assemble helper resources for Linux x64, Windows x64, and both macOS architectures. Native installations serve only as private research fixtures.
+Local add-on builds require Rust 1.98.1, Protobuf, and the platform's WebView build libraries. Linux sign-in requires WebKitGTK 4.1. Fresh device enrollment no longer invokes `pkexec` for unavailable hardware. Release and full-stack CI assemble helper resources for Linux x64, Windows x64, and both macOS architectures. Native installations serve only as private research fixtures.
 
 Sources: [Xodus package extraction](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/commands/streaming.rs), [Xodus licensing](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/license.rs), and [BR archive format](https://github.com/bedrock-crustaceans/brarchive/blob/main/FORMAT.md).
 

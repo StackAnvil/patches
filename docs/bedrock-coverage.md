@@ -74,7 +74,7 @@ The [source guide](bedrock-development-sources.md) defines the version and enum 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
 | I1 | Cartography creation, extension, cloning, locking, locator conversion, and naming | Incomplete | Core implements recipes, crafting, locking, naming, state transport, and metadata refresh. The add-on renders inline naming and previews through ViaProxy. Verify remaining operations and direct connections. |
-| I2 | Structure and jigsaw editors | Incomplete | Jigsaw settings and edit requests work in core on tested direct and ViaProxy routes. Complete normal opening, permission/rejection flows, structure responses, generation, and jigsaw data. |
+| I2 | Structure and jigsaw editors | Incomplete | Jigsaw settings and edit requests work in core on tested direct and ViaProxy routes. Normal right-click opening works with server operator permission through both routes. Complete native container lifecycle, rejection flows, structure responses, generation, and jigsaw data. |
 | I3 | Stonecutter recipe updates | Incomplete | Handle server recipe selection and complete result and close behavior. |
 | I4 | Trading and loom | Implemented | Preserve their tested request and response paths. Complete remaining native and inventory edge comparisons. |
 | I5 | Every container operation | Incomplete | Audit bulk transfer, acknowledgments, rejection recovery, closing, reconciliation, and legacy inventory paths. |
@@ -235,7 +235,7 @@ Its verification section preserves the original skin and persona scope.
 | --- | --- | --- | --- |
 | A1 | Licensed acquisition, decryption, extraction, archives, and versioned caching | Implemented | Preserve successful Linux acquisition without a local installation. Complete unavailable account assets and remaining platform checks. |
 | A2 | No production dependency on a local Bedrock installation | Unverified | Audit every asset path and integration, including defaults and fallback behavior. |
-| A3 | Supported operating systems and connection routes | Unverified | Verify helper runtime, login, assets, rendering, and account flows on Windows and macOS. |
+| A3 | Supported operating systems and connection routes | Unverified | Microsoft Store login must work on Linux, macOS, and Windows 11. Verify fresh authentication and the official Minecraft Launcher with Fabric, plus assets, rendering, and account flows. |
 
 Credentials, licenses, keys, native assets, raw captures, and screenshots remain outside Git.
 
@@ -288,11 +288,19 @@ These results do not complete G3.
 ## Reported regressions under investigation
 
 Skin browsing previously allowed the official-package helper to open Microsoft Store authentication automatically.
-The helper now defaults to its headless build, and **Allow Microsoft Store sign-in windows** explicitly enables interactive login.
-Missing Store credentials return before package inspection or device enrollment.
-Existing licensed caches and Store credentials remain usable.
-The reported missing passkey dialog still needs the affected OS and launcher for reproduction.
-This change prevents unsolicited windows; it does not establish support for that passkey flow.
+Microsoft Store sign-in now defaults to **Ask**, with an in-game choice before interactive login.
+Existing caches and Store credentials load first.
+Declining, Escape, and unavailable optional downloads no longer reject the server resource-pack stack.
+Private Linux probes verify refusal, Escape, and a simulated cancelled login through pack preparation and playable spawn.
+These probes inject missing credentials, so fresh authentication and the reported passkey failure remain unverified.
+
+Fresh Linux device enrollment also waited for Xodus's `pkexec` hardware probe before showing the login window.
+The helper now reports unavailable hardware without elevation and starts sign-in before full package index inspection.
+A fresh private Linux state enrolls the device and reaches Microsoft's sign-in page without elevation.
+This verifies startup through the login page, not completed authentication or passkey support.
+Closing the login window without tokens now stops before package index inspection.
+Linux, macOS, Windows 11, and the official launcher with Fabric remain required runtime comparisons.
+Existing Bedrock MSA token reuse and a default-browser Store flow require protocol research.
 
 A lighting queue regression reproduces a dropped refresh when a server replaces a column during an older lighting job.
 The core now retains that refresh while dispatching unrelated ready columns.
@@ -304,3 +312,16 @@ A 0.3.0 joining report shows a Java read timeout and an interrupted package help
 That release lacks the direct-session timeout fix.
 The error sequence is consistent with the tested connection timeout; the affected user's exact environment remains unverified.
 [Release 0.3.1](https://github.com/StackAnvil/patches/releases/tag/stack-v0.3.1) includes the timeout and transport-disconnect fixes.
+
+A separate 0.3.1 report shows `StoreSignInRequiredException` disconnecting the client during optional built-in image loading.
+The provider fallback and Ask consent fix address this path on main after that release.
+
+A custom-block report fails in the pack-cache fingerprint with `Invalid custom block box`.
+The matching server accepts enabled collision and selection boxes with a zero extent on each axis.
+Core now omits these empty shapes while preserving rendered geometry, and metadata canonicalizes them without rejecting conversion.
+The exact reported server values and its complete conversion remain unverified.
+
+The new CubeCraft screenshots show pig placeholders and paper items after resource-pack acceptance.
+This rendering report needs a matching scene capture and a check of delivered pack definitions, models, textures, and actor bindings.
+The Dressing Room report also fails to show an existing native skin selection.
+Both reports remain open. ExploitPreventer compatibility is outside this investigation at the user's request.

@@ -1341,30 +1341,43 @@ A rebuilt Java 26.3 client through ViaProxy passes all 440 ordinary FOV cases th
 
 The full add-on suite reports 516 tests, no failures or errors, and 104 optional skips. The projection, walking-bob, and camera-spring tests pass with their private fixtures enabled. The add-on, both dependency builds, client bundle, and north-star PR check pass.
 
-## Microsoft Store sign-in windows
+## Microsoft Store sign-in consent
 
-Built-in model and animation loads can run while browsing classic packs or previewing a character.
-The package helper previously opened interactive Microsoft Store sign-in automatically when its Store credentials were missing.
-That separate sign-in path can present Microsoft's passkey page inside the embedded webview.
-The reported missing passkey dialog itself remains unverified without the affected platform and launcher.
+Built-in model, animation, and image loads first reuse available caches and Store credentials.
+The **Microsoft Store sign-in** setting defaults to **Ask**.
+Missing credentials show Minecraft's standard confirmation screen before the helper opens a login window.
+**Sign in** permits interactive login. **Continue without it**, Escape, and screen removal decline it.
+The decision applies to that account for the game session, and concurrent requests share the same prompt.
+**Allow** and **Never** remain explicit settings.
 
-Use the bundled headless helper by default.
-It contains no interactive login module and returns a structured sign-in requirement instead of opening a window.
-Preserve existing Store credentials, licensed asset caches, and normal Microsoft Bedrock device-code login.
-The persisted Bedrock setting **Allow Microsoft Store sign-in windows** explicitly permits the interactive helper.
-It defaults to disabled.
-The Java process bridge retains the sign-in-required receipt and explains how to enable this setting.
-Diagnostics and credentials remain private.
+The resource-image provider returns no licensed layers after missing credentials, declined consent, cancelled login, or optional download errors.
+Normal mappings and server packs remain available, so these errors do not reject resource-pack preparation.
+The provider retains errors outside optional acquisition, including interruption.
+The reported 0.3.1 exception reached this provider and disconnected the client.
 
-A subprocess regression verifies that the bridge drains diagnostics, recognizes the structured sign-in requirement, and terminates the helper.
-A headless Rust regression proves missing Store credentials stop before package inspection or device enrollment.
-The headless suite reports five passed tests and two ignored network/acquisition tests.
-The complete stack build includes both headless and interactive helpers.
-The headless helper's existing compile configuration excludes the embedded login window code.
-Enabling the setting does not establish passkey support on the reported platform.
+Private Linux client probes inject a missing-credentials response at the acquisition boundary.
+The production consent screen appears at the default window size.
+Declining, Escape, and a simulated cancelled interactive download all permit pack preparation and a playable dedicated-server connection.
+These probes verify the client and provider integration. They do not establish fresh Microsoft authentication.
+Automated tests cover silent reuse, shared consent, remembered refusal, accepted consent, explicit settings, and unavailable optional images.
 
-The rebuilt headless executable returns `interactive_sign_in_required` against an empty private Store state without opening a window.
-The final complete build reports 880 tests passed and 110 skipped, with no failures or errors.
+Fresh Linux enrollment exposed Xodus's `pkexec` hardware probe before the login window appeared.
+The helper now reports unavailable hardware with the same enrollment components instead of requesting elevation.
+It retains an independent device identity and propagates enrollment errors.
+Sign-in starts after the package header check, before full index inspection.
+A fresh private Linux state enrolls the device and reaches Microsoft's sign-in page without elevation.
+This verifies startup through the login page, not completed authentication or passkey support.
+Closing the login window without issued tokens now stops acquisition before index inspection.
+A private Linux window-close test returns a failed receipt immediately.
+The Java helper bridge still bounds acquisition and terminates subprocesses on cancellation.
 
-Platform research also finds a [WebKitGTK WebAuthn tracking issue](https://bugs.webkit.org/show_bug.cgi?id=205350) and a [WebView2 missing-prompt report](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5663).
-These are investigation leads, not evidence identifying the affected user's platform or cause.
+Fresh interactive Store sign-in remains a required check on Linux, macOS, and Windows 11.
+The official Minecraft Launcher with Fabric also needs a runtime comparison.
+All four platform helpers compile in release CI, but these builds do not verify interactive authentication or passkeys.
+[WebKitGTK WebAuthn tracking](https://bugs.webkit.org/show_bug.cgi?id=205350) and a
+[WebView2 missing-prompt report](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5663) remain investigation leads.
+Existing Bedrock MSA token reuse and a default-browser Store flow still need protocol research.
+
+The replayed stack reports 448 core tests, 535 add-on tests, and 16 converter tests, with no failures or errors.
+There are 110 optional skips. Full core Checkstyle passes.
+Interactive Rust tests pass five cases with two optional skips; headless tests pass six with two optional skips.
