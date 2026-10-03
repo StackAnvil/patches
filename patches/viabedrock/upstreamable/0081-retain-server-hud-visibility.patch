@@ -1,0 +1,421 @@
+From 5d114dd6991d155b98d98df4110b34245f4cc8b2 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 21:05:45 +0200
+Subject: [PATCH] feat(hud): retain server visibility restrictions
+
+Decode SetHud packet 308 into per-element restrictions for Bedrock 1.26.51 protocol 2193. Target BDS captures establish the unsigned array length, signed enum varints, all thirteen element IDs, and hide/reset values.
+
+Retain independent updates and transport a versioned snapshot after Java joins and late channel registration. Reset removes server restrictions without changing the player's local visibility settings. Preserve unknown element IDs across updates and transport. Bound malformed arrays before allocation.
+
+Java has no standard packet for individual HUD visibility. Core owns decoding, state, and ViaProxy transport; registered clients apply the restrictions during HUD rendering. Ordinary Java clients retain the authoritative state without receiving unsupported custom payloads.
+---
+ .../api/model/HudVisibilityState.java         | 72 +++++++++++++++
+ .../viabedrock/protocol/BedrockProtocol.java  |  2 +
+ .../protocol/model/HudVisibilityUpdate.java   | 48 ++++++++++
+ .../protocol/packet/HudVisibilityPackets.java | 40 +++++++++
+ .../protocol/packet/JoinPackets.java          |  2 +
+ .../protocol/packet/MultiStatePackets.java    |  2 +
+ .../protocol/packet/UnhandledPackets.java     |  1 -
+ .../storage/HudVisibilityStorage.java         | 49 +++++++++++
+ .../api/model/HudVisibilityStateTest.java     | 88 +++++++++++++++++++
+ 9 files changed, 303 insertions(+), 1 deletion(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/HudVisibilityState.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/HudVisibilityUpdate.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/HudVisibilityPackets.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/HudVisibilityStorage.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/HudVisibilityStateTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/HudVisibilityState.java b/src/main/java/net/raphimc/viabedrock/api/model/HudVisibilityState.java
+new file mode 100644
+index 000000000..e250dabe1
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/HudVisibilityState.java
+@@ -0,0 +1,72 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.HudElement;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.HudVisibility;
++
++import java.util.HashSet;
++import java.util.Set;
++
++/** Server restrictions supplement the player's HUD settings. Reset removes only those restrictions. */
++public record HudVisibilityState(Set<Integer> hiddenElements) {
++
++    public static final String CHANNEL = "viabedrock:hud_visibility";
++    public static final HudVisibilityState DEFAULT = new HudVisibilityState(Set.of());
++    public static final Type<HudVisibilityState> TYPE = new Type<>(HudVisibilityState.class) {
++        @Override
++        public HudVisibilityState read(final ByteBuf buffer) {
++            if (Types.VAR_INT.readPrimitive(buffer) != 1
++                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IllegalArgumentException("Unsupported HUD visibility snapshot");
++            }
++            final int count = Types.VAR_INT.readPrimitive(buffer);
++            if (count < 0 || count > 4096) {
++                throw new IllegalArgumentException("Invalid HUD element count");
++            }
++            final Set<Integer> hidden = new HashSet<>();
++            for (int i = 0; i < count; i++) {
++                hidden.add(Types.VAR_INT.readPrimitive(buffer));
++            }
++            return new HudVisibilityState(hidden);
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final HudVisibilityState value) {
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            Types.VAR_INT.writePrimitive(buffer, value.hiddenElements.size());
++            value.hiddenElements.stream().sorted().forEach(element -> Types.VAR_INT.writePrimitive(buffer, element));
++        }
++    };
++
++    public HudVisibilityState {
++        hiddenElements = Set.copyOf(hiddenElements);
++        if (hiddenElements.size() > 4096) {
++            throw new IllegalArgumentException("Invalid HUD element count");
++        }
++    }
++
++    public boolean hides(final HudElement element) {
++        return this.hiddenElements.contains(element.getValue());
++    }
++
++    public HudVisibilityState update(final int[] elements, final HudVisibility visibility) {
++        final Set<Integer> hidden = new HashSet<>(this.hiddenElements);
++        for (final int element : elements) {
++            switch (visibility) {
++                case Hide -> hidden.add(element);
++                case Reset -> hidden.remove(element);
++            }
++        }
++        return new HudVisibilityState(hidden);
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+index 3a62d26ed..087b9056c 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+@@ -111,6 +111,7 @@ public class BedrockProtocol
+         MapPackets.register(this);
+         EntityPackets.register(this);
+         HudPackets.register(this);
++        HudVisibilityPackets.register(this);
+         InventoryPackets.register(this);
+         NpcDialoguePackets.register(this);
+         WorldEffectPackets.register(this);
+@@ -165,6 +166,7 @@ public class BedrockProtocol
+         user.put(new PacketSyncStorage(user));
+         user.put(new ChannelStorage());
+         user.put(new PlayerInputStorage(user));
++        user.put(new HudVisibilityStorage(user));
+         user.put(new PlayerListStorage());
+         user.put(new PlayerWaypointTracker(user));
+         user.put(new ScoreboardTracker());
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/HudVisibilityUpdate.java b/src/main/java/net/raphimc/viabedrock/protocol/model/HudVisibilityUpdate.java
+new file mode 100644
+index 000000000..0080e1867
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/HudVisibilityUpdate.java
+@@ -0,0 +1,48 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++import java.util.ArrayList;
++import java.util.List;
++
++public record HudVisibilityUpdate(List<Integer> elements, int visibility) {
++
++    public static final Type<HudVisibilityUpdate> TYPE = new Type<>(HudVisibilityUpdate.class) {
++        @Override
++        public HudVisibilityUpdate read(final ByteBuf buffer) {
++            final int count = BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(buffer);
++            if (count < 0 || count > 4096) {
++                throw new IllegalArgumentException("Invalid HUD element count");
++            }
++            final List<Integer> elements = new ArrayList<>(count);
++            for (int i = 0; i < count; i++) {
++                elements.add(BedrockTypes.VAR_INT.readPrimitive(buffer));
++            }
++            return new HudVisibilityUpdate(elements, BedrockTypes.VAR_INT.readPrimitive(buffer));
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final HudVisibilityUpdate value) {
++            BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(buffer, value.elements.size());
++            for (final int element : value.elements) {
++                BedrockTypes.VAR_INT.writePrimitive(buffer, element);
++            }
++            BedrockTypes.VAR_INT.writePrimitive(buffer, value.visibility);
++        }
++    };
++
++    public HudVisibilityUpdate {
++        elements = List.copyOf(elements);
++        if (elements.size() > 4096) {
++            throw new IllegalArgumentException("Invalid HUD element count");
++        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudVisibilityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudVisibilityPackets.java
+new file mode 100644
+index 000000000..c4caba141
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudVisibilityPackets.java
+@@ -0,0 +1,40 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.type.Types;
++import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.HudVisibility;
++import net.raphimc.viabedrock.protocol.model.HudVisibilityUpdate;
++import net.raphimc.viabedrock.protocol.storage.HudVisibilityStorage;
++
++public final class HudVisibilityPackets {
++
++    public static void register(final BedrockProtocol protocol) {
++        protocol.registerClientbound(ClientboundBedrockPackets.SET_HUD, null, wrapper -> {
++            wrapper.cancel();
++            final HudVisibilityUpdate update = wrapper.read(HudVisibilityUpdate.TYPE);
++            final int rawVisibility = update.visibility();
++            final HudVisibility visibility = HudVisibility.getByValue(rawVisibility);
++            if (wrapper.read(Types.REMAINING_BYTES).length != 0) {
++                throw new IllegalArgumentException("Unexpected HUD visibility fields");
++            }
++            if (visibility == null) {
++                ViaBedrock.getPlatform().getLogger().warning("Unknown HUD visibility: " + rawVisibility);
++                return;
++            }
++            final HudVisibilityStorage storage = wrapper.user().get(HudVisibilityStorage.class);
++            storage.update(update.elements().stream().mapToInt(Integer::intValue).toArray(), visibility);
++            storage.sendSnapshot();
++        });
++    }
++
++    private HudVisibilityPackets() {
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+index 9584aebe6..b9cd2a5df 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+@@ -586,6 +586,8 @@ public final class JoinPackets {
+         joinGame.send(BedrockProtocol.class);
+         user.get(PlayerInputStorage.class).markJoined();
+         user.get(PlayerInputStorage.class).sendSnapshot();
++        user.get(HudVisibilityStorage.class).markJoined();
++        user.get(HudVisibilityStorage.class).sendSnapshot();
+ 
+         clientPlayer.createTeam();
+         clientPlayer.sendInitialEntityData();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+index 7494de2b7..94529e144 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+@@ -45,6 +45,7 @@ import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
+ import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
+ import net.raphimc.viabedrock.protocol.storage.PacketSyncStorage;
+ import net.raphimc.viabedrock.protocol.storage.PlayerInputStorage;
++import net.raphimc.viabedrock.protocol.storage.HudVisibilityStorage;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
+ import java.nio.charset.StandardCharsets;
+@@ -147,6 +148,7 @@ public final class MultiStatePackets {
+             final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
+             wrapper.user().get(ChannelStorage.class).addChannels(channels);
+             wrapper.user().get(PlayerInputStorage.class).sendSnapshot();
++            wrapper.user().get(HudVisibilityStorage.class).sendSnapshot();
+ 
+             if (channels.contains(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
+                 ViaBedrockUtilityInterface.confirmPresence(wrapper.user());
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java
+index 4ac5e03f2..172699ee1 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java
+@@ -41,7 +41,6 @@ public final class UnhandledPackets {
+         protocol.cancelClientbound(ClientboundBedrockPackets.LESSON_PROGRESS); // Not relevant (Education Edition)
+         protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_PRESETS); // Not possible in Java Edition
+         protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_INSTRUCTION); // Not possible in Java Edition
+-        protocol.cancelClientbound(ClientboundBedrockPackets.SET_HUD); // Not possible in Java Edition
+         protocol.cancelClientbound(ClientboundBedrockPackets.CURRENT_STRUCTURE_FEATURE); // Useless
+         protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_AIM_ASSIST); // Not possible in Java Edition
+         protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_AIM_ASSIST_PRESETS); // Not possible in Java Edition
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/HudVisibilityStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/HudVisibilityStorage.java
+new file mode 100644
+index 000000000..967eb0e38
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/HudVisibilityStorage.java
+@@ -0,0 +1,49 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.StoredObject;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.raphimc.viabedrock.api.model.HudVisibilityState;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.HudVisibility;
++
++public final class HudVisibilityStorage extends StoredObject {
++
++    private HudVisibilityState state = HudVisibilityState.DEFAULT;
++    private boolean joined;
++
++    public HudVisibilityStorage(final UserConnection user) {
++        super(user);
++    }
++
++    public HudVisibilityState state() {
++        return this.state;
++    }
++
++    public void update(final int[] elements, final HudVisibility visibility) {
++        this.state = this.state.update(elements, visibility);
++    }
++
++    public void markJoined() {
++        this.joined = true;
++    }
++
++    public void sendSnapshot() {
++        if (!this.joined || this.user().getProtocolInfo().getServerState() != State.PLAY || !this.user().get(ChannelStorage.class).hasChannel(HudVisibilityState.CHANNEL)) {
++            return;
++        }
++        final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
++        packet.write(Types.STRING, HudVisibilityState.CHANNEL);
++        packet.write(HudVisibilityState.TYPE, this.state);
++        packet.send(BedrockProtocol.class);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/HudVisibilityStateTest.java b/src/test/java/net/raphimc/viabedrock/api/model/HudVisibilityStateTest.java
+new file mode 100644
+index 000000000..1ca1e8bcc
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/HudVisibilityStateTest.java
+@@ -0,0 +1,88 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.HudElement;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.HudVisibility;
++import net.raphimc.viabedrock.protocol.model.HudVisibilityUpdate;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++
++import java.util.HashSet;
++import java.util.Set;
++import java.util.stream.Collectors;
++import java.util.stream.IntStream;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class HudVisibilityStateTest {
++
++    @Test
++    void targetWirePreservesAllElementsAndIndependentResets() {
++        final var buffer = Unpooled.wrappedBuffer(new byte[]{13, 2, 8, 10, 0, 4, 6, 12, 14, 16, 18, 20, 22, 24, 2});
++        try {
++            final var update = HudVisibilityUpdate.TYPE.read(buffer);
++            assertEquals(HudVisibility.Reset.getValue(), update.visibility());
++            assertEquals(Set.of(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), Set.copyOf(update.elements()));
++            assertFalse(buffer.isReadable());
++            final int[] elements = update.elements().stream().mapToInt(Integer::intValue).toArray();
++            final var hidden = HudVisibilityState.DEFAULT.update(elements, HudVisibility.Hide);
++            for (final HudElement element : HudElement.values()) {
++                assertTrue(hidden.hides(element));
++            }
++            final var resetHealth = hidden.update(new int[]{6, 6}, HudVisibility.Reset);
++            assertFalse(resetHealth.hides(HudElement.Health));
++            assertTrue(resetHealth.hides(HudElement.Armor));
++            assertTrue(hidden.hides(HudElement.Health));
++            assertEquals(HudVisibilityState.DEFAULT, resetHealth.update(elements, HudVisibility.Reset));
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void snapshotsRetainUnknownElementsAndDoNotShareMutableState() {
++        final var mutable = new HashSet<>(Set.of(4, 512));
++        final var state = new HudVisibilityState(mutable);
++        mutable.clear();
++        final var buffer = Unpooled.buffer();
++        try {
++            HudVisibilityState.TYPE.write(buffer, state);
++            assertEquals(state, HudVisibilityState.TYPE.read(buffer));
++            assertTrue(state.hides(HudElement.Crosshair));
++            assertEquals(Set.of(512), state.update(new int[]{4}, HudVisibility.Reset).hiddenElements());
++            assertEquals(state, state.update(new int[0], HudVisibility.Reset));
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void rejectsTruncatedAndUnboundedWireArrays() {
++        final var full = new HudVisibilityState(IntStream.range(0, 4096).boxed().collect(Collectors.toSet()));
++        assertThrows(IllegalArgumentException.class, () -> full.update(new int[]{4096}, HudVisibility.Hide));
++        assertEquals(4096, full.hiddenElements().size());
++        assertEquals(full, full.update(new int[]{0}, HudVisibility.Hide));
++        assertThrows(IllegalArgumentException.class, () -> new HudVisibilityUpdate(IntStream.range(0, 4097).boxed().toList(), 0));
++        final var buffer = Unpooled.buffer();
++        try {
++            BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(buffer, 2);
++            BedrockTypes.VAR_INT.writePrimitive(buffer, 4);
++            assertThrows(IndexOutOfBoundsException.class, () -> HudVisibilityUpdate.TYPE.read(buffer));
++            buffer.clear();
++            BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(buffer, 4097);
++            assertThrows(IllegalArgumentException.class, () -> HudVisibilityUpdate.TYPE.read(buffer));
++            buffer.clear();
++            Types.VAR_INT.writePrimitive(buffer, 2);
++            assertThrows(IllegalArgumentException.class, () -> HudVisibilityState.TYPE.read(buffer));
++        } finally {
++            buffer.release();
++        }
++    }
++
++}
+-- 
+2.55.0

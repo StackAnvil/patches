@@ -1,0 +1,267 @@
+From 8573adf3b27358497f4e7bdcb5b6e6caed687f1c Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 21:09:11 +0200
+Subject: [PATCH] feat(hud): apply server element visibility restrictions
+
+Apply the core's versioned HUD snapshot through direct connections and ViaProxy. Hide individual Java HUD draws without altering player settings or neighboring HUD elements. Preserve contextual progress backgrounds, fills, levels, and spectator hotbar behavior when visible.
+
+Clear restrictions on world exit before another connection can render. Core owns packet decoding, cumulative restrictions, reset semantics, and late-registration snapshots. The client integration is necessary because Java has no standard packet for per-element HUD visibility.
+
+Paper doll, touch-control, and control-hint restrictions remain retained by core. Java does not currently render those Bedrock HUD elements, so these hooks do not add substitutes or hide inventory tooltips.
+---
+ .../bedrock/ViaFabricPlusBedrock.java         |  5 +
+ .../bedrock/hud/BedrockHudVisibility.java     | 35 +++++++
+ .../bedrock/hud/HudVisibilityPayload.java     | 26 +++++
+ .../render/MixinBedrockHudVisibility.java     | 95 +++++++++++++++++++
+ .../render/MixinMinecraftHudVisibility.java   | 24 +++++
+ .../viafabricplus-bedrock.mixins.json         |  4 +-
+ 6 files changed, 188 insertions(+), 1 deletion(-)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/hud/BedrockHudVisibility.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/hud/HudVisibilityPayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockHudVisibility.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftHudVisibility.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+index b0869c1..9469cab 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+@@ -28,6 +28,8 @@ import com.viaversion.viafabricplus.bedrock.inventory.BedrockCartographyContext;
+ import com.viaversion.viafabricplus.bedrock.inventory.CartographyPayload;
+ import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
+ import com.viaversion.viafabricplus.bedrock.input.InputPermissionsPayload;
++import com.viaversion.viafabricplus.bedrock.hud.HudVisibilityPayload;
++import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
+ import com.viaversion.viafabricplus.bedrock.input.RawInputPayload;
+ import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
+ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+@@ -69,6 +71,9 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+         PayloadTypeRegistry.clientboundPlay().register(CartographyPayload.TYPE, CartographyPayload.CODEC);
+         ClientPlayNetworking.registerGlobalReceiver(CartographyPayload.TYPE,
+             (payload, context) -> BedrockCartographyContext.accept(payload.state()));
++        PayloadTypeRegistry.clientboundPlay().register(HudVisibilityPayload.TYPE, HudVisibilityPayload.CODEC);
++        ClientPlayNetworking.registerGlobalReceiver(HudVisibilityPayload.TYPE,
++            (payload, context) -> BedrockHudVisibility.accept(payload.state()));
+         this.settings = new BedrockSettings();
+         this.account = new BedrockAccount(ViaFabricPlus.api().path().resolve("bedrock.json"));
+         this.appearances = new BedrockAppearanceStore(ViaFabricPlus.api().path().resolve("bedrock-appearances"));
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/hud/BedrockHudVisibility.java b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/BedrockHudVisibility.java
+new file mode 100644
+index 0000000..116ec5c
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/BedrockHudVisibility.java
+@@ -0,0 +1,35 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.hud;
++
++import net.raphimc.viabedrock.api.model.HudVisibilityState;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.HudElement;
++
++/** Connection-scoped server restrictions leave local visibility settings intact. */
++public final class BedrockHudVisibility {
++
++    private static HudVisibilityState state = HudVisibilityState.DEFAULT;
++
++    private BedrockHudVisibility() {
++    }
++
++    public static HudVisibilityState current() {
++        return state;
++    }
++
++    public static void accept(final HudVisibilityState snapshot) {
++        state = snapshot;
++    }
++
++    public static boolean hidden(final HudElement element) {
++        return state.hides(element);
++    }
++
++    public static void clear() {
++        state = HudVisibilityState.DEFAULT;
++    }
++
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/hud/HudVisibilityPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/HudVisibilityPayload.java
+new file mode 100644
+index 0000000..7f8ad36
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/hud/HudVisibilityPayload.java
+@@ -0,0 +1,26 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.hud;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.HudVisibilityState;
++
++public record HudVisibilityPayload(HudVisibilityState state) implements CustomPacketPayload {
++
++    public static final Type<HudVisibilityPayload> TYPE = new Type<>(Identifier.parse(HudVisibilityState.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, HudVisibilityPayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> HudVisibilityState.TYPE.write(buffer, payload.state),
++            buffer -> new HudVisibilityPayload(HudVisibilityState.TYPE.read(buffer)));
++
++    @Override
++    public Type<HudVisibilityPayload> type() {
++        return TYPE;
++    }
++
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockHudVisibility.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockHudVisibility.java
+new file mode 100644
+index 0000000..9be65dc
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockHudVisibility.java
+@@ -0,0 +1,95 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
++import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
++import net.minecraft.client.DeltaTracker;
++import net.minecraft.client.gui.Font;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.gui.Hud;
++import net.minecraft.client.gui.components.spectator.SpectatorGui;
++import net.minecraft.client.gui.contextualbar.ContextualBar;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.HudElement;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(Hud.class)
++public abstract class MixinBedrockHudVisibility {
++
++    @Inject(method = "extractCrosshair", at = @At("HEAD"), cancellable = true)
++    private void hideCrosshair(final CallbackInfo ci) {
++        if (BedrockHudVisibility.hidden(HudElement.Crosshair)) ci.cancel();
++    }
++
++    @Inject(method = "extractItemHotbar", at = @At("HEAD"), cancellable = true)
++    private void hideHotbar(final CallbackInfo ci) {
++        if (BedrockHudVisibility.hidden(HudElement.HotBar)) ci.cancel();
++    }
++
++    @Inject(method = "extractArmor", at = @At("HEAD"), cancellable = true)
++    private static void hideArmor(final CallbackInfo ci) {
++        if (BedrockHudVisibility.hidden(HudElement.Armor)) ci.cancel();
++    }
++
++    @Inject(method = "extractHearts", at = @At("HEAD"), cancellable = true)
++    private void hideHealth(final CallbackInfo ci) {
++        if (BedrockHudVisibility.hidden(HudElement.Health)) ci.cancel();
++    }
++
++    @Inject(method = "extractFood", at = @At("HEAD"), cancellable = true)
++    private void hideHunger(final CallbackInfo ci) {
++        if (BedrockHudVisibility.hidden(HudElement.Hunger)) ci.cancel();
++    }
++
++    @Inject(method = "extractAirBubbles", at = @At("HEAD"), cancellable = true)
++    private void hideAir(final CallbackInfo ci) {
++        if (BedrockHudVisibility.hidden(HudElement.AirBubbles)) ci.cancel();
++    }
++
++    @Inject(method = "extractVehicleHealth", at = @At("HEAD"), cancellable = true)
++    private void hideVehicleHealth(final CallbackInfo ci) {
++        if (BedrockHudVisibility.hidden(HudElement.HorseHealth)) ci.cancel();
++    }
++
++    @Inject(method = "extractEffects", at = @At("HEAD"), cancellable = true)
++    private void hideEffects(final CallbackInfo ci) {
++        if (BedrockHudVisibility.hidden(HudElement.StatusEffects)) ci.cancel();
++    }
++
++    @Inject(method = "extractSelectedItemName", at = @At("HEAD"), cancellable = true)
++    private void hideItemText(final CallbackInfo ci) {
++        if (BedrockHudVisibility.hidden(HudElement.ItemText)) ci.cancel();
++    }
++
++    @WrapWithCondition(method = "extractHotbarAndDecorations", at = {
++            @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/contextualbar/ContextualBar;extractBackground(Lnet/minecraft/client/gui/GuiGraphicsExtractor;Lnet/minecraft/client/DeltaTracker;)V"),
++            @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/contextualbar/ContextualBar;extractRenderState(Lnet/minecraft/client/gui/GuiGraphicsExtractor;Lnet/minecraft/client/DeltaTracker;)V")})
++    private boolean showProgress(final ContextualBar bar, final GuiGraphicsExtractor graphics, final DeltaTracker delta) {
++        return !BedrockHudVisibility.hidden(HudElement.ProgressBar);
++    }
++
++    @WrapWithCondition(method = "extractHotbarAndDecorations", at = @At(value = "INVOKE",
++            target = "Lnet/minecraft/client/gui/contextualbar/ContextualBar;extractExperienceLevel(Lnet/minecraft/client/gui/GuiGraphicsExtractor;Lnet/minecraft/client/gui/Font;I)V"))
++    private boolean showLevel(final GuiGraphicsExtractor graphics, final Font font, final int level) {
++        return !BedrockHudVisibility.hidden(HudElement.ProgressBar);
++    }
++
++    @WrapWithCondition(method = "extractHotbarAndDecorations", at = @At(value = "INVOKE",
++            target = "Lnet/minecraft/client/gui/components/spectator/SpectatorGui;extractHotbar(Lnet/minecraft/client/gui/GuiGraphicsExtractor;)V"))
++    private boolean showSpectatorHotbar(final SpectatorGui spectator, final GuiGraphicsExtractor graphics) {
++        return !BedrockHudVisibility.hidden(HudElement.HotBar);
++    }
++
++    @WrapWithCondition(method = "extractHotbarAndDecorations", at = @At(value = "INVOKE",
++            target = "Lnet/minecraft/client/gui/components/spectator/SpectatorGui;extractAction(Lnet/minecraft/client/gui/GuiGraphicsExtractor;)V"))
++    private boolean showSpectatorItemText(final SpectatorGui spectator, final GuiGraphicsExtractor graphics) {
++        return !BedrockHudVisibility.hidden(HudElement.ItemText);
++    }
++
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftHudVisibility.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftHudVisibility.java
+new file mode 100644
+index 0000000..9f4d7b5
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftHudVisibility.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.screens.Screen;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(Minecraft.class)
++public abstract class MixinMinecraftHudVisibility {
++
++    @Inject(method = "disconnect(Lnet/minecraft/client/gui/screens/Screen;ZZ)V", at = @At("HEAD"))
++    private void clearHud(final Screen screen, final boolean transferring, final boolean skipSaving, final CallbackInfo ci) {
++        BedrockHudVisibility.clear();
++    }
++
++}
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index 12011ed..c6968af 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -115,7 +115,9 @@
+     "features.sound.MixinBedrockSoundManager",
+     "features.sound.MixinBedrockSoundEngine",
+     "features.particle.MixinBedrockParticleEngine",
+-    "features.particle.MixinBedrockParticleRenderType"
++    "features.particle.MixinBedrockParticleRenderType",
++    "features.render.MixinBedrockHudVisibility",
++    "features.render.MixinMinecraftHudVisibility"
+   ],
+   "injectors": {
+     "defaultRequire": 1
+-- 
+2.55.0

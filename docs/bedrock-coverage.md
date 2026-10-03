@@ -40,7 +40,7 @@ These comparisons establish the tested Linux routes; other transports and platfo
 ## Protocol inventory
 
 The complete applied source defines 168 inbound packet types.
-There are 105 explicit registrations, 20 explicit cancellations, and 43 automatic fallback cancellations.
+There are 106 explicit registrations, 19 explicit cancellations, and 43 automatic fallback cancellations.
 These counts describe source registration, not feature completion.
 The inventory excludes commented enum entries and includes transition registrations.
 
@@ -129,10 +129,24 @@ The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
 | U1 | Presets, instructions, splines, shake, and aim assistance | Incomplete | Implement packet state, client behavior, lifecycle, and ViaProxy transport. |
-| U2 | Fog and HUD visibility | Incomplete | Apply server updates and restore state after removal or disconnect. |
+| U2 | Fog and HUD visibility | Incomplete | Core retains all target HUD restrictions and transports them through direct connections and ViaProxy. The add-on applies individual Java HUD restrictions and preserves local settings on reset. Fog, missing native widgets, and remaining visual comparisons are incomplete. |
 | U3 | Texture animations, toasts, credits, store requests, and inventory preferences | Incomplete | Implement target packet behavior and verify native presentation. |
 | U4 | Dynamic JSON UI and widgets | Incomplete | Extend static sidebar support with expression evaluation and applicable widgets. |
 | U5 | NPC conversations, portraits, links, and editing | Incomplete | Core Java conversations exist. Native portraits, editing, link captures, and UI comparisons remain. |
+
+The [HUD core patch](../patches/viabedrock/upstreamable/0081-retain-server-hud-visibility.pr.md) handles packet 308 instead of discarding it.
+Target BDS captures establish all thirteen IDs, signed enum encoding, and explicit all-element resets.
+Core preserves unknown IDs and sends the current snapshot after joining or late channel registration.
+The [client patch](../patches/viafabricplus-bedrock/upstreamable/0021-apply-server-element-visibility-restrictions.pr.md) suppresses individual Java HUD elements.
+Native comparisons preserve selected-item text while the hotbar is hidden, and hide the XP level with its progress bar.
+Live direct and ViaProxy comparisons verify health, hunger, hotbar, crosshair, progress, and independent selected-item text.
+Both routes preserve F1 after a server reset.
+Local exit and remote disconnect clear the restrictions.
+Armor and status-effect icons were absent in the Java baseline, so their visibility hooks remain unverified.
+Air, horse health, contextual jump bars, and spectator behavior also need comparisons.
+Paper doll, touch controls, and native control hints still lack renderers.
+Ordinary Java has no standard packet for individual HUD restrictions.
+These results do not complete U2.
 
 ## Gameplay and entities
 
@@ -143,7 +157,7 @@ The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and
 | G3 | Voxel shapes | Incomplete | Core retains the registry and compiles custom face rules, transformed slices, and culling layers into accepted server packs. Direct and ViaProxy add-on terrain paths apply the conditions. Broader native comparisons, vanilla partial-block slices, registry replacement, and alternative terrain renderers remain incomplete. These grids do not define collision or selection. |
 | G4 | Animation commands, entity overrides, mob properties, and equipment updates | Incomplete | Connect server updates to authoritative state and runtime playback. |
 | G5 | Movement attributes and attack/use prediction | Incomplete | Apply ignored movement attributes and complete native input and cooldown behavior. |
-| G6 | Interaction and entity metadata | Incomplete | Audit variant mappings, interactions, flags, properties, and unsupported metadata. |
+| G6 | Interaction and entity metadata | Incomplete | Audit variant mappings, interactions, flags, properties, and unsupported metadata. The HUD fixture also lacks Java armor and status-effect meters despite visible native equivalents. |
 
 The [input permission patch](../patches/viabedrock/upstreamable/0080-retain-and-transport-native-player-permissions.pr.md) decodes packet 196 from the target build.
 Private BDS 1.26.51.1 captures establish eleven category masks, reset packets, and the absence of a position field.
@@ -212,9 +226,10 @@ The goal remains active while any required row is incomplete or unverified.
 
 ## Latest validation
 
-The complete stack build passes after replaying the block transport, voxel registry, and custom culling changes into their owning patches.
-The core suite reports 428 tests with one optional fixture skip.
-The add-on suite reports 526 tests with 109 optional fixture skips.
+The complete stack build passes with the input permissions and HUD visibility changes.
+The final HUD size-limit correction also passes the complete core suite after stack replay.
+The core suite reports 440 tests with one optional fixture skip.
+The add-on suite reports 529 tests with 109 optional fixture skips.
 The converter suite reports 16 tests without skips.
 All three suites have zero failures and errors.
 Core Checkstyle passes.
