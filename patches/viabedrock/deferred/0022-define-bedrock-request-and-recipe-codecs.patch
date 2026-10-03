@@ -1,4 +1,4 @@
-From 01dfd3b8d1d15463fef9d69d600e0e77e3ac7aae Mon Sep 17 00:00:00 2001
+From 34202aecee543c6498032d02b96dd2d1d29bcb73 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 12:55:51 +0200
 Subject: [PATCH] feat(inventory): define Bedrock request and recipe codecs
@@ -6,6 +6,8 @@ Subject: [PATCH] feat(inventory): define Bedrock request and recipe codecs
 Introduce the request, response, and recipe models with their versioned codecs before wiring inventory behavior. Keep enum mappings and codec tests with the protocol foundation so the later container patch starts from a typed Bedrock interface.
 
 Retain the native TextProcessingEventOrigin mapping with unknown=-1. A capture from Bedrock 1.26.51.1 build 51061372, protocol 2193, confirms this sentinel in accepted merchant requests. The schema enum list does not describe its numeric starting value.
+
+Retain all dynamic multi-recipe UUIDs and their server-assigned network IDs. Bedrock 1.26.51.1 build 51061372, protocol 2193, native cartography captures use these IDs for map cloning, extension, and locking through CraftRecipeOptional. Dropping this array prevents containers from resolving the recipes. Keep unknown UUIDs and unsigned IDs intact so decoding does not depend on a closed list of vanilla recipes.
 ---
  .../generated/InventorySourceType.java        |   2 +-
  .../generated/ItemStackRequestActionType.java |  22 +-
@@ -18,6 +20,7 @@ Retain the native TextProcessingEventOrigin mapping with unknown=-1. A capture f
  .../protocol/model/recipe/EnchantData.java    |  30 +++
  .../protocol/model/recipe/ItemDescriptor.java | 146 +++++++++++
  .../model/recipe/ItemDescriptorType.java      |  81 +++++++
+ .../protocol/model/recipe/MultiRecipe.java    |  17 ++
  .../protocol/model/recipe/Recipe.java         |  68 ++++++
  .../protocol/model/recipe/RecipeType.java     |  85 +++++++
  .../protocol/model/recipe/ShapedRecipe.java   |  71 ++++++
@@ -32,13 +35,14 @@ Retain the native TextProcessingEventOrigin mapping with unknown=-1. A capture f
  .../inventory/ItemStackResponseType.java      |  75 ++++++
  .../inventory/ItemStackSlotRequestType.java   |  50 ++++
  .../inventory/ItemStackSlotResponseType.java  |  65 +++++
- .../types/recipe/CraftingDataReader.java      | 174 ++++++++++++++
+ .../types/recipe/CraftingDataReader.java      | 175 ++++++++++++++
  .../recipe/NetworkItemDescriptorType.java     |  87 +++++++
  .../types/inventory/ItemStackCodecTest.java   | 227 ++++++++++++++++++
  .../ItemStackRequestResultTypeTest.java       |  55 +++++
+ .../types/recipe/CraftingDataReaderTest.java  |  85 +++++++
  .../recipe/NetworkItemDescriptorTypeTest.java |  98 ++++++++
  .../generator/BedrockDataEnumGenerator.java   |   6 +
- 31 files changed, 2054 insertions(+), 15 deletions(-)
+ 33 files changed, 2157 insertions(+), 15 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestAction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestInfo.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/inventory/ItemStackRequestSlotInfo.java
@@ -48,6 +52,7 @@ Retain the native TextProcessingEventOrigin mapping with unknown=-1. A capture f
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/recipe/EnchantData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemDescriptor.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ItemDescriptorType.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/recipe/MultiRecipe.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/recipe/Recipe.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/recipe/RecipeType.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/recipe/ShapedRecipe.java
@@ -65,6 +70,7 @@ Retain the native TextProcessingEventOrigin mapping with unknown=-1. A capture f
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/types/recipe/NetworkItemDescriptorType.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackCodecTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/inventory/ItemStackRequestResultTypeTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReaderTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/recipe/NetworkItemDescriptorTypeTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/InventorySourceType.java b/src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/InventorySourceType.java
@@ -675,6 +681,29 @@ index 00000000..bb6b046d
 +
 +    public int getValue() {
 +        return this.value;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/MultiRecipe.java b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/MultiRecipe.java
+new file mode 100644
+index 00000000..7ad3eb6d
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/recipe/MultiRecipe.java
+@@ -0,0 +1,17 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model.recipe;
++
++import java.util.UUID;
++
++/** A server-enabled dynamic recipe whose inputs and result depend on item data. */
++public final class MultiRecipe extends Recipe {
++
++    public MultiRecipe(final UUID recipeId) {
++        super(recipeId.toString(), recipeId, "", 0);
 +    }
 +
 +}
@@ -1665,10 +1694,10 @@ index 00000000..66596f9d
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReader.java b/src/main/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReader.java
 new file mode 100644
-index 00000000..47636b45
+index 00000000..535f52d1
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReader.java
-@@ -0,0 +1,174 @@
+@@ -0,0 +1,175 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1710,8 +1739,9 @@ index 00000000..47636b45
 +        readShaped(packet, items, recipes, RecipeType.SHAPED);
 +        readShapeless(packet, items, recipes, RecipeType.SHAPELESS);
 +        for (int i = 0, size = packet.read(BedrockTypes.UNSIGNED_VAR_INT); i < size; i++) {
-+            packet.read(BedrockTypes.UUID);
-+            packet.read(BedrockTypes.UNSIGNED_VAR_INT);
++            final UUID uuid = packet.read(BedrockTypes.UUID);
++            final int netId = packet.read(BedrockTypes.UNSIGNED_VAR_INT);
++            recipes.add(new CraftingDataStorage(RecipeType.MULTI, netId, new MultiRecipe(uuid)));
 +        }
 +        readShapeless(packet, items, recipes, RecipeType.USER_DATA_SHAPELESS);
 +        readShapeless(packet, items, recipes, RecipeType.SHAPELESS_CHEMISTRY);
@@ -2227,6 +2257,97 @@ index 00000000..4fcb3777
 +        } finally {
 +            buffer.release();
 +        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReaderTest.java b/src/test/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReaderTest.java
+new file mode 100644
+index 00000000..79f72bab
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/types/recipe/CraftingDataReaderTest.java
+@@ -0,0 +1,85 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.types.recipe;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.connection.ProtocolInfoImpl;
++import com.viaversion.viaversion.exception.InformativeException;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.model.recipe.MultiRecipe;
++import net.raphimc.viabedrock.protocol.model.recipe.RecipeType;
++import org.junit.jupiter.api.Test;
++
++import java.util.HexFormat;
++import java.util.UUID;
++import java.lang.reflect.Proxy;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertInstanceOf;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class CraftingDataReaderTest {
++
++    @Test
++    void retainsDynamicRecipeIdsWithoutConsumingFollowingArrays() {
++        // Target protocol 2193: three cartography switches plus an unknown unsigned network ID.
++        final var buffer = Unpooled.wrappedBuffer(HexFormat.of().parseHex(
++                "00000443457282ed852d445dd0de908f41f1a69825"
++                        + "3c4829188c26368bf2a856713b99f1a09a25"
++                        + "5343c1cae43422604b0270ffebb1b78b9b25"
++                        + "00112233445566778899aabbccddeeff98f5f2f60f"
++                        + "000000000001020406080a0c0000015a"));
++        try {
++            final var data = CraftingDataReader.read(new PacketWrapperImpl(0, buffer, connection()));
++            final UUID[] ids = {
++                UUID.fromString("442d85ed-8272-4543-a6f1-418f90ded05d"),
++                UUID.fromString("8b36268c-1829-483c-a0f1-993b7156a8f2"),
++                UUID.fromString("602234e4-cac1-4353-8bb7-b1ebff70024b"),
++                new UUID(0x7766554433221100L, 0xFFEEDDCCBBAA9988L)
++            };
++            final int[] networkIds = {4760, 4762, 4763, 0xFEDCBA98};
++            assertEquals(ids.length, data.recipes().size());
++            for (int index = 0; index < ids.length; index++) {
++                final var recipe = data.recipes().get(index);
++                assertEquals(RecipeType.MULTI, recipe.type());
++                assertEquals(networkIds[index], recipe.networkId());
++                assertEquals(ids[index], assertInstanceOf(MultiRecipe.class, recipe.recipe()).getRecipeId());
++            }
++            assertTrue(data.clearRecipes());
++            assertEquals(0x5A, buffer.readUnsignedByte());
++            assertFalse(buffer.isReadable());
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void rejectsIncompleteDynamicRecipeBeforeReadingLaterArrays() {
++        final var buffer = Unpooled.wrappedBuffer(new byte[]{0, 0, 1, 1, 2, 3});
++        try {
++            assertThrows(InformativeException.class, () -> CraftingDataReader.read(
++                    new PacketWrapperImpl(0, buffer, connection())));
++        } finally {
++            buffer.release();
++        }
++    }
++
++    private static UserConnection connection() {
++        // These packets have no item descriptors or item results, so no item rewriter is required.
++        return (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, arguments) -> {
++                    return switch (method.getName()) {
++                        case "get" -> null;
++                        case "getProtocolInfo" -> new ProtocolInfoImpl();
++                        default -> throw new UnsupportedOperationException(method.getName());
++                    };
++                });
 +    }
 +
 +}
