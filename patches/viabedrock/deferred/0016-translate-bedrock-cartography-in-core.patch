@@ -1,4 +1,4 @@
-From 34741b5148508e3394f34fa17296c578faf0e3f0 Mon Sep 17 00:00:00 2001
+From 194bc47287cd599cd52c171010e807db1ad2aaf4 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 3 Oct 2026 13:22:54 +0200
 Subject: [PATCH] feat(inventory): translate Bedrock cartography in core
@@ -8,25 +8,96 @@ Open cartography through ordinary Java menus and select creation, rename, clone,
 Native Bedrock 1.26.51.1 build 51061372 protocol 2193 captures establish recipe UUIDs, single lower-slot operations, locator subtype, sparse map families, and clone request counts. Single Shift-click crafts one pair; right-click does not split the two-map clone. Keep those behaviors instead of automatically repeating Java quick moves.
 
 Ordinary Java uses a nonce-bound text dialog for naming because its cartography screen has no name field. Native inline naming and operation previews still need client rendering work and integration verification. Seven focused tests cover recipe selection, item identity, metadata preservation, request construction, and complete-result placement.
+
+Advertise versioned cartography presentation state before opening the menu.
+Include edit acknowledgements so client rendering can retain newer typing
+while older name echoes arrive through ViaProxy. Export native UI images
+from the effective pack stack and invalidate converted pack caches.
 ---
- .../container/block/CartographyContainer.java | 340 ++++++++++++++++++
- .../container/block/CartographyRecipes.java   | 161 +++++++++
+ .../api/model/CartographyState.java           |  50 +++
+ .../container/block/CartographyContainer.java | 357 ++++++++++++++++++
+ .../container/block/CartographyRecipes.java   | 161 ++++++++
+ .../http/ConvertedResourcePackCache.java      |   2 +-
  .../generated/bedrock/CustomBlockTags.java    |   1 +
- .../protocol/packet/InventoryPackets.java     |  28 ++
+ .../protocol/packet/InventoryPackets.java     |  32 ++
  .../protocol/packet/MapPackets.java           |   5 +
+ .../rewriter/ResourcePackRewriter.java        |   2 +
+ .../CartographyUiResourceRewriter.java        |  46 +++
  .../viabedrock/data/custom/block_tags.json    |   3 +
+ .../api/model/CartographyStateTest.java       |  37 ++
  .../block/CartographyRecipesTest.java         | 193 ++++++++++
- 7 files changed, 731 insertions(+)
+ .../CartographyUiResourceRewriterTest.java    |  42 +++
+ 13 files changed, 930 insertions(+), 1 deletion(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CartographyState.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/CartographyContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/CartographyRecipes.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CartographyUiResourceRewriter.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CartographyStateTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/block/CartographyRecipesTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CartographyUiResourceRewriterTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CartographyState.java b/src/main/java/net/raphimc/viabedrock/api/model/CartographyState.java
+new file mode 100644
+index 00000000..b8765451
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/CartographyState.java
+@@ -0,0 +1,50 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.api.type.types.StringType;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++
++/** Versioned presentation state. Recipes and inventory requests remain authoritative in core. */
++public record CartographyState(int windowId, int editAcknowledgements, String operation, String name) {
++
++    public static final String CHANNEL = "viabedrock:cartography";
++    public static final Type<CartographyState> TYPE = new Type<>(CartographyState.class) {
++        private final StringType operationType = new StringType(16);
++        private final StringType nameType = new StringType(512);
++
++        @Override
++        public CartographyState read(final ByteBuf buffer) {
++            if (Types.VAR_INT.readPrimitive(buffer) != 1
++                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IllegalArgumentException("Unsupported cartography state");
++            }
++            return new CartographyState(Types.VAR_INT.readPrimitive(buffer), Types.VAR_INT.readPrimitive(buffer),
++                    this.operationType.read(buffer), this.nameType.read(buffer));
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final CartographyState value) {
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            Types.VAR_INT.writePrimitive(buffer, value.windowId());
++            Types.VAR_INT.writePrimitive(buffer, value.editAcknowledgements());
++            this.operationType.write(buffer, value.operation());
++            this.nameType.write(buffer, value.name());
++        }
++    };
++
++    public CartographyState {
++        if (windowId < Byte.MIN_VALUE || windowId > 255 || editAcknowledgements < 0 || name.length() > 512
++                || !java.util.Set.of("empty", "create", "create_locator", "rename", "clone", "extend", "lock", "locator").contains(operation)) {
++            throw new IllegalArgumentException("Invalid cartography state");
++        }
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/CartographyContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/CartographyContainer.java
 new file mode 100644
-index 00000000..c9950b68
+index 00000000..5611a2bc
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/block/CartographyContainer.java
-@@ -0,0 +1,340 @@
+@@ -0,0 +1,357 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -51,6 +122,7 @@ index 00000000..c9950b68
 +import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
 +import com.viaversion.viaversion.libs.mcstructs.core.Identifier;
 +import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.raphimc.viabedrock.api.model.CartographyState;
 +import net.raphimc.viabedrock.api.model.container.Container;
 +import net.raphimc.viabedrock.api.model.container.InputContainer;
 +import net.raphimc.viabedrock.api.util.PacketFactory;
@@ -83,6 +155,8 @@ index 00000000..c9950b68
 +public final class CartographyContainer extends InputContainer {
 +
 +    public static final String NAME_RESPONSE_PREFIX = "viabedrock:cartography_name/";
++    private CartographyState sentState;
++    private int editAcknowledgements;
 +    private boolean updatingContent;
 +    private String renameText = "";
 +    private String nameResponseId;
@@ -180,6 +254,19 @@ index 00000000..c9950b68
 +            }
 +            this.items[2].tag().putLong("map_uuid", this.lockedPreviewId);
 +        }
++        this.sendState();
++    }
++
++    public void sendState() {
++        final String operation = this.selection == null ? "empty" : this.selection.operation().name().toLowerCase(java.util.Locale.ROOT);
++        final CartographyState state = new CartographyState(this.javaContainerId(), this.editAcknowledgements, operation, this.renameText);
++        if (!state.equals(this.sentState)) {
++            final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user);
++            packet.write(Types.STRING, CartographyState.CHANNEL);
++            packet.write(CartographyState.TYPE, state);
++            packet.send(BedrockProtocol.class);
++            this.sentState = state;
++        }
 +    }
 +
 +    public void refresh() {
@@ -195,6 +282,7 @@ index 00000000..c9950b68
 +            return;
 +        }
 +        this.renameText = text;
++        this.editAcknowledgements++;
 +        this.refreshOutput();
 +        PacketFactory.sendJavaContainerSetContent(this.user, this);
 +    }
@@ -534,6 +622,19 @@ index 00000000..a857dced
 +    record Selection(Operation operation, int networkId, BedrockItem result, int inputCount, int additionalCount) { }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
+index 92161e95..e6e68d46 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
+@@ -52,7 +52,7 @@ import java.util.logging.Level;
+ 
+ public class ConvertedResourcePackCache {
+ 
+-    private static final String CONVERSION_VERSION = "native-appearance-rendering-metadata-10";
++    private static final String CONVERSION_VERSION = "native-appearance-rendering-metadata-11";
+ 
+     private final Path directory;
+     private final String conversionVersion;
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/data/generated/bedrock/CustomBlockTags.java b/src/main/java/net/raphimc/viabedrock/protocol/data/generated/bedrock/CustomBlockTags.java
 index 6ef8f93d..9d1c1819 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/data/generated/bedrock/CustomBlockTags.java
@@ -547,10 +648,18 @@ index 6ef8f93d..9d1c1819 100644
      public static final String CREAKING_HEART = "creaking_heart";
      public static final String DAYLIGHT_DETECTOR = "daylight_detector";
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index 63452ea1..ed253d00 100644
+index 63452ea1..e67df923 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-@@ -143,6 +143,9 @@ public final class InventoryPackets {
+@@ -63,6 +63,7 @@ import net.lenni0451.mcstructs_bedrock.forms.types.CustomForm;
+ import net.lenni0451.mcstructs_bedrock.forms.types.ModalForm;
+ import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTextUtils;
+ import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.api.model.CartographyState;
+ import net.raphimc.viabedrock.api.chunk.BedrockBlockEntity;
+ import net.raphimc.viabedrock.api.model.container.ChestContainer;
+ import net.raphimc.viabedrock.api.model.container.Container;
+@@ -143,6 +144,9 @@ public final class InventoryPackets {
              wrapper.cancel();
              return;
          }
@@ -560,7 +669,7 @@ index 63452ea1..ed253d00 100644
          inventoryTracker.setCurrentContainerClosed(serverInitiated);
          if (!serverInitiated && container instanceof InventoryContainer) {
              wrapper.cancel();
-@@ -339,6 +342,7 @@ public final class InventoryPackets {
+@@ -339,6 +343,7 @@ public final class InventoryPackets {
                          container =
                                          new SmithingContainer(
                                                  wrapper.user(), containerId, title, position);
@@ -568,18 +677,21 @@ index 63452ea1..ed253d00 100644
                          case LOOM -> container = new LoomContainer(wrapper.user(), containerId, title, position);
                          case STONECUTTER ->
                          container =
-@@ -395,6 +399,10 @@ public final class InventoryPackets {
+@@ -395,6 +400,13 @@ public final class InventoryPackets {
                          }
                      }
                      inventoryTracker.setCurrentContainer(container);
-+                    if (container instanceof CartographyContainer) {
-+                        PacketFactory.sendJavaSystemChat(wrapper.user(), TextUtil.textComponentToNbt(
-+                                TextUtil.stringToTextComponent("Shift-right-click the cartography output slot to edit the map name.")));
++                    if (container instanceof CartographyContainer cartography) {
++                        cartography.sendState();
++                        if (!wrapper.user().get(ChannelStorage.class).hasChannel(CartographyState.CHANNEL)) {
++                            PacketFactory.sendJavaSystemChat(wrapper.user(), TextUtil.textComponentToNbt(
++                                    TextUtil.stringToTextComponent("Shift-right-click the cartography output slot to edit the map name.")));
++                        }
 +                    }
  
                      if (screenType == ContainerType.HORSE) {
                          ((HorseContainer) container).writeJavaOpen(wrapper);
-@@ -445,6 +453,13 @@ public final class InventoryPackets {
+@@ -445,6 +457,13 @@ public final class InventoryPackets {
                                      (byte) containerId, containerName, storageItem);
                      if (container != null && container.setItems(items)) {
                          container.markServerUpdate();
@@ -593,7 +705,7 @@ index 63452ea1..ed253d00 100644
                          wrapper.user().get(InventoryRequestTracker.class)
                                  .handleAuthoritativeContent(container);
                          wrapper.user().get(InventoryRequestTracker.class)
-@@ -895,6 +910,9 @@ public final class InventoryPackets {
+@@ -895,6 +914,9 @@ public final class InventoryPackets {
                      wrapper.user().get(InventoryTracker.class).getInventoryContainer()
                              .refreshCraftingOutput();
                      tracker.sendJavaUpdateRecipes(wrapper.user());
@@ -603,7 +715,7 @@ index 63452ea1..ed253d00 100644
                  });
          protocol.registerClientbound(
                  ClientboundBedrockPackets.UNLOCKED_RECIPES,
-@@ -1196,6 +1214,9 @@ public final class InventoryPackets {
+@@ -1196,6 +1218,9 @@ public final class InventoryPackets {
                      if (wrapper.user().get(InventoryTracker.class).getCurrentContainer()
                              instanceof AnvilContainer anvil) {
                          anvil.setRenameText(name);
@@ -613,7 +725,7 @@ index 63452ea1..ed253d00 100644
                      }
                  });
          protocol.registerServerbound(
-@@ -1230,6 +1251,13 @@ public final class InventoryPackets {
+@@ -1230,6 +1255,13 @@ public final class InventoryPackets {
                      final String id = wrapper.read(Types.STRING); // id
                      final CompoundTag payload =
                              (CompoundTag) wrapper.read(Types.CUSTOM_CLICK_ACTION_TAG); // payload
@@ -650,6 +762,78 @@ index 5847a29c..dff5531e 100644
              wrapper.write(Types.VAR_INT, maps.javaId(bedrockId));
              wrapper.write(Types.BYTE, mapData.javaScale());
              wrapper.write(Types.BOOLEAN, locked);
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
+index 4f43f563..0c589990 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
+@@ -21,6 +21,7 @@ import com.viaversion.viaversion.libs.gson.JsonObject;
+ import net.raphimc.viabedrock.api.resourcepack.content.Content;
+ import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
+ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CartographyUiResourceRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomAttachableResourceRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomBlockResourceRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomEntityResourceRewriter;
+@@ -42,6 +43,7 @@ public final class ResourcePackRewriter {
+     static {
+         REWRITERS.add(new GlyphSheetResourceRewriter());
+         REWRITERS.add(new ScoreboardUiResourceRewriter());
++        REWRITERS.add(new CartographyUiResourceRewriter());
+         REWRITERS.add(new CustomItemTextureResourceRewriter());
+         REWRITERS.add(new CustomBlockResourceRewriter());
+         REWRITERS.add(new CustomAttachableResourceRewriter());
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CartographyUiResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CartographyUiResourceRewriter.java
+new file mode 100644
+index 00000000..16318a5a
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CartographyUiResourceRewriter.java
+@@ -0,0 +1,46 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
++
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++
++import java.util.List;
++import java.util.function.Consumer;
++import java.util.function.Supplier;
++
++public final class CartographyUiResourceRewriter implements ResourcePackRewriter.Rewriter {
++
++    public static final List<String> IMAGES = List.of("cartography_table_empty", "cartography_table_copy",
++            "cartography_table_map", "cartography_table_zoom", "cartography_table_glass", "anvil-plus", "arrow");
++
++    @Override
++    public void submitTasks(final ResourcePackStorage storage, final Consumer<Supplier<Content>> submitter) {
++        submitter.accept(() -> convert(storage));
++    }
++
++    public static Content convert(final ResourcePackStorage storage) {
++        final Content output = new InMemoryContent();
++        for (final String name : IMAGES) {
++            for (final ResourcePack pack : storage.getPackStackTopToBottom()) {
++                final var source = pack.content().getShortnameImage("textures/ui/" + name);
++                if (source == null) {
++                    continue;
++                }
++                final var image = source.getImage();
++                if (image.getWidth() <= 1024 && image.getHeight() <= 1024) {
++                    output.putPngImage("assets/viabedrock/textures/cartography/" + name + ".png", image);
++                }
++                break;
++            }
++        }
++        return output;
++    }
++
++}
 diff --git a/src/main/resources/assets/viabedrock/data/custom/block_tags.json b/src/main/resources/assets/viabedrock/data/custom/block_tags.json
 index fa60824c..3e13586a 100644
 --- a/src/main/resources/assets/viabedrock/data/custom/block_tags.json
@@ -664,6 +848,49 @@ index fa60824c..3e13586a 100644
    "cauldron": [
      "minecraft:cauldron"
    ],
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CartographyStateTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CartographyStateTest.java
+new file mode 100644
+index 00000000..ddf8867a
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/CartographyStateTest.java
+@@ -0,0 +1,37 @@
++package net.raphimc.viabedrock.api.model;
++
++import io.netty.buffer.Unpooled;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class CartographyStateTest {
++
++    @Test
++    void preservesWindowAndEditAcknowledgementsAcrossWireRoundTrip() {
++        final var buffer = Unpooled.buffer();
++        try {
++            final var state = new CartographyState(-1, 7, "clone", "Area 🌍");
++            CartographyState.TYPE.write(buffer, state);
++            assertEquals(state, CartographyState.TYPE.read(buffer));
++            assertFalse(buffer.isReadable());
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void rejectsUnsupportedVersionsAndUnboundedState() {
++        final var buffer = Unpooled.buffer();
++        try {
++            buffer.writeByte(2);
++            assertThrows(IllegalArgumentException.class, () -> CartographyState.TYPE.read(buffer));
++        } finally {
++            buffer.release();
++        }
++        assertThrows(IllegalArgumentException.class, () -> new CartographyState(256, 0, "empty", ""));
++        assertThrows(IllegalArgumentException.class, () -> new CartographyState(1, -1, "empty", ""));
++        assertThrows(IllegalArgumentException.class, () -> new CartographyState(1, 0, "empty", "x".repeat(513)));
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/block/CartographyRecipesTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/block/CartographyRecipesTest.java
 new file mode 100644
 index 00000000..dbcd6e4b
@@ -860,6 +1087,54 @@ index 00000000..dbcd6e4b
 +        }
 +        map.setTag(tag);
 +        return map;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CartographyUiResourceRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CartographyUiResourceRewriterTest.java
+new file mode 100644
+index 00000000..f3dbbdbc
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CartographyUiResourceRewriterTest.java
+@@ -0,0 +1,42 @@
++package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
++
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++
++import java.awt.image.BufferedImage;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class CartographyUiResourceRewriterTest {
++
++    @Test
++    void retainsHigherPackPixelsAndDoesNotExportUnrelatedAssets() {
++        final var lower = pack(0xFF112233, 2);
++        final var higher = pack(0xFF445566, 3);
++        final var output = CartographyUiResourceRewriter.convert(new ResourcePackStorage(List.of(higher, lower)));
++        final var image = output.getImage("assets/viabedrock/textures/cartography/cartography_table_copy.png").getImage();
++        assertEquals(3, image.getWidth());
++        assertEquals(0xFF445566, image.getRGB(0, 0));
++        assertEquals(1, output.getFilesDeep("", ".png").size());
++    }
++
++    @Test
++    void oversizedHigherImageDoesNotRevealLowerPack() {
++        final var output = CartographyUiResourceRewriter.convert(new ResourcePackStorage(List.of(pack(-1, 1025), pack(-1, 2))));
++        assertEquals(0, output.getFilesDeep("", ".png").size());
++    }
++
++    private static ResourcePack pack(final int color, final int width) {
++        final var content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"uuid\":\"" + java.util.UUID.randomUUID() + "\",\"version\":[1,0,0],\"name\":\"test\"}}");
++        final var image = new BufferedImage(width, 2, BufferedImage.TYPE_INT_ARGB);
++        image.setRGB(0, 0, color);
++        content.putPngImage("textures/ui/cartography_table_copy.png", image);
++        content.putPngImage("textures/ui/unrelated.png", image);
++        return new ResourcePack(content);
 +    }
 +
 +}

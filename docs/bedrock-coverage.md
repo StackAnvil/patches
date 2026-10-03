@@ -46,7 +46,7 @@ The [source guide](bedrock-development-sources.md) defines the version and enum 
 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
-| I1 | Cartography creation, extension, cloning, locking, locator conversion, and naming | Incomplete | Core implements the main screen, recipe selection, crafting, locked-copy requests, naming dialog, and metadata refresh. Verify Java and ViaProxy interactions; complete native UI and remaining operations. |
+| I1 | Cartography creation, extension, cloning, locking, locator conversion, and naming | Incomplete | Core implements recipes, crafting, locking, naming, state transport, and metadata refresh. The add-on renders inline naming and previews through ViaProxy. Verify remaining operations and direct connections. |
 | I2 | Structure and jigsaw editors | Incomplete | Implement screens, requests, structure responses, and jigsaw data. |
 | I3 | Stonecutter recipe updates | Incomplete | Handle server recipe selection and complete result and close behavior. |
 | I4 | Trading and loom | Implemented | Preserve their tested request and response paths. Complete remaining native and inventory edge comparisons. |
@@ -87,9 +87,15 @@ The [client patch](../patches/viafabricplus-bedrock/upstreamable/0018-preserve-a
 The patched Java client displays paper-only output through ViaProxy, crafts one map, and places the refreshed result in its hotbar.
 Naming cancellation preserves inputs and restores the result without a phantom item.
 Saving and crafting retains the name in the server's final item, with no pending synchronization.
-Native inline naming, operation previews, and remaining container operations still need work and live comparisons.
-Seven focused cartography tests pass.
-The complete core suite reports 403 tests with one optional fixture skip.
+The add-on now renders a native cartography layout with inline naming and operation previews.
+Core supplies presentation state before opening an empty table, including through ViaProxy.
+Rapid edits and keyboard typing preserve the final name in the acknowledged crafted item.
+The accepted server pack supplies native images without a local Bedrock installation.
+Private captures verify creation, clone, and locator previews.
+Direct connections, locking and zoom previews, missing-image acquisition, and remaining operations still need comparisons.
+Eleven focused cartography tests pass.
+The complete core suite reports 407 tests with one optional fixture skip.
+The add-on suite reports 521 tests with 109 optional fixture skips.
 
 The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and-recipe-codecs.pr.md#dynamic-recipes) record their evidence and build results.
 

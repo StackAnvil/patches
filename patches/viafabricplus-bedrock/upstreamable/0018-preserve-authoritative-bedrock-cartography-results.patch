@@ -1,18 +1,292 @@
-From f9d1f9022422e27fa0350f457ad4a79274bccca1 Mon Sep 17 00:00:00 2001
+From c8292889af08917d2289051ed30760f1e34ea55d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 3 Oct 2026 13:34:07 +0200
-Subject: [PATCH] fix(inventory): preserve authoritative Bedrock cartography
- results
+Subject: [PATCH] feat(inventory): render authoritative native Bedrock
+ cartography
 
 Java cartography clears a received result whenever either input is empty, even while applying server inventory packets. Bedrock supports paper-only creation and map-only naming, so its valid results disappear in Java. Cancel local recipe recomputation only when native item context identifies a Bedrock menu.
 
 Detect the existing ViaBedrock item component instead of the local protocol selection so the fix works through ViaProxy as well as direct connections. Keep recipe selection and requests in ViaBedrock core. Native inline naming and operation previews remain separate client rendering work.
----
- .../inventory/MixinCartographyTableMenu.java  | 44 +++++++++++++++++++
- .../viafabricplus-bedrock.mixins.json         |  1 +
- 2 files changed, 45 insertions(+)
- create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinCartographyTableMenu.java
 
+Use core presentation state to open the native layout even when the table
+is empty on ViaProxy. Keep real menu slots and ordinary Java rename packets,
+with acknowledgement tracking to preserve newer edits. Draw accepted pack
+overrides above independently licensed images, release textures on close,
+and keep the native captions from Bedrock 1.26.51.1.
+---
+ .../bedrock/ViaFabricPlusBedrock.java         |   7 +
+ .../appearance/BedrockCartographyImages.java  | 103 ++++++++++++
+ .../access/IBedrockSlotPosition.java          |  11 ++
+ .../MixinBedrockCartographyScreen.java        |  33 ++++
+ .../MixinBedrockCartographySlot.java          |  21 +++
+ .../MixinCartographyPacketListener.java       |  22 +++
+ .../inventory/MixinCartographyTableMenu.java  |  44 +++++
+ .../MixinBedrockRenderingConnection.java      |   1 +
+ .../inventory/BedrockCartographyContext.java  |  36 ++++
+ .../CartographyNameSynchronization.java       |  25 +++
+ .../bedrock/inventory/CartographyPayload.java |  23 +++
+ .../screen/BedrockCartographyScreen.java      | 155 ++++++++++++++++++
+ .../viafabricplus-bedrock/lang/en_us.json     |  12 +-
+ .../viafabricplus-bedrock.mixins.json         |   4 +
+ .../CartographyNameSynchronizationTest.java   |  30 ++++
+ 15 files changed, 526 insertions(+), 1 deletion(-)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCartographyImages.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockSlotPosition.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinBedrockCartographyScreen.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinBedrockCartographySlot.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinCartographyPacketListener.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinCartographyTableMenu.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/inventory/BedrockCartographyContext.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/inventory/CartographyNameSynchronization.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/inventory/CartographyPayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCartographyScreen.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/inventory/CartographyNameSynchronizationTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+index 60c4100..a364703 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+@@ -24,6 +24,10 @@ package com.viaversion.viafabricplus.bedrock;
+ import com.viaversion.viafabricplus.ViaFabricPlus;
+ import com.viaversion.viafabricplus.api.entrypoint.ViaFabricPlusEntrypoint;
+ import com.viaversion.viafabricplus.bedrock.account.BedrockAccount;
++import com.viaversion.viafabricplus.bedrock.inventory.BedrockCartographyContext;
++import com.viaversion.viafabricplus.bedrock.inventory.CartographyPayload;
++import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+ import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
+ import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusSkinProvider;
+ import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusBuiltinResourcePackProvider;
+@@ -55,6 +59,9 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+ 
+     @Override
+     public void onPreSettingsLoading() {
++        PayloadTypeRegistry.clientboundPlay().register(CartographyPayload.TYPE, CartographyPayload.CODEC);
++        ClientPlayNetworking.registerGlobalReceiver(CartographyPayload.TYPE,
++            (payload, context) -> BedrockCartographyContext.accept(payload.state()));
+         this.settings = new BedrockSettings();
+         this.account = new BedrockAccount(ViaFabricPlus.api().path().resolve("bedrock.json"));
+         this.appearances = new BedrockAppearanceStore(ViaFabricPlus.api().path().resolve("bedrock-appearances"));
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCartographyImages.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCartographyImages.java
+new file mode 100644
+index 0000000..40a7093
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockCartographyImages.java
+@@ -0,0 +1,103 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.mojang.blaze3d.platform.NativeImage;
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.renderer.RenderPipelines;
++import net.minecraft.client.renderer.texture.DynamicTexture;
++import net.minecraft.resources.Identifier;
++import net.minecraft.server.packs.repository.PackSource;
++import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CartographyUiResourceRewriter;
++
++import java.util.LinkedHashMap;
++import java.util.Map;
++import java.util.UUID;
++import java.util.concurrent.CompletableFuture;
++
++/** Resolves accepted server overrides first, with independently licensed native images underneath. */
++public final class BedrockCartographyImages implements AutoCloseable {
++    private final Map<String, Image> images = new LinkedHashMap<>();
++    private boolean closed;
++    private boolean loading = true;
++
++    public BedrockCartographyImages() {
++        final var account = ViaFabricPlusBedrock.impl().account().get();
++        if (account == null) {
++            this.loading = false;
++            return;
++        }
++        CompletableFuture.supplyAsync(() -> {
++            final Map<String, byte[]> bytes = new LinkedHashMap<>();
++            try {
++                final var library = BedrockBuiltinAssets.load(account).library();
++                for (final String name : CartographyUiResourceRewriter.IMAGES) {
++                    final byte[] file = library.particleTexture("textures/ui/" + name);
++                    if (file != null) {
++                        final var image = BedrockParticleTexture.read(file);
++                        if (image.getWidth() > 1024 || image.getHeight() > 1024) continue;
++                        final var encoded = new java.io.ByteArrayOutputStream();
++                        javax.imageio.ImageIO.write(image, "png", encoded);
++                        bytes.put(name, encoded.toByteArray());
++                    }
++                }
++            } catch (final Exception ignored) {
++                // The screen remains usable while acquisition is unavailable. No unlicensed substitute is shipped.
++            }
++            return bytes;
++        }).thenAccept(bytes -> Minecraft.getInstance().execute(() -> {
++            this.loading = false;
++            if (this.closed || ViaFabricPlusBedrock.impl().account().get() != account) return;
++            for (final var entry : bytes.entrySet()) {
++                try {
++                    final NativeImage pixels = NativeImage.read(entry.getValue());
++                    if (pixels.getWidth() > 1024 || pixels.getHeight() > 1024) {
++                        pixels.close();
++                        continue;
++                    }
++                    final Identifier id = Identifier.fromNamespaceAndPath("viafabricplus-bedrock",
++                        "cartography/" + UUID.randomUUID() + '/' + entry.getKey());
++                    Minecraft.getInstance().getTextureManager().register(id, new DynamicTexture(id::toString, pixels));
++                    this.images.put(entry.getKey(), new Image(id, pixels.getWidth(), pixels.getHeight()));
++                } catch (final Exception ignored) {
++                    // A missing image does not change the server's recipe or result.
++                }
++            }
++        }));
++    }
++
++    public boolean draw(final GuiGraphicsExtractor graphics, final String name, final int x, final int y,
++                        final int width, final int height) {
++        final var minecraft = Minecraft.getInstance();
++        final Identifier server = Identifier.fromNamespaceAndPath("viabedrock", "textures/cartography/" + name + ".png");
++        final var resource = minecraft.getResourceManager().getResource(server);
++        if (resource.isPresent() && resource.get().source().location().source() == PackSource.SERVER) {
++            graphics.blit(RenderPipelines.GUI_TEXTURED, server, x, y, 0, 0, width, height,
++                width, height, width, height);
++            return true;
++        }
++        final Image image = this.images.get(name);
++        if (image == null) return false;
++        graphics.blit(RenderPipelines.GUI_TEXTURED, image.id, x, y, 0, 0, width, height,
++            image.width, image.height, image.width, image.height);
++        return true;
++    }
++
++    public boolean loading() {
++        return this.loading;
++    }
++
++    @Override
++    public void close() {
++        this.closed = true;
++        for (final Image image : this.images.values()) Minecraft.getInstance().getTextureManager().release(image.id);
++        this.images.clear();
++    }
++
++    private record Image(Identifier id, int width, int height) {}
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockSlotPosition.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockSlotPosition.java
+new file mode 100644
+index 0000000..e71914e
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockSlotPosition.java
+@@ -0,0 +1,11 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.access;
++
++public interface IBedrockSlotPosition {
++    void viaFabricPlusBedrock$setX(int x);
++    void viaFabricPlusBedrock$setY(int y);
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinBedrockCartographyScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinBedrockCartographyScreen.java
+new file mode 100644
+index 0000000..ac1329a
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinBedrockCartographyScreen.java
+@@ -0,0 +1,33 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.inventory;
++
++import com.viaversion.viafabricplus.bedrock.inventory.BedrockCartographyContext;
++import com.viaversion.viafabricplus.bedrock.screen.BedrockCartographyScreen;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.screens.MenuScreens;
++import net.minecraft.network.chat.Component;
++import net.minecraft.world.inventory.AbstractContainerMenu;
++import net.minecraft.world.inventory.MenuType;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(MenuScreens.class)
++public abstract class MixinBedrockCartographyScreen {
++    @Inject(method = "create", at = @At("HEAD"), cancellable = true)
++    private static <T extends AbstractContainerMenu> void openCartography(final MenuType<T> type, final Minecraft minecraft,
++                                                                         final int id, final Component title, final CallbackInfo ci) {
++        final var state = BedrockCartographyContext.take(id);
++        if (type != MenuType.CARTOGRAPHY_TABLE || state == null || minecraft.player == null) return;
++        final var inventory = minecraft.player.getInventory();
++        final var menu = MenuType.CARTOGRAPHY_TABLE.create(id, inventory);
++        minecraft.player.containerMenu = menu;
++        minecraft.gui.setScreen(new BedrockCartographyScreen(menu, inventory, title, state));
++        ci.cancel();
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinBedrockCartographySlot.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinBedrockCartographySlot.java
+new file mode 100644
+index 0000000..0b2414b
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinBedrockCartographySlot.java
+@@ -0,0 +1,21 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.inventory;
++
++import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockSlotPosition;
++import net.minecraft.world.inventory.Slot;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Mutable;
++import org.spongepowered.asm.mixin.gen.Accessor;
++
++@Mixin(Slot.class)
++public interface MixinBedrockCartographySlot extends IBedrockSlotPosition {
++    @Mutable @Accessor("x")
++    void viaFabricPlusBedrock$setX(int x);
++
++    @Mutable @Accessor("y")
++    void viaFabricPlusBedrock$setY(int y);
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinCartographyPacketListener.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinCartographyPacketListener.java
+new file mode 100644
+index 0000000..a6d059f
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinCartographyPacketListener.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.inventory;
++
++import com.viaversion.viafabricplus.bedrock.inventory.BedrockCartographyContext;
++import net.minecraft.client.multiplayer.ClientPacketListener;
++import net.minecraft.network.protocol.game.ClientboundContainerClosePacket;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(ClientPacketListener.class)
++public abstract class MixinCartographyPacketListener {
++    @Inject(method = "handleContainerClose", at = @At("TAIL"))
++    private void clearCartography(final ClientboundContainerClosePacket packet, final CallbackInfo ci) {
++        BedrockCartographyContext.clear();
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinCartographyTableMenu.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/inventory/MixinCartographyTableMenu.java
 new file mode 100644
 index 0000000..7076462
@@ -63,17 +337,352 @@ index 0000000..7076462
 +    }
 +
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingConnection.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingConnection.java
+index df1029c..17c3533 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingConnection.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRenderingConnection.java
+@@ -18,6 +18,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+ public abstract class MixinBedrockRenderingConnection {
+     @Inject(method = "onDisconnect", at = @At("HEAD"))
+     private void clearNativeMetadata(final DisconnectionDetails details, final CallbackInfo ci) {
++        com.viaversion.viafabricplus.bedrock.inventory.BedrockCartographyContext.clear();
+         BedrockRenderingMetadata.clear();
+         BedrockScoreboardImages.clear();
+     }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/inventory/BedrockCartographyContext.java b/src/main/java/com/viaversion/viafabricplus/bedrock/inventory/BedrockCartographyContext.java
+new file mode 100644
+index 0000000..537385e
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/inventory/BedrockCartographyContext.java
+@@ -0,0 +1,36 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.inventory;
++
++import com.viaversion.viafabricplus.bedrock.screen.BedrockCartographyScreen;
++import net.minecraft.client.Minecraft;
++import net.raphimc.viabedrock.api.model.CartographyState;
++
++/** Initial state precedes OPEN_SCREEN, including an empty table on a ViaProxy connection. */
++public final class BedrockCartographyContext {
++    private static CartographyState pending;
++
++    private BedrockCartographyContext() {}
++
++    public static void accept(final CartographyState state) {
++        if (Minecraft.getInstance().gui.screen() instanceof BedrockCartographyScreen screen
++            && screen.getMenu().containerId == state.windowId()) {
++            screen.accept(state);
++        } else {
++            pending = state;
++        }
++    }
++
++    public static CartographyState take(final int windowId) {
++        final CartographyState state = pending;
++        pending = null;
++        return state != null && state.windowId() == windowId ? state : null;
++    }
++
++    public static void clear() {
++        pending = null;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/inventory/CartographyNameSynchronization.java b/src/main/java/com/viaversion/viafabricplus/bedrock/inventory/CartographyNameSynchronization.java
+new file mode 100644
+index 0000000..301313f
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/inventory/CartographyNameSynchronization.java
+@@ -0,0 +1,25 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.inventory;
++
++/** A delayed acknowledgement must not replace text the player has already edited again. */
++public final class CartographyNameSynchronization {
++    private int sent;
++
++    public CartographyNameSynchronization(final int acknowledged) {
++        this.sent = acknowledged;
++    }
++
++    public void edited() {
++        this.sent++;
++    }
++
++    public boolean acknowledge(final int acknowledged) {
++        if (acknowledged < this.sent) return false;
++        this.sent = acknowledged;
++        return true;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/inventory/CartographyPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/inventory/CartographyPayload.java
+new file mode 100644
+index 0000000..f652959
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/inventory/CartographyPayload.java
+@@ -0,0 +1,23 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.inventory;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.raphimc.viabedrock.api.model.CartographyState;
++
++public record CartographyPayload(CartographyState state) implements CustomPacketPayload {
++    public static final Type<CartographyPayload> TYPE = new Type<>(net.minecraft.resources.Identifier.parse(CartographyState.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, CartographyPayload> CODEC = CustomPacketPayload.codec(
++        (payload, buffer) -> CartographyState.TYPE.write(buffer, payload.state),
++        buffer -> new CartographyPayload(CartographyState.TYPE.read(buffer)));
++
++    @Override
++    public Type<CartographyPayload> type() {
++        return TYPE;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCartographyScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCartographyScreen.java
+new file mode 100644
+index 0000000..c86b0fd
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/BedrockCartographyScreen.java
+@@ -0,0 +1,155 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen;
++
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockCartographyImages;
++import com.viaversion.viafabricplus.bedrock.inventory.CartographyNameSynchronization;
++import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockSlotPosition;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.gui.components.EditBox;
++import net.minecraft.client.gui.components.Button;
++import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
++import net.minecraft.client.input.KeyEvent;
++import net.minecraft.network.chat.Component;
++import net.minecraft.network.protocol.game.ServerboundRenameItemPacket;
++import net.minecraft.world.entity.player.Inventory;
++import net.minecraft.world.inventory.CartographyTableMenu;
++import net.minecraft.world.inventory.ContainerInput;
++import net.minecraft.world.inventory.Slot;
++import net.raphimc.viabedrock.api.model.CartographyState;
++
++/** Native layout over the real Java menu, with all recipes and results supplied by ViaBedrock. */
++public final class BedrockCartographyScreen extends AbstractContainerScreen<CartographyTableMenu> {
++    private static final int TEXT_COLOR = 0xFF373737;
++    private final BedrockCartographyImages images = new BedrockCartographyImages();
++    private final CartographyNameSynchronization names;
++    private CartographyState state;
++    private EditBox nameField;
++    private boolean applyingName;
++
++    public BedrockCartographyScreen(final CartographyTableMenu menu, final Inventory inventory, final Component title,
++                                   final CartographyState state) {
++        super(menu, inventory, title, 176, 220);
++        this.state = state;
++        this.names = new CartographyNameSynchronization(state.editAcknowledgements());
++        this.inventoryLabelY = 130;
++        move(menu.getSlot(0), 8, 59);
++        move(menu.getSlot(1), 8, 98);
++        move(menu.getSlot(2), 149, 79);
++        for (int index = 3; index < 30; index++) move(menu.getSlot(index), 8 + (index - 3) % 9 * 18, 140 + (index - 3) / 9 * 18);
++        for (int index = 30; index < 39; index++) move(menu.getSlot(index), 8 + (index - 30) * 18, 198);
++    }
++
++    private static void move(final Slot slot, final int x, final int y) {
++        final var position = (IBedrockSlotPosition) slot;
++        position.viaFabricPlusBedrock$setX(x);
++        position.viaFabricPlusBedrock$setY(y);
++    }
++
++    @Override
++    protected void init() {
++        super.init();
++        final String previous = this.nameField == null ? this.state.name() : this.nameField.getValue();
++        this.nameField = this.addRenderableWidget(new EditBox(this.font, this.leftPos + 9, this.topPos + 34,
++            158, 14, Component.translatable("cartography.viafabricplus.map_name")));
++        this.addRenderableWidget(Button.builder(Component.literal("×"), button -> this.onClose())
++            .bounds(this.leftPos + 176, this.topPos, 20, 20).build());
++        this.nameField.setBordered(false);
++        this.nameField.setMaxLength(30);
++        this.nameField.setValue(previous);
++        this.nameField.setResponder(name -> {
++            if (!this.applyingName && this.minecraft.getConnection() != null) {
++                this.names.edited();
++                this.minecraft.getConnection().send(new ServerboundRenameItemPacket(name));
++            }
++        });
++    }
++
++    @Override
++    protected void containerTick() {
++        final var result = this.menu.getSlot(2).getItem();
++        this.nameField.setHint(result.isEmpty() ? Component.empty() : result.getHoverName());
++    }
++
++    public void accept(final CartographyState state) {
++        this.state = state;
++        if (this.nameField != null && this.names.acknowledge(state.editAcknowledgements())
++            && !this.nameField.getValue().equals(state.name())) {
++            this.applyingName = true;
++            try {
++                this.nameField.setValue(state.name());
++            } finally {
++                this.applyingName = false;
++            }
++        }
++    }
++
++    @Override
++    public void extractBackground(final GuiGraphicsExtractor graphics, final int mouseX, final int mouseY, final float delta) {
++        super.extractBackground(graphics, mouseX, mouseY, delta);
++        final int x = this.leftPos, y = this.topPos;
++        graphics.fill(x, y, x + this.imageWidth, y + this.imageHeight, 0xFF373737);
++        graphics.fill(x + 1, y + 1, x + 175, y + 219, 0xFFFFFFFF);
++        graphics.fill(x + 3, y + 3, x + 173, y + 217, 0xFFC6C6C6);
++        graphics.fill(x + 6, y + 30, x + 170, y + 49, 0xFF373737);
++        graphics.fill(x + 7, y + 31, x + 169, y + 48, 0xFFFFFFFF);
++        graphics.fill(x + 8, y + 32, x + 168, y + 47, 0xFF5B5B5B);
++        for (final Slot slot : this.menu.slots) slotFrame(graphics, x + slot.x, y + slot.y, 16);
++        slotFrame(graphics, x + 145, y + 75, 24);
++        this.images.draw(graphics, "anvil-plus", x + 9, y + 80, 13, 13);
++        this.images.draw(graphics, "arrow", x + 32, y + 81, 16, 13);
++        this.images.draw(graphics, "arrow", x + 125, y + 81, 16, 13);
++        final String preview = switch (this.state.operation()) {
++            case "clone" -> "cartography_table_copy";
++            case "extend" -> "cartography_table_zoom";
++            case "lock" -> "cartography_table_glass";
++            case "empty" -> "cartography_table_empty";
++            default -> "cartography_table_map";
++        };
++        if (!this.images.draw(graphics, preview, x + 55, y + 55, 66, 66)) {
++            graphics.textWithWordWrap(this.font, Component.translatable(this.images.loading()
++                ? "cartography.viafabricplus.loading_images" : "cartography.viafabricplus.missing_images"), x + 55, y + 73, 66, TEXT_COLOR, false);
++        }
++    }
++
++    private static void slotFrame(final GuiGraphicsExtractor graphics, final int x, final int y, final int size) {
++        graphics.fill(x - 1, y - 1, x + size + 1, y + size + 1, 0xFFFFFFFF);
++        graphics.fill(x - 1, y - 1, x + size, y + size, 0xFF373737);
++        graphics.fill(x, y, x + size, y + size, 0xFF8B8B8B);
++    }
++
++    @Override
++    protected void extractLabels(final GuiGraphicsExtractor graphics, final int mouseX, final int mouseY) {
++        graphics.text(this.font, this.title, (this.imageWidth - this.font.width(this.title)) / 2, 6, TEXT_COLOR, false);
++        graphics.text(this.font, Component.translatable("cartography.viafabricplus.map_name"), 6, 20, TEXT_COLOR, false);
++        graphics.text(this.font, this.playerInventoryTitle, 6, this.inventoryLabelY, TEXT_COLOR, false);
++        if (!"empty".equals(this.state.operation())) {
++            final Component caption = Component.translatable("cartography.viafabricplus." + this.state.operation());
++            graphics.text(this.font, caption, (this.imageWidth - this.font.width(caption)) / 2, 122, TEXT_COLOR, false);
++        }
++    }
++
++    @Override
++    public boolean keyPressed(final KeyEvent event) {
++        if (event.isEscape()) {
++            this.onClose();
++            return true;
++        }
++        if (this.nameField.keyPressed(event) || this.nameField.canConsumeInput()) return true;
++        return super.keyPressed(event);
++    }
++
++    @Override
++    protected void slotClicked(final Slot slot, final int id, final int button, final ContainerInput action) {
++        super.slotClicked(slot, id, id == 2 && action == ContainerInput.QUICK_MOVE ? 0 : button, action);
++    }
++
++    @Override
++    public void removed() {
++        this.images.close();
++        super.removed();
++    }
++}
+diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
+index 227bd37..380c057 100644
+--- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
++++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
+@@ -390,5 +390,15 @@
+   "bedrock_marketplace.viafabricplus.wallet_failed": "Minecoins: unavailable",
+   "bedrock_marketplace.viafabricplus.wallet_sign_in": "Minecoins: sign in",
+   "bedrock_marketplace.viafabricplus.wallet_refresh": "Refresh balance",
+-  "bedrock_marketplace.viafabricplus.wallet_sign_in_short": "Sign in"
++  "bedrock_marketplace.viafabricplus.wallet_sign_in_short": "Sign in",
++  "cartography.viafabricplus.map_name": "Map Name",
++  "cartography.viafabricplus.create": "Basic Map",
++  "cartography.viafabricplus.create_locator": "Map that Shows Players",
++  "cartography.viafabricplus.rename": "Rename Map",
++  "cartography.viafabricplus.clone": "Copy Map",
++  "cartography.viafabricplus.extend": "Zoom Out & Clear",
++  "cartography.viafabricplus.lock": "Lock Map",
++  "cartography.viafabricplus.locator": "Map that Shows Players",
++  "cartography.viafabricplus.loading_images": "Loading images…",
++  "cartography.viafabricplus.missing_images": "Built-in images unavailable"
+ }
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 157b33b..817508d 100644
+index 157b33b..ed61ec0 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -50,6 +50,7 @@
+@@ -50,6 +50,10 @@
      "features.creative.MixinCreativeModeInventoryScreen",
      "features.creative.MixinCreativeModeTab_ItemDisplayBuilder",
      "features.creative.MixinCreativeModeTabs",
 +    "features.inventory.MixinCartographyTableMenu",
++    "features.inventory.MixinCartographyPacketListener",
++    "features.inventory.MixinBedrockCartographyScreen",
++    "features.inventory.MixinBedrockCartographySlot",
      "features.misc.MixinClientSuggestionProvider",
      "features.misc.MixinInventoryScreen",
      "features.misc.MixinMinecraft",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/inventory/CartographyNameSynchronizationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/inventory/CartographyNameSynchronizationTest.java
+new file mode 100644
+index 0000000..f3e0f7a
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/inventory/CartographyNameSynchronizationTest.java
+@@ -0,0 +1,30 @@
++package com.viaversion.viafabricplus.bedrock.inventory;
++
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++final class CartographyNameSynchronizationTest {
++    @Test
++    void delayedEchoCannotReplaceASecondEdit() {
++        final var names = new CartographyNameSynchronization(4);
++        names.edited();
++        names.edited();
++        assertFalse(names.acknowledge(4));
++        assertFalse(names.acknowledge(5));
++        assertTrue(names.acknowledge(6));
++        names.edited();
++        assertFalse(names.acknowledge(6));
++        assertTrue(names.acknowledge(7));
++    }
++
++    @Test
++    void authoritativeInputChangeAppliesWhenNoEditIsPending() {
++        final var names = new CartographyNameSynchronization(0);
++        assertTrue(names.acknowledge(0));
++        assertTrue(names.acknowledge(1));
++        names.edited();
++        names.edited();
++        assertFalse(names.acknowledge(2));
++        assertTrue(names.acknowledge(3));
++    }
++}
 -- 
 2.55.0

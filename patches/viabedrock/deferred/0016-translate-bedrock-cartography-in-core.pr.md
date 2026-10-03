@@ -56,7 +56,7 @@ Raw captures, account data, proprietary assets, and screenshots remain private.
 
 ## Remaining verification
 
-- Native inline naming and operation previews need client rendering support.
+- Inline naming and previews have verified ViaProxy flows. Direct, locking, and zoom comparisons remain required.
 - Further Java menu operations and crafted metadata edge cases need live comparisons.
 - Bulk operations, drop keys, hotbar exchanges, close timing, and rejected requests need further native comparisons.
 - Direct connections and ViaProxy need visible and behavioral verification.
@@ -67,8 +67,8 @@ It does not establish complete cartography parity.
 
 ## Testing
 
-Seven focused tests cover advertised counts and output, sparse map families, unknown scales, locator and lock metadata, naming, network identity, request actions, and destination capacity.
-The complete core suite reports 403 tests, no failures or errors, and one optional fixture skip.
+Seven recipe and request tests cover advertised counts and output, sparse map families, unknown scales, locator and lock metadata, naming, network identity, request actions, and destination capacity.
+The complete core suite reports 407 tests, no failures or errors, and one optional fixture skip.
 Main and test Checkstyle pass.
 
 A private Java 26.3 client with the preservation patch verifies paper-only output through ViaProxy.
@@ -79,3 +79,39 @@ The final naming test confirms cancellation retains all four paper items and res
 Saving a name and Shift-clicking crafts one named map into the hotbar.
 The server's final item retains that name and its acknowledged network ID, with no pending synchronization.
 All four targets build after the patch updates.
+
+## Native presentation transport
+
+Core sends `viabedrock:cartography` before `OPEN_SCREEN`, including an empty table.
+Payload format 1 carries the pinned protocol, window ID, edit acknowledgements, operation, and map name.
+Names and operation values have explicit bounds.
+Core derives the operation from its selected recipe.
+The client sends ordinary Java rename packets and retains newer typing until core acknowledges those edits.
+
+The resource converter exports the seven cartography images from the effective pack stack.
+Higher packs retain precedence, including extension changes.
+Oversized images do not reveal a lower pack's image.
+The conversion cache version changes with this output.
+Licensed built-in images remain private; none are included in this patch.
+
+Four additional tests cover state encoding, bounds, image precedence, and oversized overrides.
+Main and test Checkstyle pass.
+
+## Inline naming and preview comparisons
+
+The private Java 26.3 client opens the native layout through ViaProxy with an empty table.
+Six rapid edits finish with six core acknowledgements and retain the final text.
+Keyboard typing also works, including the inventory key while the field has focus.
+Crafting consumes one paper and retains the name in the server's acknowledged item.
+Synchronization finishes without pending requests.
+
+A private resource pack contains the seven images from the licensed matching package.
+The converter transports them through ViaProxy, and the client draws accepted server images.
+Captures verify creation, copy, and locator mode transitions and captions.
+The client has no Bedrock account selected during this server-image comparison.
+The missing-image message is also checked separately.
+Licensed acquisition, direct connections, resize timing, locking and zoom visuals, and complete operations remain unverified here.
+
+The core suite reports 407 tests, no failures or errors, and one optional fixture skip.
+The add-on suite reports 521 tests, no failures or errors, and 109 optional fixture skips.
+All four targets build; main and test core Checkstyle pass.
