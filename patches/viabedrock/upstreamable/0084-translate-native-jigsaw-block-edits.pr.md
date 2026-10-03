@@ -28,7 +28,7 @@ The matching server's generated metadata schema and saved NBT establish target t
 The standard Java screen shows the server's names, replacement state, and priorities on a direct connection.
 Submitting priorities `-19` and `31` persists them across a reconnect through ViaProxy.
 Submitting `-23` and `37` through ViaProxy persists both values in the dedicated server's saved block entity.
-The private probe opens the standard Java screen directly; it does not verify normal interaction or native container opening.
+Normal right-click interaction also opens the standard Java editor on direct and ViaProxy connections after the server grants operator permission. These comparisons use the add-on client.
 
 A numerical round-trip test covers coordinates, signed priority limits, retained unknown fields, and unchanged authoritative state.
 The complete stack builds.
@@ -38,8 +38,11 @@ All suites have zero failures and errors, and core main and test Checkstyle pass
 
 ## Remaining coverage
 
-Native container opening, permission and rejection flows, and ordinary clients without the add-on remain unverified.
+Native container lifecycle remains incomplete: Bedrock sends `JIGSAW_EDITOR`, which still reaches the unsupported-container path. Rejection flows and ordinary clients without the add-on remain unverified.
 The Java screen also exposes generation controls absent from the inspected native in-game screen.
 The documented [jigsaw structure data](https://mojang.github.io/bedrock-protocol-docs/1.26.50/packets/jigsaw-structure-data-packet/) carries rules for client world generation.
 Handling that data, world-generation rules, and generation requests remains incomplete.
 These results establish settings and edit requests on the tested Linux routes, not full editor parity.
+
+The patch applies to the pinned upstream base without setup, and standalone production compilation passes.
+The full stack supplies test dependencies absent from the standalone upstream test classpath.
