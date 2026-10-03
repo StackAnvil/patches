@@ -51,9 +51,13 @@ The inventory excludes commented enum entries and includes transition registrati
 | P3 | Target packets absent from enums | Incomplete | Compare definitions with protocol 2193. Later preview packets do not establish target support. |
 | P4 | Intentional exclusions | Incomplete | Record versioned evidence for each telemetry, Education, platform, or obsolete exclusion. |
 
-Live joins still log startup inventory, player-list, and jigsaw packets ignored outside the Java play state.
-Their lifecycle and required retained state still need an audit.
-A separate wire capture places inventory after StartGame, so these logs alone do not establish a general buffering policy.
+A private capture of the rebuilt ViaProxy route records the target server's startup order on 2026-10-03.
+Five equipment-slot updates arrive before StartGame, followed by a generic level event, the player list, clocks, jigsaw data, and voxel shapes.
+After StartGame, the server repeats the same player-list payload and sends full inventory snapshots for windows 0, 120, 124, and 119.
+The observed warnings therefore do not establish lost inventory or player-list state on this route.
+Jigsaw data arrives only once, before StartGame, and still has no handler.
+Audit its retained state and editor behavior, and compare startup ordering on other server implementations.
+This capture does not justify buffering every packet before StartGame.
 
 The [clock patch](../patches/viabedrock/upstreamable/0014-initialize-and-preserve-bedrock-clock-time.pr.md) now accepts explicit clock packets during configuration.
 The pinned server sends a state sync before StartGame and its registry afterward.
