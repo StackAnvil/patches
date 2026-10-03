@@ -1,0 +1,353 @@
+From 6b8678b25b52aaa920c9c4a4560c4da492491062 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 19:36:19 +0200
+Subject: [PATCH] feat(input): apply server movement and camera permissions
+
+Consume the core versioned permission channel for direct and ViaProxy connections. Filter gameplay key samples and recalculate the normalized movement vector before Java prediction. Camera locks discard mouse look while preserving menu controls and clearing smoothing history.
+
+Clear permissions when the connection closes. Preserve held key state so controls resume when the server unlocks them. Mount permission transport is retained, but exact vehicle mounting interactions and broader native comparisons still need verification.
+---
+ .../bedrock/ViaFabricPlusBedrock.java         |  5 +++
+ .../features/input/MixinClientInput.java      | 24 ++++++++++
+ .../input/MixinInputPermissionConnection.java | 22 +++++++++
+ .../features/input/MixinKeyboardInput.java    | 25 +++++++++++
+ .../input/MixinMinecraftInputPermissions.java | 22 +++++++++
+ .../features/input/MixinMouseHandler.java     | 31 +++++++++++++
+ .../input/BedrockInputPermissions.java        | 45 +++++++++++++++++++
+ .../input/InputPermissionsPayload.java        | 24 ++++++++++
+ .../viafabricplus-bedrock.mixins.json         |  5 +++
+ .../input/BedrockInputPermissionsTest.java    | 42 +++++++++++++++++
+ 10 files changed, 245 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinClientInput.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinInputPermissionConnection.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinKeyboardInput.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinMinecraftInputPermissions.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinMouseHandler.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockInputPermissions.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/InputPermissionsPayload.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockInputPermissionsTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+index a364703..b7613b0 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+@@ -26,6 +26,8 @@ import com.viaversion.viafabricplus.api.entrypoint.ViaFabricPlusEntrypoint;
+ import com.viaversion.viafabricplus.bedrock.account.BedrockAccount;
+ import com.viaversion.viafabricplus.bedrock.inventory.BedrockCartographyContext;
+ import com.viaversion.viafabricplus.bedrock.inventory.CartographyPayload;
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import com.viaversion.viafabricplus.bedrock.input.InputPermissionsPayload;
+ import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
+ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+ import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
+@@ -59,6 +61,9 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+ 
+     @Override
+     public void onPreSettingsLoading() {
++        PayloadTypeRegistry.clientboundPlay().register(InputPermissionsPayload.TYPE, InputPermissionsPayload.CODEC);
++        ClientPlayNetworking.registerGlobalReceiver(InputPermissionsPayload.TYPE,
++            (payload, context) -> BedrockInputPermissions.accept(payload.permissions()));
+         PayloadTypeRegistry.clientboundPlay().register(CartographyPayload.TYPE, CartographyPayload.CODEC);
+         ClientPlayNetworking.registerGlobalReceiver(CartographyPayload.TYPE,
+             (payload, context) -> BedrockCartographyContext.accept(payload.state()));
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinClientInput.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinClientInput.java
+new file mode 100644
+index 0000000..404f58e
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinClientInput.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.input;
++
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import net.minecraft.client.player.ClientInput;
++import net.raphimc.viabedrock.api.model.PlayerInputPermissions;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(ClientInput.class)
++public abstract class MixinClientInput {
++    @Inject(method = "makeJump", at = @At("HEAD"), cancellable = true)
++    private void applyJumpPermission(final CallbackInfo ci) {
++        if (!BedrockInputPermissions.current().allows(PlayerInputPermissions.Control.JUMP)) {
++            ci.cancel();
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinInputPermissionConnection.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinInputPermissionConnection.java
+new file mode 100644
+index 0000000..3d0436f
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinInputPermissionConnection.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.input;
++
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import net.minecraft.client.multiplayer.ClientCommonPacketListenerImpl;
++import net.minecraft.network.DisconnectionDetails;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(ClientCommonPacketListenerImpl.class)
++public abstract class MixinInputPermissionConnection {
++    @Inject(method = "onDisconnect", at = @At("HEAD"))
++    private void clearPermissions(final DisconnectionDetails details, final CallbackInfo ci) {
++        BedrockInputPermissions.clear();
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinKeyboardInput.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinKeyboardInput.java
+new file mode 100644
+index 0000000..9945cff
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinKeyboardInput.java
+@@ -0,0 +1,25 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.input;
++
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.player.ClientInput;
++import net.minecraft.client.player.KeyboardInput;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(KeyboardInput.class)
++public abstract class MixinKeyboardInput extends ClientInput {
++    @Inject(method = "tick", at = @At("TAIL"))
++    private void applyPermissions(final CallbackInfo ci) {
++        final var player = Minecraft.getInstance().player;
++        this.keyPresses = BedrockInputPermissions.filter(this.keyPresses, player != null && player.isPassenger());
++        this.moveVector = BedrockInputPermissions.movement(this.keyPresses);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinMinecraftInputPermissions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinMinecraftInputPermissions.java
+new file mode 100644
+index 0000000..73f60e6
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinMinecraftInputPermissions.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.input;
++
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.screens.Screen;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(Minecraft.class)
++public abstract class MixinMinecraftInputPermissions {
++    @Inject(method = "disconnect(Lnet/minecraft/client/gui/screens/Screen;ZZ)V", at = @At("HEAD"))
++    private void clearPermissions(final Screen screen, final boolean transferring, final boolean skipSaving, final CallbackInfo ci) {
++        BedrockInputPermissions.clear();
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinMouseHandler.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinMouseHandler.java
+new file mode 100644
+index 0000000..93fce20
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinMouseHandler.java
+@@ -0,0 +1,31 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.input;
++
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import net.minecraft.client.MouseHandler;
++import net.minecraft.util.SmoothDouble;
++import net.raphimc.viabedrock.api.model.PlayerInputPermissions;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.Final;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(MouseHandler.class)
++public abstract class MixinMouseHandler {
++    @Shadow @Final private SmoothDouble smoothTurnX;
++    @Shadow @Final private SmoothDouble smoothTurnY;
++    @Inject(method = "turnPlayer", at = @At("HEAD"), cancellable = true)
++    private void applyCameraPermission(final double deltaTime, final CallbackInfo ci) {
++        if (!BedrockInputPermissions.current().allows(PlayerInputPermissions.Control.CAMERA)) {
++            this.smoothTurnX.reset();
++            this.smoothTurnY.reset();
++            ci.cancel();
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockInputPermissions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockInputPermissions.java
+new file mode 100644
+index 0000000..74542a7
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockInputPermissions.java
+@@ -0,0 +1,45 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import net.minecraft.world.entity.player.Input;
++import net.minecraft.world.phys.Vec2;
++import net.raphimc.viabedrock.api.model.PlayerInputPermissions;
++
++/** Connection-scoped permissions also work when ViaBedrock runs remotely in ViaProxy. */
++public final class BedrockInputPermissions {
++    private static PlayerInputPermissions permissions = PlayerInputPermissions.NONE;
++
++    private BedrockInputPermissions() {}
++
++    public static PlayerInputPermissions current() {
++        return permissions;
++    }
++
++    public static void accept(final PlayerInputPermissions value) {
++        permissions = value;
++    }
++
++    public static void clear() {
++        permissions = PlayerInputPermissions.NONE;
++    }
++
++    public static Input filter(final Input input, final boolean passenger) {
++        final int bits = (input.forward() ? 1 : 0) | (input.backward() ? 2 : 0) | (input.left() ? 4 : 0)
++            | (input.right() ? 8 : 0) | (input.jump() ? 16 : 0) | (input.shift() ? 32 : 0) | (input.sprint() ? 64 : 0);
++        final int filtered = permissions.filterInput(bits, passenger);
++        return new Input((filtered & 1) != 0, (filtered & 2) != 0, (filtered & 4) != 0,
++            (filtered & 8) != 0, (filtered & 16) != 0, (filtered & 32) != 0, (filtered & 64) != 0);
++    }
++
++    public static Vec2 movement(final Input input) {
++        return new Vec2(impulse(input.left(), input.right()), impulse(input.forward(), input.backward())).normalized();
++    }
++
++    private static float impulse(final boolean positive, final boolean negative) {
++        return positive == negative ? 0F : positive ? 1F : -1F;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/InputPermissionsPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/InputPermissionsPayload.java
+new file mode 100644
+index 0000000..58b77b4
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/InputPermissionsPayload.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.PlayerInputPermissions;
++
++public record InputPermissionsPayload(PlayerInputPermissions permissions) implements CustomPacketPayload {
++    public static final Type<InputPermissionsPayload> TYPE = new Type<>(Identifier.parse(PlayerInputPermissions.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, InputPermissionsPayload> CODEC = CustomPacketPayload.codec(
++        (payload, buffer) -> PlayerInputPermissions.TYPE.write(buffer, payload.permissions),
++        buffer -> new InputPermissionsPayload(PlayerInputPermissions.TYPE.read(buffer)));
++
++    @Override
++    public Type<InputPermissionsPayload> type() {
++        return TYPE;
++    }
++}
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index 53f8d9a..12011ed 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -98,6 +98,11 @@
+     "features.render.MixinBedrockModelPartTransforms",
+     "features.render.MixinPlayerSkinWidget",
+     "features.render.MixinGuiSkinRenderer",
++    "features.input.MixinKeyboardInput",
++    "features.input.MixinClientInput",
++    "features.input.MixinMouseHandler",
++    "features.input.MixinInputPermissionConnection",
++    "features.input.MixinMinecraftInputPermissions",
+     "features.movement.MixinEntity",
+     "features.movement.MixinEntityFluidInteraction",
+     "features.movement.MixinEntityFluidInteraction_CurrentAccumulator",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockInputPermissionsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockInputPermissionsTest.java
+new file mode 100644
+index 0000000..c835540
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/input/BedrockInputPermissionsTest.java
+@@ -0,0 +1,42 @@
++package com.viaversion.viafabricplus.bedrock.input;
++
++import net.minecraft.world.entity.player.Input;
++import net.raphimc.viabedrock.api.model.PlayerInputPermissions;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.Test;
++
++import static net.raphimc.viabedrock.api.model.PlayerInputPermissions.Control.*;
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockInputPermissionsTest {
++    @AfterEach
++    void disconnect() {
++        BedrockInputPermissions.clear();
++    }
++
++    @Test
++    void opposingInputsResolveAfterDirectionalPermissionFiltering() {
++        final var all = new Input(true, true, true, true, true, true, true);
++        assertEquals(0F, BedrockInputPermissions.movement(all).length());
++        BedrockInputPermissions.accept(new PlayerInputPermissions(BACKWARD.mask() | RIGHT.mask()));
++        final var filtered = BedrockInputPermissions.filter(all, false);
++        assertTrue(filtered.jump());
++        assertTrue(filtered.shift());
++        assertTrue(filtered.sprint());
++        final var vector = BedrockInputPermissions.movement(filtered);
++        assertEquals(1F, vector.length(), 0.00001F);
++        assertEquals(vector.x, vector.y);
++        assertTrue(vector.x > 0F);
++    }
++
++    @Test
++    void resetRestoresHeldControlsAndDoesNotLeakIntoNextConnection() {
++        final var held = new Input(true, false, true, false, true, true, false);
++        BedrockInputPermissions.accept(new PlayerInputPermissions(MOVEMENT.mask() | CAMERA.mask()));
++        assertEquals(0F, BedrockInputPermissions.movement(BedrockInputPermissions.filter(held, false)).length());
++        assertFalse(BedrockInputPermissions.current().allows(CAMERA));
++        BedrockInputPermissions.clear();
++        assertEquals(held, BedrockInputPermissions.filter(held, false));
++        assertTrue(BedrockInputPermissions.current().allows(CAMERA));
++    }
++}
+-- 
+2.55.0

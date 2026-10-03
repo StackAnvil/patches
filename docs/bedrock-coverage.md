@@ -138,12 +138,24 @@ The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and
 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
-| G1 | Input locks | Incomplete | Preserve server permissions and apply movement and camera restrictions. |
+| G1 | Input locks | Incomplete | Core retains all eleven target permission categories and filters auth input. The add-on applies movement, directional, jump, sneak, camera, and passenger dismount restrictions through direct connections and ViaProxy. Manual mounting, native control comparisons, and broader vehicle tests remain incomplete. |
 | G2 | Movement effects and prediction corrections | Incomplete | Implement missing packets and compare translated movement timing with the native client. |
 | G3 | Voxel shapes | Incomplete | Core retains the registry and compiles custom face rules, transformed slices, and culling layers into accepted server packs. Direct and ViaProxy add-on terrain paths apply the conditions. Broader native comparisons, vanilla partial-block slices, registry replacement, and alternative terrain renderers remain incomplete. These grids do not define collision or selection. |
 | G4 | Animation commands, entity overrides, mob properties, and equipment updates | Incomplete | Connect server updates to authoritative state and runtime playback. |
 | G5 | Movement attributes and attack/use prediction | Incomplete | Apply ignored movement attributes and complete native input and cooldown behavior. |
 | G6 | Interaction and entity metadata | Incomplete | Audit variant mappings, interactions, flags, properties, and unsupported metadata. |
+
+The [input permission patch](../patches/viabedrock/upstreamable/0080-retain-and-transport-native-player-permissions.pr.md) decodes packet 196 from the target build.
+Private BDS 1.26.51.1 captures establish eleven category masks, reset packets, and the absence of a position field.
+Core preserves unknown bits and sends the latest snapshot after joining or late channel registration.
+Java local prediction and camera control require the [client integration](../patches/viafabricplus-bedrock/upstreamable/0020-apply-server-movement-and-camera-permissions.pr.md).
+Ordinary Java clients still predict their own movement despite filtered auth input.
+Live direct and ViaProxy tests stop held W movement while locked and permit movement after reset.
+Mouse-look samples preserve yaw while locked and rotate after reset.
+Directional restrictions preserve a normalized diagonal, and jump restrictions also block Java auto-jump.
+Local exit while locked clears the permissions before the next connection.
+The full build passes with 867 tests passed and 110 skipped.
+Manual mounting remains incomplete because vehicle interactions also include feeding and inventory access.
 
 ## Resources, animation, particles, and audio
 
