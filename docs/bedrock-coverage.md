@@ -138,7 +138,7 @@ The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and
 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
-| G1 | Input locks | Incomplete | Core retains all eleven target permission categories and filters auth input. The add-on applies movement, directional, jump, sneak, camera, and passenger dismount restrictions through direct connections and ViaProxy. Manual mounting, native control comparisons, and broader vehicle tests remain incomplete. |
+| G1 | Input locks | Incomplete | Core retains all eleven target permission categories and filters auth input. Raw movement and jump/sneak input survive movement locks. The add-on applies movement, directional, jump, sneak, camera, and passenger dismount restrictions through direct connections and ViaProxy. Manual mounting, broader native control comparisons, and vehicle tests remain incomplete. |
 | G2 | Movement effects and prediction corrections | Incomplete | Implement missing packets and compare translated movement timing with the native client. |
 | G3 | Voxel shapes | Incomplete | Core retains the registry and compiles custom face rules, transformed slices, and culling layers into accepted server packs. Direct and ViaProxy add-on terrain paths apply the conditions. Broader native comparisons, vanilla partial-block slices, registry replacement, and alternative terrain renderers remain incomplete. These grids do not define collision or selection. |
 | G4 | Animation commands, entity overrides, mob properties, and equipment updates | Incomplete | Connect server updates to authoritative state and runtime playback. |
@@ -154,7 +154,12 @@ Live direct and ViaProxy tests stop held W movement while locked and permit move
 Mouse-look samples preserve yaw while locked and rotate after reset.
 Directional restrictions preserve a normalized diagonal, and jump restrictions also block Java auto-jump.
 Local exit while locked clears the permissions before the next connection.
-The full build passes with 867 tests passed and 110 skipped.
+The full build passes with 872 tests passed and 110 skipped.
+Native 1.26.51.1 comparisons preserve raw movement, jump, and sneak while movement is locked.
+Keyboard diagonals remain normalized, with positive left and negative right raw X.
+Core latches raw button edges independently of filtered controls and shield use.
+The add-on sends physical samples before filtering through a negotiated raw-input channel.
+Live direct and ViaProxy tests match the native diagonal values and preserve both raw buttons while position stays fixed.
 Manual mounting remains incomplete because vehicle interactions also include feeding and inventory access.
 
 ## Resources, animation, particles, and audio

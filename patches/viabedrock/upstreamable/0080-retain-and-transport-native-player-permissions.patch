@@ -1,26 +1,102 @@
-From f40090f02eebe8b893c83bdac696b3927e085e14 Mon Sep 17 00:00:00 2001
+From 3b56f845c2150f92a9499c3eeebc9de73e467a67 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 3 Oct 2026 19:33:46 +0200
 Subject: [PATCH] feat(input): retain and transport native player permissions
 
-Bedrock 1.26.51 protocol 2193 sends packet 196 as a single unsigned varint permission mask. Native BDS captures confirm camera, movement, lateral movement, sneak, jump, mount, dismount and four directional bits with no position field. Movement disables its child categories even when their individual bits are clear.
+Bedrock 1.26.51 protocol 2193 sends packet 196 as a single unsigned varint permission mask. Target BDS captures establish all eleven categories and the absence of a position field. Movement disables its child categories even when their individual bits are clear.
 
-Retain each authoritative replacement per connection, filter held auth input immediately, and transport versioned snapshots after joining and late channel registration. Preserve unknown bits. Client prediction and camera input require the registered client integration; mount interactions still need separate native behavior work.
+Retain each replacement per connection, filter held auth input immediately, and transport versioned snapshots after joining and late channel registration. Preserve unknown bits. Java local prediction and camera input require client integration; manual mount interactions remain incomplete.
+
+Keep raw movement and jump/sneak edges independent of the permission-filtered controls. Negotiate a separate client sample channel so direct and ViaProxy clients can preserve physical input before local filtering. Ordinary Java clients retain raw samples from their standard input packets. Latch button edges between auth ticks and keep shield use out of raw sneak input.
+
+Native 1.26.51 Script API comparisons establish normalized keyboard diagonals, positive left and negative right raw X, and movement/jump/sneak input while movement is locked. Live BDS tests validate locked position with raw input through ViaProxy.
 ---
+ .../viabedrock/api/model/PlayerInput.java     |  61 ++++++++++
  .../api/model/PlayerInputPermissions.java     |  79 +++++++++++++
- .../api/model/entity/ClientPlayerEntity.java  |  14 ++-
+ .../api/model/entity/ClientPlayerEntity.java  |  19 +++-
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
+ .../protocol/packet/ClientPlayerPackets.java  |  17 ++-
  .../packet/InputPermissionPackets.java        |  36 ++++++
  .../protocol/packet/JoinPackets.java          |   2 +
- .../protocol/packet/MultiStatePackets.java    |   2 +
- .../protocol/storage/PlayerInputStorage.java  |  47 ++++++++
- .../api/model/PlayerInputPermissionsTest.java | 105 ++++++++++++++++++
- 8 files changed, 285 insertions(+), 2 deletions(-)
+ .../protocol/packet/MultiStatePackets.java    |  15 +++
+ .../protocol/storage/PlayerInputStorage.java  | 107 ++++++++++++++++++
+ .../api/model/PlayerInputPermissionsTest.java | 105 +++++++++++++++++
+ .../viabedrock/api/model/PlayerInputTest.java |  73 ++++++++++++
+ 11 files changed, 502 insertions(+), 14 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInput.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerInputPermissions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/InputPermissionPackets.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/PlayerInputPermissionsTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/PlayerInputTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/PlayerInput.java b/src/main/java/net/raphimc/viabedrock/api/model/PlayerInput.java
+new file mode 100644
+index 000000000..4c00190f6
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/PlayerInput.java
+@@ -0,0 +1,61 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.model.Position2f;
++
++/** A gameplay key sample before the server's permission mask is applied. */
++public record PlayerInput(int flags) {
++
++    public static final String CHANNEL = "viabedrock:raw_input";
++    public static final PlayerInput NONE = new PlayerInput(0);
++    public static final Type<PlayerInput> TYPE = new Type<>(PlayerInput.class) {
++        @Override
++        public PlayerInput read(final ByteBuf buffer) {
++            if (Types.VAR_INT.readPrimitive(buffer) != 1
++                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IllegalArgumentException("Unsupported raw player input");
++            }
++            return new PlayerInput(buffer.readUnsignedByte());
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final PlayerInput value) {
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            buffer.writeByte(value.flags());
++        }
++    };
++
++    public PlayerInput {
++        if ((flags & ~127) != 0) {
++            throw new IllegalArgumentException("Invalid player input bits");
++        }
++    }
++
++    public boolean jumping() {
++        return (this.flags & 16) != 0;
++    }
++
++    public boolean sneaking() {
++        return (this.flags & 32) != 0;
++    }
++
++    public Position2f movement() {
++        float x = ((this.flags & 4) != 0 ? 1F : 0F) - ((this.flags & 8) != 0 ? 1F : 0F);
++        float y = ((this.flags & 1) != 0 ? 1F : 0F) - ((this.flags & 2) != 0 ? 1F : 0F);
++        if (x != 0F && y != 0F) {
++            x *= (float) (1D / Math.sqrt(2));
++            y *= (float) (1D / Math.sqrt(2));
++        }
++        return new Position2f(x, y);
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/PlayerInputPermissions.java b/src/main/java/net/raphimc/viabedrock/api/model/PlayerInputPermissions.java
 new file mode 100644
 index 000000000..67025b87e
@@ -107,7 +183,7 @@ index 000000000..67025b87e
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
-index e634276b0..116720a43 100644
+index e634276b0..7eafefdf2 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
 @@ -38,11 +38,13 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
@@ -150,6 +226,20 @@ index e634276b0..116720a43 100644
      }
  
      public Set<InputFlag> prevInputFlags() {
+@@ -412,11 +422,10 @@ public class ClientPlayerEntity extends PlayerEntity {
+         final boolean shouldSneak = this.sneaking || this.isShieldBlocking();
+         if (shouldSneak) {
+             this.addAuthInputData(PlayerAuthInputData.SneakDown, PlayerAuthInputData.Sneaking,
+-                    PlayerAuthInputData.WantDown, PlayerAuthInputData.SneakCurrentRaw);
++                    PlayerAuthInputData.WantDown);
+         }
+         if (shouldSneak != this.bedrockSneaking) {
+-            this.addAuthInputData(shouldSneak ? PlayerAuthInputData.SneakPressedRaw : PlayerAuthInputData.SneakReleasedRaw,
+-                    shouldSneak ? PlayerAuthInputData.StartSneaking : PlayerAuthInputData.StopSneaking);
++            this.addAuthInputData(shouldSneak ? PlayerAuthInputData.StartSneaking : PlayerAuthInputData.StopSneaking);
+             this.bedrockSneaking = shouldSneak;
+         }
+     }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 index 37691e5a3..3a62d26ed 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
@@ -170,6 +260,66 @@ index 37691e5a3..3a62d26ed 100644
          user.put(new PlayerListStorage());
          user.put(new PlayerWaypointTracker(user));
          user.put(new ScoreboardTracker());
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+index b9f6e8dc0..fa6ad9de0 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+@@ -37,6 +37,7 @@ import net.raphimc.viabedrock.api.util.EnumUtil;
+ import net.raphimc.viabedrock.api.util.MathUtil;
+ import net.raphimc.viabedrock.api.util.PacketFactory;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.api.model.PlayerInput;
+ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+@@ -544,7 +545,9 @@ public final class ClientPlayerPackets {
+         protocol.registerServerbound(ServerboundPackets26_3.PLAYER_INPUT, null, wrapper -> {
+             wrapper.cancel();
+             final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
+-            final Set<InputFlag> inputFlags = EnumUtil.getEnumSetFromBitmask(InputFlag.class, wrapper.read(Types.BYTE), InputFlag::ordinal); // input flags
++            final byte flags = wrapper.read(Types.BYTE); // input flags
++            wrapper.user().get(PlayerInputStorage.class).recordStandardInput(new PlayerInput(flags & 127));
++            final Set<InputFlag> inputFlags = EnumUtil.getEnumSetFromBitmask(InputFlag.class, flags, InputFlag::ordinal);
+             clientPlayer.setInputFlags(inputFlags);
+         });
+         protocol.registerServerbound(ServerboundPackets26_3.CLIENT_TICK_END, ServerboundBedrockPackets.PLAYER_AUTH_INPUT, wrapper -> {
+@@ -576,6 +579,8 @@ public final class ClientPlayerPackets {
+                 return;
+             }
+ 
++            final PlayerInputStorage playerInput = wrapper.user().get(PlayerInputStorage.class);
++            clientPlayer.authInputData().addAll(playerInput.takeButtonEvents());
+             clientPlayer.addAuthInputData(PlayerAuthInputData.BlockBreakingDelayEnabled);
+             if (clientPlayer.isOnGround()) {
+                 clientPlayer.addAuthInputData(PlayerAuthInputData.VerticalCollision);
+@@ -596,17 +601,11 @@ public final class ClientPlayerPackets {
+                 clientPlayer.addAuthInputData(PlayerAuthInputData.Right);
+             }
+             if (clientPlayer.inputFlags().contains(InputFlag.JUMP)) {
+-                clientPlayer.addAuthInputData(PlayerAuthInputData.JumpDown, PlayerAuthInputData.Jumping, PlayerAuthInputData.WantUp, PlayerAuthInputData.JumpCurrentRaw);
++                clientPlayer.addAuthInputData(PlayerAuthInputData.JumpDown, PlayerAuthInputData.Jumping, PlayerAuthInputData.WantUp);
+             }
+             if (clientPlayer.inputFlags().contains(InputFlag.SPRINT)) {
+                 clientPlayer.addAuthInputData(PlayerAuthInputData.SprintDown, PlayerAuthInputData.Sprinting);
+             }
+-            if (clientPlayer.inputFlags().contains(InputFlag.JUMP) && !prevInputFlags.contains(InputFlag.JUMP)) {
+-                clientPlayer.addAuthInputData(PlayerAuthInputData.JumpPressedRaw);
+-            }
+-            if (prevInputFlags.contains(InputFlag.JUMP) && !clientPlayer.inputFlags().contains(InputFlag.JUMP)) {
+-                clientPlayer.addAuthInputData(PlayerAuthInputData.JumpReleasedRaw);
+-            }
+             if (clientPlayer.inputFlags().contains(InputFlag.SHIFT) && !prevInputFlags.contains(InputFlag.SHIFT)) {
+                 clientPlayer.setSneaking(true);
+             }
+@@ -704,7 +703,7 @@ public final class ClientPlayerPackets {
+                     ? MathUtil.calculateMovementDirections(clientPlayer.authInputData(), false)
+                     : new Position2f(0F, 0F)); // analog move vector
+             wrapper.write(BedrockTypes.POSITION_3F, MathUtil.calculateCameraOrientation(clientPlayer.rotation().y(), clientPlayer.rotation().x())); // camera orientation
+-            wrapper.write(BedrockTypes.POSITION_2F, MathUtil.calculateMovementDirections(clientPlayer.authInputData(), false)); // raw move vector
++            wrapper.write(BedrockTypes.POSITION_2F, playerInput.rawInput().movement()); // raw move vector
+ 
+             clientPlayer.authInputData().clear();
+             clientPlayer.authInputBlockActions().clear();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InputPermissionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InputPermissionPackets.java
 new file mode 100644
 index 000000000..71927cf15
@@ -226,10 +376,19 @@ index b3463e75e..9584aebe6 100644
          clientPlayer.createTeam();
          clientPlayer.sendInitialEntityData();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-index 88b9ea570..bb480c2c6 100644
+index 88b9ea570..7494de2b7 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
-@@ -42,6 +42,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolat
+@@ -29,6 +29,8 @@ import com.viaversion.viaversion.util.Key;
+ import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTranslator;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
++import net.raphimc.viabedrock.api.model.PlayerInput;
++import net.raphimc.viabedrock.api.model.PlayerInputPermissions;
+ import net.raphimc.viabedrock.api.util.PacketFactory;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+@@ -42,6 +44,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolat
  import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
  import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
  import net.raphimc.viabedrock.protocol.storage.PacketSyncStorage;
@@ -237,7 +396,21 @@ index 88b9ea570..bb480c2c6 100644
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
  
  import java.nio.charset.StandardCharsets;
-@@ -132,6 +133,7 @@ public final class MultiStatePackets {
+@@ -129,9 +132,21 @@ public final class MultiStatePackets {
+     public static final PacketHandler CUSTOM_PAYLOAD_HANDLER = wrapper -> {
+         wrapper.cancel();
+         final String channel = Key.namespaced(wrapper.read(Types.STRING)); // channel
++        if (channel.equals(PlayerInput.CHANNEL)) {
++            if (wrapper.user().getProtocolInfo().getClientState() == State.PLAY
++                    && wrapper.user().get(ChannelStorage.class).hasChannel(PlayerInputPermissions.CHANNEL)) {
++                final PlayerInput input = wrapper.read(PlayerInput.TYPE);
++                if (wrapper.read(Types.REMAINING_BYTES).length != 0) {
++                    throw new IllegalArgumentException("Unexpected raw input fields");
++                }
++                wrapper.user().get(PlayerInputStorage.class).recordRawInput(input);
++            }
++            return;
++        }
          if (channel.equals("minecraft:register")) {
              final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
              wrapper.user().get(ChannelStorage.class).addChannels(channels);
@@ -247,10 +420,10 @@ index 88b9ea570..bb480c2c6 100644
                  ViaBedrockUtilityInterface.confirmPresence(wrapper.user());
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
 new file mode 100644
-index 000000000..2047d7dea
+index 000000000..47c6a05d1
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,107 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -263,13 +436,23 @@ index 000000000..2047d7dea
 +import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 +import com.viaversion.viaversion.api.type.Types;
 +import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.raphimc.viabedrock.api.model.PlayerInput;
 +import net.raphimc.viabedrock.api.model.PlayerInputPermissions;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputData;
++
++import java.nio.charset.StandardCharsets;
++import java.util.EnumSet;
++import java.util.Set;
 +
 +public final class PlayerInputStorage extends StoredObject {
 +
 +    private PlayerInputPermissions permissions = PlayerInputPermissions.NONE;
 +    private boolean joined;
++    private boolean separateRawInput;
++    private PlayerInput rawInput = PlayerInput.NONE;
++    private int pressed;
++    private int released;
 +
 +    public PlayerInputStorage(final UserConnection user) {
 +        super(user);
@@ -283,6 +466,52 @@ index 000000000..2047d7dea
 +        this.permissions = permissions;
 +    }
 +
++    public PlayerInput rawInput() {
++        return this.rawInput;
++    }
++
++    public void recordStandardInput(final PlayerInput input) {
++        if (!this.separateRawInput) {
++            this.updateRawInput(input);
++        }
++    }
++
++    public void recordRawInput(final PlayerInput input) {
++        this.separateRawInput = true;
++        this.updateRawInput(input);
++    }
++
++    private void updateRawInput(final PlayerInput input) {
++        this.pressed |= input.flags() & ~this.rawInput.flags();
++        this.released |= this.rawInput.flags() & ~input.flags();
++        this.rawInput = input;
++    }
++
++    public Set<PlayerAuthInputData> takeButtonEvents() {
++        final Set<PlayerAuthInputData> events = EnumSet.noneOf(PlayerAuthInputData.class);
++        if (this.rawInput.jumping()) {
++            events.add(PlayerAuthInputData.JumpCurrentRaw);
++        }
++        if (this.rawInput.sneaking()) {
++            events.add(PlayerAuthInputData.SneakCurrentRaw);
++        }
++        if ((this.pressed & 16) != 0) {
++            events.add(PlayerAuthInputData.JumpPressedRaw);
++        }
++        if ((this.released & 16) != 0) {
++            events.add(PlayerAuthInputData.JumpReleasedRaw);
++        }
++        if ((this.pressed & 32) != 0) {
++            events.add(PlayerAuthInputData.SneakPressedRaw);
++        }
++        if ((this.released & 32) != 0) {
++            events.add(PlayerAuthInputData.SneakReleasedRaw);
++        }
++        this.pressed = 0;
++        this.released = 0;
++        return events;
++    }
++
 +    public void markJoined() {
 +        this.joined = true;
 +    }
@@ -291,6 +520,10 @@ index 000000000..2047d7dea
 +        if (!this.joined || !this.user().get(ChannelStorage.class).hasChannel(PlayerInputPermissions.CHANNEL)) {
 +            return;
 +        }
++        final PacketWrapper register = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
++        register.write(Types.STRING, "minecraft:register");
++        register.write(Types.REMAINING_BYTES, PlayerInput.CHANNEL.getBytes(StandardCharsets.UTF_8));
++        register.send(BedrockProtocol.class);
 +        final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
 +        packet.write(Types.STRING, PlayerInputPermissions.CHANNEL);
 +        packet.write(PlayerInputPermissions.TYPE, this.permissions);
@@ -406,6 +639,85 @@ index 000000000..2829338a1
 +        storage.setPermissions(PlayerInputPermissions.NONE);
 +        player.setInputFlags(held);
 +        assertEquals(held, player.inputFlags());
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/PlayerInputTest.java b/src/test/java/net/raphimc/viabedrock/api/model/PlayerInputTest.java
+new file mode 100644
+index 000000000..ce7d16155
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/PlayerInputTest.java
+@@ -0,0 +1,73 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.model.Position2f;
++import net.raphimc.viabedrock.protocol.storage.PlayerInputStorage;
++import org.junit.jupiter.api.Test;
++
++import java.util.Set;
++
++import static net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputData.*;
++import static org.junit.jupiter.api.Assertions.*;
++
++class PlayerInputTest {
++
++    @Test
++    void rawSampleSurvivesPermissionFilteringAndCancelsOpposingControls() {
++        final var raw = new PlayerInput(1 | 4 | 16 | 32);
++        final var permissions = new PlayerInputPermissions(PlayerInputPermissions.Control.MOVEMENT.mask());
++        assertEquals(0, permissions.filterInput(raw.flags(), false));
++        assertEquals((float) (1D / Math.sqrt(2)), raw.movement().x());
++        assertEquals((float) (1D / Math.sqrt(2)), raw.movement().y());
++        assertEquals(new Position2f(0F, 0F), new PlayerInput(15).movement());
++        assertEquals(new Position2f(-1F, 0F), new PlayerInput(1 | 2 | 8).movement());
++    }
++
++    @Test
++    void preservesRawButtonEdgesAcrossHeldTicksAndFastPressRelease() {
++        final var storage = new PlayerInputStorage(null);
++        storage.recordStandardInput(new PlayerInput(16 | 32));
++        assertEquals(Set.of(JumpCurrentRaw, JumpPressedRaw, SneakCurrentRaw, SneakPressedRaw), storage.takeButtonEvents());
++        assertEquals(Set.of(JumpCurrentRaw, SneakCurrentRaw), storage.takeButtonEvents());
++        storage.recordStandardInput(PlayerInput.NONE);
++        storage.recordStandardInput(new PlayerInput(16));
++        storage.recordStandardInput(PlayerInput.NONE);
++        assertEquals(Set.of(JumpReleasedRaw, JumpPressedRaw, SneakReleasedRaw), storage.takeButtonEvents());
++        assertTrue(storage.takeButtonEvents().isEmpty());
++    }
++
++    @Test
++    void filteredStandardPacketsCannotOverwriteTheSeparateRawStream() {
++        final var storage = new PlayerInputStorage(null);
++        final var raw = new PlayerInput(1 | 16);
++        storage.recordRawInput(raw);
++        storage.setPermissions(new PlayerInputPermissions(PlayerInputPermissions.Control.MOVEMENT.mask()));
++        storage.recordStandardInput(PlayerInput.NONE);
++        assertEquals(raw, storage.rawInput());
++        assertEquals(Set.of(JumpCurrentRaw, JumpPressedRaw), storage.takeButtonEvents());
++        storage.recordRawInput(PlayerInput.NONE);
++        assertEquals(Set.of(JumpReleasedRaw), storage.takeButtonEvents());
++        assertEquals(PlayerInput.NONE, new PlayerInputStorage(null).rawInput());
++    }
++
++    @Test
++    void sampleTransportRejectsUndefinedJavaBits() {
++        final var buffer = Unpooled.buffer();
++        try {
++            final var sample = new PlayerInput(127);
++            PlayerInput.TYPE.write(buffer, sample);
++            assertEquals(sample, PlayerInput.TYPE.read(buffer));
++            assertFalse(buffer.isReadable());
++            assertThrows(IllegalArgumentException.class, () -> new PlayerInput(128));
++            assertThrows(IllegalArgumentException.class, () -> new PlayerInput(-1));
++        } finally {
++            buffer.release();
++        }
 +    }
 +
 +}

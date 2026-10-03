@@ -7,6 +7,9 @@ Filter the keyboard sample and recalculate its normalized movement vector.
 Discard locked mouse look and clear smoothing history. Menu input remains available.
 Apply jump permissions to Java auto-jump as well as the keyboard sample.
 The payload channel works through direct connections and ViaProxy.
+Send physical samples before filtering only when the core advertises the raw-input channel.
+Send changed samples and the first sample of each connection.
+Reset raw sample history with connection permissions.
 Remote disconnect and local world exit clear the connection's permissions before another server can receive input.
 
 ## Target evidence
@@ -18,7 +21,10 @@ This patch applies the shared policy to Java 26.3 gameplay controls.
 
 ## Testing and limits
 
-The full build passes with 867 tests passed and 110 skipped.
+Live BDS 1.26.51.1 tests through direct connections and ViaProxy preserve raw diagonal movement, jump, and sneak while the permission mask remains 4.
+The native client and Java connection report the same diagonal components, about (-0.70710677, 0.70710677), for forward and right.
+The server position stays fixed, and release returns the raw vector and buttons to their idle state.
+The full build passes with 872 tests passed and 110 skipped.
 Tests cover normalized diagonals, opposing controls, directional filtering, held controls, reset, and connection cleanup.
 Live direct and ViaProxy joins receive the target server's permission replacements and resets.
 Locked W input leaves the player's position unchanged. Reset permits movement again.
