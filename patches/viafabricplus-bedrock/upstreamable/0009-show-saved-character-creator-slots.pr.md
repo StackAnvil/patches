@@ -1286,3 +1286,16 @@ A rebuilt Java 26.3 client through ViaProxy passes six controlled equipment and 
 The add-on and its two dependency build targets pass. The add-on suite reports 502 tests, no failures or errors, and 101 optional skips. The bundled client passes the live probe. Native graph drawing and camera and item transforms remain unfinished.
 
 Further native tracing identifies `0x1404c4400` as the first-person camera and projection setup. It calls `renderFirstPerson` with flags `0x21`. This path applies view bobbing through `0x1446bd990` and integrates a time-based rotation spring before actor drawing. The actor path also applies its world matrix, model scale, and global animations. These calculations require integration and visible comparison before Java hand transforms can be removed.
+
+
+### Entity-relative bone matrices
+
+Entity-relative animation preserves the translated bone origin and replaces the inherited matrix basis before local rotation and scale. This removes parent scale and shear too. The previous quaternion cancellation retained those transforms and included ancestor bind rotations.
+
+The evidence comes from `BoneOrientation::updateBoneTransform` at `0x141bc3d20` in Bedrock 1.26.51.1 build 51061372. Its relative flag clears the first three matrix columns after position translation. The [native orientation fields](https://github.com/LiteLDev/LeviLamina/blob/main/src/mc/world/actor/animation/BoneOrientation.h) identify the transform state. Private executable probes run the complete function for 840 combinations. These cover parent rotation, nonuniform scale, shear, zero scale, translation, local rotation, and signed local scale.
+
+The animated model now retains full matrices for drawing and geometry bounds. Scoped hooks preserve external actor and preview transforms. Authored cube pivots still use their local transforms. Matrix composition does not invert parent transforms, so an entity-relative child remains visible under a parent scaled to zero. Weak model references avoid retaining discarded previews. Nested calls and exceptions restore the previous scope.
+
+All 840 native comparisons pass. Targeted model, locator, attachment, and scope tests pass. The full add-on build reports 506 tests, no failures or errors, and 103 optional skips. Its dependency builds, client bundle, and north-star PR check pass.
+
+A rebuilt Java 26.3 client passes the production drawing and bounds probe. Two synthetic cubes produce 48 vertices at native-transformed corners under nonuniform and zero parent scale. Normals remain finite. External transforms remain outside the bone scope, and failed visits release that scope. These checks verify bone matrix composition. Native first-person camera transforms, graph submission, and held-item rendering remain incomplete.
