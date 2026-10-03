@@ -146,7 +146,9 @@ The initial Java baseline lacked armor and status-effect icons.
 The [effect correction](../patches/viabedrock/upstreamable/0082-preserve-status-icons-independently-of-particles.pr.md) restores icons through standard Java packets.
 Direct and ViaProxy comparisons show icons with particles disabled, including ViaProxy with the add-on removed.
 Direct and ViaProxy status-icon hiding and reset now have visible comparison evidence.
-The armor visibility hook remains unverified because the baseline armor meter is absent.
+The [armor correction](../patches/viabedrock/upstreamable/0083-synchronize-native-armor-attributes.pr.md) derives native protection and toughness in core.
+Direct and ViaProxy comparisons now verify armor-meter rendering, individual hiding, and reset.
+A ViaProxy client without the add-on also displays the armor meter.
 Air, horse health, contextual jump bars, and spectator behavior also need comparisons.
 Paper doll, touch controls, and native control hints still lack renderers.
 Ordinary Java has no standard packet for individual HUD restrictions.
@@ -161,7 +163,7 @@ These results do not complete U2.
 | G3 | Voxel shapes | Incomplete | Core retains the registry and compiles custom face rules, transformed slices, and culling layers into accepted server packs. Direct and ViaProxy add-on terrain paths apply the conditions. Broader native comparisons, vanilla partial-block slices, registry replacement, and alternative terrain renderers remain incomplete. These grids do not define collision or selection. |
 | G4 | Animation commands, entity overrides, mob properties, and equipment updates | Incomplete | Connect server updates to authoritative state and runtime playback. |
 | G5 | Movement attributes and attack/use prediction | Incomplete | Apply ignored movement attributes and complete native input and cooldown behavior. |
-| G6 | Interaction and entity metadata | Incomplete | Audit variant mappings, interactions, flags, properties, and unsupported metadata. The HUD fixture still lacks the Java armor meter despite visible native armor. Core now preserves effect icons independently of particles. |
+| G6 | Interaction and entity metadata | Incomplete | Audit variant mappings, interactions, flags, properties, and unsupported metadata. Core now derives local armor and toughness from vanilla and custom wearable definitions. Both routes verify updates, dimension changes, and retained or cleared equipment after respawns. Remote equipment, custom equip interactions, and rejection recovery still need comparisons. Core now preserves effect icons independently of particles. |
 
 The [input permission patch](../patches/viabedrock/upstreamable/0080-retain-and-transport-native-player-permissions.pr.md) decodes packet 196 from the target build.
 Private BDS 1.26.51.1 captures establish eleven category masks, reset packets, and the absence of a position field.

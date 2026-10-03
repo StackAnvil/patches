@@ -1,0 +1,351 @@
+From 60712ec79a24c9c208a414ab780684757afbad6e Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 22:11:19 +0200
+Subject: [PATCH] feat(equipment): synchronize native armor attributes
+
+Bedrock does not send player armor attributes, so the Java armor meter remains empty despite equipped armor. Derive protection and toughness from the authoritative armor container and send standard Java attributes after equipment changes, joins, respawns, and dimension changes. Batch full replacements and suppress duplicate totals.
+
+BDS 1.26.51.1 build 51061372 equippable queries establish vanilla values, including copper armor. Captured ItemRegistry components provide custom wearable protection and declared slots. The target excludes misplaced armor and hand wearables from both totals; preserve those rules and use zero toughness for custom wearables. Snapshot copies do not emit attributes, while restoring the actual armor container recomputes totals.
+---
+ .../container/player/ArmorContainer.java      | 73 +++++++++++++++
+ .../protocol/model/ItemArmorData.java         | 90 +++++++++++++++++++
+ .../protocol/packet/ClientPlayerPackets.java  |  1 +
+ .../protocol/packet/JoinPackets.java          |  1 +
+ .../protocol/packet/WorldPackets.java         |  1 +
+ .../protocol/rewriter/ItemRewriter.java       | 11 +++
+ .../protocol/model/ItemArmorDataTest.java     | 55 ++++++++++++
+ 7 files changed, 232 insertions(+)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/ItemArmorData.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/ItemArmorDataTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/player/ArmorContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/player/ArmorContainer.java
+index 09ba1a464..ad7d87c92 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/container/player/ArmorContainer.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/container/player/ArmorContainer.java
+@@ -18,15 +18,88 @@
+ package net.raphimc.viabedrock.api.model.container.player;
+ 
+ import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
++import net.raphimc.viabedrock.protocol.data.generated.java.Attributes;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.ItemArmorData;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++
++import java.util.Arrays;
+ 
+ public class ArmorContainer extends InventorySubContainer {
+ 
++    private ItemArmorData.Totals lastSent;
++    private boolean replacingItems;
++
+     public ArmorContainer(final UserConnection user) {
+         super(user, (byte) ContainerID.CONTAINER_ID_ARMOR.getValue(), ContainerType.ARMOR, 4);
+     }
+ 
++    @Override
++    public boolean setItem(final int slot, final BedrockItem item) {
++        final boolean changed = super.setItem(slot, item);
++        if (changed && !this.replacingItems) {
++            this.updateAttributes(false);
++        }
++        return changed;
++    }
++
++    @Override
++    public boolean setItems(final BedrockItem[] items) {
++        final boolean changed;
++        this.replacingItems = true;
++        try {
++            changed = super.setItems(items);
++        } finally {
++            this.replacingItems = false;
++        }
++        if (changed) {
++            this.updateAttributes(false);
++        }
++        return changed;
++    }
++
++    @Override
++    public void clearItems() {
++        super.clearItems();
++        this.updateAttributes(false);
++    }
++
++    public void sendAttributes() {
++        this.updateAttributes(true);
++    }
++
++    private void updateAttributes(final boolean force) {
++        final EntityTracker entities = this.user.get(EntityTracker.class);
++        final ItemRewriter rewriter = this.user.get(ItemRewriter.class);
++        if (entities == null || entities.getClientPlayer() == null || rewriter == null
++                || this.user.getProtocolInfo().getServerState() != State.PLAY) {
++            return;
++        }
++        final ItemArmorData.Totals totals = ItemArmorData.total(Arrays.stream(this.items).map(rewriter::armorData).toArray(ItemArmorData[]::new));
++        if (!force && totals.equals(this.lastSent)) {
++            return;
++        }
++        final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.UPDATE_ATTRIBUTES, this.user);
++        packet.write(Types.VAR_INT, entities.getClientPlayer().javaId());
++        packet.write(Types.VAR_INT, 2);
++        packet.write(Types.VAR_INT, BedrockProtocol.MAPPINGS.getJavaEntityAttributes().get(Attributes.ARMOR));
++        packet.write(Types.DOUBLE, totals.protection());
++        packet.write(Types.VAR_INT, 0);
++        packet.write(Types.VAR_INT, BedrockProtocol.MAPPINGS.getJavaEntityAttributes().get(Attributes.ARMOR_TOUGHNESS));
++        packet.write(Types.DOUBLE, totals.toughness());
++        packet.write(Types.VAR_INT, 0);
++        packet.send(BedrockProtocol.class);
++        this.lastSent = totals;
++    }
++
+     @Override
+     public int javaSlot(final int slot) {
+         return 5 + slot;
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemArmorData.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemArmorData.java
+new file mode 100644
+index 000000000..32d8c42b5
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemArmorData.java
+@@ -0,0 +1,90 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.NumberTag;
++import com.viaversion.nbt.tag.StringTag;
++
++import java.util.HashMap;
++import java.util.Map;
++
++/** Native equipment values, indexed in Bedrock's head, chest, legs, feet order. */
++public record ItemArmorData(int slot, int protection, float toughness) {
++
++    public static final ItemArmorData NONE = new ItemArmorData(-1, 0, 0F);
++    private static final Map<String, ItemArmorData> VANILLA = createVanilla();
++
++    public ItemArmorData {
++        if (slot < -1 || slot > 3 || protection < 0 || !Float.isFinite(toughness) || toughness < 0F) {
++            throw new IllegalArgumentException("Invalid item armor properties");
++        }
++    }
++
++    public static ItemArmorData vanilla(final String identifier) {
++        return identifier == null ? NONE : VANILLA.getOrDefault(identifier, NONE);
++    }
++
++    public static ItemArmorData fromNetworkComponents(final CompoundTag components) {
++        if (!(components.get("minecraft:wearable") instanceof CompoundTag wearable)
++                || !(wearable.get("slot") instanceof StringTag slot)) {
++            return NONE;
++        }
++        final int index = switch (slot.getValue()) {
++            case "slot.armor.head" -> 0;
++            case "slot.armor.chest" -> 1;
++            case "slot.armor.legs" -> 2;
++            case "slot.armor.feet" -> 3;
++            default -> -1;
++        };
++        if (index == -1) {
++            return NONE;
++        }
++        final int protection = wearable.get("protection") instanceof NumberTag value ? Math.max(0, value.asInt()) : 0;
++        return new ItemArmorData(index, protection, 0F);
++    }
++
++    public static Totals total(final ItemArmorData[] equipment) {
++        if (equipment.length != 4) {
++            throw new IllegalArgumentException("Expected four player armor slots");
++        }
++        double protection = 0D;
++        double toughness = 0D;
++        for (int slot = 0; slot < equipment.length; slot++) {
++            final ItemArmorData item = equipment[slot];
++            if (item.slot == slot) {
++                protection += item.protection;
++                toughness += item.toughness;
++            }
++        }
++        return new Totals(protection, toughness);
++    }
++
++    private static Map<String, ItemArmorData> createVanilla() {
++        // BDS 1.26.51.1 equippable totals establish these values; vanilla registry entries omit components.
++        final Map<String, ItemArmorData> items = new HashMap<>();
++        addMaterial(items, "leather", new int[]{1, 3, 2, 1}, 0F);
++        addMaterial(items, "chainmail", new int[]{2, 5, 4, 1}, 0F);
++        addMaterial(items, "copper", new int[]{2, 4, 3, 1}, 0F);
++        addMaterial(items, "iron", new int[]{2, 6, 5, 2}, 0F);
++        addMaterial(items, "golden", new int[]{2, 5, 3, 1}, 0F);
++        addMaterial(items, "diamond", new int[]{3, 8, 6, 3}, 2F);
++        addMaterial(items, "netherite", new int[]{3, 8, 6, 3}, 3F);
++        items.put("minecraft:turtle_helmet", new ItemArmorData(0, 2, 0F));
++        return Map.copyOf(items);
++    }
++
++    private static void addMaterial(final Map<String, ItemArmorData> items, final String material, final int[] protection, final float toughness) {
++        final String[] names = {"helmet", "chestplate", "leggings", "boots"};
++        for (int slot = 0; slot < names.length; slot++) {
++            items.put("minecraft:" + material + '_' + names[slot], new ItemArmorData(slot, protection[slot], toughness));
++        }
++    }
++
++    public record Totals(double protection, double toughness) {
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+index fa6ad9de0..feb36e9b0 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
+@@ -149,6 +149,7 @@ public final class ClientPlayerPackets {
+                         wrapper.write(Types.VAR_INT, 64); // sea level
+                         wrapper.write(Types.BYTE, (byte) (RespawnKeepFlag.ATTRIBUTE_MODIFIERS.getBit() | RespawnKeepFlag.ENTITY_DATA.getBit())); // keep data mask
+                         wrapper.send(BedrockProtocol.class);
++                        inventoryTracker.getArmorContainer().sendAttributes();
+                         clientPlayer.sendAttribute("minecraft:health"); // Ensure health is synced
+                         clientPlayer.setAbilities(clientPlayer.abilities()); // Java client always resets abilities on respawn. Resend them
+                         PacketFactory.sendJavaGameEvent(wrapper.user(), GameEventType.LEVEL_CHUNKS_LOAD_START, 0F);
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+index b9cd2a5df..efa05eba1 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+@@ -592,6 +592,7 @@ public final class JoinPackets {
+         clientPlayer.createTeam();
+         clientPlayer.sendInitialEntityData();
+         clientPlayer.updateAttributes(clientPlayer.attributes().values().toArray(new EntityAttribute[0]));
++        user.get(InventoryTracker.class).getArmorContainer().sendAttributes();
+         clientPlayer.setAbilities(clientPlayer.abilities());
+         clientPlayer.sendPlayerPositionPacketToClient(Relative.NONE);
+         if (commandsStorage != null) {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+index a2369386a..add3f7faa 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+@@ -195,6 +195,7 @@ public final class WorldPackets {
+             clientPlayer.sendPlayerPositionPacketToClient(Relative.NONE);
+             clientPlayer.sendAttribute("minecraft:health"); // Java client always resets health on respawn, but Bedrock client keeps health when switching dimensions
+             clientPlayer.sendEffects(); // Java client always resets effects on respawn. Resend them
++            inventoryTracker.getArmorContainer().sendAttributes();
+             clientPlayer.setAbilities(clientPlayer.abilities()); // Java client always resets abilities on respawn. Resend them
+ 
+             final PacketWrapper initializeBorder = PacketWrapper.create(ClientboundPackets26_3.INITIALIZE_BORDER, wrapper.user());
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
+index b9bf87b01..ae9f78038 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
+@@ -50,6 +50,7 @@ import net.raphimc.viabedrock.protocol.model.BedrockItem;
+ import net.raphimc.viabedrock.protocol.model.ItemEntry;
+ import net.raphimc.viabedrock.protocol.model.ItemCooldown;
+ import net.raphimc.viabedrock.protocol.model.ItemAnimationData;
++import net.raphimc.viabedrock.protocol.model.ItemArmorData;
+ import net.raphimc.viabedrock.protocol.rewriter.item.BundleItemRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomAttachableResourceRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
+@@ -69,6 +70,7 @@ import java.util.logging.Level;
+ public class ItemRewriter extends StoredObject {
+ 
+     private final Map<String, ItemAnimationData> animationData = new HashMap<>();
++    private final Map<String, ItemArmorData> armorData = new HashMap<>();
+ 
+     private final Map<String, ItemCooldown> cooldowns = new HashMap<>(Map.of(
+             "minecraft:ender_pearl", new ItemCooldown("ender_pearl", 1F),
+@@ -92,6 +94,14 @@ public class ItemRewriter extends StoredObject {
+         ITEM_NBT_REWRITERS.put(CustomItemTags.BUNDLE, new BundleItemRewriter());
+     }
+ 
++    public ItemArmorData armorData(final BedrockItem item) {
++        if (item.isEmpty()) {
++            return ItemArmorData.NONE;
++        }
++        final String identifier = this.items.inverse().get(item.identifier());
++        return this.armorData.getOrDefault(identifier, ItemArmorData.vanilla(identifier));
++    }
++
+     public ItemRewriter(final UserConnection user, final ItemEntry[] itemEntries) {
+         super(user);
+ 
+@@ -103,6 +113,7 @@ public class ItemRewriter extends StoredObject {
+             if (itemEntry.componentData() != null
+                     && itemEntry.componentData().get("components") instanceof CompoundTag components) {
+                 this.animationData.put(itemEntry.identifier(), ItemAnimationData.fromNetworkComponents(components));
++                this.armorData.put(itemEntry.identifier(), ItemArmorData.fromNetworkComponents(components));
+                 final ItemCooldown cooldown = ItemCooldown.fromNetworkComponents(components);
+                 if (cooldown != null) {
+                     this.cooldowns.put(itemEntry.identifier(), cooldown);
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/ItemArmorDataTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemArmorDataTest.java
+new file mode 100644
+index 000000000..ab77fcedd
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemArmorDataTest.java
+@@ -0,0 +1,55 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class ItemArmorDataTest {
++
++    @Test
++    void totalsOnlyMatchingArmorSlotsAndPreservesNativeToughness() {
++        final ItemArmorData[] equipped = {
++                ItemArmorData.vanilla("minecraft:netherite_helmet"),
++                custom("slot.armor.chest", 7),
++                ItemArmorData.vanilla("minecraft:diamond_leggings"),
++                ItemArmorData.vanilla("minecraft:copper_boots")};
++        assertEquals(new ItemArmorData.Totals(17D, 5D), ItemArmorData.total(equipped));
++        equipped[1] = ItemArmorData.NONE;
++        assertEquals(new ItemArmorData.Totals(10D, 5D), ItemArmorData.total(equipped));
++        equipped[0] = ItemArmorData.vanilla("minecraft:diamond_chestplate");
++        assertEquals(new ItemArmorData.Totals(7D, 2D), ItemArmorData.total(equipped));
++        equipped[0] = custom("slot.weapon.mainhand", 9);
++        equipped[1] = custom("slot.weapon.offhand", 5);
++        assertEquals(new ItemArmorData.Totals(7D, 2D), ItemArmorData.total(equipped));
++    }
++
++    @Test
++    void missingAndNonArmorDefinitionsContributeNothingAndTotalsCannotOverflow() {
++        assertEquals(ItemArmorData.NONE, ItemArmorData.vanilla(null));
++        assertEquals(ItemArmorData.NONE, ItemArmorData.vanilla("minecraft:elytra"));
++        assertEquals(ItemArmorData.NONE, ItemArmorData.fromNetworkComponents(new CompoundTag()));
++        final ItemArmorData[] equipped = new ItemArmorData[4];
++        for (int slot = 0; slot < equipped.length; slot++) {
++            equipped[slot] = new ItemArmorData(slot, Integer.MAX_VALUE, 0F);
++        }
++        assertEquals(4D * Integer.MAX_VALUE, ItemArmorData.total(equipped).protection());
++        assertThrows(IllegalArgumentException.class, () -> ItemArmorData.total(new ItemArmorData[5]));
++        assertThrows(IllegalArgumentException.class, () -> new ItemArmorData(0, 1, Float.NaN));
++    }
++
++    private static ItemArmorData custom(final String slot, final int protection) {
++        final CompoundTag wearable = new CompoundTag();
++        wearable.putString("slot", slot);
++        wearable.putInt("protection", protection);
++        final CompoundTag components = new CompoundTag();
++        components.put("minecraft:wearable", wearable);
++        return ItemArmorData.fromNetworkComponents(components);
++    }
++
++}
+-- 
+2.55.0
