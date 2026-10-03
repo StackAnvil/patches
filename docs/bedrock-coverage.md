@@ -46,7 +46,7 @@ The [source guide](bedrock-development-sources.md) defines the version and enum 
 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
-| I1 | Cartography creation, extension, cloning, locking, locator conversion, and naming | Incomplete | Multi-recipe IDs and map state now survive decoding. Implement the screen, crafting, locked-copy requests, and authoritative results. |
+| I1 | Cartography creation, extension, cloning, locking, locator conversion, and naming | Incomplete | Core retains multi-recipe IDs and map state and can refresh crafted item metadata. Implement the screen, crafting, and locked-copy requests. |
 | I2 | Structure and jigsaw editors | Incomplete | Implement screens, requests, structure responses, and jigsaw data. |
 | I3 | Stonecutter recipe updates | Incomplete | Handle server recipe selection and complete result and close behavior. |
 | I4 | Trading and loom | Implemented | Preserve their tested request and response paths. Complete remaining native and inventory edge comparisons. |
@@ -63,6 +63,17 @@ Core now retains map dimension, origin, lock state, scale, and the server's crea
 An omitted scale or creation list preserves previous state.
 A native extension selects the next ID in the advertised map family.
 Cloning preserves that ID; locking creates a separate map identity.
+
+Core now refreshes crafted destinations after a successful acknowledgment.
+It requests full inventory data and holds queued interactions until item IDs, counts, and all player snapshots agree.
+This preserves server-generated tags that acknowledgments omit.
+A timeout enters the existing inventory recovery path.
+
+A native map-locking test confirms the refresh without closing cartography.
+The refreshed item has a different UUID from its preview and includes the server's final map subtype.
+The native client places that refreshed item successfully using its acknowledged network ID.
+Five correlation tests and the complete core build pass.
+Java client behavior through direct connections and ViaProxy still needs integration verification.
 The [map notes](../patches/viabedrock/upstreamable/0002-restore-map-rendering.pr.md) record the implementation boundary and native evidence.
 
 The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and-recipe-codecs.pr.md#dynamic-recipes) record their evidence and build results.

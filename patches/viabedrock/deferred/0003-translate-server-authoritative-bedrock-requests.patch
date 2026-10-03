@@ -1,4 +1,4 @@
-From 310ba290ca9bbaeb61f5924658a7f5e5df7ce34c Mon Sep 17 00:00:00 2001
+From 5193d7163c19eb43d71e3d5394535a7d27d9d0ae Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 12:56:10 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -85,6 +85,21 @@ screens otherwise remap the first player inventory cells into the
 player crafting or armor slots after selecting the inventory container.
 A native 1.26.51.1 ViaProxy merchant test exposed the rejected placement;
 keep all click modes on the same screen-relative slot mapping.
+
+Refresh full item data after taking crafted output. ItemStackResponse supplies
+counts, names and stack network IDs, but omits server-generated tags such as
+map UUIDs and enchantments. An InventoryMismatch transaction asks the server
+for its complete player inventory, cursor, armor and offhand state without
+closing the workstation. Hold queued clicks until all snapshots arrive and
+crafted destinations match the acknowledged IDs and counts. Reuse inventory
+recovery if this refresh does not complete.
+
+Native Bedrock 1.26.51.1 build 51061372, protocol 2193, confirms that mismatch
+requests return all four inventory snapshots. Correlation tests cover map
+identity, stale IDs and amounts, multiple destinations, inventory aliases,
+and a later snapshot invalidating an earlier slot update. Raw probes stay
+private. The target packet schema is documented at
+https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/inventory-transaction-packet/
 ---
  build.gradle                                  |    3 +-
  .../api/model/container/ChestContainer.java   |   52 +-
@@ -122,10 +137,11 @@ keep all click modes on the same screen-relative slot mapping.
  .../protocol/packet/WorldPackets.java         |   12 +
  .../protocol/rewriter/ItemRewriter.java       |  280 ++-
  .../protocol/rewriter/ItemStackSizes.java     |   59 +
+ .../storage/CraftedItemSynchronization.java   |  113 ++
  .../protocol/storage/CraftingDataTracker.java |  206 ++
  .../storage/InventoryRequestRecovery.java     |   80 +
  .../storage/InventoryRequestStorage.java      |  100 +
- .../storage/InventoryRequestTracker.java      |  487 +++++
+ .../storage/InventoryRequestTracker.java      |  523 +++++
  .../protocol/storage/InventoryTracker.java    |  166 +-
  .../protocol/types/item/BedrockItemType.java  |   12 +-
  .../data/bedrock/item_stack_sizes.json        |  267 +++
@@ -139,12 +155,13 @@ keep all click modes on the same screen-relative slot mapping.
  .../protocol/packet/DropTransactionTest.java  |   46 +
  .../protocol/packet/InventoryPacketsTest.java |  247 +++
  .../ItemRewriterBlockEntityItemTest.java      |   48 +
+ .../CraftedItemSynchronizationTest.java       |  225 +++
  .../storage/InventoryRequestRecoveryTest.java |   68 +
  .../InventoryRequestTrackerQueueTest.java     |  136 ++
  .../storage/InventoryRequestTrackerTest.java  |  330 ++++
  .../storage/InventoryTrackerTest.java         |  124 ++
  .../storage/StonecutterRecipePacketTest.java  |   53 +
- 58 files changed, 8426 insertions(+), 844 deletions(-)
+ 60 files changed, 8800 insertions(+), 844 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/AnvilContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/BeaconContainer.java
@@ -162,6 +179,7 @@ keep all click modes on the same screen-relative slot mapping.
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/SmokerContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/StonecutterContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemStackSizes.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/CraftedItemSynchronization.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestRecovery.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestStorage.java
@@ -175,6 +193,7 @@ keep all click modes on the same screen-relative slot mapping.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/DropTransactionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriterBlockEntityItemTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CraftedItemSynchronizationTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestRecoveryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerQueueTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerTest.java
@@ -8410,6 +8429,125 @@ index 00000000..e4ef0e45
 +    private ItemStackSizes() { }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftedItemSynchronization.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftedItemSynchronization.java
+new file mode 100644
+index 00000000..db6adae8
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftedItemSynchronization.java
+@@ -0,0 +1,113 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2025 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import net.raphimc.viabedrock.api.model.container.Container;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestSlotInfo;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseInfo;
++
++import java.util.HashSet;
++import java.util.List;
++import java.util.Set;
++
++/** Waits for full item data absent from a successful crafting acknowledgment. */
++final class CraftedItemSynchronization {
++
++    private final Set<Target> targets;
++    private final Set<Container> inventories;
++    private final Set<Target> refreshedTargets = new HashSet<>();
++
++    private CraftedItemSynchronization(final Set<Target> targets, final InventoryTracker inventory) {
++        this.targets = new HashSet<>(targets);
++        this.inventories = new HashSet<>(List.of(inventory.getInventoryContainer(),
++                inventory.getHudContainer(), inventory.getArmorContainer(), inventory.getOffhandContainer()));
++    }
++
++    static CraftedItemSynchronization from(final InventoryRequestStorage request,
++                                           final ItemStackResponseInfo response,
++                                           final InventoryTracker inventory) {
++        final Set<Target> targets = new HashSet<>();
++        for (final ItemStackRequestAction action : request.requestInfo().actions()) {
++            final ItemStackRequestSlotInfo source;
++            final ItemStackRequestSlotInfo destination;
++            if (action instanceof ItemStackRequestAction.TakeAction take) {
++                source = take.source();
++                destination = take.destination();
++            } else if (action instanceof ItemStackRequestAction.PlaceAction place) {
++                source = place.source();
++                destination = place.destination();
++            } else {
++                continue;
++            }
++            if (source.container().name() != ContainerEnumName.CreatedOutputContainer) {
++                continue;
++            }
++            final int requestSlot = Byte.toUnsignedInt(destination.slot());
++            final Container target = inventory.getContainerFromName(destination.container(), requestSlot);
++            if (target == null || !target.ownsBedrockSlot(destination.container(), requestSlot)) {
++                continue;
++            }
++            final int slot = target.slotFromRequest(requestSlot);
++            for (final var containerInfo : response.containers()) {
++                for (final var slotInfo : containerInfo.slots()) {
++                    final int responseSlot = Byte.toUnsignedInt(slotInfo.slot());
++                    final Container container = inventory.getContainerFromName(
++                            containerInfo.containerName(), responseSlot);
++                    if (container == target && container.ownsBedrockSlot(containerInfo.containerName(), responseSlot)
++                            && container.slotFromRequest(responseSlot) == slot && slotInfo.amount() != 0) {
++                        targets.add(new Target(target, slot, slotInfo.itemNetId(),
++                                Byte.toUnsignedInt(slotInfo.amount())));
++                    }
++                }
++            }
++        }
++        return targets.isEmpty() ? null : new CraftedItemSynchronization(targets, inventory);
++    }
++
++    void observe(final Container container, final boolean fullContent, final int slot) {
++        if (fullContent) {
++            this.inventories.remove(container);
++        }
++        for (final Target target : this.targets) {
++            if (target.container() == container && (fullContent || target.slot() == slot)) {
++                if (target.matches()) {
++                    this.refreshedTargets.add(target);
++                } else {
++                    this.refreshedTargets.remove(target);
++                }
++            }
++        }
++    }
++
++    boolean isComplete() {
++        return this.refreshedTargets.containsAll(this.targets) && this.inventories.isEmpty();
++    }
++
++    private record Target(Container container, int slot, int networkId, int amount) {
++
++        boolean matches() {
++            final BedrockItem item = this.container.getItem(this.slot);
++            return !item.isEmpty() && item.netId() != null
++                    && item.netId() == this.networkId && item.amount() == this.amount;
++        }
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftingDataTracker.java
 new file mode 100644
 index 00000000..73165b00
@@ -8816,10 +8954,10 @@ index 00000000..293affa7
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
 new file mode 100644
-index 00000000..86c72d38
+index 00000000..a3731d43
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
-@@ -0,0 +1,487 @@
+@@ -0,0 +1,523 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2025 RK_01/RaphiMC and contributors
@@ -8852,6 +8990,10 @@ index 00000000..86c72d38
 +import net.raphimc.viabedrock.api.util.PacketFactory;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ComplexInventoryTransaction_Type;
++import net.raphimc.viabedrock.protocol.model.inventory.BedrockInventoryTransaction;
++import net.raphimc.viabedrock.protocol.model.inventory.InventoryTransactionData;
++import net.raphimc.viabedrock.protocol.rewriter.InventoryTransactionRewriter;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InteractPacketPayload_Action;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemStackNetResult;
 +import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
@@ -8885,6 +9027,7 @@ index 00000000..86c72d38
 +    private long pendingSinceNanos;
 +    private boolean closeTemporaryInventory;
 +    private boolean predictingClick;
++    private CraftedItemSynchronization craftedItemSynchronization;
 +
 +    public InventoryRequestTracker(final UserConnection user) {
 +        super(user);
@@ -8909,7 +9052,7 @@ index 00000000..86c72d38
 +    }
 +
 +    public boolean hasPending() {
-+        return !this.requests.isEmpty();
++        return !this.requests.isEmpty() || this.craftedItemSynchronization != null;
 +    }
 +
 +    public boolean isPredictingClick() {
@@ -9040,10 +9183,11 @@ index 00000000..86c72d38
 +        ViaBedrock.getPlatform().getLogger().log(Level.WARNING,
 +                "Inventory request timed out; reopening player inventory for authoritative state");
 +        final InventoryTracker tracker = this.user().get(InventoryTracker.class);
-+        final InventoryRequestStorage request = this.requests.values().iterator().next();
-+        final boolean armorTouched = request.prevContainers().stream()
++        final InventoryRequestStorage request = this.requests.isEmpty() ? null
++                : this.requests.values().iterator().next();
++        final boolean armorTouched = request == null || request.prevContainers().stream()
 +                .anyMatch(container -> container.containerId() == tracker.getArmorContainer().containerId());
-+        final boolean offhandTouched = request.prevContainers().stream()
++        final boolean offhandTouched = request == null || request.prevContainers().stream()
 +                .anyMatch(container -> container.containerId() == tracker.getOffhandContainer().containerId());
 +        this.recovery.begin(now, armorTouched, offhandTouched);
 +        this.clearQueuedInteractions();
@@ -9067,12 +9211,22 @@ index 00000000..86c72d38
 +
 +    private void noteAuthoritativeUpdate(
 +            final Container container, final boolean fullContent, final int slot) {
++        if (!this.recovery.isActive() && this.craftedItemSynchronization != null) {
++            this.craftedItemSynchronization.observe(container, fullContent, slot);
++            if (this.craftedItemSynchronization.isComplete()) {
++                this.craftedItemSynchronization = null;
++                this.resetRecovery();
++                this.drainQueuedInteractions();
++                this.closeTemporaryInventoryIfIdle();
++            }
++        }
 +        if (!this.recovery.isActive() || !this.hasPending()) {
 +            return;
 +        }
 +        final InventoryTracker tracker = this.user().get(InventoryTracker.class);
 +        if (this.recovery.observe(container, tracker.getHudContainer(), fullContent, slot)) {
 +            this.requests.clear();
++            this.craftedItemSynchronization = null;
 +            this.resetRecovery();
 +            PacketFactory.sendJavaContainerSetContent(this.user(), tracker.getInventoryContainer());
 +        }
@@ -9125,6 +9279,15 @@ index 00000000..86c72d38
 +            }
 +        } else {
 +            changed.addAll(this.applySuccessfulResponse(response, request));
++            if (this.synchronizeCraftedItems(request, response)) {
++                final PacketWrapper refresh = PacketWrapper.create(
++                        ServerboundBedrockPackets.INVENTORY_TRANSACTION, this.user());
++                refresh.write(this.user().get(InventoryTransactionRewriter.class).getInventoryTransactionType(),
++                        new BedrockInventoryTransaction(0, List.of(), List.of(),
++                                ComplexInventoryTransaction_Type.InventoryMismatch,
++                                new InventoryTransactionData.MismatchTransactionData()));
++                refresh.sendToServer(BedrockProtocol.class);
++            }
 +        }
 +
 +        if (response.result() == ItemStackNetResult.Success) {
@@ -9136,6 +9299,17 @@ index 00000000..86c72d38
 +        }
 +        PacketFactory.sendJavaContainerSetContent(this.user(), tracker.getInventoryContainer());
 +        this.closeTemporaryInventoryIfIdle();
++    }
++
++    boolean synchronizeCraftedItems(final InventoryRequestStorage request,
++                                     final ItemStackResponseInfo response) {
++        this.craftedItemSynchronization = CraftedItemSynchronization.from(
++                request, response, this.user().get(InventoryTracker.class));
++        if (this.craftedItemSynchronization == null) {
++            return false;
++        }
++        this.pendingSinceNanos = System.nanoTime();
++        return true;
 +    }
 +
 +    Set<Container> applySuccessfulResponse(final ItemStackResponseInfo response,
@@ -10788,6 +10962,237 @@ index 00000000..07c75335
 +        assertEquals(1, item.amount());
 +        assertSame(bookData, item.tag());
 +        assertEquals(2, ((ListTag<?>) item.tag().get("pages")).size());
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftedItemSynchronizationTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftedItemSynchronizationTest.java
+new file mode 100644
+index 00000000..3d6e5700
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/CraftedItemSynchronizationTest.java
+@@ -0,0 +1,225 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2025 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import net.raphimc.viabedrock.api.model.container.Container;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ItemStackNetResult;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.TextProcessingEventOrigin;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.FullContainerName;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestSlotInfo;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseContainerInfo;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseInfo;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackResponseSlotInfo;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Proxy;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.atomic.AtomicLong;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class CraftedItemSynchronizationTest {
++
++    @Test
++    void waitsForFinalMapIdentityAndAllSnapshotsBeforeQueuedPlacement() {
++        final Fixture fixture = new Fixture();
++        final Container cursor = fixture.inventory.getHudContainer();
++        cursor.setItem(0, map(20, 1, 3387645893L));
++        final var destination = cursor.requestSlotInfo(0, 0);
++        final InventoryRequestStorage request = fixture.request(List.of(take(destination)));
++        final ItemStackResponseInfo response = response(destination, 20, 1);
++        assertTrue(fixture.requests.synchronizeCraftedItems(request, response));
++        final AtomicLong placedMapId = new AtomicLong();
++        assertTrue(fixture.requests.queueInteraction(new InventoryRequestTracker.QueuedInteraction() {
++            @Override
++            public Container container() {
++                return fixture.inventory.getInventoryContainer();
++            }
++
++            @Override
++            public boolean apply() {
++                placedMapId.set(cursor.getItem(0).tag().getLong("map_uuid"));
++                return true;
++            }
++        }));
++        fixture.requests.drainQueuedInteractions();
++        assertEquals(0, placedMapId.get());
++
++        // The acknowledgment alone installed the correct network ID, but retained a preview UUID.
++        cursor.setItem(0, map(20, 1, 824460016L));
++        fixture.requests.handleAuthoritativeSlot(cursor, 0);
++        assertTrue(fixture.requests.hasPending());
++        for (final Container container : fixture.playerContainers()) {
++            fixture.requests.handleAuthoritativeContent(container);
++        }
++        assertFalse(fixture.requests.hasPending());
++        assertEquals(824460016L, placedMapId.get());
++        fixture.requests.handleAuthoritativeContent(cursor);
++        assertEquals(824460016L, placedMapId.get());
++    }
++
++    @Test
++    void ignoresWrongSlotOldNetworkIdAndOldAmount() {
++        final Fixture fixture = new Fixture();
++        final Container inventory = fixture.inventory.getInventoryContainer();
++        final var destination = inventory.requestSlotInfo(9, 0);
++        final var synchronization = CraftedItemSynchronization.from(
++                fixture.request(List.of(take(destination))), response(destination, 30, 2), fixture.inventory);
++        inventory.setItem(9, map(29, 2, 1));
++        for (final Container container : fixture.playerContainers()) {
++            synchronization.observe(container, true, -1);
++        }
++        assertFalse(synchronization.isComplete());
++        inventory.setItem(9, map(30, 1, 1));
++        synchronization.observe(inventory, false, 9);
++        assertFalse(synchronization.isComplete());
++        inventory.setItem(9, map(30, 2, 1));
++        synchronization.observe(inventory, false, 10);
++        assertFalse(synchronization.isComplete());
++        synchronization.observe(inventory, false, 9);
++        assertTrue(synchronization.isComplete());
++    }
++
++    @Test
++    void laterSnapshotCanInvalidateEarlierMatchingSlot() {
++        final Fixture fixture = new Fixture();
++        final Container cursor = fixture.inventory.getHudContainer();
++        final var destination = cursor.requestSlotInfo(0, 0);
++        final var synchronization = CraftedItemSynchronization.from(
++                fixture.request(List.of(take(destination))), response(destination, 30, 1), fixture.inventory);
++        cursor.setItem(0, map(30, 1, 2));
++        synchronization.observe(cursor, false, 0);
++        cursor.setItem(0, map(29, 1, 1));
++        for (final Container container : fixture.playerContainers()) {
++            synchronization.observe(container, true, -1);
++        }
++        assertFalse(synchronization.isComplete());
++        cursor.setItem(0, map(30, 1, 2));
++        synchronization.observe(cursor, false, 0);
++        assertTrue(synchronization.isComplete());
++    }
++
++    @Test
++    void waitsForEveryCraftDestinationAndMatchesInventoryAliases() {
++        final Fixture fixture = new Fixture();
++        final Container inventory = fixture.inventory.getInventoryContainer();
++        final var first = inventory.requestSlotInfo(0, 0);
++        final var second = inventory.requestSlotInfo(9, 0);
++        final var request = fixture.request(List.of(take(first),
++                new ItemStackRequestAction.PlaceAction(1, output(), second)));
++        final var response = new ItemStackResponseInfo(ItemStackNetResult.Success, -5, List.of(
++                new ItemStackResponseContainerInfo(new FullContainerName(
++                        ContainerEnumName.HotbarContainer, null), List.of(slot(0, 30, 1))),
++                new ItemStackResponseContainerInfo(new FullContainerName(
++                        ContainerEnumName.InventoryContainer, null), List.of(slot(9, 31, 1)))));
++        final var synchronization = CraftedItemSynchronization.from(request, response, fixture.inventory);
++        inventory.setItem(0, map(30, 1, 1));
++        for (final Container container : fixture.playerContainers()) {
++            synchronization.observe(container, true, -1);
++        }
++        assertFalse(synchronization.isComplete());
++        inventory.setItem(9, map(31, 1, 2));
++        synchronization.observe(inventory, false, 9);
++        assertTrue(synchronization.isComplete());
++    }
++
++    @Test
++    void ordinaryTransfersAndEmptyCraftDestinationsNeedNoRefresh() {
++        final Fixture fixture = new Fixture();
++        final var destination = fixture.inventory.getHudContainer().requestSlotInfo(0, 0);
++        final var source = fixture.inventory.getInventoryContainer().requestSlotInfo(9, 1);
++        assertNull(CraftedItemSynchronization.from(fixture.request(List.of(
++                        new ItemStackRequestAction.TakeAction(1, source, destination))),
++                response(destination, 30, 1), fixture.inventory));
++        assertNull(CraftedItemSynchronization.from(fixture.request(List.of(take(destination))),
++                response(destination, 0, 0), fixture.inventory));
++    }
++
++    private static BedrockItem map(final int networkId, final int amount, final long mapId) {
++        final BedrockItem item = new BedrockItem(423);
++        item.setAmount(amount);
++        item.setNetId(networkId);
++        final CompoundTag tag = new CompoundTag();
++        tag.putLong("map_uuid", mapId);
++        item.setTag(tag);
++        return item;
++    }
++
++    private static ItemStackRequestSlotInfo output() {
++        return new ItemStackRequestSlotInfo(new FullContainerName(
++                ContainerEnumName.CreatedOutputContainer, null), (byte) 50, -5);
++    }
++
++    private static ItemStackRequestAction.TakeAction take(final ItemStackRequestSlotInfo destination) {
++        return new ItemStackRequestAction.TakeAction(1, output(), destination);
++    }
++
++    private static ItemStackResponseSlotInfo slot(final int slot, final int networkId, final int amount) {
++        return new ItemStackResponseSlotInfo((byte) slot, (byte) slot, (byte) amount,
++                networkId, "", null, 0);
++    }
++
++    private static ItemStackResponseInfo response(final ItemStackRequestSlotInfo destination,
++                                                final int networkId, final int amount) {
++        return new ItemStackResponseInfo(ItemStackNetResult.Success, -5, List.of(
++                new ItemStackResponseContainerInfo(destination.container(), List.of(
++                        slot(Byte.toUnsignedInt(destination.slot()), networkId, amount)))));
++    }
++
++    private static final class Fixture {
++
++        private final InventoryTracker inventory;
++        private final InventoryRequestTracker requests;
++
++        private Fixture() {
++            final Map<Class<?>, Object> storage = new HashMap<>();
++            final UserConnection user = (UserConnection) Proxy.newProxyInstance(
++                    UserConnection.class.getClassLoader(), new Class<?>[]{UserConnection.class},
++                    (proxy, method, args) -> method.getName().equals("get") ? storage.get(args[0]) : null);
++            this.inventory = new InventoryTracker(user);
++            this.requests = new InventoryRequestTracker(user);
++            storage.put(InventoryTracker.class, this.inventory);
++            storage.put(InventoryRequestTracker.class, this.requests);
++            this.inventory.setCurrentContainer(this.inventory.getInventoryContainer());
++            this.requests.setPredictingClick(true);
++        }
++
++        private List<Container> playerContainers() {
++            return List.of(this.inventory.getInventoryContainer(), this.inventory.getArmorContainer(),
++                    this.inventory.getHudContainer(), this.inventory.getOffhandContainer());
++        }
++
++        private InventoryRequestStorage request(final List<ItemStackRequestAction> actions) {
++            return new InventoryRequestStorage(new ItemStackRequestInfo(-5, actions, List.of(),
++                    TextProcessingEventOrigin.unknown), 0, this.inventory.getHudContainer().copy(),
++                    List.of(this.inventory.getInventoryContainer().copy()));
++        }
 +    }
 +
 +}
