@@ -1299,3 +1299,16 @@ The animated model now retains full matrices for drawing and geometry bounds. Sc
 All 840 native comparisons pass. Targeted model, locator, attachment, and scope tests pass. The full add-on build reports 506 tests, no failures or errors, and 103 optional skips. Its dependency builds, client bundle, and north-star PR check pass.
 
 A rebuilt Java 26.3 client passes the production drawing and bounds probe. Two synthetic cubes produce 48 vertices at native-transformed corners under nonuniform and zero parent scale. Normals remain finite. External transforms remain outside the bone scope, and failed visits release that scope. These checks verify bone matrix composition. Native first-person camera transforms, graph submission, and held-item rendering remain incomplete.
+
+
+### Native first-person rotation spring
+
+Native appearances now use the target camera spring instead of Java's fixed angle-difference sway. Each appearance retains separate pitch, yaw, angular velocity, spring velocity, and clock state. The first-person frame applies these angles to the production camera matrix. Nested submissions and exceptions restore the previous frame.
+
+Bedrock 1.26.51.1 build 51061372 computes this spring in `0x1404c4400`. The arithmetic starts at `0x1404c4bed`. Pitch and yaw samples interpolate wrapped actor angles. The previous angular velocity contributes 0.8, and the new velocity contributes 0.2. The clock caps elapsed time at 0.2 seconds. Spring integration uses steps of at most 1/120 second, damping of 42, stiffness of 900, and a drive factor of 90. The target clamps angular velocity to 50 degrees per second in each direction.
+
+Private probes run the actual interpolation and spring instructions through `0x1404c4ebd`. The harness supplies actor rotations, camera state, frame alpha, a clock, and the `fmodf` import. It covers 435 independent cases and 948 retained frames at 30, 60, 144, and 240 frames per second. Java matches the native float bits, with NaN checks for zero-length frames. Portable tests also cover wrapped yaw, long frames, independent springs, and clock ownership.
+
+A rebuilt Java 26.3 client through ViaProxy passes the production camera submission probe. Its matrix uses the executable-verified spring angles. Disabling bobbing removes sway and preserves the spring clock. A missing native appearance retains ordinary Java sway. Existing equip inputs, licensed hand visibility, nested scopes, and exception restoration pass six equipment and spectator cases. The probe restores player rotations, held items, the bobbing setting, and client appearance ownership.
+
+The add-on and its two dependency builds pass. The add-on suite reports 509 tests, no failures or errors, and 104 optional skips. All three camera tests pass with the native fixture enabled. The client bundle and north-star PR check pass. This change covers angular camera sway. Projection, walking bob, native graph drawing, held-item transforms, and visible native motion comparison remain incomplete.
