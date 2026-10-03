@@ -305,6 +305,10 @@ A fresh Linux helper verifies the Xbox identity, obtains the pinned package lice
 A mismatched Xbox account fails before extraction.
 The headless helper now runs inside Flatpak; its default permissions blocked the previous host-command invocation.
 A fresh in-game test under default Prism Flatpak permissions loads the active persona and renders its Dressing Room preview without a Store window.
+The [0.3.2 release workflow](https://github.com/StackAnvil/patches/actions/runs/37161239901) passes all four helper builds and tests, the full stack build, and both mod-platform uploads.
+Its published add-on contains eight helpers with matching embedded checksums.
+CI-built Linux and Windows helpers each extract 6,146 files, running inside Prism Flatpak and under Wine 11 respectively.
+All extracted paths and bytes match. The Wine test verifies the Windows helper, not Windows 11 interactive authentication.
 A default-browser fallback and completed Windows 11 and macOS authentication remain unverified.
 
 A lighting queue regression reproduces a dropped refresh when a server replaces a column during an older lighting job.

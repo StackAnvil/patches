@@ -1408,6 +1408,11 @@ Default Prism Flatpak permissions cannot invoke `flatpak-spawn --host`.
 The headless helper now runs inside the sandbox with its C runtime.
 A fresh in-game test with default Prism Flatpak permissions downloads the active account persona and renders its Dressing Room preview.
 No Store window opens. The fixture starts without saved appearance metadata or cached licensed assets.
+The CI-built Linux helper also extracts all 6,146 files inside Prism Flatpak with default permissions.
+The CI-built Windows helper enrolls fresh private device state and extracts the same files under Wine 11.
+Every extracted path and byte matches across these two runs. This does not establish Windows 11 interactive authentication.
+The [0.3.2 workflow](https://github.com/StackAnvil/patches/actions/runs/37161239901) passes all four helper builds and tests and the full stack build.
+The published add-on checksum and all eight embedded helper checksums are verified after download.
 The embedded interactive helper retains its host runtime requirement.
 Ask still controls interactive fallback when silent token acquisition is unavailable.
 Default-browser fallback, fresh interactive authentication, Windows 11, macOS, and official-launcher runtime checks remain required.

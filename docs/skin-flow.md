@@ -522,6 +522,8 @@ The helper verifies the selected Xbox identity and retains license keys internal
 A fresh Linux run obtains the pinned package license and extracts 6,146 files without interactive sign-in.
 The headless helper runs inside Prism's Flatpak sandbox, where the previous host-command invocation was denied.
 A fresh in-game test with default Prism permissions loads the account persona and renders its preview without another sign-in window.
+CI-built Linux and Windows helpers produce identical paths and bytes for all 6,146 files under Flatpak and Wine 11.
+The [0.3.2 release](https://github.com/StackAnvil/patches/releases/tag/stack-v0.3.2) passes all four platform builds and tests and includes eight helpers with verified checksums.
 Ask remains the default for interactive fallback.
 Windows 11, macOS, official-launcher runtime behavior, and a default-browser fallback still need verification.
 
