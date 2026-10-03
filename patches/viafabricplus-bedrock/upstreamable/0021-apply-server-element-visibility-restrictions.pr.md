@@ -28,8 +28,10 @@ A server reset restores the unrestricted elements while preserving F1's hidden-H
 Leaving the ViaProxy world clears all restrictions.
 A remote disconnect from the direct route also clears them.
 
-Armor and status-effect icons were absent in the Java fixture before restrictions, despite native visibility.
-Those baseline translation gaps prevent a visible comparison for these two hooks.
+Armor and status-effect icons were absent during the initial Java fixture, despite native visibility.
+The [core effect correction](../../viabedrock/upstreamable/0082-preserve-status-icons-independently-of-particles.pr.md) restores the status icon independently of particles.
+Direct and ViaProxy comparisons now hide and reset this icon without removing its active effect.
+The missing baseline armor meter still prevents a visible comparison for the armor hook.
 Air, vehicle health, contextual jump bars, and spectator rendering still need native comparisons.
 Paper doll, touch controls, and native control hints have no renderer in the current client.
 Core retains their restrictions, but this patch does not supply those missing widgets.

@@ -142,7 +142,11 @@ Native comparisons preserve selected-item text while the hotbar is hidden, and h
 Live direct and ViaProxy comparisons verify health, hunger, hotbar, crosshair, progress, and independent selected-item text.
 Both routes preserve F1 after a server reset.
 Local exit and remote disconnect clear the restrictions.
-Armor and status-effect icons were absent in the Java baseline, so their visibility hooks remain unverified.
+The initial Java baseline lacked armor and status-effect icons.
+The [effect correction](../patches/viabedrock/upstreamable/0082-preserve-status-icons-independently-of-particles.pr.md) restores icons through standard Java packets.
+Direct and ViaProxy comparisons show icons with particles disabled, including ViaProxy with the add-on removed.
+Direct and ViaProxy status-icon hiding and reset now have visible comparison evidence.
+The armor visibility hook remains unverified because the baseline armor meter is absent.
 Air, horse health, contextual jump bars, and spectator behavior also need comparisons.
 Paper doll, touch controls, and native control hints still lack renderers.
 Ordinary Java has no standard packet for individual HUD restrictions.
@@ -157,7 +161,7 @@ These results do not complete U2.
 | G3 | Voxel shapes | Incomplete | Core retains the registry and compiles custom face rules, transformed slices, and culling layers into accepted server packs. Direct and ViaProxy add-on terrain paths apply the conditions. Broader native comparisons, vanilla partial-block slices, registry replacement, and alternative terrain renderers remain incomplete. These grids do not define collision or selection. |
 | G4 | Animation commands, entity overrides, mob properties, and equipment updates | Incomplete | Connect server updates to authoritative state and runtime playback. |
 | G5 | Movement attributes and attack/use prediction | Incomplete | Apply ignored movement attributes and complete native input and cooldown behavior. |
-| G6 | Interaction and entity metadata | Incomplete | Audit variant mappings, interactions, flags, properties, and unsupported metadata. The HUD fixture also lacks Java armor and status-effect meters despite visible native equivalents. |
+| G6 | Interaction and entity metadata | Incomplete | Audit variant mappings, interactions, flags, properties, and unsupported metadata. The HUD fixture still lacks the Java armor meter despite visible native armor. Core now preserves effect icons independently of particles. |
 
 The [input permission patch](../patches/viabedrock/upstreamable/0080-retain-and-transport-native-player-permissions.pr.md) decodes packet 196 from the target build.
 Private BDS 1.26.51.1 captures establish eleven category masks, reset packets, and the absence of a position field.
@@ -175,6 +179,11 @@ Core latches raw button edges independently of filtered controls and shield use.
 The add-on sends physical samples before filtering through a negotiated raw-input channel.
 Live direct and ViaProxy tests match the native diagonal values and preserve both raw buttons while position stays fixed.
 Manual mounting remains incomplete because vehicle interactions also include feeding and inventory access.
+
+The server equips a diamond chestplate, but Java reports zero armor points.
+Target BDS registry captures carry empty components for vanilla armor.
+Script API comparisons establish protection and toughness for all thirty vanilla armor and elytra entries.
+Core still needs to derive equipment attributes from target item definitions, including custom wearables, and synchronize updates and removals.
 
 ## Resources, animation, particles, and audio
 
@@ -227,8 +236,8 @@ The goal remains active while any required row is incomplete or unverified.
 ## Latest validation
 
 The complete stack build passes with the input permissions and HUD visibility changes.
-The final HUD size-limit correction also passes the complete core suite after stack replay.
-The core suite reports 440 tests with one optional fixture skip.
+The effect-icon correction also passes the complete core suite and applies independently to the pinned upstream base.
+The core suite reports 441 tests with one optional fixture skip.
 The add-on suite reports 529 tests with 109 optional fixture skips.
 The converter suite reports 16 tests without skips.
 All three suites have zero failures and errors.
