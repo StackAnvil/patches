@@ -1200,3 +1200,15 @@ The matching Bedrock 1.26.51.1 callbacks pass 112 kinetic, 12 swing, and 32 tag 
 A live Java 26.3 client through ViaProxy receives the actual spear context. Its production queries return the native spear tag and timing fields. The licensed graph runs with those queries and controlled remaining-use ticks. Right-arm X is -30 degrees during hold, -62 during the tested use phase, and -30 after release. The probe runs on the Minecraft thread. The full dependency build and Prism bundle pass: 385 core tests, and 482 add-on tests with 96 optional skips, all without failures.
 
 This enables the native spear graph through transmitted context. First-person playback, visible native comparisons, Java swing and input timing, local charging prediction, and additional equipment queries remain incomplete.
+
+### Authored bone pivots and render tick fractions
+
+Bind `get_default_bone_pivot` to an immutable snapshot of the body geometry. Keep absolute native pixel coordinates before parent transforms and render conversion. The query requires a bone name and an axis. Numeric axes use the target float conversion. Named axes accept `x`, `y`, and `z`. Missing bones and invalid requests return zero. Shared equipment queries exclude body pivots because attachables have their own geometry context.
+
+Pass the render state's partial tick to `frame_alpha`. Preserve its supplied value without a clamp. Preview graphs use their own body geometry and the current render tick fraction.
+
+The matching Bedrock 1.26.51.1 executable supplies the version evidence. The pivot callback at `14221efc0` scans native bone records and reads the stored pivot components. It passes 110 execution cases for axes, fractional indices, numeric bounds, missing bones, argument counts, and unavailable contexts. The frame callback at `14221abb0` passes 14 cases and returns the context fraction even without an actor. The harness supplies the model records, expression values, and client predicate. This verifies callback behavior; it does not verify native model construction. Sources: [Mojang Molang query reference](https://mojang.github.io/bedrock-samples/Molang.html) and the matching executable.
+
+A Java 26.3 runtime probe through ViaProxy uses a private synthetic geometry and the licensed player graph. Production body and preview frames expose the authored pivots. Shared equipment queries exclude those body pivots. Seven supplied frame fractions pass through unchanged. The licensed first-person graph places its held-item bone at Y=2 and Z=2.5 for the fixture. With controlled remaining-use ticks, fractions 0.125 and 0.875 produce use phases of 6.125 and 6.875 ticks. These graph samples do not verify first-person submission or visible native motion.
+
+The full dependency build and Prism bundle pass. The core suite passes 385 tests. The add-on suite reports 484 tests with 96 optional fixture skips, no failures, and no errors. Native pivot, equipment, item-name, and duration fixtures are enabled. First-person hand and item submission, camera transforms, walking bob, charging prediction, and visible native comparisons remain incomplete.
