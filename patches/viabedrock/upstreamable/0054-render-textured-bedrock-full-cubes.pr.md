@@ -69,10 +69,49 @@ The direct connection retains the same registry through joining.
 [Mojang's target packet reference](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/voxel-shapes-packet/) describes the registry structure.
 [Microsoft's voxel shape guide](https://learn.microsoft.com/en-us/minecraft/creator/documents/voxelshapes?view=minecraft-bedrock-stable) describes its culling purpose.
 Voxel grids do not replace physical collision or selection boxes.
-Applying culling rules, transformed face slices, and culling-layer conditions remains incomplete.
+Core now compiles authored culling rules and transformed face slices.
+Native vanilla partial-block mapping and broader rendering parity remain incomplete.
 
 The final full stack builds successfully.
-Core reports 419 tests with one optional fixture skip.
-The add-on reports 524 tests with 109 optional fixture skips.
+Core reports 426 tests with one optional fixture skip.
+The add-on reports 526 tests with 109 optional fixture skips.
 The converter reports 16 tests without skips.
 All suites have zero failures and errors, and core Checkstyle passes.
+
+## Authored custom block culling
+
+Core reads `block_culling/` definitions in resource-pack order.
+It preserves source bone and cube indices, including invisible cubes.
+Each converted face carries its native conditions and transformed neighbor direction.
+The accepted server pack carries protocol-bound state identities, culling layers, face participation, and voxel slices.
+Equivalent models share a carrier unless a conditional rule needs their distinct block identity or permutation.
+
+Face slices use native grids independently of collision and selection boxes.
+Quarter turns transform the grids and rule directions together.
+Adjacent grid cells merge before transport and comparison, while holes remain empty.
+Tests cover unequal grids, holes, outside-face bounds, dense grid compaction, invisible cubes, and rotated rules.
+
+Private target-server fixtures use Bedrock 1.26.51.1 build 51061372, protocol 2193.
+Their StartGame definitions retain the authored culling identifier, layer, and custom half-height grid.
+Direct and ViaProxy client inspections confirm six marked faces on each test cube.
+With invisible neighbors, block identity, matching layers, and voxel coverage hide three cubes.
+The cube with a different neighbor permutation remains visible.
+Removing those neighbors restores all four cubes through both flat and ambient-occlusion terrain paths.
+ViaProxy reload preserves the descriptors, and disconnect clears them.
+
+These client results require the add-on.
+Ordinary Java clients retain the generated geometry, but cannot evaluate the native conditional rules.
+Native local-world comparison confirms the tested conditions and neighbor-removal behavior.
+Broader native visual parity remains incomplete.
+Two transparent neighbor permutations leave dark faces on Java that the native comparison does not show.
+Vanilla partial-block slices, runtime registry replacement, and alternative terrain renderers remain incomplete.
+
+Target-native content diagnostics reject an explicitly authored `default` condition.
+The default condition requires an omitted field in this build.
+The parser retains that distinction despite the generic documentation listing `default` as a value.
+Conditional rules do not participate in voxel coverage.
+A built-in full cube supplies a unit grid but has no authored bone graph.
+Its implicit opaque-neighbor rules remain separate from authored voxel participation.
+Native comparisons retain the yellow voxel fixture beside that transparent built-in cube.
+An authored custom neighbor with a default opposite rule hides it.
+Both sides need default participation before the client compares their slices.

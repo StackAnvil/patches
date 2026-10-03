@@ -1,4 +1,4 @@
-From b93dad2cf10979b7a65dbd2f6cb8276c3a0b4080 Mon Sep 17 00:00:00 2001
+From 7ad6fddae21a8471df5d20261d3266899b7d79ac Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:39:38 +0200
 Subject: [PATCH] feat(blocks): apply native custom block shapes and lighting
@@ -35,24 +35,50 @@ Targeted tests cover server-pack precedence, shape and light values,
 reload ordering, removal and disconnect during preparation. The native
 VoxelShapes registry represents rendering culling and remains separate
 from the physical boxes transported here.
+
+Retain native rule annotations through Java cuboid deserialization and
+terrain quad baking. Evaluate authored neighbor directions, identity,
+permutation, layer and voxel face coverage before submitting each terrain
+quad. Keep inventory drawing outside neighbor culling. Read both physical
+properties and culling definitions from the same accepted server-pack
+lifecycle on direct and ViaProxy connections.
+
+Use distinct annotated quad instances so Java's geometry/material
+interning cannot merge different native rules. Numerical tests cover
+condition independence, opaque-neighbor opt-out, opposite participation
+and holes in coverage. Vanilla partial-block mapping and native rendering
+comparisons remain required.
 ---
- .../block/BedrockCustomBlockResources.java    |  70 ++++++++
+ .../bedrock/block/BedrockCullingRules.java    |  17 ++
+ .../block/BedrockCustomBlockResources.java    |  81 ++++++++++
  .../bedrock/block/BedrockCustomBlocks.java    |  92 +++++++++++
+ .../bedrock/block/BedrockCustomCulling.java   |  50 ++++++
  .../features/block/MixinBlockColors.java      |  34 ++++
+ .../block/MixinCullingFaceBakery.java         |  39 +++++
+ .../block/MixinCullingFaceDeserializer.java   |  30 ++++
+ .../features/block/MixinCullingRules.java     |  30 ++++
  .../block/MixinCustomBlockConnection.java     |  24 +++
+ .../block/MixinCustomBlockCulling.java        |  34 ++++
  .../block/MixinCustomBlockLighting.java       |  29 ++++
  .../block/MixinCustomBlockResources.java      |  24 +++
  .../features/block/MixinCustomBlockState.java | 149 ++++++++++++++++++
  .../block/MixinRedstoneWireBlock.java         |  29 ++++
- .../viafabricplus-bedrock.mixins.json         |   6 +
+ .../viafabricplus-bedrock.mixins.json         |  10 ++
  .../block/BedrockCustomBlockLightingTest.java |  54 +++++++
  .../BedrockCustomBlockResourcesTest.java      |  90 +++++++++++
  .../block/BedrockCustomBlocksTest.java        |  63 ++++++++
- 12 files changed, 664 insertions(+)
+ .../block/BedrockCustomCullingTest.java       |  51 ++++++
+ 19 files changed, 930 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCullingRules.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResources.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomCulling.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBlockColors.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCullingFaceBakery.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCullingFaceDeserializer.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCullingRules.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockConnection.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockCulling.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockLighting.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockResources.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockState.java
@@ -60,13 +86,37 @@ from the physical boxes transported here.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockLightingTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResourcesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocksTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomCullingTest.java
 
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCullingRules.java b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCullingRules.java
+new file mode 100644
+index 0000000..93984d1
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCullingRules.java
+@@ -0,0 +1,17 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.block;
++
++import net.raphimc.viabedrock.api.model.CustomBlockCulling;
++
++import java.util.List;
++
++/** Culling rules attached to authored cuboid faces and their baked terrain quads. */
++public interface BedrockCullingRules {
++    List<CustomBlockCulling.Rule> viaFabricPlusBedrock$cullingRules();
++
++    void viaFabricPlusBedrock$cullingRules(List<CustomBlockCulling.Rule> rules);
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResources.java
 new file mode 100644
-index 0000000..a9c23d4
+index 0000000..0681cfb
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResources.java
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,81 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -75,6 +125,8 @@ index 0000000..a9c23d4
 +package com.viaversion.viafabricplus.bedrock.block;
 +
 +import com.viaversion.viaversion.libs.gson.JsonParser;
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import net.raphimc.viabedrock.api.model.CustomBlockCulling;
 +import net.minecraft.resources.Identifier;
 +import net.minecraft.server.packs.repository.PackSource;
 +import net.minecraft.server.packs.resources.ResourceManager;
@@ -87,26 +139,37 @@ index 0000000..a9c23d4
 +import java.io.IOException;
 +import java.nio.charset.StandardCharsets;
 +import java.util.Map;
++import java.util.function.Function;
 +import java.util.concurrent.atomic.AtomicReference;
 +
 +/** Physical block properties from the accepted, versioned server pack on either connection route. */
 +public final class BedrockCustomBlockResources extends SimplePreparableReloadListener<BedrockCustomBlockResources.Prepared> {
 +    private static final Logger LOGGER = LogManager.getLogger("Bedrock custom blocks");
 +    private static final Identifier LOCATION = Identifier.fromNamespaceAndPath("viabedrock", "custom_blocks.json");
-+    private static final AtomicReference<State> STATE = new AtomicReference<>(new State(Map.of()));
++    private static final AtomicReference<State> STATE = new AtomicReference<>(new State(Map.of(), Map.of()));
 +
 +    public static Map<Integer, CustomBlockProperties> current() {
 +        return STATE.get().definitions();
 +    }
 +
 +    public static void clear() {
-+        STATE.set(new State(Map.of()));
++        STATE.set(new State(Map.of(), Map.of()));
 +    }
 +
 +    @Override
 +    protected Prepared prepare(final ResourceManager resources, final ProfilerFiller profiler) {
-+        final State pending = STATE.updateAndGet(current -> new State(current.definitions()));
-+        final var stack = resources.getResourceStack(LOCATION);
++        final State pending = STATE.updateAndGet(current -> new State(current.definitions(), current.culling()));
++        return new Prepared(pending, read(resources, LOCATION, CustomBlockProperties::decode),
++            read(resources, Identifier.fromNamespaceAndPath("viabedrock", "block_culling.json"), CustomBlockCulling::decode));
++    }
++
++    public static Map<Integer, CustomBlockCulling.Definition> currentCulling() {
++        return STATE.get().culling();
++    }
++
++    private static <T> Map<Integer, T> read(final ResourceManager resources, final Identifier location,
++                                           final Function<JsonElement, Map<Integer, T>> decoder) {
++        final var stack = resources.getResourceStack(location);
 +        for (int i = stack.size() - 1; i >= 0; i--) {
 +            final var resource = stack.get(i);
 +            if (resource.source().location().source() != PackSource.SERVER) continue;
@@ -115,26 +178,24 @@ index 0000000..a9c23d4
 +                if (content.length > CustomBlockProperties.MAX_BYTES) {
 +                    throw new IOException("Custom block metadata exceeds the byte limit");
 +                }
-+                final Map<Integer, CustomBlockProperties> definitions = CustomBlockProperties.decode(
-+                    JsonParser.parseString(new String(content, StandardCharsets.UTF_8)));
-+                return new Prepared(pending, definitions);
++                return decoder.apply(JsonParser.parseString(new String(content, StandardCharsets.UTF_8)));
 +            } catch (IOException | RuntimeException error) {
-+                LOGGER.warn("Could not load Bedrock custom block properties", error);
-+                return new Prepared(pending, Map.of());
++                LOGGER.warn("Could not load Bedrock block metadata {}", location, error);
++                return Map.of();
 +            }
 +        }
-+        return new Prepared(pending, Map.of());
++        return Map.of();
 +    }
 +
 +    @Override
 +    protected void apply(final Prepared prepared, final ResourceManager resources, final ProfilerFiller profiler) {
-+        STATE.compareAndSet(prepared.pending(), new State(prepared.definitions()));
++        STATE.compareAndSet(prepared.pending(), new State(prepared.definitions(), prepared.culling()));
 +    }
 +
-+    record State(Map<Integer, CustomBlockProperties> definitions) {
++    record State(Map<Integer, CustomBlockProperties> definitions, Map<Integer, CustomBlockCulling.Definition> culling) {
 +    }
 +
-+    record Prepared(State pending, Map<Integer, CustomBlockProperties> definitions) {
++    record Prepared(State pending, Map<Integer, CustomBlockProperties> definitions, Map<Integer, CustomBlockCulling.Definition> culling) {
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java
@@ -235,6 +296,62 @@ index 0000000..f91dda7
 +    private record Snapshot(Object connection, Map<Integer, CustomBlockVisual> direct, Map<Integer, CustomBlockProperties> remote, Map<Integer, Visual> visuals) {
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomCulling.java b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomCulling.java
+new file mode 100644
+index 0000000..e7a9c71
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomCulling.java
+@@ -0,0 +1,50 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.block;
++
++import net.minecraft.core.BlockPos;
++import net.minecraft.core.Direction;
++import net.minecraft.world.level.BlockGetter;
++import net.minecraft.world.level.block.Block;
++import net.minecraft.world.level.block.state.BlockState;
++import net.raphimc.viabedrock.api.model.CustomBlockCulling;
++import net.raphimc.viabedrock.api.model.CustomBlockCulling.Definition;
++import net.raphimc.viabedrock.api.model.CustomBlockCulling.Rule;
++
++import java.util.List;
++
++public final class BedrockCustomCulling {
++    private BedrockCustomCulling() {
++    }
++
++    public static boolean visible(final BlockGetter level, final BlockPos pos, final BlockState state, final List<Rule> rules) {
++        final var definitions = BedrockCustomBlockResources.currentCulling();
++        final Definition own = definitions.get(Block.getId(state));
++        if (own == null) return true;
++        for (Rule rule : rules) {
++            final Direction direction = Direction.valueOf(rule.direction().name());
++            final BlockState neighbor = level.getBlockState(pos.relative(direction));
++            final Definition other = definitions.get(Block.getId(neighbor));
++            final var physical = BedrockCustomBlockResources.current().get(Block.getId(neighbor));
++            final boolean opaque = physical != null ? physical.occluding() : neighbor.isSolidRender();
++            if (hidden(own, other, opaque, rule)) return false;
++        }
++        return true;
++    }
++
++    static boolean hidden(final Definition own, final Definition other, final boolean fullAndOpaque, final Rule rule) {
++        if (rule.cullAgainstFullAndOpaque() && fullAndOpaque) return true;
++        if (other == null) return false;
++        return switch (rule.condition()) {
++            case SAME_BLOCK -> !own.identifier().isEmpty() && own.identifier().equals(other.identifier());
++            case SAME_BLOCK_PERMUTATION -> !own.permutation().isEmpty() && own.permutation().equals(other.permutation());
++            case SAME_CULLING_LAYER -> !own.layer().isEmpty() && !own.layer().equals("minecraft:culling_layer.undefined") && own.layer().equals(other.layer());
++            case DEFAULT -> own.directions().contains(rule.direction())
++                && other.directions().contains(rule.direction().opposite())
++                && CustomBlockCulling.covers(own.slice(rule.direction()), other.slice(rule.direction().opposite()));
++        };
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBlockColors.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBlockColors.java
 new file mode 100644
 index 0000000..48b052b
@@ -275,6 +392,123 @@ index 0000000..48b052b
 +    }
 +
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCullingFaceBakery.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCullingFaceBakery.java
+new file mode 100644
+index 0000000..eef7e42
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCullingFaceBakery.java
+@@ -0,0 +1,39 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
++
++import com.viaversion.viafabricplus.bedrock.block.BedrockCullingRules;
++import net.minecraft.client.resources.model.ModelBaker;
++import net.minecraft.client.resources.model.cuboid.CuboidFace;
++import net.minecraft.client.resources.model.cuboid.CuboidRotation;
++import net.minecraft.client.resources.model.cuboid.FaceBakery;
++import net.minecraft.client.resources.model.geometry.BakedQuad;
++import net.minecraft.client.resources.model.sprite.Material;
++import net.minecraft.client.renderer.block.dispatch.ModelState;
++import net.minecraft.core.Direction;
++import org.joml.Vector3fc;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
++
++@Mixin(FaceBakery.class)
++public abstract class MixinCullingFaceBakery {
++    @Inject(method = "bakeQuad(Lnet/minecraft/client/resources/model/ModelBaker;Lorg/joml/Vector3fc;Lorg/joml/Vector3fc;Lnet/minecraft/client/resources/model/cuboid/CuboidFace;Lnet/minecraft/client/resources/model/sprite/Material$Baked;Lnet/minecraft/core/Direction;Lnet/minecraft/client/renderer/block/dispatch/ModelState;Lnet/minecraft/client/resources/model/cuboid/CuboidRotation;Lnet/minecraft/core/Direction;I)Lnet/minecraft/client/resources/model/geometry/BakedQuad;", at = @At("RETURN"), cancellable = true)
++    private static void retainNativeCulling(final ModelBaker baker, final Vector3fc from, final Vector3fc to, final CuboidFace face,
++                                           final Material.Baked material, final Direction direction, final ModelState state,
++                                           final CuboidRotation rotation, final Direction shade, final int emission,
++                                           final CallbackInfoReturnable<BakedQuad> cir) {
++        final var rules = ((BedrockCullingRules) (Object) face).viaFabricPlusBedrock$cullingRules();
++        if (rules.isEmpty()) return;
++        final BakedQuad original = cir.getReturnValue();
++        // Keep native rule identity separate from Java's interned geometry and materials.
++        final BakedQuad quad = new BakedQuad(original.position0(), original.position1(), original.position2(), original.position3(),
++            original.packedUV0(), original.packedUV1(), original.packedUV2(), original.packedUV3(), original.direction(), original.materialInfo());
++        ((BedrockCullingRules) (Object) quad).viaFabricPlusBedrock$cullingRules(rules);
++        cir.setReturnValue(quad);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCullingFaceDeserializer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCullingFaceDeserializer.java
+new file mode 100644
+index 0000000..f75b74a
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCullingFaceDeserializer.java
+@@ -0,0 +1,30 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
++
++import com.google.gson.JsonElement;
++import com.google.gson.JsonDeserializationContext;
++import com.viaversion.viafabricplus.bedrock.block.BedrockCullingRules;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.minecraft.client.resources.model.cuboid.CuboidFace;
++import net.raphimc.viabedrock.api.model.CustomBlockCulling;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
++import java.lang.reflect.Type;
++
++@Mixin(targets = "net.minecraft.client.resources.model.cuboid.CuboidFace$Deserializer")
++public abstract class MixinCullingFaceDeserializer {
++    @Inject(method = "deserialize(Lcom/google/gson/JsonElement;Ljava/lang/reflect/Type;Lcom/google/gson/JsonDeserializationContext;)Lnet/minecraft/client/resources/model/cuboid/CuboidFace;", at = @At("RETURN"))
++    private void readNativeCulling(final JsonElement json, final Type type, final JsonDeserializationContext context,
++                                   final CallbackInfoReturnable<CuboidFace> cir) {
++        final JsonElement rules = json.getAsJsonObject().get(CustomBlockCulling.KEY);
++        if (rules != null) {
++            ((BedrockCullingRules) (Object) cir.getReturnValue()).viaFabricPlusBedrock$cullingRules(CustomBlockCulling.rules(JsonParser.parseString(rules.toString())));
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCullingRules.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCullingRules.java
+new file mode 100644
+index 0000000..89ae46a
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCullingRules.java
+@@ -0,0 +1,30 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
++
++import com.viaversion.viafabricplus.bedrock.block.BedrockCullingRules;
++import net.minecraft.client.resources.model.cuboid.CuboidFace;
++import net.minecraft.client.resources.model.geometry.BakedQuad;
++import net.raphimc.viabedrock.api.model.CustomBlockCulling;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Unique;
++import java.util.List;
++
++@Mixin({CuboidFace.class, BakedQuad.class})
++public abstract class MixinCullingRules implements BedrockCullingRules {
++    @Unique
++    private List<CustomBlockCulling.Rule> viaFabricPlusBedrock$cullingRules = List.of();
++
++    @Override
++    public List<CustomBlockCulling.Rule> viaFabricPlusBedrock$cullingRules() {
++        return this.viaFabricPlusBedrock$cullingRules;
++    }
++
++    @Override
++    public void viaFabricPlusBedrock$cullingRules(final List<CustomBlockCulling.Rule> rules) {
++        this.viaFabricPlusBedrock$cullingRules = List.copyOf(rules);
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockConnection.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockConnection.java
 new file mode 100644
 index 0000000..e101d6c
@@ -303,6 +537,46 @@ index 0000000..e101d6c
 +    private void clearCustomBlockProperties(final DisconnectionDetails details, final CallbackInfo ci) {
 +        BedrockCustomBlockResources.clear();
 +        BedrockCustomBlocks.clear();
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockCulling.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockCulling.java
+new file mode 100644
+index 0000000..8d12bde
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockCulling.java
+@@ -0,0 +1,34 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
++
++import com.viaversion.viafabricplus.bedrock.block.BedrockCullingRules;
++import com.viaversion.viafabricplus.bedrock.block.BedrockCustomCulling;
++import net.minecraft.client.renderer.block.BlockAndTintGetter;
++import net.minecraft.client.renderer.block.BlockQuadOutput;
++import net.minecraft.client.renderer.block.ModelBlockRenderer;
++import net.minecraft.client.resources.model.geometry.BakedQuad;
++import net.minecraft.core.BlockPos;
++import net.minecraft.world.level.block.state.BlockState;
++import org.spongepowered.asm.mixin.Final;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(ModelBlockRenderer.class)
++public abstract class MixinCustomBlockCulling {
++    @Shadow @Final private boolean cull;
++
++    @Inject(method = "putQuadWithTint", at = @At("HEAD"), cancellable = true)
++    private void nativeTerrainCulling(final BlockQuadOutput output, final float x, final float y, final float z,
++                                     final BlockAndTintGetter level, final BlockState state, final BlockPos pos,
++                                     final BakedQuad quad, final CallbackInfo ci) {
++        final var rules = ((BedrockCullingRules) (Object) quad).viaFabricPlusBedrock$cullingRules();
++        if (this.cull && !rules.isEmpty() && !BedrockCustomCulling.visible(level, pos, state, rules)) ci.cancel();
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockLighting.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockLighting.java
@@ -561,10 +835,10 @@ index 0000000..c05289d
 +
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 8cd3e15..8ccbdfe 100644
+index 8cd3e15..2fbfacc 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -30,10 +30,15 @@
+@@ -30,10 +30,19 @@
      "features.block.MixinBambooStalkBlock",
      "features.block.MixinBedBlock",
      "features.block.MixinBlockBehaviour_Properties",
@@ -575,12 +849,16 @@ index 8cd3e15..8ccbdfe 100644
      "features.block.MixinConduitBlock",
 +    "features.block.MixinCustomBlockState",
 +    "features.block.MixinCustomBlockResources",
++    "features.block.MixinCullingRules",
++    "features.block.MixinCullingFaceDeserializer",
++    "features.block.MixinCullingFaceBakery",
++    "features.block.MixinCustomBlockCulling",
 +    "features.block.MixinCustomBlockConnection",
 +    "features.block.MixinCustomBlockLighting",
      "features.block.MixinDoorBlock",
      "features.block.MixinDragonEggBlock",
      "features.block.MixinEndPortalFrameBlock",
-@@ -41,6 +46,7 @@
+@@ -41,6 +50,7 @@
      "features.block.MixinLadderBlock",
      "features.block.MixinLanternBlock",
      "features.block.MixinLecternBlock",
@@ -650,7 +928,7 @@ index 0000000..49dcd6e
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResourcesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResourcesTest.java
 new file mode 100644
-index 0000000..21d76e3
+index 0000000..30ff65c
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResourcesTest.java
 @@ -0,0 +1,90 @@
@@ -741,7 +1019,7 @@ index 0000000..21d76e3
 +
 +    private static ResourceManager resources(final List<Resource> stack) {
 +        return (ResourceManager) Proxy.newProxyInstance(ResourceManager.class.getClassLoader(), new Class[]{ResourceManager.class},
-+                (proxy, method, arguments) -> method.getName().equals("getResourceStack") ? stack : null);
++                (proxy, method, arguments) -> method.getName().equals("getResourceStack") ? ((net.minecraft.resources.Identifier) arguments[0]).getPath().equals("custom_blocks.json") ? stack : List.of() : null);
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocksTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocksTest.java
@@ -811,6 +1089,63 @@ index 0000000..1f059a1
 +
 +    private static CustomBlockVisual.Box box(final double minX, final double minY, final double minZ, final double maxX, final double maxY, final double maxZ) {
 +        return new CustomBlockVisual.Box(minX, minY, minZ, maxX, maxY, maxZ);
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomCullingTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomCullingTest.java
+new file mode 100644
+index 0000000..640a616
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomCullingTest.java
+@@ -0,0 +1,51 @@
++package com.viaversion.viafabricplus.bedrock.block;
++
++import net.raphimc.viabedrock.api.model.CustomBlockCulling;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++
++import static net.raphimc.viabedrock.api.model.CustomBlockCulling.*;
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockCustomCullingTest {
++
++    @Test
++    void preservesIndependentIdentityAndLayerConditionsAndOpaqueNeighborControl() {
++        final Definition own = definition("test:glass", "test:glass[lit=true]", "test:glass_layer");
++        final Definition sameBlock = definition("test:glass", "test:glass[lit=false]", "test:other_layer");
++        final Definition sameLayer = definition("test:other", "test:other", "test:glass_layer");
++        assertTrue(BedrockCustomCulling.hidden(own, sameBlock, false, rule(Condition.SAME_BLOCK, false)));
++        assertFalse(BedrockCustomCulling.hidden(own, sameBlock, false, rule(Condition.SAME_BLOCK_PERMUTATION, false)));
++        assertTrue(BedrockCustomCulling.hidden(own, own, false, rule(Condition.SAME_BLOCK_PERMUTATION, false)));
++        assertTrue(BedrockCustomCulling.hidden(own, sameLayer, false, rule(Condition.SAME_CULLING_LAYER, false)));
++        assertFalse(BedrockCustomCulling.hidden(own, sameBlock, false, rule(Condition.SAME_CULLING_LAYER, false)));
++        assertTrue(BedrockCustomCulling.hidden(own, null, true, rule(Condition.DEFAULT, true)));
++        assertFalse(BedrockCustomCulling.hidden(own, null, true, rule(Condition.DEFAULT, false)));
++        final Definition undefined = definition("", "", "minecraft:culling_layer.undefined");
++        assertFalse(BedrockCustomCulling.hidden(undefined, undefined, false, rule(Condition.SAME_CULLING_LAYER, false)));
++    }
++
++    @Test
++    void defaultComparisonRequiresOppositeFaceParticipationAndCompleteCoverage() {
++        final Definition own = new Definition("", "", "", Map.of(Direction.NORTH, List.of(new Rectangle(0, 0, 1, 0.5))), Set.of(Direction.NORTH));
++        final Definition neighbor = new Definition("", "", "", Map.of(Direction.SOUTH, List.of(new Rectangle(0, 0, 0.5, 1), new Rectangle(0.5, 0, 1, 0.5))), Set.of(Direction.SOUTH));
++        assertTrue(BedrockCustomCulling.hidden(own, neighbor, false, rule(Condition.DEFAULT, false)));
++        final Definition disabledOwn = new Definition("", "", "", own.slices(), Set.of());
++        assertFalse(BedrockCustomCulling.hidden(disabledOwn, neighbor, false, rule(Condition.DEFAULT, false)));
++        final Definition disabled = new Definition("", "", "", neighbor.slices(), Set.of());
++        assertFalse(BedrockCustomCulling.hidden(own, disabled, false, rule(Condition.DEFAULT, false)));
++        final Definition gap = new Definition("", "", "", Map.of(Direction.SOUTH, List.of(new Rectangle(0, 0, 0.49, 1), new Rectangle(0.5, 0, 1, 1))), Set.of(Direction.SOUTH));
++        assertFalse(BedrockCustomCulling.hidden(own, gap, false, rule(Condition.DEFAULT, false)));
++    }
++
++    private static Definition definition(final String identifier, final String permutation, final String layer) {
++        return new Definition(identifier, permutation, layer, Map.of(), Set.of());
++    }
++
++    private static Rule rule(final Condition condition, final boolean opaque) {
++        return new Rule(Direction.NORTH, condition, opaque);
 +    }
 +}
 -- 

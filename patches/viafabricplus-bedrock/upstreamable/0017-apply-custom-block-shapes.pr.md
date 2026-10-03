@@ -30,8 +30,31 @@ Disconnect clears the client mapping.
 The fixture texture is procedural, and production requires no local Bedrock installation.
 
 VoxelShapes describes native rendering culling.
-Core retains that registry, but culling rules remain incomplete.
+Core now compiles custom culling rules from that registry.
+Vanilla partial-block mapping and broader native comparisons remain incomplete.
 This transport carries physical properties independently.
-The full stack passes 419 core tests, 524 add-on tests, and 16 converter tests.
+The full stack passes 426 core tests, 526 add-on tests, and 16 converter tests.
 Core has one optional fixture skip, and the add-on has 109 optional fixture skips.
 All suites have zero failures and errors, and core Checkstyle passes.
+
+## Conditional terrain culling
+
+The server-pack loader retains culling descriptors with physical properties during resource reload.
+It reads accepted server packs and clears both mappings after disconnect.
+Java model parsing and baking preserve the authored face rules on distinct quads.
+This prevents shared quad identities from losing different rules.
+The terrain renderer evaluates these rules against the actual neighboring state.
+Inventory previews retain all geometry.
+
+Tests cover block identity, permutations, layers, opaque-neighbor opt-out, face participation, and coverage gaps.
+A private target-server fixture verifies that direct and ViaProxy models retain six marked faces per cube.
+Both terrain rendering paths hide the matching block, matching layer, and covered voxel fixtures.
+A different permutation remains visible, and neighbor removal restores all four cubes.
+The ViaProxy client visibly displays that different-permutation cube with the neighbors present.
+Reload preserves the descriptors, and disconnect clears them.
+
+Native local-world comparison confirms the tested conditions and neighbor-removal behavior.
+Broader native rendering parity remains incomplete.
+Two transparent neighbor permutations leave dark faces on Java that the native comparison does not show.
+Native vanilla partial-block slices and alternative terrain renderers remain incomplete.
+These results do not establish full voxel-culling parity.

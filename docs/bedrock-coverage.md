@@ -140,7 +140,7 @@ The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and
 | --- | --- | --- | --- |
 | G1 | Input locks | Incomplete | Preserve server permissions and apply movement and camera restrictions. |
 | G2 | Movement effects and prediction corrections | Incomplete | Implement missing packets and compare translated movement timing with the native client. |
-| G3 | Voxel shapes | Incomplete | Core retains the native culling registry during configuration and play. Apply culling rules, transformed face slices, and culling-layer conditions. These grids do not define collision or selection. |
+| G3 | Voxel shapes | Incomplete | Core retains the registry and compiles custom face rules, transformed slices, and culling layers into accepted server packs. Direct and ViaProxy add-on terrain paths apply the conditions. Broader native comparisons, vanilla partial-block slices, registry replacement, and alternative terrain renderers remain incomplete. These grids do not define collision or selection. |
 | G4 | Animation commands, entity overrides, mob properties, and equipment updates | Incomplete | Connect server updates to authoritative state and runtime playback. |
 | G5 | Movement attributes and attack/use prediction | Incomplete | Apply ignored movement attributes and complete native input and cooldown behavior. |
 | G6 | Interaction and entity metadata | Incomplete | Audit variant mappings, interactions, flags, properties, and unsupported metadata. |
@@ -195,9 +195,9 @@ The goal remains active while any required row is incomplete or unverified.
 
 ## Latest validation
 
-The complete stack build passes after replaying the block transport and voxel registry changes into their owning patches.
-The core suite reports 419 tests with one optional fixture skip.
-The add-on suite reports 524 tests with 109 optional fixture skips.
+The complete stack build passes after replaying the block transport, voxel registry, and custom culling changes into their owning patches.
+The core suite reports 426 tests with one optional fixture skip.
+The add-on suite reports 526 tests with 109 optional fixture skips.
 The converter suite reports 16 tests without skips.
 All three suites have zero failures and errors.
 Core Checkstyle passes.
@@ -215,3 +215,14 @@ The direct route retains the same registry after joining.
 An asymmetric native fixture and numerical tests establish cell ordering and coordinate bounds.
 Full voxel culling remains incomplete.
 These comparisons do not establish full protocol, rendering, or platform parity.
+
+Private procedural culling fixtures verify the four conditional paths through the add-on on direct connections and ViaProxy.
+Matching block identity, matching layers, and voxel coverage hide three cubes with invisible neighbors.
+The different-permutation cube remains visible.
+Neighbor removal restores all four cubes through flat and ambient-occlusion terrain rendering.
+ViaProxy reload preserves culling descriptors, and disconnect clears them.
+Native local-world comparison confirms these conditions and neighbor-removal behavior.
+Broader native visual parity remains incomplete.
+Two transparent neighbor permutations leave dark faces on Java that the native comparison does not show.
+Numerical tests also preserve holes while compacting dense voxel slices.
+These results do not complete G3.
