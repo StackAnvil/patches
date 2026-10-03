@@ -1228,3 +1228,15 @@ The evidence comes from Bedrock 1.26.51.1 build 51061372, protocol 2193. Native 
 The rebuilt Java preview selects Birdie Wings and Earth Skin through the production asynchronous account flow. The action is disabled during saving. Service receipts and fresh profile reads confirm both writes. Fresh production downloads and imports into a separate cache preserve their pixels and native IDs. After selecting Earth Skin in Java, restarting the native client displays Earth Skin in its main menu and Dressing Room. Research restores all six account collections and the isolated Java appearance files.
 
 Five new tests cover original indices, native IDs, persistence and width edits, preserved account collections, classic preparation, emote positions, and persona restoration. All four build targets and the Prism bundle pass. The full suites report 385 core tests and 490 add-on tests, with no failures or errors. One core test and 100 add-on tests need optional fixtures and are skipped in this run. Imported images without pack references, paid acquisition, and additional cross-platform flows remain incomplete.
+
+### Native walking inputs
+
+The player graph now receives `query.walk_distance` from a separate accumulator on each local or remote player. This accumulator also runs through ViaProxy. Java accumulates its hand-bobbing distance per local movement call and does not populate that value for remote players.
+
+The matching Bedrock 1.26.51.1 build 51061372 accumulates horizontal travel once per tick. Its query extrapolates the current and previous distances with `frame_alpha`, then applies a 0.6 scale. Native float arithmetic preserves that order, including fractional frames and large coordinates. Java snap teleports reset the previous position and do not add their displacement to walking distance. The query remains separate from `modified_distance_moved` and `modified_move_speed`.
+
+Private executable probes run the actual native component update and query callbacks. They cover 60 query cases, seven component updates, and 1,000 repeated updates. Fixture-enabled Java tests compare the native query results and update sequence. The default regression also compares the 1,000-tick result by its float bits. This supplies a missing first-person graph input. It does not establish native first-person drawing, camera transforms, or item transforms.
+
+A rebuilt Java 26.3 client connected through ViaProxy passed the live binding probe. Both local and remote players expose separate walking state. Remote tick samples match six frame fractions. Standing stops extrapolation, and snap teleports preserve the accumulated walking phase. A licensed first-person player graph consumes the production query and changes its arm position with the walking phase.
+
+All four build targets, the client bundle, and the north-star PR check passed. The final add-on rebuild ran 493 tests without failures or errors; 101 optional cases were skipped. All three walking tests passed with the native fixture enabled and no skips. These checks cover the walking input and graph sampling, not visible first-person parity.

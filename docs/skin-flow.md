@@ -497,6 +497,8 @@ Native checks still need to establish live frame timing and complete expression 
 
 The loader now uses the matching 68-alias player definition. Its added tracks include crawling, spyglass, goat horn, brush, and spear poses. These tracks still need complete query bindings and native motion comparisons. Inverse interpolation and all 30 easing functions now use target curve behavior. Conditional assignments and modern nested conditionals preserve their selected values. Licensed spear scripts produce changing bone rotations with production equipment queries. Body and preview graphs now receive authored bone pivots and render tick fractions. Controlled first-person graph samples preserve fractional use phases.
 
+Player graphs now receive native walking distance for local and remote players, including connections through ViaProxy. The accumulator uses horizontal travel once per tick. Render queries extrapolate the current and previous distances, then apply the native 0.6 scale. Target executable probes cover component updates, query arithmetic, and 1,000 accumulated ticks. Walking distance stays independent of Java limb swing. These inputs still need integration with native first-person graph drawing.
+
 First-person hand calls now submit animated arm and sleeve surfaces with their existing frame textures and authored bind pivots. Body and surface hands use the native alpha-test material family. Native first-person graph submission, camera and item transforms, charged left-arm visibility, walking bob, swing/input timing, and charging prediction remain incomplete.
 
 ### Verification still needed
