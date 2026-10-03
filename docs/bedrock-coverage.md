@@ -300,7 +300,12 @@ A fresh private Linux state enrolls the device and reaches Microsoft's sign-in p
 This verifies startup through the login page, not completed authentication or passkey support.
 Closing the login window without tokens now stops before package index inspection.
 Linux, macOS, Windows 11, and the official launcher with Fabric remain required runtime comparisons.
-Existing Bedrock MSA token reuse and a default-browser Store flow require protocol research.
+The selected account's MSA refresh token now requests the Microsoft licensing scope under its existing app identity.
+A fresh Linux helper verifies the Xbox identity, obtains the pinned package license, and extracts 6,146 files without interactive sign-in.
+A mismatched Xbox account fails before extraction.
+The headless helper now runs inside Flatpak; its default permissions blocked the previous host-command invocation.
+A fresh in-game test under default Prism Flatpak permissions loads the active persona and renders its Dressing Room preview without a Store window.
+A default-browser fallback and completed Windows 11 and macOS authentication remain unverified.
 
 A lighting queue regression reproduces a dropped refresh when a server replaces a column during an older lighting job.
 The core now retains that refresh while dispatching unrelated ready columns.
@@ -322,6 +327,9 @@ Core now omits these empty shapes while preserving rendered geometry, and metada
 The exact reported server values and its complete conversion remain unverified.
 
 The new CubeCraft screenshots show pig placeholders and paper items after resource-pack acceptance.
-This rendering report needs a matching scene capture and a check of delivered pack definitions, models, textures, and actor bindings.
-The Dressing Room report also fails to show an existing native skin selection.
-Both reports remain open. ExploitPreventer compatibility is outside this investigation at the user's request.
+A fresh CubeCraft capture loads both converted packs through ViaProxy and displays custom actors and hotbar icons.
+A direct replay without a Store account passes complete-payload, pack-load, skin, model-resolution, and actual native draw checks.
+The reported pig and paper fallback does not reproduce on current main; the affected user's failed pack response remains unknown.
+Dressing Room now initializes an unselected account from its active cloud character.
+Initialization preserves a local choice made during the download and keeps the existing preview if acquisition fails.
+Imported images without downloadable account references and later cloud-selection changes remain incomplete. ExploitPreventer compatibility is outside this investigation at the user's request.

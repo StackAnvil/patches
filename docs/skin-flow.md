@@ -509,6 +509,22 @@ The licensed downloader now includes render-controller files and archives. Cache
 
 First-person graph sampling now receives each hand's interpolated equip height. Offhand height stays in the native context scope. Arm offsets use 22 minus each authored arm pivot Y, before animation or render conversion. Matching executable probes pass 343 height cases and 100 arm-offset cases. These inputs preserve Java's equip clock; native equip timing and graph drawing remain unfinished. First-person target rotation queries now use the native zero-rotation scope. Camera pitch remains available separately, and world and preview query values stay unchanged.
 
+### Initial account appearance and silent licensing
+
+Dressing Room now loads the active account character when no local appearance has been selected.
+The download uses the existing classic and persona loaders.
+Local choices made while the download runs take precedence.
+The preview remains available if account assets cannot load.
+Cloud selection changes after initialization and imported images without downloadable references remain incomplete.
+
+Missing Store credentials first trigger a licensing-scope request with the existing Bedrock MSA refresh token.
+The helper verifies the selected Xbox identity and retains license keys internally.
+A fresh Linux run obtains the pinned package license and extracts 6,146 files without interactive sign-in.
+The headless helper runs inside Prism's Flatpak sandbox, where the previous host-command invocation was denied.
+A fresh in-game test with default Prism permissions loads the account persona and renders its preview without another sign-in window.
+Ask remains the default for interactive fallback.
+Windows 11, macOS, official-launcher runtime behavior, and a default-browser fallback still need verification.
+
 ### Verification still needed
 
 - Compare more face sizes, tint channels, overlapping outfits, and cape motion against the native client.

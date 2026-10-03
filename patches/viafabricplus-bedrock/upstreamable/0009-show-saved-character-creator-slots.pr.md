@@ -1376,8 +1376,38 @@ The official Minecraft Launcher with Fabric also needs a runtime comparison.
 All four platform helpers compile in release CI, but these builds do not verify interactive authentication or passkeys.
 [WebKitGTK WebAuthn tracking](https://bugs.webkit.org/show_bug.cgi?id=205350) and a
 [WebView2 missing-prompt report](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5663) remain investigation leads.
-Existing Bedrock MSA token reuse and a default-browser Store flow still need protocol research.
+Existing Bedrock MSA token reuse is verified below. A default-browser Store flow still needs protocol research.
 
-The replayed stack reports 448 core tests, 535 add-on tests, and 16 converter tests, with no failures or errors.
+The replayed stack reports 448 core tests, 539 add-on tests, and 16 converter tests, with no failures or errors.
 There are 110 optional skips. Full core Checkstyle passes.
 Interactive Rust tests pass five cases with two optional skips; headless tests pass six with two optional skips.
+
+## Existing account tokens and initial Dressing Room selection
+
+An unselected Dressing Room now downloads the account's active character on first open.
+This uses the existing classic-pack and persona preparation paths.
+A local selection made during download takes precedence at the synchronized store boundary.
+Failures leave the current preview available and direct the user to Characters for a retry.
+Existing local imports stay selected; imported account images without downloadable pack references remain unsupported.
+
+The helper first tries existing Store credentials.
+If credentials are missing, Java exchanges the Bedrock app's MSA refresh token for `service::www.microsoft.com::MBI_SSL`.
+It retains the original app identity and obtains the PUID from that response.
+The helper checks the original Xbox ticket against the selected XUID before licensing the package.
+Short-lived credentials travel through private stdin. Receipts contain no tokens or license keys.
+The response and process input limits bound these credentials.
+
+A private Linux experiment obtains the matching 1.26.51.1 package license with this audience.
+Fresh production helper state then extracts 6,146 files without a Store window or external game installation.
+A mismatched selected XUID fails before extraction.
+Java's original Bedrock refresh scope still works after the licensing-scope request.
+These exchanges use the existing [MinecraftAuth ticket convention](https://github.com/RaphiMC/MinecraftAuth/blob/main/src/main/java/net/raphimc/minecraftauth/xbl/request/XblUserAuthenticateRequest.java)
+and [Xodus licensing request](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus/src/licensing/content.rs).
+
+Default Prism Flatpak permissions cannot invoke `flatpak-spawn --host`.
+The headless helper now runs inside the sandbox with its C runtime.
+A fresh in-game test with default Prism Flatpak permissions downloads the active account persona and renders its Dressing Room preview.
+No Store window opens. The fixture starts without saved appearance metadata or cached licensed assets.
+The embedded interactive helper retains its host runtime requirement.
+Ask still controls interactive fallback when silent token acquisition is unavailable.
+Default-browser fallback, fresh interactive authentication, Windows 11, macOS, and official-launcher runtime checks remain required.
