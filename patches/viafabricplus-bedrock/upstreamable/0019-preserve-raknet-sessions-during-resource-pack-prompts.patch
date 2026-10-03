@@ -1,0 +1,56 @@
+From d87f047914d499c855d1db12ab96de93cbf530ca Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 14:48:47 +0200
+Subject: [PATCH] fix(network): preserve RakNet sessions during resource pack
+ prompts
+
+Java's application read timeout closes a live Bedrock connection after
+thirty seconds while the player answers a resource pack prompt. RakNet
+heartbeats continue below that handler, so the transport is still active.
+
+Remove the vanilla read timeout only for RakClientChannel connections.
+Keep the existing RakNet session timeout and connection timeout, which
+still close a silent or unreachable peer. Retain TCP and other transport
+handlers. This belongs in the client pipeline because core cannot change
+Minecraft's timeout handler on direct connections.
+
+Reproduce with Bedrock 1.26.51.1 build 51061372, protocol 2193, and Java
+26.3. Cloudburst RakSessionCodec checks incoming datagram activity against
+the configured session timeout independently of application packets.
+---
+ .../injection/mixin/core/connection/MixinConnection_1.java  | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnection_1.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnection_1.java
+index cd74fe9..c59ae76 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnection_1.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnection_1.java
+@@ -28,6 +28,7 @@ import io.netty.channel.Channel;
+ import io.netty.channel.ChannelConfig;
+ import io.netty.channel.ChannelOption;
+ import io.netty.channel.ChannelPipeline;
++import io.netty.handler.timeout.ReadTimeoutHandler;
+ import java.util.concurrent.ThreadLocalRandom;
+ import net.minecraft.network.Connection;
+ import net.minecraft.network.HandlerNames;
+@@ -37,6 +38,7 @@ import net.raphimc.viabedrock.netty.DisconnectHandler;
+ import net.raphimc.viabedrock.netty.PacketCodec;
+ import net.raphimc.viabedrock.netty.raknet.MessageCodec;
+ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import org.cloudburstmc.netty.channel.raknet.RakClientChannel;
+ import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
+ import org.spongepowered.asm.mixin.Final;
+ import org.spongepowered.asm.mixin.Mixin;
+@@ -75,6 +77,10 @@ public abstract class MixinConnection_1 {
+ 
+         // ViaBedrock, added around the Via handlers ViaFabricPlus put into the pipeline before
+         final ChannelPipeline pipeline = channel.pipeline();
++        // RakNet heartbeats maintain the session while application packets pause at a pack prompt.
++        if (channel instanceof RakClientChannel && pipeline.get(HandlerNames.TIMEOUT) instanceof ReadTimeoutHandler) {
++            pipeline.remove(HandlerNames.TIMEOUT);
++        }
+         pipeline.addBefore(HandlerNames.SPLITTER, DisconnectHandler.NAME, new DisconnectHandler());
+         pipeline.addBefore(HandlerNames.SPLITTER, MessageCodec.NAME, new MessageCodec());
+         pipeline.replace(HandlerNames.SPLITTER, HandlerNames.SPLITTER, new BatchLengthCodec());
+-- 
+2.55.0

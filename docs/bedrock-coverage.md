@@ -26,6 +26,17 @@ Each feature must record results for direct connections and ViaProxy.
 Ordinary Java clients use standard translations where those translations reproduce the required behavior.
 A fallback does not establish native parity.
 
+### Connection lifetime comparisons
+
+The direct resource-pack prompt previously closed a healthy session after 30 seconds without application packets.
+The [client timeout patch](../patches/viafabricplus-bedrock/upstreamable/0019-preserve-raknet-sessions-during-resource-pack-prompts.pr.md) leaves liveness detection to RakNet.
+The [core disconnect patch](../patches/viabedrock/upstreamable/0079-finish-transport-initiated-raknet-disconnects.pr.md) prevents a second handshake after the transport starts closing.
+A rebuilt direct client waits 75 seconds at the prompt, accepts the pack, and spawns.
+Pausing the private server then produces a disconnect at the configured 30-second session timeout.
+The ViaProxy route opens the native cartography screen and retains Java's TCP timeout handler.
+Pausing its Bedrock backend also closes the connection after 30 seconds.
+These comparisons establish the tested Linux routes; other transports and platforms remain unverified.
+
 ## Protocol inventory
 
 The complete applied source defines 168 inbound packet types.
@@ -39,6 +50,9 @@ The inventory excludes commented enum entries and includes transition registrati
 | P2 | Every outbound packet and field | Incomplete | Audit request generation, flags, enum values, state transitions, and native client ordering. |
 | P3 | Target packets absent from enums | Incomplete | Compare definitions with protocol 2193. Later preview packets do not establish target support. |
 | P4 | Intentional exclusions | Incomplete | Record versioned evidence for each telemetry, Education, platform, or obsolete exclusion. |
+
+A live ViaProxy join also logs startup inventory, clock, jigsaw, and voxel packets ignored outside the Java play state.
+Their lifecycle and required retained state need an audit before packet coverage can be complete.
 
 The [source guide](bedrock-development-sources.md) defines the version and enum research process.
 
@@ -92,9 +106,11 @@ Core supplies presentation state before opening an empty table, including throug
 Rapid edits and keyboard typing preserve the final name in the acknowledged crafted item.
 The accepted server pack supplies native images without a local Bedrock installation.
 Private captures verify creation, clone, and locator previews.
-Direct connections, locking and zoom previews, missing-image acquisition, and remaining operations still need comparisons.
+A direct connection verifies map initialization, the zoom preview, one accepted extension, and the lock preview.
+These previews use matching licensed server images.
+Missing-image acquisition and remaining operations still need comparisons.
 Eleven focused cartography tests pass.
-The complete core suite reports 407 tests with one optional fixture skip.
+The complete core suite reports 409 tests with one optional fixture skip.
 The add-on suite reports 521 tests with 109 optional fixture skips.
 
 The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and-recipe-codecs.pr.md#dynamic-recipes) record their evidence and build results.

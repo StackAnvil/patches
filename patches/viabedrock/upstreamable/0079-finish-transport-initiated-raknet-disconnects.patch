@@ -1,0 +1,150 @@
+From 106411aa5e29005b96ef03e4802c54cecbe57114 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 15:05:22 +0200
+Subject: [PATCH] fix(network): finish transport-initiated RakNet disconnects
+
+RakNet emits a disconnect reason before closing its application pipeline.
+Treat that event as an already initiated disconnect so the core close handler
+does not start another handshake against a session in DISCONNECTING state.
+
+A direct Java 26.3 connection to Bedrock 1.26.51.1 (protocol 2193) stays
+active after the peer goes silent: the session detects its 30-second timeout,
+but the repeated disconnect never completes. This affects the shared handler
+used by direct connections and ViaProxy. Local closes still send one orderly
+disconnect, and transport events continue to downstream handlers.
+
+Embedded transport tests cover every RakNet reason and local close completion.
+The resolved Cloudburst and VFP runtime session codecs both emit the event
+before closing; no runtime-library reflection or client workaround is needed.
+---
+ build.gradle                                  |  1 +
+ .../viabedrock/netty/DisconnectHandler.java   | 13 +++-
+ .../netty/DisconnectHandlerTest.java          | 74 +++++++++++++++++++
+ 3 files changed, 86 insertions(+), 2 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/netty/DisconnectHandlerTest.java
+
+diff --git a/build.gradle b/build.gradle
+index 4cc0760e..df4c343d 100644
+--- a/build.gradle
++++ b/build.gradle
+@@ -79,6 +79,7 @@ dependencies {
+     compileOnly "io.netty:netty-handler:4.2.18.Final"
+     compileOnly "com.google.code.gson:gson:2.14.0"
+     compileOnly "org.cloudburstmc.netty:netty-transport-raknet:2.0.0.CR4-20260921.144528-1"
++    testImplementation "org.cloudburstmc.netty:netty-transport-raknet:2.0.0.CR4-20260921.144528-1"
+     compileOnly "org.cloudburstmc.netty:netty-transport-nethernet:2.0.0.CR4-20260921.144528-1"
+ 
+     api("io.netty:netty-codec-http:4.2.18.Final") {
+diff --git a/src/main/java/net/raphimc/viabedrock/netty/DisconnectHandler.java b/src/main/java/net/raphimc/viabedrock/netty/DisconnectHandler.java
+index 3302236b..36ba2656 100644
+--- a/src/main/java/net/raphimc/viabedrock/netty/DisconnectHandler.java
++++ b/src/main/java/net/raphimc/viabedrock/netty/DisconnectHandler.java
+@@ -18,15 +18,24 @@
+ package net.raphimc.viabedrock.netty;
+ 
+ import io.netty.channel.ChannelHandlerContext;
+-import io.netty.channel.ChannelOutboundHandlerAdapter;
++import io.netty.channel.ChannelDuplexHandler;
+ import io.netty.channel.ChannelPromise;
++import org.cloudburstmc.netty.channel.raknet.RakDisconnectReason;
+ 
+-public class DisconnectHandler extends ChannelOutboundHandlerAdapter {
++public class DisconnectHandler extends ChannelDuplexHandler {
+ 
+     public static final String NAME = "viabedrock-disconnect-handler";
+ 
+     private boolean calledDisconnect = false;
+ 
++    @Override
++    public void userEventTriggered(final ChannelHandlerContext ctx, final Object event) throws Exception {
++        if (event instanceof RakDisconnectReason) {
++            this.calledDisconnect = true;
++        }
++        super.userEventTriggered(ctx, event);
++    }
++
+     @Override
+     public void close(final ChannelHandlerContext ctx, final ChannelPromise promise) throws Exception {
+         if (ctx.channel().isActive() && !this.calledDisconnect) {
+diff --git a/src/test/java/net/raphimc/viabedrock/netty/DisconnectHandlerTest.java b/src/test/java/net/raphimc/viabedrock/netty/DisconnectHandlerTest.java
+new file mode 100644
+index 00000000..c227bed1
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/netty/DisconnectHandlerTest.java
+@@ -0,0 +1,74 @@
++package net.raphimc.viabedrock.netty;
++
++import io.netty.channel.ChannelHandlerContext;
++import io.netty.channel.ChannelOutboundHandlerAdapter;
++import io.netty.channel.ChannelPromise;
++import io.netty.channel.embedded.EmbeddedChannel;
++import org.cloudburstmc.netty.channel.raknet.RakDisconnectReason;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class DisconnectHandlerTest {
++
++    @Test
++    void transportDisconnectEventsCloseWithoutStartingAnotherDisconnect() {
++        for (final RakDisconnectReason reason : RakDisconnectReason.values()) {
++            final var transport = new Transport();
++            final var channel = new EmbeddedChannel(true, true, transport, new DisconnectHandler());
++            try {
++                channel.pipeline().fireUserEventTriggered(reason);
++                final var close = channel.close();
++                assertTrue(close.isSuccess());
++                assertFalse(channel.isActive());
++                assertEquals(0, transport.disconnects);
++                assertEquals(1, transport.closes);
++            } finally {
++                channel.finishAndReleaseAll();
++            }
++        }
++    }
++
++    @Test
++    void localCloseStillSendsOneDisconnectAndPropagatesItsCompletion() {
++        final var transport = new Transport();
++        final var channel = new EmbeddedChannel(true, true, transport, new DisconnectHandler());
++        try {
++            channel.pipeline().fireUserEventTriggered(new Object());
++            final var close = channel.close();
++            channel.runPendingTasks();
++            assertTrue(close.isSuccess());
++            assertFalse(channel.isActive());
++            assertEquals(1, transport.disconnects);
++            assertEquals(1, transport.closes);
++        } finally {
++            channel.finishAndReleaseAll();
++        }
++    }
++
++    private static final class Transport extends ChannelOutboundHandlerAdapter {
++
++        private int disconnects;
++        private int closes;
++
++        @Override
++        public void disconnect(final ChannelHandlerContext ctx, final ChannelPromise promise) {
++            this.disconnects++;
++            ctx.pipeline().close().addListener(future -> {
++                if (future.isSuccess()) {
++                    promise.trySuccess();
++                } else {
++                    promise.tryFailure(future.cause());
++                }
++            });
++        }
++
++        @Override
++        public void close(final ChannelHandlerContext ctx, final ChannelPromise promise) {
++            this.closes++;
++            ctx.close(promise);
++        }
++
++    }
++
++}
+-- 
+2.55.0

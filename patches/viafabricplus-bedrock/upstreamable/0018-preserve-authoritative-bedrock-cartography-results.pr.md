@@ -28,7 +28,7 @@ That method removes the output when either input is empty.
 ## Remaining work
 
 Inline naming and operation previews have verified ViaProxy flows. Further comparisons remain listed below.
-Direct connections, native item input behavior, rejected requests, and complete container operations need further comparisons.
+Further native item input behavior, rejected requests, and complete container operations need comparisons.
 
 ## Verification
 
@@ -40,7 +40,7 @@ The add-on suite reports 521 tests, no failures or errors, and 109 optional fixt
 
 Naming cancellation preserves input counts and restores the result through the core dialog lifecycle.
 Saving a name and crafting produces an acknowledged item with the requested name.
-These comparisons establish the tested ViaProxy flows, not complete native UI or direct connection parity.
+These comparisons establish the tested ViaProxy flows. Full native UI parity still needs the comparisons listed below.
 
 ## Native client screen
 
@@ -74,8 +74,17 @@ The converter transports them through ViaProxy, and the client draws accepted se
 Captures verify creation, copy, and locator mode transitions and captions.
 The client has no Bedrock account selected during this server-image comparison.
 The missing-image message is also checked separately.
-Licensed acquisition, direct connections, resize timing, locking and zoom visuals, and complete operations remain unverified here.
+Licensed acquisition, resize timing, and complete operations remain unverified here.
 
 The core suite reports 407 tests, no failures or errors, and one optional fixture skip.
 The add-on suite reports 521 tests, no failures or errors, and 109 optional fixture skips.
 All four targets build; main and test core Checkstyle pass.
+
+## Direct cartography comparison
+
+A private direct connection initializes an empty map through the server's normal item-use path.
+The table recognizes its advertised map family and displays the native zoom image and caption.
+Taking the result consumes one paper and receives the server's final map UUID without pending requests.
+Replacing paper with a glass pane displays the native lock image and caption.
+This verifies these direct previews with accepted matching server images.
+Further lock result reconciliation and complete operations remain open.
