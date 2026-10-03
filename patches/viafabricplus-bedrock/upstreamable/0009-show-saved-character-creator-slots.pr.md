@@ -1324,3 +1324,19 @@ The view matrix at `0x1446bd990` interpolates bob and tilt with frame alpha. It 
 The rebuilt Java 26.3 client through ViaProxy passes a controlled live probe of the applied `GameRenderer` hook. Its matrix matches the native executable result. Missing native graphs and unmatched skins delegate to Java. The probe restores the player's walking and bob state. Existing camera-spring, equip-input, visibility, nested-scope, and exception-restoration checks pass too.
 
 The full add-on suite reports 512 tests, no failures or errors, and 104 optional skips. All three bob tests and all three camera-spring tests pass with their private fixtures enabled. The add-on, its two dependency builds, the client bundle, and the north-star PR check pass. Player velocity still comes from translated Java movement. Native projection, full hand and item geometry submission, vehicle and movement timing comparison, and visible motion parity remain unfinished.
+
+### Native first-person projection
+
+Matching native appearances now use the ordinary hand camera's FOV and near plane. The first-person hook changes the HUD projection through Java's `Projection` API. This preserves reversed depth, the GPU depth range, the far plane, and window dimensions. Missing actor graphs, unmatched skins, third-person views, and panoramic views retain Java projection.
+
+Bedrock 1.26.51.1 build 51061372 calls `0x1446bd180` with its world-FOV branch disabled at `0x1404c470b`. The base FOV is 70 degrees. The native effects toggle gates water narrowing to 60 degrees and the ordinary death curve. Lava uses a separate camera flag and does not narrow this FOV. The native counter getter at `0x142082df0` reads a signed short. The curve uses that counter plus frame alpha without Java's 20-tick cap. The result clamps to 5 through 130 degrees. The hand projection block at `0x1404c4710` uses a near plane of 0.025.
+
+Java's `deathTime` keeps advancing on the client after 20 ticks. The binding uses this existing counter with the native signed-short conversion. It does not introduce another clock. A positive Java FOV-effects scale enables the native boolean toggle. Intermediate Java slider values therefore enable the full native effect.
+
+Private probes execute the complete native FOV function and the actual signed-short getter. They supply option, actor-health, and death-camera tag accessors. The probe executes the native projection instructions with a supplied CRT `tanf` import. All 440 ordinary-camera cases match Java float bits, including counter wrap and frame-alpha edges. The 54 native matrices match both Java GPU depth ranges after depth conversion. All four targeted projection tests pass.
+
+The executable also has an alternate branch for `MinecraftCamera::DeathCameraComponent`. That branch uses sine easing over 120 ticks and needs a separate camera-controller integration. These checks cover the ordinary hand camera. Native death timing, full hand and item geometry submission, and visible projection parity still require comparison.
+
+A rebuilt Java 26.3 client through ViaProxy passes all 440 ordinary FOV cases through the applied `GameRenderer` projection hook. The probe checks the native near plane, lava exclusion, unchanged far plane and window dimensions, and all four fallback paths. It uses a controlled native actor appearance and restores player health, death ticks, options, and appearance ownership. This verifies the hook binding and projection inputs. It does not compare final rendered pixels against the native client.
+
+The full add-on suite reports 516 tests, no failures or errors, and 104 optional skips. The projection, walking-bob, and camera-spring tests pass with their private fixtures enabled. The add-on, both dependency builds, client bundle, and north-star PR check pass.
