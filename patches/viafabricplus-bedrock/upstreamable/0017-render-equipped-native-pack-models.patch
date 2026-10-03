@@ -1,4 +1,4 @@
-From 418172d1869d0058e41e2cbffbd19e878df143e8 Mon Sep 17 00:00:00 2001
+From 2b3e2e362c06b31a09e94dd9133c364e7e887fd0 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 18:26:58 +0200
 Subject: [PATCH] feat(attachables): render equipped native pack models
@@ -25,12 +25,14 @@ scope; this does not prevent independent equipped wing playback.
 
 Targeted tests cover identity collisions, equipment lifetime, held spawn
 playback, owner context, ordered visibility and animated body binding, including rotated native ancestor rest poses.
+
+Preserve full same-name owner deformation matrices for equipped models. Rotated bones under nonuniform or reflected scale require shear, and independently bound children can have a singular parent. Avoid parent inversion and TRS decomposition. Keep local animation poses intact, inherit full matrices for unmatched descendants, and clear bindings on each pose or replacement binding pass. Existing full-matrix drawing and bounds scopes also apply to bound models. Targeted tests fail against the previous binding and pass for shear, reflections, singular parents, entity-relative descendants, locators, drawing normals, and repeated binding. This preserves the supported binding rule; explicit native binding expressions and complete first-person equipment parity remain separate gaps.
 ---
  .../appearance/BedrockActorAnimation.java     |  33 ++-
  .../appearance/BedrockPlayerControllers.java  |  36 ++-
  .../render/MixinAvatarAnimationRenderer.java  |  18 +-
  .../render/MixinAvatarAnimationState.java     |  11 +-
- .../bedrock/render/BedrockAnimatedModel.java  |  79 ++++-
+ .../bedrock/render/BedrockAnimatedModel.java  |  66 ++++-
  .../bedrock/render/BedrockEquipmentCache.java |  41 +++
  .../BedrockEquippedAttachableLayer.java       |  33 +++
  .../render/BedrockPlayerAttachables.java      | 270 ++++++++++++++++++
@@ -38,13 +40,15 @@ playback, owner context, ordered visibility and animated body binding, including
  .../bedrock/render/BedrockPlayerSkins.java    |  20 +-
  .../BedrockEquippedAnimationTest.java         |  46 +++
  .../BedrockPlayerControllersTest.java         |  22 ++
+ .../render/BedrockAttachableMatricesTest.java | 150 ++++++++++
  .../render/BedrockEquippedAttachableTest.java |  98 +++++++
  .../render/BedrockPlayerModelTest.java        |  58 ++++
- 14 files changed, 754 insertions(+), 17 deletions(-)
+ 15 files changed, 890 insertions(+), 18 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquipmentCache.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableLayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquippedAnimationTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAttachableMatricesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
@@ -263,7 +267,7 @@ index aa2083a..cbc48ea 100644
  
      @Override
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
-index 6b3463c..201f6e5 100644
+index 6b3463c..2795311 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
 @@ -6,6 +6,7 @@
@@ -282,7 +286,7 @@ index 6b3463c..201f6e5 100644
  import java.util.Map;
  import java.util.Set;
  
-@@ -27,8 +29,10 @@ import java.util.Set;
+@@ -27,8 +29,11 @@ import java.util.Set;
  public final class BedrockAnimatedModel {
      private final Model.Simple model;
      private final Map<String, ModelPart> parts;
@@ -290,10 +294,11 @@ index 6b3463c..201f6e5 100644
      private final Map<ModelPart, ModelPart> parents = new HashMap<>();
      private final Set<ModelPart> entityRelative = new HashSet<>();
 +    private final Map<ModelPart, Matrix4f> bindMatrices = new HashMap<>();
++    private final Map<ModelPart, Matrix4f> boundMatrices = new HashMap<>();
  
      BedrockAnimatedModel(
              final ModelPart root,
-@@ -36,7 +40,7 @@ public final class BedrockAnimatedModel {
+@@ -36,7 +41,7 @@ public final class BedrockAnimatedModel {
              final BedrockGeometryModel geometry) {
          this.model = new Model.Simple(root, RenderTypes::entityTranslucent);
          final Map<String, ModelPart> normalized = new HashMap<>();
@@ -302,7 +307,7 @@ index 6b3463c..201f6e5 100644
          this.parts = Map.copyOf(normalized);
          for (final var definition : geometry.getParents()) {
              final ModelPart child = parts.get(definition.getName());
-@@ -44,6 +48,7 @@ public final class BedrockAnimatedModel {
+@@ -44,6 +49,7 @@ public final class BedrockAnimatedModel {
              if (parent != null) this.parents.put(child, parent);
          }
          BedrockModelTransforms.register(this, root, this.parts.values());
@@ -310,42 +315,36 @@ index 6b3463c..201f6e5 100644
      }
  
      public Model.Simple model() {
-@@ -146,6 +151,78 @@ public final class BedrockAnimatedModel {
+@@ -74,6 +80,7 @@ public final class BedrockAnimatedModel {
+     public void pose(final Map<String, BedrockBoneAnimation.Transform> transforms) {
+         this.model.root().getAllParts().forEach(ModelPart::resetPose);
+         this.entityRelative.clear();
++        this.boundMatrices.clear();
+         transforms.forEach(
+                 (name, transform) -> {
+                     final ModelPart part = this.parts.get(normalize(name));
+@@ -92,7 +99,7 @@ public final class BedrockAnimatedModel {
+     }
+ 
+     boolean usesNativeMatrices() {
+-        return !this.entityRelative.isEmpty();
++        return !this.entityRelative.isEmpty() || !this.boundMatrices.isEmpty();
+     }
+ 
+     Map<ModelPart, Matrix4f> drawingMatrices() {
+@@ -146,9 +153,64 @@ public final class BedrockAnimatedModel {
          target.jacket.loadPose(target.body.storePose());
      }
  
 +    /** Applies the owner's bind-to-current deformation to matching attachable bones. */
 +    void bind(final Map<String, Matrix4f> deformations) {
++        this.boundMatrices.clear();
 +        final Map<ModelPart, Matrix4f> original = new HashMap<>();
 +        this.parts.values().forEach(part -> this.global(part, original));
-+        final Map<ModelPart, Matrix4f> desired = new HashMap<>();
 +        this.parts.forEach((name, part) -> {
 +            final Matrix4f deformation = deformations.get(name);
-+            if (deformation != null) desired.put(part, new Matrix4f(deformation).mul(original.get(part)));
++            if (deformation != null) this.boundMatrices.put(part, new Matrix4f(deformation).mul(original.get(part)));
 +        });
-+        final Map<ModelPart, Matrix4f> resolved = new HashMap<>();
-+        this.parts.values().forEach(part -> this.bind(part, desired, resolved));
-+    }
-+
-+    private void bind(final ModelPart part, final Map<ModelPart, Matrix4f> desired,
-+                      final Map<ModelPart, Matrix4f> resolved) {
-+        if (resolved.containsKey(part)) return;
-+        final ModelPart parent = this.parents.get(part);
-+        if (parent != null) this.bind(parent, desired, resolved);
-+        final Matrix4f target = desired.get(part);
-+        if (target != null) {
-+            final Matrix4f local = parent == null ? new Matrix4f(target)
-+                    : new Matrix4f(resolved.get(parent)).invert().mul(target);
-+            final Vector3f position = local.getTranslation(new Vector3f());
-+            final Vector3f rotation = local.getUnnormalizedRotation(new Quaternionf()).normalize().getEulerAnglesZYX(new Vector3f());
-+            final Vector3f scale = local.getScale(new Vector3f());
-+            part.setPos(position.x, position.y, position.z);
-+            part.setRotation(rotation.x, rotation.y, rotation.z);
-+            part.xScale = scale.x;
-+            part.yScale = scale.y;
-+            part.zScale = scale.z;
-+        }
-+        this.global(part, resolved);
 +    }
 +
 +    /** Native animated owners retain the complete authored parent hierarchy in their bind matrices. */
@@ -389,6 +388,15 @@ index 6b3463c..201f6e5 100644
      private Matrix4f global(final ModelPart part, final Map<ModelPart, Matrix4f> matrices) {
          final Matrix4f cached = matrices.get(part);
          if (cached != null) return cached;
++        final Matrix4f bound = this.boundMatrices.get(part);
++        if (bound != null) {
++            final Matrix4f transform = new Matrix4f(bound);
++            matrices.put(part, transform);
++            return transform;
++        }
+         final ModelPart parent = this.parents.get(part);
+         final Matrix4f transform =
+                 parent == null ? new Matrix4f() : new Matrix4f(this.global(parent, matrices));
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquipmentCache.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquipmentCache.java
 new file mode 100644
 index 0000000..ec577f7
@@ -899,6 +907,162 @@ index 578bd60..258503c 100644
      private static BedrockPlayerControllers controllers(final boolean combined) {
          final var scripts = new BedrockEntityData.Scripts(List.of("v.show_hat = 0;"), List.of(
                  "v.visible = q.mark_variant != 255;",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAttachableMatricesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAttachableMatricesTest.java
+new file mode 100644
+index 0000000..a99fd48
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAttachableMatricesTest.java
+@@ -0,0 +1,150 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++import com.mojang.blaze3d.vertex.PoseStack;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockBoneAnimation;
++import java.util.Map;
++import net.minecraft.client.model.geom.ModelPart;
++import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++import org.joml.Matrix4f;
++import org.joml.Vector3f;
++import org.junit.jupiter.api.Test;
++
++final class BedrockAttachableMatricesTest {
++    @Test
++    void carriesShearAndReflectionsThroughBoundBonesDescendantsLocatorsAndDrawing() throws Exception {
++        final var model = model();
++        final var body = model.model().root().getChild("root").getChild("body");
++        final var wing = body.getChild("wing");
++        final var local = new Matrix4f().translation(4, -8, 3).rotateZYX(radians(30), radians(20), radians(10));
++        for (final float scaleX : new float[]{2, -2}) {
++            model.pose(Map.of());
++            final var deformation = new Matrix4f().translation(2, 3, 4).rotateY(.7F).scale(scaleX, 3, .5F);
++            final var bodyMatrix = new Matrix4f(deformation).mul(bodyBind());
++            final var wingMatrix = new Matrix4f(bodyMatrix).mul(local);
++            // Rotated bones under nonuniform scale have nonorthogonal columns that TRS cannot preserve.
++            assertTrue(Math.abs(bodyMatrix.getColumn(0, new Vector3f()).dot(bodyMatrix.getColumn(1, new Vector3f()))) > .1F);
++            model.bind(Map.of("body", deformation));
++            assertTrue(model.usesNativeMatrices());
++            assertTrue(drawing(bodyMatrix).equals(model.drawingMatrices().get(body), .000002F));
++            assertTrue(drawing(wingMatrix).equals(model.drawingMatrices().get(wing), .000002F));
++            final var locator = new BedrockModelLocators.Locator("wing", 0, 0, 0, 0, 0, 0, false);
++            assertTrue(wingMatrix.equals(model.locatorTransform(locator), .00002F));
++            assertDraw(model, wing, drawing(wingMatrix), true);
++            // Binding owns its matrices and leaves the authored local animation pose intact.
++            deformation.identity();
++            assertTrue(drawing(bodyMatrix).equals(model.drawingMatrices().get(body), .000002F));
++            assertEquals(1, body.x);
++            assertEquals(-12, body.y);
++        }
++    }
++
++    @Test
++    void drawsIndependentlyBoundChildrenOfSingularParentsWithoutAnInverse() throws Exception {
++        final var model = model();
++        final var root = model.model().root().getChild("root");
++        final var body = root.getChild("body");
++        final var wing = body.getChild("wing");
++        final var deformation = new Matrix4f().translation(-2, 6, 4).rotateX(.3F).scale(2, 3, 4);
++        final var bodyMatrix = new Matrix4f(deformation).mul(bodyBind());
++        final var wingMatrix = new Matrix4f(bodyMatrix).translate(4, -8, 3)
++                .rotateZYX(radians(30), radians(20), radians(10));
++        for (int frame = 0; frame < 3; frame++) {
++            model.bind(Map.of("root", new Matrix4f().scale(0), "body", deformation));
++            assertTrue(model.drawingMatrices().get(root).isFinite());
++            assertEquals(0, model.drawingMatrices().get(root).determinant());
++            assertTrue(drawing(bodyMatrix).equals(model.drawingMatrices().get(body), .000002F));
++            assertDraw(model, wing, drawing(wingMatrix), true);
++        }
++        model.pose(Map.of("root", transform(false, 0)));
++        model.bind(Map.of("body", deformation));
++        assertTrue(model.drawingMatrices().get(body).isFinite());
++        assertDraw(model, wing, model.drawingMatrices().get(wing), false);
++        model.pose(Map.of());
++        assertFalse(model.usesNativeMatrices());
++        assertTrue(drawing(bodyBind()).equals(model.drawingMatrices().get(body), .000002F));
++    }
++
++    @Test
++    void keepsEntityRelativeChildBasisAndReplacesBindingsWithoutAccumulating() throws Exception {
++        final var model = model();
++        final var body = model.model().root().getChild("root").getChild("body");
++        final var wing = body.getChild("wing");
++        model.pose(Map.of("wing", transform(true, 1)));
++        final var deformation = new Matrix4f().rotateZ(.9F).scale(2, .5F, 3);
++        final var origin = new Matrix4f(deformation).mul(bodyBind()).transformPosition(new Vector3f(4, -8, 3));
++        final var expected = new Matrix4f().translation(origin).rotateZYX(radians(30), radians(20), radians(10));
++        for (int frame = 0; frame < 3; frame++) {
++            model.bind(Map.of("body", deformation));
++            assertTrue(drawing(expected).equals(model.drawingMatrices().get(wing), .000002F));
++            assertDraw(model, wing, drawing(expected), true);
++        }
++        model.bind(Map.of());
++        assertTrue(model.usesNativeMatrices());
++        assertTrue(drawing(bodyBind()).equals(model.drawingMatrices().get(body), .000002F));
++        model.pose(Map.of());
++        assertFalse(model.usesNativeMatrices());
++    }
++
++    private static void assertDraw(final BedrockAnimatedModel model, final ModelPart wing,
++                                   final Matrix4f expected, final boolean checkNormal) {
++        final var poses = new PoseStack();
++        poses.translate(2, 3, 4);
++        poses.rotate(new org.joml.Quaternionf().rotationY(.4F));
++        final var base = new Matrix4f(poses.last().pose());
++        BedrockModelTransforms.visit(model.model().root(), poses, () -> {
++            apply(model.model().root(), poses);
++            final var root = model.model().root().getChild("root");
++            apply(root, poses);
++            apply(root.getChild("body"), poses);
++            apply(wing, poses);
++            final var combined = new Matrix4f(base).mul(expected);
++            assertTrue(combined.equals(poses.last().pose(), .000005F));
++            assertEquals(0, combined.transformPosition(new Vector3f(.2F, .3F, .4F))
++                    .distance(poses.last().pose().transformPosition(new Vector3f(.2F, .3F, .4F))), .000001F);
++            if (checkNormal) {
++                final var normal = new Vector3f(.2F, .7F, .3F).normalize();
++                final var expectedNormal = combined.normal(new org.joml.Matrix3f()).transform(new Vector3f(normal)).normalize();
++                assertEquals(0, expectedNormal.distance(poses.last().normal().transform(normal).normalize()), .000001F);
++            }
++        });
++    }
++
++    private static void apply(final ModelPart part, final PoseStack poses) {
++        BedrockModelTransforms.transform(part, poses, () -> part.translateAndRotate(poses));
++    }
++
++    private static Matrix4f bodyBind() {
++        return new Matrix4f().translation(0, 24, 0).rotateZYX(radians(20), radians(30), radians(15))
++                .translate(1, -12, 2).rotateZYX(radians(35), radians(-10), radians(25));
++    }
++
++    private static Matrix4f drawing(final Matrix4f pixels) {
++        return new Matrix4f(pixels).m30(pixels.m30() / 16F).m31(pixels.m31() / 16F).m32(pixels.m32() / 16F);
++    }
++
++    private static float radians(final float degrees) {
++        return (float) Math.toRadians(degrees);
++    }
++
++    private static BedrockBoneAnimation.Transform transform(final boolean relative, final float scale) {
++        return new BedrockBoneAnimation.Transform(new BedrockBoneAnimation.Vector(0, 0, 0),
++                new BedrockBoneAnimation.Vector(0, 0, 0), new BedrockBoneAnimation.Vector(scale, scale, scale), relative);
++    }
++
++    private static BedrockAnimatedModel model() throws Exception {
++        final var geometry = BedrockGeometryModel.fromJson("""
++            {"minecraft:geometry":[{"description":{"identifier":"geometry.test","texture_width":64,"texture_height":64},
++            "bones":[{"name":"root","pivot":[0,0,0],"rotation":[15,30,20]},
++            {"name":"body","parent":"root","pivot":[1,12,2],"rotation":[25,-10,35]},
++            {"name":"wing","parent":"body","pivot":[5,20,5],"rotation":[10,20,30]}]}]}
++            """).getFirst();
++        return BedrockGeometry.animatedModel(geometry, Map.of());
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java
 new file mode 100644
 index 0000000..d9f0c69

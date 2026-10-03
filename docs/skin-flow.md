@@ -62,6 +62,8 @@ Player equipment layers now use the installed skin's render flags. `enable_attac
 
 The target native reader applies only present flags. The matching player definition enables attachables. Microsoft documents the [equipment flags and armor precedence](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/entityreference/examples/cliententitydocumentation/cliententitydocumentationintroduction?view=minecraft-bedrock-stable#enable_attachables). A private running-client probe passed 208 checks across standard and custom models, flag combinations, layer submissions, lighting, replacement, and release. These checks establish Java layer behavior. Native visual and first-person comparisons remain pending.
 
+Equipped resource-pack models now preserve full matrices for supported same-name bone bindings. Shear, reflected scale, and independently bound children of zero-scale parents survive locators, bounds, and drawing. Three numerical regression tests fail against the previous TRS conversion and pass with the complete matrices. A private Java client verifies four bounds visits and 96 rendered vertices through the applied drawing hooks. These checks use synthetic geometry. Explicit native binding expressions, native visual comparison, ViaProxy attachable graph transport, and first-person equipment parity remain incomplete.
+
 ## Classic animation playback
 
 The package loader also extracts the base vanilla player definition, animations, and animation controllers. Classic aliases override the player defaults. Empty aliases disable their referenced animation. Imports compile the reachable graph before accepting an animated skin pack.
