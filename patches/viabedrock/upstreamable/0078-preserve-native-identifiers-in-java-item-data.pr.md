@@ -25,3 +25,18 @@ The full dependency build passes all four targets. Core passes 383 tests, with n
 A live Java 26.3 client through ViaProxy receives the spear's native maximum of 1,440,000 ticks. Its Java maximum is 72,000 ticks. Production animation queries preserve elapsed time: at 17 elapsed ticks, native remaining time is 1,439,983. After release, remaining time is zero while the maximum persists.
 
 These fields supply animation context. They do not change Java's input timeout or replace inventory request validation. Legacy duration discovery, local charging prediction, additional equipment-slot queries, custom component name comparisons, and first-person rendering remain separate work.
+
+
+## Native tags and kinetic timing
+
+The animation context also carries compiled item tags, swing ticks, and four kinetic-weapon timing values. It uses `viabedrock:item_animation` in standard custom data. The parser copies tags into an immutable list and removes stale context when a definition has none.
+
+Bedrock 1.26.51.1 sends the spear's delay and condition durations as NBT shorts. Delay preserves unsigned bits; condition durations preserve signed values. The network component has a second `minecraft:kinetic_weapon` wrapper. Missing conditions produce zero. Swing duration comes from authored seconds and is converted to ticks before the client query returns seconds.
+
+The matching native callbacks are `141cecf30`, `141ced0a0`, `141ced220`, `141ced3a0`, and `141cef920`. Independent execution covers 112 kinetic cases and 12 swing cases. It supplies item objects, virtual getters, component lookup, actor category, and thread-local setup. The native callbacks execute their optional-condition checks, unsigned delay reads, signed duration reads, and float conversion. Native tag callback `14221ca30` passes 32 slot, argument, and tag cases. Its harness supplies the slot registry, tag hashes, expression values, and item storage. These checks do not prove every component constructor or malformed input path.
+
+The [Creator kinetic-weapon reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/itemreference/examples/itemcomponents/minecraft_kinetic_weapon?view=minecraft-bedrock-stable) documents tick units. The [Creator query reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/queryfunctions?view=minecraft-bedrock-stable) describes main-hand kinetic queries and equipped tag matching. The target player definition uses these queries in its spear hold, use, and attack tracks.
+
+All four build targets and the Prism bundle pass. Core passes 385 tests with no failures or skips. Tests cover copied metadata, optional conditions, both NBT widths, signed and unsigned boundaries, invalid swing values, and immutable tags. The add-on reports 482 tests, no failures, and 96 optional fixture skips. Native kinetic, swing, tag, item-name, and duration query fixtures are enabled.
+
+A rebuilt Java 26.3 client through ViaProxy receives the real spear's tag, delay 15, condition durations 300/200/100, and 13 swing ticks. Production queries return these values. The licensed player graph, sampled with those production queries and controlled use ticks, produces right-arm X rotations of -30, -62, and -30 degrees for hold, use, and release. This verifies graph activation and query binding. It does not establish visible native motion or complete attack timing parity.

@@ -1,4 +1,4 @@
-From 1fb4397d9f1d87c2c3bcee6299c372b487d4241d Mon Sep 17 00:00:00 2001
+From 208cb3f0a7f1dbaf225c3eda88310b81cd8134f9 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 3 Oct 2026 01:05:30 +0200
 Subject: [PATCH] feat(items): preserve native item context in Java data
@@ -19,17 +19,124 @@ raw-name hash from either the legacy item or its component document.
 Native execution confirms those source branches. These fields supply
 rendering context; inventory requests use the native inventory and
 creative catalog rather than client-supplied context.
+
+Carry compiled item tags, kinetic condition durations, and base swing
+periods in immutable animation context. The native player scripts require
+these fields to activate and time spear hold, use, and attack tracks.
+Missing conditions stay zero; absent metadata retains native query defaults.
+Native 1.26.51.1 callback execution verifies main-hand lookup, optional
+condition flags, unsigned delay, signed condition durations, tag matching,
+and swing tick conversion. Render metadata travels in standard custom
+data so direct connections and ViaProxy share the same contract.
 ---
+ .../protocol/model/ItemAnimationData.java     | 88 ++++++++++++++++++
  .../protocol/model/ItemUseDuration.java       | 25 ++++++
- .../protocol/rewriter/ItemDataRewriter.java   | 15 ++++
- .../protocol/rewriter/ItemRewriter.java       | 10 +++
- .../protocol/model/ItemUseDurationTest.java   | 82 +++++++++++++++++++
- .../protocol/rewriter/ItemIdentityTest.java   | 48 +++++++++++
- 5 files changed, 180 insertions(+)
+ .../protocol/rewriter/ItemDataRewriter.java   | 23 +++++
+ .../protocol/rewriter/ItemRewriter.java       |  7 ++
+ .../protocol/model/ItemAnimationDataTest.java | 90 +++++++++++++++++++
+ .../protocol/model/ItemUseDurationTest.java   | 82 +++++++++++++++++
+ .../protocol/rewriter/ItemIdentityTest.java   | 54 +++++++++++
+ 7 files changed, 369 insertions(+)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/ItemAnimationData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/ItemUseDuration.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/ItemAnimationDataTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/ItemUseDurationTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemIdentityTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemAnimationData.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemAnimationData.java
+new file mode 100644
+index 00000000..acdb84c5
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemAnimationData.java
+@@ -0,0 +1,88 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.IntTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.nbt.tag.NumberTag;
++import com.viaversion.nbt.tag.ShortTag;
++import com.viaversion.nbt.tag.StringTag;
++
++import java.util.LinkedHashSet;
++import java.util.List;
++
++/** Immutable native item context needed by client animation queries. */
++public record ItemAnimationData(Integer useDurationTicks, List<String> tags, Integer swingDurationTicks,
++                                KineticWeapon kineticWeapon) {
++
++    public static final ItemAnimationData EMPTY = new ItemAnimationData(null, List.of(), null, null);
++
++    public ItemAnimationData {
++        tags = List.copyOf(new LinkedHashSet<>(tags));
++    }
++
++    public static ItemAnimationData fromNetworkComponents(final CompoundTag components) {
++        final ListTag<StringTag> compiledTags = components.getListTag("item_tags", StringTag.class);
++        final List<String> tags = compiledTags == null ? List.of()
++                : compiledTags.getValue().stream().map(StringTag::getValue).toList();
++        Integer swingTicks = null;
++        if (components.get("minecraft:swing_duration") instanceof CompoundTag swing
++                && swing.get("value") instanceof NumberTag seconds) {
++            final float ticks = seconds.asFloat() * 20F;
++            if (Float.isFinite(ticks) && ticks >= 0F && ticks < 2147483648F) {
++                swingTicks = (int) ticks;
++            }
++        }
++        KineticWeapon kinetic = null;
++        if (components.get("minecraft:kinetic_weapon") instanceof CompoundTag wrapper
++                && wrapper.get("minecraft:kinetic_weapon") instanceof CompoundTag weapon) {
++            kinetic = new KineticWeapon(integer(weapon, "delay", 0, 65535),
++                    duration(weapon, "damage_conditions"), duration(weapon, "knockback_conditions"),
++                    duration(weapon, "dismount_conditions"));
++        }
++        return new ItemAnimationData(ItemUseDuration.fromNetworkComponents(components), tags, swingTicks, kinetic);
++    }
++
++    private static int duration(final CompoundTag weapon, final String condition) {
++        return weapon.get(condition) instanceof CompoundTag data
++                ? integer(data, "max_duration", Short.MIN_VALUE, Short.MAX_VALUE) : 0;
++    }
++
++    private static int integer(final CompoundTag data, final String name, final int min, final int max) {
++        final var tag = data.get(name);
++        if (tag instanceof ShortTag value) {
++            return min == 0 && max == 65535 ? value.asInt() & 0xFFFF : value.asInt();
++        }
++        if (tag instanceof IntTag value && value.asInt() >= min && value.asInt() <= max) {
++            return value.asInt();
++        }
++        return 0;
++    }
++
++    public CompoundTag renderTag() {
++        final CompoundTag data = new CompoundTag();
++        if (!this.tags.isEmpty()) {
++            data.put("tags", new ListTag<>(this.tags.stream().map(StringTag::new).toList()));
++        }
++        if (this.swingDurationTicks != null) {
++            data.putInt("swing_duration_ticks", this.swingDurationTicks);
++        }
++        if (this.kineticWeapon != null) {
++            final CompoundTag kinetic = new CompoundTag();
++            kinetic.putInt("delay", this.kineticWeapon.delay());
++            kinetic.putInt("damage_duration", this.kineticWeapon.damageDuration());
++            kinetic.putInt("knockback_duration", this.kineticWeapon.knockbackDuration());
++            kinetic.putInt("dismount_duration", this.kineticWeapon.dismountDuration());
++            data.put("kinetic_weapon", kinetic);
++        }
++        return data;
++    }
++
++    public record KineticWeapon(int delay, int damageDuration, int knockbackDuration, int dismountDuration) {
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemUseDuration.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemUseDuration.java
 new file mode 100644
 index 00000000..060368e6
@@ -62,31 +169,46 @@ index 00000000..060368e6
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
-index 2635bd6f..96439ec1 100644
+index 2635bd6f..d81445ce 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
-@@ -53,6 +53,9 @@ import java.util.logging.Level;
+@@ -43,6 +43,7 @@ import net.raphimc.viabedrock.api.util.TextUtil;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Enchant_Type;
+ import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.ItemAnimationData;
+ 
+ import java.util.ArrayList;
+ import java.util.HashMap;
+@@ -53,6 +54,10 @@ import java.util.logging.Level;
  
  public final class ItemDataRewriter {
  
 +    public static final String BEDROCK_IDENTIFIER_TAG = "viabedrock:item_identifier";
++    public static final String BEDROCK_ANIMATION_TAG = "viabedrock:item_animation";
 +    public static final String BEDROCK_USE_DURATION_TAG = "viabedrock:item_use_duration";
 +
      private static final Set<String> DYED_LEATHER_ARMOR_ITEMS = Set.of(
              "minecraft:leather_helmet", "minecraft:leather_chestplate",
              "minecraft:leather_leggings", "minecraft:leather_boots");
-@@ -255,6 +258,18 @@ public final class ItemDataRewriter {
+@@ -255,6 +260,24 @@ public final class ItemDataRewriter {
          }
      }
  
-+    /** Retain native identity across Java item mappings and proxy connections. */
-+    static CompoundTag withBedrockItemData(final CompoundTag javaData, final String identifier, final Integer useDuration) {
++    /** Retain native identity and animation context across Java mappings and proxy connections. */
++    static CompoundTag withBedrockItemData(final CompoundTag javaData, final String identifier, final ItemAnimationData animation) {
 +        final CompoundTag data = javaData == null ? new CompoundTag() : javaData.copy();
 +        data.putString(BEDROCK_IDENTIFIER_TAG, identifier);
-+        if (useDuration != null) {
-+            data.putInt(BEDROCK_USE_DURATION_TAG, useDuration);
++        if (animation.useDurationTicks() != null) {
++            data.putInt(BEDROCK_USE_DURATION_TAG, animation.useDurationTicks());
 +        } else {
 +            data.remove(BEDROCK_USE_DURATION_TAG);
++        }
++        final CompoundTag renderData = animation.renderTag();
++        if (!renderData.isEmpty()) {
++            data.put(BEDROCK_ANIMATION_TAG, renderData);
++        } else {
++            data.remove(BEDROCK_ANIMATION_TAG);
 +        }
 +        return data;
 +    }
@@ -95,14 +217,14 @@ index 2635bd6f..96439ec1 100644
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index 6c115dce..8c2a108b 100644
+index 6c115dce..b9bf87b0 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 @@ -49,6 +49,7 @@ import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomItemTags;
  import net.raphimc.viabedrock.protocol.model.BedrockItem;
  import net.raphimc.viabedrock.protocol.model.ItemEntry;
  import net.raphimc.viabedrock.protocol.model.ItemCooldown;
-+import net.raphimc.viabedrock.protocol.model.ItemUseDuration;
++import net.raphimc.viabedrock.protocol.model.ItemAnimationData;
  import net.raphimc.viabedrock.protocol.rewriter.item.BundleItemRewriter;
  import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomAttachableResourceRewriter;
  import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
@@ -110,32 +232,125 @@ index 6c115dce..8c2a108b 100644
  
  public class ItemRewriter extends StoredObject {
  
-+    private final Map<String, Integer> useDurations = new HashMap<>();
++    private final Map<String, ItemAnimationData> animationData = new HashMap<>();
 +
      private final Map<String, ItemCooldown> cooldowns = new HashMap<>(Map.of(
              "minecraft:ender_pearl", new ItemCooldown("ender_pearl", 1F),
              "minecraft:goat_horn", new ItemCooldown("goat_horn", 7F),
-@@ -99,6 +102,10 @@ public class ItemRewriter extends StoredObject {
+@@ -99,6 +102,7 @@ public class ItemRewriter extends StoredObject {
              this.items.put(itemEntry.identifier(), itemEntry.id());
              if (itemEntry.componentData() != null
                      && itemEntry.componentData().get("components") instanceof CompoundTag components) {
-+                final Integer useDuration = ItemUseDuration.fromNetworkComponents(components);
-+                if (useDuration != null) {
-+                    this.useDurations.put(itemEntry.identifier(), useDuration);
-+                }
++                this.animationData.put(itemEntry.identifier(), ItemAnimationData.fromNetworkComponents(components));
                  final ItemCooldown cooldown = ItemCooldown.fromNetworkComponents(components);
                  if (cooldown != null) {
                      this.cooldowns.put(itemEntry.identifier(), cooldown);
-@@ -255,6 +262,9 @@ public class ItemRewriter extends StoredObject {
+@@ -255,6 +259,9 @@ public class ItemRewriter extends StoredObject {
              ITEM_NBT_REWRITERS.get(tag).toJava(this.user(), bedrockItem, javaItem);
          }
  
 +        javaItem.dataContainer().set(StructuredDataKey.CUSTOM_DATA,
 +                ItemDataRewriter.withBedrockItemData(javaItem.dataContainer().get(StructuredDataKey.CUSTOM_DATA),
-+                        identifier, this.useDurations.get(identifier)));
++                        identifier, this.animationData.getOrDefault(identifier, ItemAnimationData.EMPTY)));
          return javaItem;
      }
  
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/ItemAnimationDataTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemAnimationDataTest.java
+new file mode 100644
+index 00000000..0e65ce98
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemAnimationDataTest.java
+@@ -0,0 +1,90 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.nbt.tag.StringTag;
++import com.viaversion.nbt.tag.ShortTag;
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class ItemAnimationDataTest {
++
++    @Test
++    void freezesTagsAndConvertsSwingSecondsWithoutChangingKineticTicks() {
++        final CompoundTag components = new CompoundTag();
++        final ListTag<StringTag> tags = new ListTag<>(StringTag.class);
++        tags.add(new StringTag("probe:first"));
++        tags.add(new StringTag("probe:first"));
++        tags.add(new StringTag("probe:second"));
++        components.put("item_tags", tags);
++        final CompoundTag swing = new CompoundTag();
++        swing.putFloat("value", 0.65F);
++        components.put("minecraft:swing_duration", swing);
++        final CompoundTag weapon = new CompoundTag();
++        weapon.putInt("delay", 15);
++        final CompoundTag damage = new CompoundTag();
++        damage.putInt("max_duration", -1);
++        weapon.put("damage_conditions", damage);
++        final CompoundTag wrapper = new CompoundTag();
++        wrapper.put("minecraft:kinetic_weapon", weapon);
++        components.put("minecraft:kinetic_weapon", wrapper);
++        final var data = ItemAnimationData.fromNetworkComponents(components);
++        assertEquals(2, data.tags().size());
++        assertEquals(13, data.swingDurationTicks());
++        assertEquals(new ItemAnimationData.KineticWeapon(15, -1, 0, 0), data.kineticWeapon());
++        tags.getValue().clear();
++        weapon.putInt("delay", 10);
++        assertEquals(2, data.tags().size());
++        assertEquals(15, data.kineticWeapon().delay());
++        final var wire = data.renderTag();
++        assertEquals(2, wire.getListTag("tags", StringTag.class).size());
++        assertEquals(-1, wire.getCompoundTag("kinetic_weapon").getInt("damage_duration"));
++        wire.getCompoundTag("kinetic_weapon").putInt("delay", 0);
++        assertEquals(15, data.kineticWeapon().delay());
++        final List<String> mutable = new ArrayList<>(data.tags());
++        final var copy = new ItemAnimationData(null, mutable, null, null);
++        mutable.clear();
++        assertEquals(data.tags(), copy.tags());
++        assertThrows(UnsupportedOperationException.class, () -> copy.tags().clear());
++    }
++
++    @Test
++    void keepsAbsentConditionsAtZeroAndRejectsUnsupportedWidths() {
++        final CompoundTag components = new CompoundTag();
++        assertEquals(ItemAnimationData.EMPTY, ItemAnimationData.fromNetworkComponents(components));
++        final CompoundTag weapon = new CompoundTag();
++        final CompoundTag wrapper = new CompoundTag();
++        wrapper.put("minecraft:kinetic_weapon", weapon);
++        components.put("minecraft:kinetic_weapon", wrapper);
++        weapon.putInt("delay", 65535);
++        final CompoundTag duration = new CompoundTag();
++        duration.putInt("max_duration", Short.MAX_VALUE);
++        weapon.put("knockback_conditions", duration);
++        assertEquals(new ItemAnimationData.KineticWeapon(65535, 0, Short.MAX_VALUE, 0),
++                ItemAnimationData.fromNetworkComponents(components).kineticWeapon());
++        weapon.put("delay", new ShortTag((short) 65535));
++        duration.put("max_duration", new ShortTag((short) -1));
++        assertEquals(new ItemAnimationData.KineticWeapon(65535, 0, -1, 0),
++                ItemAnimationData.fromNetworkComponents(components).kineticWeapon());
++        weapon.putInt("delay", -1);
++        duration.putInt("max_duration", 65535);
++        assertEquals(new ItemAnimationData.KineticWeapon(0, 0, 0, 0),
++                ItemAnimationData.fromNetworkComponents(components).kineticWeapon());
++        final CompoundTag swing = new CompoundTag();
++        components.put("minecraft:swing_duration", swing);
++        for (final float invalid : new float[]{Float.NaN, Float.POSITIVE_INFINITY, -1F, Float.MAX_VALUE}) {
++            swing.putFloat("value", invalid);
++            assertNull(ItemAnimationData.fromNetworkComponents(components).swingDurationTicks());
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/ItemUseDurationTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemUseDurationTest.java
 new file mode 100644
 index 00000000..8390e3fe
@@ -226,10 +441,10 @@ index 00000000..8390e3fe
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemIdentityTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemIdentityTest.java
 new file mode 100644
-index 00000000..66b44550
+index 00000000..85998256
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemIdentityTest.java
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,54 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -239,6 +454,8 @@ index 00000000..66b44550
 +
 +import com.viaversion.nbt.tag.CompoundTag;
 +import org.junit.jupiter.api.Test;
++import net.raphimc.viabedrock.protocol.model.ItemAnimationData;
++import java.util.List;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
@@ -253,11 +470,15 @@ index 00000000..66b44550
 +        original.putInt("viabedrock:creative_entry", 23);
 +        original.putString(ItemDataRewriter.BEDROCK_IDENTIFIER_TAG, "old");
 +        final String identifier = "probe:custom_item";
-+        final CompoundTag result = ItemDataRewriter.withBedrockItemData(original, identifier, 1440000);
++        final CompoundTag result = ItemDataRewriter.withBedrockItemData(original, identifier, new ItemAnimationData(1440000, List.of("probe:tag"), 13, null));
 +        assertEquals(identifier, result.getString(ItemDataRewriter.BEDROCK_IDENTIFIER_TAG));
 +        assertEquals(1440000, result.getInt(ItemDataRewriter.BEDROCK_USE_DURATION_TAG));
 +        assertFalse(original.contains(ItemDataRewriter.BEDROCK_USE_DURATION_TAG));
-+        assertFalse(ItemDataRewriter.withBedrockItemData(result, identifier, null)
++        assertFalse(original.contains(ItemDataRewriter.BEDROCK_ANIMATION_TAG));
++        assertEquals(13, result.getCompoundTag(ItemDataRewriter.BEDROCK_ANIMATION_TAG).getInt("swing_duration_ticks"));
++        assertFalse(ItemDataRewriter.withBedrockItemData(result, identifier, ItemAnimationData.EMPTY)
++                .contains(ItemDataRewriter.BEDROCK_ANIMATION_TAG));
++        assertFalse(ItemDataRewriter.withBedrockItemData(result, identifier, ItemAnimationData.EMPTY)
 +                .contains(ItemDataRewriter.BEDROCK_USE_DURATION_TAG));
 +        assertEquals(original.getInt("viabedrock:creative_entry"), result.getInt("viabedrock:creative_entry"));
 +        assertEquals(nested, result.getCompoundTag("nested"));
@@ -270,11 +491,11 @@ index 00000000..66b44550
 +    void keepsDifferentNativeAliasesDistinctDespiteTheirSharedJavaMapping() {
 +        final String first = "minecraft:apple";
 +        final String second = "probe:apple";
-+        final CompoundTag a = ItemDataRewriter.withBedrockItemData(null, first, null);
-+        final CompoundTag b = ItemDataRewriter.withBedrockItemData(null, second, null);
++        final CompoundTag a = ItemDataRewriter.withBedrockItemData(null, first, ItemAnimationData.EMPTY);
++        final CompoundTag b = ItemDataRewriter.withBedrockItemData(null, second, ItemAnimationData.EMPTY);
 +        assertNotEquals(a, b);
-+        assertEquals(a, ItemDataRewriter.withBedrockItemData(a, first, null));
-+        assertEquals(b, ItemDataRewriter.withBedrockItemData(a, second, null));
++        assertEquals(a, ItemDataRewriter.withBedrockItemData(a, first, ItemAnimationData.EMPTY));
++        assertEquals(b, ItemDataRewriter.withBedrockItemData(a, second, ItemAnimationData.EMPTY));
 +    }
 +
 +}

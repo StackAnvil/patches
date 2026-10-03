@@ -1189,3 +1189,14 @@ Bedrock 1.26.51.1 sends spear durations of 1,440,000 ticks; Java 26.3 uses 72,00
 The full dependency build and Prism bundle pass. The core suite passes 383 tests with its native registry fixture enabled. The add-on suite reports 480 tests, no failures, and 96 optional fixture skips. Targeted tests cover differing clocks, elapsed ticks, startup, release, completion, short native durations, and integer bounds. Native name and duration query fixtures are enabled.
 
 This verifies transmitted duration context and live query binding. Java's input timeout, legacy native durations, local charging prediction, spear tag and kinetic bindings, first-person playback, and visible native motion comparisons remain incomplete.
+
+
+### Native spear and equipment queries
+
+Read immutable item animation context from standard Java custom data. Bind equipped tag matching across the main hand, offhand, and five armor slots. Bind the four kinetic-weapon queries to the main hand. Bind base swing duration to native ticks with the target float conversion and 0.3-second empty-hand default.
+
+The matching Bedrock 1.26.51.1 callbacks pass 112 kinetic, 12 swing, and 32 tag cases. The harness supplies item storage, virtual getters, component lookup, slot registry, tag hashes, expression values, category, and thread-local setup. Production comparisons cover those callback outputs. Constructor behavior and malformed native input handling remain outside that evidence.
+
+A live Java 26.3 client through ViaProxy receives the actual spear context. Its production queries return the native spear tag and timing fields. The licensed graph runs with those queries and controlled remaining-use ticks. Right-arm X is -30 degrees during hold, -62 during the tested use phase, and -30 after release. The probe runs on the Minecraft thread. The full dependency build and Prism bundle pass: 385 core tests, and 482 add-on tests with 96 optional skips, all without failures.
+
+This enables the native spear graph through transmitted context. First-person playback, visible native comparisons, Java swing and input timing, local charging prediction, and additional equipment queries remain incomplete.
