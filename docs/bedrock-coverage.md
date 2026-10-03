@@ -273,3 +273,18 @@ That ordinary-Java comparison still shows holes in neighboring terrain from carr
 The add-on path does not show those holes.
 Numerical tests also preserve holes while compacting dense voxel slices.
 These results do not complete G3.
+
+## Reported regressions under investigation
+
+Skin browsing previously allowed the official-package helper to open Microsoft Store authentication automatically.
+The helper now defaults to its headless build, and **Allow Microsoft Store sign-in windows** explicitly enables interactive login.
+Missing Store credentials return before package inspection or device enrollment.
+Existing licensed caches and Store credentials remain usable.
+The reported missing passkey dialog still needs the affected OS and launcher for reproduction.
+This change prevents unsolicited windows; it does not establish support for that passkey flow.
+
+A lighting queue regression reproduces a dropped refresh when a server replaces a column during an older lighting job.
+The core now retains that refresh while dispatching unrelated ready columns.
+The pinned upstream scheduler also contains the faulty removal order.
+The reported chunk-loading slowdown remains unverified until its server and timing can be compared.
+Existing Hive captures and BDS measurements do not establish broader server compatibility or loading performance.

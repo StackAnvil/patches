@@ -1,4 +1,4 @@
-From 8e96a3a2086656d832e504de69b4c7622b3517dd Mon Sep 17 00:00:00 2001
+From ccd2e5b185f83520f001ef8b3ca6f606fa210883 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 03:59:09 +0200
 Subject: [PATCH] perf(lighting): propagate increased block light incrementally
@@ -38,14 +38,16 @@ Numeric propagation and palette-coordinate tests cover native filtering,
 wet/dry separation, water removal, and immutable snapshots. Native probe
 raw data stays private. Script API light queries include time/weather
 adjustment, so all propagation comparisons were taken at clear noon.
+
+Retain queued lighting refreshes while the same chunk key has an older worker in flight. A server can replace a column before that worker completes; the completion discards the old column snapshot by identity, so removing the new dirty key would permanently lose its border refresh. Skip pending keys without blocking unrelated updates and remove only unloaded or dispatched keys. A failing-before regression reproduces replacement, independent dispatch, and retry after completion. This fixes an upstream scheduling edge case without establishing the cause of a reported server slowdown.
 ---
- .../api/chunk/light/LightEngine.java          | 168 ++++++++++++++-
+ .../api/chunk/light/LightEngine.java          | 168 ++++++++++++-
  .../protocol/data/BedrockMappingData.java     |  11 +-
- .../protocol/storage/ChunkTracker.java        | 193 ++++++++++++++++--
- .../api/chunk/light/LightEngineTest.java      | 141 +++++++++++++
- .../data/BlockLightFilteringTest.java         |  97 +++++++++
- .../protocol/storage/ChunkTrackerTest.java    |  29 +++
- 6 files changed, 619 insertions(+), 20 deletions(-)
+ .../protocol/storage/ChunkTracker.java        | 221 ++++++++++++++++--
+ .../api/chunk/light/LightEngineTest.java      | 141 +++++++++++
+ .../data/BlockLightFilteringTest.java         |  97 ++++++++
+ .../protocol/storage/ChunkTrackerTest.java    |  45 ++++
+ 6 files changed, 659 insertions(+), 24 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/chunk/light/LightEngineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/data/BlockLightFilteringTest.java
 
@@ -292,21 +294,22 @@ index 98d435ad8..8fb8c4a83 100644
       * Light emission of a java block state that depends on its block state properties.
       * Returns -1 if the block has no state dependent emission rule.
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
-index fb7ffb20f..37e00a1f6 100644
+index fb7ffb20f..1f40c863d 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
-@@ -67,9 +67,9 @@ import java.util.*;
+@@ -67,9 +67,10 @@ import java.util.*;
  import java.util.concurrent.ExecutorService;
  import java.util.concurrent.Executors;
  import java.util.concurrent.Semaphore;
 +import java.util.function.IntPredicate;
++import java.util.function.LongPredicate;
  import java.util.logging.Level;
  
 -// TODO: Feature: Incremental light updates instead of whole section recomputations
  public class ChunkTracker extends StoredObject {
  
      private static final int MAX_SUB_CHUNK_REQUEST_OFFSETS_PER_PACKET = 256;
-@@ -85,6 +85,7 @@ public class ChunkTracker extends StoredObject {
+@@ -85,6 +86,7 @@ public class ChunkTracker extends StoredObject {
      private final Set<Long> dirtyChunks = new LinkedHashSet<>();
  
      private final Long2ObjectMap<int[][]> javaBlockStateCache = new Long2ObjectOpenHashMap<>(); // chunk key -> per section java block states
@@ -314,7 +317,7 @@ index fb7ffb20f..37e00a1f6 100644
      private final Long2ObjectMap<ChunkLight> chunkLight = new Long2ObjectOpenHashMap<>(); // Only chunks sent to the client have cached light
      private final LongSet lightDirtyChunks = new LongOpenHashSet();
      private final LongSet pendingLightComputations = new LongOpenHashSet();
-@@ -164,7 +165,10 @@ public class ChunkTracker extends StoredObject {
+@@ -164,7 +166,10 @@ public class ChunkTracker extends StoredObject {
                  chunk.getSections()[i] = new BedrockChunkSectionImpl(true);
              }
          }
@@ -326,7 +329,7 @@ index fb7ffb20f..37e00a1f6 100644
  
          return chunk;
      }
-@@ -180,6 +184,7 @@ public class ChunkTracker extends StoredObject {
+@@ -180,6 +185,7 @@ public class ChunkTracker extends StoredObject {
              && position.chunkZ == chunkPos.chunkZ());
          this.dirtyChunks.remove(chunkKey);
          this.javaBlockStateCache.remove(chunkKey);
@@ -334,7 +337,7 @@ index fb7ffb20f..37e00a1f6 100644
          this.chunkLight.remove(chunkKey);
          this.lightDirtyChunks.remove(chunkKey);
          this.lightVersions.remove(chunkKey);
-@@ -476,8 +481,10 @@ public class ChunkTracker extends StoredObject {
+@@ -476,8 +482,10 @@ public class ChunkTracker extends StoredObject {
          }
          final DataPalette palette = section.palettes(PaletteType.BLOCKS).get(layer);
          final int prevBlockState = palette.idAt(sectionX, sectionY, sectionZ);
@@ -345,7 +348,7 @@ index fb7ffb20f..37e00a1f6 100644
          final String tag = blockStateRewriter.tag(blockState);
  
          int remappedBlockState = this.getJavaBlockState(blockPosition);
-@@ -488,14 +495,14 @@ public class ChunkTracker extends StoredObject {
+@@ -488,14 +496,14 @@ public class ChunkTracker extends StoredObject {
  
          if (prevBlockState != blockState) {
              this.invalidateJavaBlockStates(blockPosition.x() >> 4, blockPosition.y() >> 4, blockPosition.z() >> 4);
@@ -367,7 +370,7 @@ index fb7ffb20f..37e00a1f6 100644
  
              if (CustomBlockTags.ITEM_FRAME.equals(tag)) {
                  entityTracker.spawnItemFrame(blockPosition, blockStateRewriter.blockState(blockState));
-@@ -521,6 +528,87 @@ public class ChunkTracker extends StoredObject {
+@@ -521,6 +529,87 @@ public class ChunkTracker extends StoredObject {
          return new IntObjectImmutablePair<>(remappedBlockState, null);
      }
  
@@ -455,7 +458,7 @@ index fb7ffb20f..37e00a1f6 100644
      public BedrockChunkSection handleBlockPalette(final BedrockChunkSection section) {
          this.replaceLegacyBlocks(section);
          this.resolvePersistentIds(section);
-@@ -717,17 +805,21 @@ public class ChunkTracker extends StoredObject {
+@@ -717,17 +806,21 @@ public class ChunkTracker extends StoredObject {
  
      private ChunkLight computeChunkLight(final int chunkX, final int chunkZ) {
          final int[][][] regionStates = new int[9][][];
@@ -481,7 +484,7 @@ index fb7ffb20f..37e00a1f6 100644
          for (int dz = -1; dz <= 1; dz++) {
              for (int dx = -1; dx <= 1; dx++) {
                  final BedrockChunk neighbor = this.chunks.get(ChunkPosition.chunkKey(chunkX + dx, chunkZ + dz));
-@@ -737,9 +829,10 @@ public class ChunkTracker extends StoredObject {
+@@ -737,9 +830,10 @@ public class ChunkTracker extends StoredObject {
  
                  final int chunkIndex = (dz + 1) * 3 + (dx + 1);
                  regionStates[chunkIndex] = this.snapshotChunkStates(neighbor);
@@ -493,7 +496,7 @@ index fb7ffb20f..37e00a1f6 100644
      }
  
      private int[][] snapshotChunkStates(final BedrockChunk chunk) {
-@@ -750,18 +843,56 @@ public class ChunkTracker extends StoredObject {
+@@ -750,18 +844,56 @@ public class ChunkTracker extends StoredObject {
          return states.clone();
      }
  
@@ -553,7 +556,7 @@ index fb7ffb20f..37e00a1f6 100644
              } catch (final Throwable e) {
                  failure = e;
              } finally {
-@@ -847,6 +978,27 @@ public class ChunkTracker extends StoredObject {
+@@ -847,6 +979,27 @@ public class ChunkTracker extends StoredObject {
                  }
              }
          }
@@ -581,7 +584,7 @@ index fb7ffb20f..37e00a1f6 100644
          return states;
      }
  
-@@ -859,6 +1011,10 @@ public class ChunkTracker extends StoredObject {
+@@ -859,6 +1012,10 @@ public class ChunkTracker extends StoredObject {
          final int sectionIndex = subChunkY + Math.abs(this.minY >> 4);
          if (sectionIndex >= 0 && sectionIndex < chunkStates.length) {
              chunkStates[sectionIndex] = null;
@@ -592,7 +595,50 @@ index fb7ffb20f..37e00a1f6 100644
          }
      }
  
-@@ -1251,6 +1407,9 @@ public class ChunkTracker extends StoredObject {
+@@ -939,12 +1096,12 @@ public class ChunkTracker extends StoredObject {
+         }
+ 
+         while (!this.lightDirtyChunks.isEmpty() && System.nanoTime() < deadline && LIGHT_SLOTS.tryAcquire()) {
+-            final long chunkKey = this.lightDirtyChunks.iterator().nextLong();
+-            this.lightDirtyChunks.remove(chunkKey);
+-            if (!this.chunkLight.containsKey(chunkKey) || this.pendingLightComputations.contains(chunkKey)) {
++            final OptionalLong update = takeLightUpdate(this.lightDirtyChunks, this.pendingLightComputations, this.chunkLight::containsKey);
++            if (update.isEmpty()) {
+                 LIGHT_SLOTS.release();
+-                continue;
++                break;
+             }
++            final long chunkKey = update.getAsLong();
+             try {
+                 this.submitLightUpdate(chunkKey);
+             } catch (final RuntimeException e) {
+@@ -955,6 +1112,25 @@ public class ChunkTracker extends StoredObject {
+         }
+     }
+ 
++    static OptionalLong takeLightUpdate(final LongSet dirty, final LongSet pending, final LongPredicate loaded) {
++        final var iterator = dirty.iterator();
++        while (iterator.hasNext()) {
++            final long key = iterator.nextLong();
++            if (!loaded.test(key)) {
++                iterator.remove();
++                continue;
++            }
++            // An older job can finish after column replacement and discard its snapshot.
++            // Keep the newer column's refresh queued until that worker releases this key.
++            if (pending.contains(key)) {
++                continue;
++            }
++            iterator.remove();
++            return OptionalLong.of(key);
++        }
++        return OptionalLong.empty();
++    }
++
+     private long distanceToCenterSquared(final int chunkX, final int chunkZ) {
+         final long dx = (long) chunkX - this.centerX;
+         final long dz = (long) chunkZ - this.centerZ;
+@@ -1251,6 +1427,9 @@ public class ChunkTracker extends StoredObject {
          }
      }
  
@@ -853,10 +899,40 @@ index 000000000..147e776c7
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
-index 130e48f58..09dbdb924 100644
+index 130e48f58..e8a79525c 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
-@@ -32,6 +32,35 @@ class ChunkTrackerTest {
+@@ -10,6 +10,7 @@
+ package net.raphimc.viabedrock.protocol.storage;
+ 
+ import com.viaversion.viaversion.api.minecraft.chunks.PaletteType;
++import com.viaversion.viaversion.libs.fastutil.longs.LongLinkedOpenHashSet;
+ import net.raphimc.viabedrock.api.chunk.datapalette.BedrockDataPalette;
+ import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSectionImpl;
+ import org.junit.jupiter.api.Test;
+@@ -20,6 +21,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
+ 
+ class ChunkTrackerTest {
+ 
++    @Test
++    void retainsReplacementLightingWhileAnOlderJobIsStillPending() {
++        final var dirty = new LongLinkedOpenHashSet(new long[]{77L, -1L, 42L});
++        final var pending = new LongLinkedOpenHashSet(new long[]{-1L});
++        final var loaded = new LongLinkedOpenHashSet(new long[]{-1L, 42L});
++        assertEquals(42L, ChunkTracker.takeLightUpdate(dirty, pending, loaded::contains).orElseThrow());
++        assertFalse(dirty.contains(77L)); // An unloaded column has no light to refresh.
++        assertTrue(dirty.contains(-1L)); // A replacement awaits the older column's worker.
++        assertTrue(ChunkTracker.takeLightUpdate(dirty, pending, loaded::contains).isEmpty());
++        assertTrue(dirty.contains(-1L));
++        pending.remove(-1L); // Completion discards the old snapshot after column replacement.
++        assertEquals(-1L, ChunkTracker.takeLightUpdate(dirty, pending, loaded::contains).orElseThrow());
++        assertTrue(dirty.isEmpty());
++    }
++
+     @Test
+     void ignoresRepeatedSubChunkAfterApplyingPendingUpdates() {
+         final BedrockChunkSectionImpl section = new BedrockChunkSectionImpl();
+@@ -32,6 +48,35 @@ class ChunkTrackerTest {
          assertEquals(3, section.palette(PaletteType.BLOCKS).idAt(0));
      }
  

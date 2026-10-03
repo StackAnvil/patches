@@ -18,3 +18,23 @@ Waterlogged stairs, fences, chains, and lanterns filter one skylight level. Thei
 Light snapshots now retain native secondary water for each position, including custom carriers without a Java waterlogged variant. Water addition and removal invalidate cached light. Replacement columns discard both state and water snapshots. Palette data and render states retain their original values. Block-light propagation already loses at least one level per step, so secondary water requires no extra block-light loss.
 
 Validation: 276 core tests pass with no failures, errors, or skips using the StackAnvil CubeConverter publication. Both main and test Checkstyle tasks pass. Numerical tests cover wet and dry states, native filter combinations, water removal, and immutable palette snapshots. Differential tests retain coverage across chunk and section boundaries.
+
+## Pending refreshes after column replacement
+
+The lighting scheduler previously removed dirty keys before checking for an active worker.
+A server can replace or reload a column while the old column's worker still runs.
+The old result then fails the column-identity check and discards its snapshot.
+Removing the replacement's dirty key also loses its required border refresh.
+
+Keep pending keys queued until their worker completes.
+Continue dispatching unrelated ready keys and remove unloaded keys.
+A regression test fails under the previous queue behavior and passes after this correction.
+It covers an unloaded key, an unrelated ready column, a pending replacement, and dispatch after the old worker finishes.
+The scheduling fault exists in the pinned upstream lighting path as well as the applied stack.
+
+This correction does not reproduce or establish the cause of the reported chunk-loading slowdown.
+The affected server, implementation, add-ons, update order, and timing still need capture and comparison.
+Existing Hive-column calculations and BDS measurements cover narrower boundaries.
+
+The final ordered stack builds with 880 tests passed and 110 skipped, with no failures or errors.
+Both core Checkstyle tasks pass.

@@ -1,4 +1,4 @@
-From 75a7f1105b2169ea2b125d1969bc7a0c9075c59b Mon Sep 17 00:00:00 2001
+From f2aaae9e286e837ab8f4b74605700e970a10c734 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1308,6 +1308,10 @@ Projection API. Restrict the hook to matching native actor appearances
 and first-person views. The separate DeathCameraComponent controller,
 native hand geometry submission, and visible motion comparison still
 need integration and verification.
+
+Use the bundled headless helper by default for background built-in asset loads. Skin browsing must not open Microsoft Store authentication windows or unsupported passkey prompts. Preserve silent Store credential and asset-cache reuse; allow the interactive helper only through an explicit persisted opt-in. Retain the structured sign-in-required receipt so the failure explains how to enable Store sign-in instead of discarding its cause.
+
+Check missing Store credentials before the headless helper fetches a package index or enrolls a device. Background previews must return the structured sign-in requirement promptly. Keep token storage and locking shared with the normal acquisition flow; a headless regression proves this exits before an invalid package URL can reach network validation.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   68 +
@@ -1318,7 +1322,7 @@ need integration and verification.
  native/persona-assets/src/index.rs            |  263 +
  native/persona-assets/src/license.rs          |   96 +
  native/persona-assets/src/login.rs            |  179 +
- native/persona-assets/src/main.rs             |  541 ++
+ native/persona-assets/src/main.rs             |  567 ++
  native/persona-assets/src/remote.rs           |  315 +
  native/persona-assets/src/store.rs            |   92 +
  native/persona-assets/src/webview.rs          |  399 +
@@ -1330,7 +1334,7 @@ need integration and verification.
  .../appearance/BedrockAppearanceStore.java    |  174 +-
  .../appearance/BedrockBoneAnimation.java      |  535 ++
  .../bedrock/appearance/BedrockBrArchive.java  |   73 +
- .../appearance/BedrockBuiltinAssets.java      |  437 ++
+ .../appearance/BedrockBuiltinAssets.java      |  439 ++
  .../appearance/BedrockCharacterProfiles.java  | 1527 ++++
  .../appearance/BedrockClassicAssets.java      |   85 +
  .../appearance/BedrockClassicModel.java       |    1 +
@@ -1349,7 +1353,7 @@ need integration and verification.
  .../bedrock/appearance/BedrockMolangMath.java |  222 +
  .../appearance/BedrockMolangParser.java       |  193 +
  .../appearance/BedrockOwnedSkinPacks.java     |  162 +
- .../appearance/BedrockPackageHelper.java      |  179 +
+ .../appearance/BedrockPackageHelper.java      |  195 +
  .../appearance/BedrockParticleAttachment.java |  167 +
  .../appearance/BedrockParticleBlocks.java     |   67 +
  .../appearance/BedrockParticleCollision.java  |  210 +
@@ -1431,9 +1435,9 @@ need integration and verification.
  .../screen/BedrockEmoteWheelScreen.java       |  124 +
  .../bedrock/screen/BedrockMinecoinWallet.java |  124 +
  .../screen/BedrockOwnedSkinPacksScreen.java   |  303 +
- .../bedrock/settings/BedrockSettings.java     |    6 +
+ .../bedrock/settings/BedrockSettings.java     |   12 +
  .../character-presets.json                    |  632 ++
- .../viafabricplus-bedrock/lang/en_us.json     |  112 +-
+ .../viafabricplus-bedrock/lang/en_us.json     |  113 +-
  .../licenses/brarchive-extractor.txt          |   21 +
  .../licenses/vgmstream.txt                    |   23 +
  .../persona-package.json                      |    7 +
@@ -1462,7 +1466,7 @@ need integration and verification.
  .../appearance/BedrockMolangColorTest.java    |  110 +
  .../bedrock/appearance/BedrockMolangTest.java |  116 +
  .../appearance/BedrockOwnedSkinPacksTest.java |  181 +
- .../appearance/BedrockPackageHelperTest.java  |  124 +
+ .../appearance/BedrockPackageHelperTest.java  |  139 +
  .../appearance/BedrockParticleAgingTest.java  |  118 +
  .../appearance/BedrockParticleBlocksTest.java |   87 +
  .../BedrockParticleCollisionEventsTest.java   |  175 +
@@ -1508,7 +1512,7 @@ need integration and verification.
  .../render/BedrockPlayerModelTest.java        |  100 +
  .../render/BedrockViewBobbingTest.java        |   93 +
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 199 files changed, 41393 insertions(+), 110 deletions(-)
+ 199 files changed, 41459 insertions(+), 110 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -9841,10 +9845,10 @@ index 0000000..55acfd9
 +}
 diff --git a/native/persona-assets/src/main.rs b/native/persona-assets/src/main.rs
 new file mode 100644
-index 0000000..5fab219
+index 0000000..ec85656
 --- /dev/null
 +++ b/native/persona-assets/src/main.rs
-@@ -0,0 +1,541 @@
+@@ -0,0 +1,567 @@
 +// SPDX-License-Identifier: GPL-3.0-or-later
 +mod index;
 +mod license;
@@ -9924,6 +9928,26 @@ index 0000000..5fab219
 +    if request.xuid.is_empty() || !request.xuid.bytes().all(|b| b.is_ascii_digit()) {
 +        return Err("Invalid account".into());
 +    }
++    let backend = Arc::new(store::FileBackend::new(
++        request.state.clone(),
++        request.xuid.clone(),
++    )?);
++    use fs2::FileExt;
++    let lock = std::fs::OpenOptions::new()
++        .create(true)
++        .truncate(false)
++        .read(true)
++        .write(true)
++        .open(request.state.join(".lock"))?;
++    lock.lock_exclusive()?;
++    backend.prune_expired()?;
++    let tokens = TokenManager::new(backend, Arc::new(MemoryBackend::default()));
++    // Browsing can request built-in assets in the background. Without interactive login,
++    // report missing Store credentials before downloading metadata or enrolling a device.
++    #[cfg(not(feature = "interactive-login"))]
++    if tokens.get_user_sts_token().is_err() {
++        return Err(InteractiveSignInRequired.into());
++    }
 +    let client = reqwest::Client::builder()
 +        .redirect(reqwest::redirect::Policy::none())
 +        .connect_timeout(std::time::Duration::from_secs(15))
@@ -9988,20 +10012,6 @@ index 0000000..5fab219
 +    if selected.is_empty() {
 +        return Err("Package has no persona assets".into());
 +    }
-+    let backend = Arc::new(store::FileBackend::new(
-+        request.state.clone(),
-+        request.xuid.clone(),
-+    )?);
-+    use fs2::FileExt;
-+    let lock = std::fs::OpenOptions::new()
-+        .create(true)
-+        .truncate(false)
-+        .read(true)
-+        .write(true)
-+        .open(request.state.join(".lock"))?;
-+    lock.lock_exclusive()?;
-+    backend.prune_expired()?;
-+    let tokens = TokenManager::new(backend, Arc::new(MemoryBackend::default()));
 +    xodus::tokens::device::ensure_device_credentials(&client, &tokens).await;
 +    if tokens.get_user_sts_token().is_err() {
 +        #[cfg(feature = "interactive-login")]
@@ -10121,7 +10131,9 @@ index 0000000..5fab219
 +        || relative.starts_with("sounds/")
 +            && (relative.ends_with(".fsb") || relative.ends_with(".ogg"))
 +        || relative.starts_with("textures/")
-+            && (relative.ends_with(".png") || relative.ends_with(".jpg") || relative.ends_with(".tga"))
++            && (relative.ends_with(".png")
++                || relative.ends_with(".jpg")
++                || relative.ends_with(".tga"))
 +}
 +
 +fn library_pack(name: &str) -> bool {
@@ -10378,12 +10390,30 @@ index 0000000..5fab219
 +        ] {
 +            assert!(library_directory(relative), "{relative}");
 +        }
-+        for relative in [
-+            "soundscapes",
-+            "ui",
-+        ] {
++        for relative in ["soundscapes", "ui"] {
 +            assert!(!library_directory(relative), "{relative}");
 +        }
++    }
++}
++
++#[cfg(all(test, not(feature = "interactive-login")))]
++mod headless_tests {
++    use super::*;
++
++    #[tokio::test]
++    async fn missing_store_credentials_stop_before_package_or_device_requests() {
++        let root = std::env::temp_dir().join(format!("persona-headless-{}", uuid::Uuid::new_v4()));
++        let request = Request {
++            url: "http://invalid.example/package".to_owned(),
++            header_sha256: String::new(),
++            package_version: String::new(),
++            xuid: "1".to_owned(),
++            state: root.join("store"),
++            output: root.join("assets"),
++        };
++        let result = acquire(request).await;
++        std::fs::remove_dir_all(root).unwrap();
++        assert!(result.unwrap_err().is::<InteractiveSignInRequired>());
 +    }
 +}
 diff --git a/native/persona-assets/src/remote.rs b/native/persona-assets/src/remote.rs
@@ -13146,10 +13176,10 @@ index 0000000..61a8010
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssets.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssets.java
 new file mode 100644
-index 0000000..676911b
+index 0000000..88a0383
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssets.java
-@@ -0,0 +1,437 @@
+@@ -0,0 +1,439 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -13160,6 +13190,7 @@ index 0000000..676911b
 +import com.google.gson.JsonObject;
 +import com.google.gson.JsonParser;
 +import com.viaversion.viafabricplus.ViaFabricPlus;
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
 +
 +import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
 +import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
@@ -13374,7 +13405,8 @@ index 0000000..676911b
 +    private static void acquire(
 +            final Path root, final Path output, final String accountId, final JsonObject build)
 +            throws Exception {
-+        final Path helper = BedrockPackageHelper.install(root.resolve("helpers"));
++        final Path helper = BedrockPackageHelper.install(root.resolve("helpers"),
++                ViaFabricPlusBedrock.impl().settings().allowStoreSignIn().isActive());
 +        final JsonObject request = new JsonObject();
 +        request.addProperty("url", build.get("url").getAsString());
 +        request.addProperty("headerSha256", build.get("headerSha256").getAsString());
@@ -18385,10 +18417,10 @@ index 0000000..908aadf
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPackageHelper.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPackageHelper.java
 new file mode 100644
-index 0000000..9282459
+index 0000000..5b36295
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPackageHelper.java
-@@ -0,0 +1,179 @@
+@@ -0,0 +1,195 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -18418,7 +18450,7 @@ index 0000000..9282459
 +final class BedrockPackageHelper {
 +    private BedrockPackageHelper() {}
 +
-+    static Path install(final Path root) throws IOException {
++    static Path install(final Path root, final boolean allowSignIn) throws IOException {
 +        final String os = System.getProperty("os.name").toLowerCase(Locale.ROOT);
 +        final String platform =
 +                os.contains("win")
@@ -18432,7 +18464,8 @@ index 0000000..9282459
 +                    case "aarch64", "arm64" -> "aarch64";
 +                    default -> "unsupported";
 +                };
-+        final String name = "persona-assets" + (platform.equals("windows") ? ".exe" : "");
++        final String name = "persona-assets" + (allowSignIn ? "" : "-headless")
++                + (platform.equals("windows") ? ".exe" : "");
 +        final String resource =
 +                "/assets/viafabricplus-bedrock/native/" + platform + "-" + arch + "/" + name;
 +        final byte[] bytes = BedrockBuiltinAssets.resource(resource);
@@ -18485,7 +18518,7 @@ index 0000000..9282459
 +            throws Exception {
 +        final Thread shutdown = Thread.ofPlatform().unstarted(() -> terminate(process));
 +        Runtime.getRuntime().addShutdownHook(shutdown);
-+        final CompletableFuture<Boolean> receipt = new CompletableFuture<>();
++        final CompletableFuture<Receipt> receipt = new CompletableFuture<>();
 +        Thread.ofVirtual()
 +                .start(
 +                        () -> {
@@ -18506,14 +18539,16 @@ index 0000000..9282459
 +            }
 +            if (!process.waitFor(20, TimeUnit.MINUTES))
 +                throw new IOException("Microsoft Store sign-in or persona download timed out");
-+            final Boolean success = receipt.get(10, TimeUnit.SECONDS);
-+            if (success == null) {
++            final Receipt result = receipt.get(10, TimeUnit.SECONDS);
++            if (result == null) {
 +                throw new IOException(flatpak
 +                        ? "The launcher could not start the bundled asset helper. Flatpak must"
-+                                + " permit host commands, and the host must provide WebKitGTK."
++                                + " permit host commands, and the host must provide the helper's dependencies."
 +                        : "The bundled asset helper could not start. Check its system dependencies.");
 +            }
-+            if (process.exitValue() != 0 || !success || writeFailure != null)
++            if (result.signInRequired())
++                throw new StoreSignInRequiredException();
++            if (process.exitValue() != 0 || !result.success() || writeFailure != null)
 +                throw new IOException(
 +                        "Could not acquire built-in assets. Sign in with the selected account and"
 +                                + " check that it owns Minecraft for Windows.", writeFailure);
@@ -18534,11 +18569,11 @@ index 0000000..9282459
 +        }
 +    }
 +
-+    private static Boolean readReceipt(final InputStream input) throws IOException {
++    private static Receipt readReceipt(final InputStream input) throws IOException {
 +        final byte[] line = new byte[16384];
 +        int length = 0;
 +        boolean oversized = false;
-+        Boolean receipt = null;
++        Receipt receipt = null;
 +        int value;
 +        while ((value = input.read()) != -1) {
 +            if (value == '\n') {
@@ -18554,18 +18589,31 @@ index 0000000..9282459
 +        return oversized ? receipt : parseReceipt(line, length, receipt);
 +    }
 +
-+    private static Boolean parseReceipt(final byte[] line, final int length, final Boolean previous) {
++    private static Receipt parseReceipt(final byte[] line, final int length, final Receipt previous) {
 +        if (length == 0 || line[0] != '{') return previous;
 +        try {
 +            final var result = JsonParser.parseString(new String(line, 0, length, StandardCharsets.UTF_8));
 +            if (!result.isJsonObject()) return previous;
 +            final var success = result.getAsJsonObject().get("ok");
-+            if (success != null && success.isJsonPrimitive() && success.getAsJsonPrimitive().isBoolean())
-+                return success.getAsBoolean();
++            if (success != null && success.isJsonPrimitive() && success.getAsJsonPrimitive().isBoolean()) {
++                final var error = result.getAsJsonObject().get("error");
++                return new Receipt(success.getAsBoolean(), !success.getAsBoolean() && error != null
++                        && error.isJsonPrimitive() && error.getAsJsonPrimitive().isString()
++                        && "interactive_sign_in_required".equals(error.getAsString()));
++            }
 +        } catch (RuntimeException ignored) {
 +            /* Discard diagnostics without exposing credentials in logs or the UI. */
 +        }
 +        return previous;
++    }
++
++    private record Receipt(boolean success, boolean signInRequired) {}
++
++    static final class StoreSignInRequiredException extends IOException {
++        private StoreSignInRequiredException() {
++            super("Built-in assets require Microsoft Store sign-in. Enable"
++                    + " 'Allow Microsoft Store sign-in windows' in Bedrock settings to sign in.");
++        }
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleAttachment.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleAttachment.java
@@ -30672,31 +30720,37 @@ index 0000000..59a61c1
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/BedrockSettings.java b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/BedrockSettings.java
-index 53573da..070ed16 100644
+index 53573da..685bd31 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/BedrockSettings.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/BedrockSettings.java
-@@ -36,6 +36,7 @@ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+@@ -36,6 +36,8 @@ import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
  public final class BedrockSettings {
  
      private final BooleanSetting replaceDefaultPort;
 +    private final BooleanSetting muteEmoteChat;
++    private final BooleanSetting allowStoreSignIn;
  
      public BedrockSettings() {
          final SettingGroup group = ViaFabricPlus.api().settings().register("bedrock");
-@@ -44,6 +45,7 @@ public final class BedrockSettings {
+@@ -44,6 +46,8 @@ public final class BedrockSettings {
              () -> Component.translatable("bedrock_settings.viafabricplus.dressing_room.open"),
              () -> new BedrockDressingRoomScreen().open(Minecraft.getInstance().gui.screen())));
          this.replaceDefaultPort = group.registerBoolean("replace_default_port", true);
 +        this.muteEmoteChat = group.registerBoolean("mute_emote_chat", false);
++        this.allowStoreSignIn = group.registerBoolean("allow_store_sign_in", false);
      }
  
      private static Component accountName() {
-@@ -67,4 +69,8 @@ public final class BedrockSettings {
+@@ -67,4 +71,12 @@ public final class BedrockSettings {
          return this.replaceDefaultPort;
      }
  
 +    public BooleanSetting muteEmoteChat() {
 +        return this.muteEmoteChat;
++    }
++
++    public BooleanSetting allowStoreSignIn() {
++        return this.allowStoreSignIn;
 +    }
 +
  }
@@ -31339,18 +31393,19 @@ index 0000000..9a72958
 +  ]
 +}
 diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
-index 4a503d3..513d228 100644
+index 4a503d3..e358207 100644
 --- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
 +++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
-@@ -9,6 +9,7 @@
+@@ -9,6 +9,8 @@
    "bedrock_settings.viafabricplus.dressing_room": "Dressing Room",
    "bedrock_settings.viafabricplus.dressing_room.open": "Open",
    "bedrock_settings.viafabricplus.replace_default_port": "Replace default port in server list",
 +  "bedrock_settings.viafabricplus.mute_emote_chat": "Mute emote chat",
++  "bedrock_settings.viafabricplus.allow_store_sign_in": "Allow Microsoft Store sign-in windows",
    "bedrock_settings.viafabricplus.experimental_features": "Enable experimental features (may be unstable)",
  
    "bedrock_account.viafabricplus.notice": "Your browser should have opened.\nClosing this screen will cancel the process!",
-@@ -27,6 +28,11 @@
+@@ -27,6 +29,11 @@
    "bedrock_lan.viafabricplus.scan_failed": "Could not scan the LAN",
    "screen.viafabricplus.bedrock_party": "Bedrock Party",
    "screen.viafabricplus.bedrock_dressing_room": "Bedrock Dressing Room",
@@ -31362,7 +31417,7 @@ index 4a503d3..513d228 100644
    "screen.viafabricplus.accept_invite": "Accept an invitation code",
  
    "bedrock_dressing_room.viafabricplus.steve": "Steve",
-@@ -45,9 +51,78 @@
+@@ -45,9 +52,78 @@
    "bedrock_dressing_room.viafabricplus.pack_skin_number": "Skin %s of %s",
    "bedrock_dressing_room.viafabricplus.import_cape": "Import cape",
    "bedrock_dressing_room.viafabricplus.remove_cape": "Remove cape",
@@ -31441,7 +31496,7 @@ index 4a503d3..513d228 100644
  
    "bedrock_realms.viafabricplus.warning": "This feature requires a Bedrock Edition account to be set in the settings!",
    "bedrock_realms.viafabricplus.availability_check": "Checking availability...",
-@@ -255,5 +330,40 @@
+@@ -255,5 +331,40 @@
    "minecraftauth_library.viafabricplus.playfabtoken": "Obtained PlayFab Token",
    "minecraftauth_library.viafabricplus.minecraftsession": "Obtained Minecraft Session",
    "minecraftauth_library.viafabricplus.minecraftmultiplayertoken": "Obtained Minecraft Multiplayer Token",
@@ -33234,7 +33289,7 @@ index 0000000..1d9e8cf
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssetsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssetsTest.java
 new file mode 100644
-index 0000000..3df2394
+index 0000000..73f316e
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssetsTest.java
 @@ -0,0 +1,537 @@
@@ -33617,7 +33672,7 @@ index 0000000..3df2394
 +                                Files.readString(
 +                                        Path.of(System.getenv("STACKANVIL_PACKAGE_REQUEST"))))
 +                        .getAsJsonObject();
-+        final var helper = BedrockPackageHelper.install(directory.resolve("helpers"));
++        final var helper = BedrockPackageHelper.install(directory.resolve("helpers"), false);
 +        final Path cache = directory.resolve("cache/1.26.51.1.zip");
 +        final AtomicInteger downloads = new AtomicInteger();
 +        final BedrockBuiltinAssets.Acquisition acquire =
@@ -37400,10 +37455,10 @@ index 0000000..97e0298
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPackageHelperTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPackageHelperTest.java
 new file mode 100644
-index 0000000..4cca698
+index 0000000..86d6aec
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPackageHelperTest.java
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,139 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -37438,6 +37493,15 @@ index 0000000..4cca698
 +        final JsonObject request = request();
 +        final Process process = child(mode, request);
 +        assertThrows(IOException.class, () -> BedrockPackageHelper.exchange(process, request, mode == 1));
++        assertFalse(process.isAlive());
++    }
++
++    @Test
++    void reportsHeadlessSignInRequirementAfterDrainingTheHelper() throws Exception {
++        final JsonObject request = request();
++        final Process process = child(5, request);
++        assertThrows(BedrockPackageHelper.StoreSignInRequiredException.class,
++                () -> BedrockPackageHelper.exchange(process, request, false));
 +        assertFalse(process.isAlive());
 +    }
 +
@@ -37504,6 +37568,12 @@ index 0000000..4cca698
 +    public static final class Child {
 +        public static void main(final String[] args) throws Exception {
 +            final int mode = Integer.parseInt(args[0]);
++            if (mode == 5) {
++                System.in.readAllBytes();
++                System.out.println("x".repeat(32768));
++                System.out.println("{\"ok\":false,\"error\":\"interactive_sign_in_required\"}");
++                System.exit(1);
++            }
 +            if (mode == 4) {
 +                System.in.readAllBytes();
 +                final Path ready = Path.of(args[2]);

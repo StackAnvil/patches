@@ -1340,3 +1340,31 @@ The executable also has an alternate branch for `MinecraftCamera::DeathCameraCom
 A rebuilt Java 26.3 client through ViaProxy passes all 440 ordinary FOV cases through the applied `GameRenderer` projection hook. The probe checks the native near plane, lava exclusion, unchanged far plane and window dimensions, and all four fallback paths. It uses a controlled native actor appearance and restores player health, death ticks, options, and appearance ownership. This verifies the hook binding and projection inputs. It does not compare final rendered pixels against the native client.
 
 The full add-on suite reports 516 tests, no failures or errors, and 104 optional skips. The projection, walking-bob, and camera-spring tests pass with their private fixtures enabled. The add-on, both dependency builds, client bundle, and north-star PR check pass.
+
+## Microsoft Store sign-in windows
+
+Built-in model and animation loads can run while browsing classic packs or previewing a character.
+The package helper previously opened interactive Microsoft Store sign-in automatically when its Store credentials were missing.
+That separate sign-in path can present Microsoft's passkey page inside the embedded webview.
+The reported missing passkey dialog itself remains unverified without the affected platform and launcher.
+
+Use the bundled headless helper by default.
+It contains no interactive login module and returns a structured sign-in requirement instead of opening a window.
+Preserve existing Store credentials, licensed asset caches, and normal Microsoft Bedrock device-code login.
+The persisted Bedrock setting **Allow Microsoft Store sign-in windows** explicitly permits the interactive helper.
+It defaults to disabled.
+The Java process bridge retains the sign-in-required receipt and explains how to enable this setting.
+Diagnostics and credentials remain private.
+
+A subprocess regression verifies that the bridge drains diagnostics, recognizes the structured sign-in requirement, and terminates the helper.
+A headless Rust regression proves missing Store credentials stop before package inspection or device enrollment.
+The headless suite reports five passed tests and two ignored network/acquisition tests.
+The complete stack build includes both headless and interactive helpers.
+The headless helper's existing compile configuration excludes the embedded login window code.
+Enabling the setting does not establish passkey support on the reported platform.
+
+The rebuilt headless executable returns `interactive_sign_in_required` against an empty private Store state without opening a window.
+The final complete build reports 880 tests passed and 110 skipped, with no failures or errors.
+
+Platform research also finds a [WebKitGTK WebAuthn tracking issue](https://bugs.webkit.org/show_bug.cgi?id=205350) and a [WebView2 missing-prompt report](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5663).
+These are investigation leads, not evidence identifying the affected user's platform or cause.
