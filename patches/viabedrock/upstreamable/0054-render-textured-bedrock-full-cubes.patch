@@ -1,4 +1,4 @@
-From 518c5c730a85f90bf9015089b888e5ebe953220a Mon Sep 17 00:00:00 2001
+From 8c4ed373278514e04b46bd442bc447798f7f686f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:38:26 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -136,9 +136,18 @@ geometry with a default opposite rule occludes the same half-grid.
 Keep both cases distinct in compiled participation metadata.
 
 Omit faces whose cutout or blended material has no visible pixels after alpha conversion. Java 26.3 assigns zero-area UV ranges to opaque rendering, which showed dark faces for fully transparent neighbors beside the pinned native culling fixture. Keep opaque materials visible and compile authored culling participation before omitting any faces, so invisible geometry retains its physical boxes and voxel coverage. Resolve the actual sprite on copied back faces and mixed material elements.
+
+Treat zero-volume collision and selection boxes as empty physical shapes.
+Do this before rotation so an enclosing AABB cannot make an empty shape
+solid, and after transformation for collapsed axes. Canonical metadata
+removes empty boxes without rejecting resource-pack conversion or its
+cache fingerprint. Nonfinite and inverted metadata bounds remain errors.
+Regression tests cover all three empty axes, rotated models, metadata
+round trips and cache identity. The reported server values still need
+a capture before attributing its exact failure to this case.
 ---
  .../api/model/CustomBlockCulling.java         | 206 +++++++
- .../api/model/CustomBlockProperties.java      | 105 ++++
+ .../api/model/CustomBlockProperties.java      | 110 ++++
  .../api/model/CustomBlockVisual.java          |  26 +
  .../definition/BlockCullingDefinitions.java   |  86 +++
  .../definition/BlockDefinitions.java          |  17 +-
@@ -153,7 +162,7 @@ Omit faces whose cutout or blended material has no visible pixels after alpha co
  .../protocol/rewriter/BlockStateRewriter.java |  60 +-
  .../rewriter/ResourcePackRewriter.java        |   2 +
  .../CustomBlockCullingCompiler.java           | 162 ++++++
- .../resourcepack/CustomBlockModel.java        | 542 ++++++++++++++++++
+ .../resourcepack/CustomBlockModel.java        | 549 ++++++++++++++++++
  .../CustomBlockResourceRewriter.java          | 233 ++++++++
  .../CustomBlockStateDefinitions.java          | 153 +++++
  .../protocol/storage/ChunkTracker.java        |  33 +-
@@ -161,10 +170,10 @@ Omit faces whose cutout or blended material has no visible pixels after alpha co
  .../protocol/storage/ResourcePackStorage.java |  49 ++
  .../protocol/storage/VoxelShapeRegistry.java  | 125 ++++
  .../api/model/CustomBlockCullingTest.java     |  54 ++
- .../api/model/CustomBlockPropertiesTest.java  |  50 ++
- .../http/ConvertedResourcePackCacheTest.java  |  16 +
+ .../api/model/CustomBlockPropertiesTest.java  |  66 +++
+ .../http/ConvertedResourcePackCacheTest.java  |  28 +
  .../rewriter/CustomBlockBoneGeometryTest.java | 177 ++++++
- .../CustomBlockModelSelectionTest.java        | 368 ++++++++++++
+ .../CustomBlockModelSelectionTest.java        | 393 +++++++++++++
  .../CustomBlockPlaneGeometryTest.java         | 170 ++++++
  .../CustomBlockCullingCompilerTest.java       | 140 +++++
  .../CustomBlockMaterialVisibilityTest.java    | 106 ++++
@@ -172,7 +181,7 @@ Omit faces whose cutout or blended material has no visible pixels after alpha co
  .../protocol/storage/ChunkTrackerTest.java    |  23 +
  .../storage/CustomBlockPackStorageTest.java   | 168 ++++++
  .../storage/VoxelShapeRegistryTest.java       | 130 +++++
- 35 files changed, 3767 insertions(+), 21 deletions(-)
+ 35 files changed, 3832 insertions(+), 21 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockCulling.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockVisual.java
@@ -410,10 +419,10 @@ index 000000000..f01a834b7
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java
 new file mode 100644
-index 000000000..99212b4eb
+index 000000000..7e0b275c3
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,110 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -426,6 +435,7 @@ index 000000000..99212b4eb
 +import com.viaversion.viaversion.libs.gson.JsonObject;
 +import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 +
++import java.util.ArrayList;
 +import java.util.Collection;
 +import java.util.Comparator;
 +import java.util.LinkedHashMap;
@@ -508,14 +518,18 @@ index 000000000..99212b4eb
 +        if (boxes == null || boxes.size() > MAX_BOXES) {
 +            throw new IllegalArgumentException("Too many custom block boxes");
 +        }
++        final List<CustomBlockVisual.Box> nonempty = new ArrayList<>();
 +        for (CustomBlockVisual.Box box : boxes) {
-+            if (!Double.isFinite(box.minX()) || !Double.isFinite(box.minY()) || !Double.isFinite(box.minZ())
++            if (box == null || !Double.isFinite(box.minX()) || !Double.isFinite(box.minY()) || !Double.isFinite(box.minZ())
 +                    || !Double.isFinite(box.maxX()) || !Double.isFinite(box.maxY()) || !Double.isFinite(box.maxZ())
-+                    || box.minX() >= box.maxX() || box.minY() >= box.maxY() || box.minZ() >= box.maxZ()) {
++                    || box.minX() > box.maxX() || box.minY() > box.maxY() || box.minZ() > box.maxZ()) {
 +                throw new IllegalArgumentException("Invalid custom block box");
 +            }
++            if (box.minX() < box.maxX() && box.minY() < box.maxY() && box.minZ() < box.maxZ()) {
++                nonempty.add(box);
++            }
 +        }
-+        return List.copyOf(boxes);
++        return List.copyOf(nonempty);
 +    }
 +
 +}
@@ -1435,10 +1449,10 @@ index 000000000..5a7981fc9
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
 new file mode 100644
-index 000000000..e29a19934
+index 000000000..6575859d8
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
-@@ -0,0 +1,542 @@
+@@ -0,0 +1,549 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1852,6 +1866,10 @@ index 000000000..e29a19934
 +        }
 +        final List<CustomBlockVisual.Box> result = new ArrayList<>();
 +        for (double[] box : bounds) {
++            // An empty native shape stays empty even if rotation expands its enclosing bounds.
++            if (box[0] == box[3] || box[1] == box[4] || box[2] == box[5]) {
++                continue;
++            }
 +            final double[] min = new double[]{Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY};
 +            final double[] max = new double[]{Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY};
 +            for (int corner = 0; corner < 8; corner++) {
@@ -1860,6 +1878,9 @@ index 000000000..e29a19934
 +                    min[i] = Math.min(min[i], point[i]);
 +                    max[i] = Math.max(max[i], point[i]);
 +                }
++            }
++            if (min[0] == max[0] || min[1] == max[1] || min[2] == max[2]) {
++                continue;
 +            }
 +            result.add(new CustomBlockVisual.Box(min[0] / 16, min[1] / 16, min[2] / 16, max[0] / 16, max[1] / 16, max[2] / 16));
 +        }
@@ -2893,10 +2914,10 @@ index 000000000..553d464b9
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockPropertiesTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockPropertiesTest.java
 new file mode 100644
-index 000000000..eab6b53dd
+index 000000000..7f23a438b
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockPropertiesTest.java
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,66 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2928,6 +2949,22 @@ index 000000000..eab6b53dd
 +    }
 +
 +    @Test
++    void canonicalizesEmptyPhysicalBoxesWithoutRejectingThePack() {
++        final var volume = new CustomBlockVisual.Box(0, 0, 0, 1, 1, 1);
++        final List<CustomBlockVisual.Box> boxes = List.of(volume,
++                new CustomBlockVisual.Box(0, 0, 0, 0, 1, 1),
++                new CustomBlockVisual.Box(0, 0, 0, 1, 0, 1),
++                new CustomBlockVisual.Box(0, 0, 0, 1, 1, 0));
++        final var visual = new CustomBlockVisual("test:block", 42, "texture", "{}", "opaque",
++                boxes, boxes.subList(1, 4), false, 0, 15, Map.of(), Map.of());
++        final var properties = CustomBlockProperties.of(visual);
++        assertEquals(List.of(volume), properties.collisionBoxes());
++        assertTrue(properties.selectionBoxes().isEmpty());
++        assertEquals(properties, CustomBlockProperties.decode(CustomBlockProperties.encode(List.of(visual))).get(42));
++        assertEquals(4, visual.collisionBoxes().size());
++    }
++
++    @Test
 +    void rejectsAmbiguousVersionsDuplicateStatesAndInvalidBounds() {
 +        final CustomBlockVisual visual = new CustomBlockVisual("test:block", 42, "texture", "{}", "opaque",
 +                List.of(), List.of(), true, 0, 15, Map.of(), Map.of());
@@ -2948,7 +2985,7 @@ index 000000000..eab6b53dd
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
-index 7c0322746..451304fc0 100644
+index 7c0322746..465c592ed 100644
 --- a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 @@ -18,6 +18,7 @@
@@ -2959,10 +2996,22 @@ index 7c0322746..451304fc0 100644
  import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
  import net.raphimc.viabedrock.protocol.provider.impl.InMemoryResourcePackProvider;
  import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
-@@ -39,6 +40,21 @@ class ConvertedResourcePackCacheTest {
+@@ -39,6 +40,33 @@ class ConvertedResourcePackCacheTest {
      @TempDir
      Path directory;
  
++    @Test
++    void emptyBoxesUseTheSameCacheIdentityAsDisabledShapes() {
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of());
++        final var empty = new CustomBlockVisual("test:block", 42, "texture", "{}", "opaque",
++                List.of(new CustomBlockVisual.Box(0, 0, 0, 0, 1, 1)), List.of(), false, 0, 15, Map.of(), Map.of());
++        storage.setCustomBlockVisuals(Map.of(42, empty));
++        final String fingerprint = ConvertedResourcePackCache.fingerprint(storage);
++        storage.setCustomBlockVisuals(Map.of(42, new CustomBlockVisual("test:block", 42, "texture", "{}", "opaque",
++                List.of(), List.of(), false, 0, 15, Map.of(), Map.of())));
++        assertEquals(fingerprint, ConvertedResourcePackCache.fingerprint(storage));
++    }
++
 +    @Test
 +    void physicalPropertiesInvalidateAnOtherwiseIdenticalCustomModel() {
 +        final ResourcePackStorage storage = new ResourcePackStorage(List.of());
@@ -3166,10 +3215,10 @@ index 000000000..a347e5aa6
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
 new file mode 100644
-index 000000000..5abcd9e0b
+index 000000000..b5a14e399
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
-@@ -0,0 +1,368 @@
+@@ -0,0 +1,393 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3178,6 +3227,7 @@ index 000000000..5abcd9e0b
 +package net.raphimc.viabedrock.protocol.rewriter;
 +
 +import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.FloatTag;
 +import com.viaversion.nbt.tag.ListTag;
 +import io.netty.buffer.Unpooled;
 +import net.raphimc.viabedrock.api.model.CustomBlockVisual;
@@ -3199,6 +3249,30 @@ index 000000000..5abcd9e0b
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class CustomBlockModelSelectionTest {
++
++    @Test
++    void emptyBoxesRemainEmptyBeforeAndAfterTransformation() {
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB))));
++        for (int axis = 0; axis < 3; axis++) {
++            for (boolean rotated : new boolean[]{false, true}) {
++                final CompoundTag components = components("minecraft:geometry.full_block", "ruby", "opaque");
++                final CompoundTag shape = new CompoundTag();
++                shape.put("origin", new ListTag<>(List.of(new FloatTag(-8), new FloatTag(0), new FloatTag(-8))));
++                shape.put("size", new ListTag<>(List.of(new FloatTag(axis == 0 ? 0 : 16), new FloatTag(axis == 1 ? 0 : 16), new FloatTag(axis == 2 ? 0 : 16))));
++                components.put("minecraft:collision_box", shape);
++                components.put("minecraft:selection_box", shape.copy());
++                if (rotated) {
++                    final CompoundTag transform = new CompoundTag();
++                    transform.put("rotation", new ListTag<>(List.of(new FloatTag(45), new FloatTag(45), new FloatTag(0))));
++                    components.put("minecraft:transformation", transform);
++                }
++                final var visual = CustomBlockModel.compile(storage, "test:block", 42, components);
++                assertTrue(visual.collisionBoxes().isEmpty());
++                assertTrue(visual.selectionBoxes().isEmpty());
++                assertFalse(JsonParser.parseString(visual.modelJson()).getAsJsonObject().getAsJsonArray("elements").isEmpty());
++            }
++        }
++    }
 +
 +    @Test
 +    void preservesLegacyFullCubeBottomOrientationAndPhysicalProperties() {

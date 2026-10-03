@@ -135,3 +135,14 @@ A ViaProxy client with the add-on disabled also omits the invisible neighbor geo
 Its carrier states still occlude adjacent terrain and leave visible holes.
 The add-on path corrects those physical occlusion properties.
 This does not establish ordinary-Java physical parity, general UV sampling, or material parity.
+
+## Empty physical boxes
+
+Bedrock 1.26.51.1 build 51061372 accepts zero-sized collision and selection components on each axis.
+A private matching-server capture retains `enabled: 1`, an empty collision AABB, and a zero extent in selection `size`.
+These definitions previously reached metadata validation and failed the entire conversion cache fingerprint.
+
+Core now omits empty physical boxes before and after transformation, while preserving visible geometry.
+Metadata canonicalizes empty boxes and keeps strict checks for nonfinite or inverted bounds.
+Tests cover each empty axis, rotation, metadata round trips, and cache identity.
+The reported server's exact bounds still need a capture. This fix does not establish that its complete pack converts correctly.
