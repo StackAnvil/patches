@@ -1,4 +1,4 @@
-From 5e4643131346a2fd357973c3867e6e3e8a26991b Mon Sep 17 00:00:00 2001
+From 28f4f6a028c8faae33e78876b920ebff88a2afe3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:52:39 +0200
 Subject: [PATCH] fix(maps): restore held and framed map rendering
@@ -10,6 +10,13 @@ Retain map dimension, origin, lock state, optional scale, and creation map IDs i
 Bedrock 1.26.51.1 build 51061372, protocol 2193, native cartography captures advertise a five-ID map family, select its next ID for extension, and preserve that ID for cloning. This authoritative family data is needed by cartography result handling. Raw captures and proprietary assets remain private.
 
 Three focused state tests cover optional-field retention, explicit replacement, immutable family lists, and independent maps.
+
+Resolve creation-map families from any member while preserving unknown
+per-map metadata. Native cartography extension walks the advertised family;
+related map updates can omit that list. Expose the server-provided family
+without guessing consecutive IDs or synthesizing scale and lock state.
+A targeted test covers sparse signed IDs, partial member updates, and an
+explicitly replaced family.
 ---
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
  .../protocol/packet/ClientPlayerPackets.java  |  15 +
@@ -20,12 +27,12 @@ Three focused state tests cover optional-field retention, explicit replacement, 
  .../protocol/rewriter/ItemRewriter.java       |  38 ++-
  .../protocol/storage/ChunkTracker.java        |  22 +-
  .../protocol/storage/EntityTracker.java       |  56 +++-
- .../protocol/storage/MapTracker.java          |  60 +++-
+ .../protocol/storage/MapTracker.java          |  73 ++++-
  .../protocol/util/map/JavaMapPaletteUtil.java | 142 +++++++++
  .../protocol/util/map/MapColor.java           | 288 ++++++++++++++++++
- .../protocol/storage/MapTrackerTest.java      |  59 ++++
+ .../protocol/storage/MapTrackerTest.java      |  75 +++++
  .../util/map/JavaMapPaletteUtilTest.java      |  29 ++
- 14 files changed, 987 insertions(+), 169 deletions(-)
+ 14 files changed, 1016 insertions(+), 169 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/MapPackets.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/util/map/JavaMapPaletteUtil.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/util/map/MapColor.java
@@ -915,10 +922,10 @@ index 85d216c7..aebd19b6 100644
 +
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/MapTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/MapTracker.java
-index 2af0a50c..e05effe4 100644
+index 2af0a50c..b8f05c2d 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/MapTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/MapTracker.java
-@@ -19,21 +19,75 @@ package net.raphimc.viabedrock.protocol.storage;
+@@ -19,21 +19,88 @@ package net.raphimc.viabedrock.protocol.storage;
  
  import com.viaversion.viaversion.api.connection.StoredObject;
  import com.viaversion.viaversion.api.connection.UserConnection;
@@ -957,6 +964,19 @@ index 2af0a50c..e05effe4 100644
 +
 +    public MapData mapData(final long bedrockId) {
 +        return this.maps.get(bedrockId);
++    }
++
++    public List<Long> creationMapIds(final long bedrockId) {
++        final MapData current = this.maps.get(bedrockId);
++        if (current != null && current.creationMapIds().contains(bedrockId)) {
++            return current.creationMapIds();
++        }
++        for (final MapData data : this.maps.values()) {
++            if (data.creationMapIds().contains(bedrockId)) {
++                return data.creationMapIds();
++            }
++        }
++        return List.of();
 +    }
 +
 +    public int javaId(final long bedrockId) {
@@ -1441,10 +1461,10 @@ index 00000000..d0e3a174
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/MapTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/MapTrackerTest.java
 new file mode 100644
-index 00000000..79a1fbce
+index 00000000..ffb714d2
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/MapTrackerTest.java
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,75 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1501,6 +1521,22 @@ index 00000000..79a1fbce
 +        assertTrue(partial.creationMapIds().isEmpty());
 +        assertEquals((byte) 4, tracker.mapData(1L).scale());
 +        assertNull(tracker.mapData(2L));
++    }
++
++    @Test
++    void mapFamilyCanBeResolvedFromAnotherMemberWithoutInventingMetadata() {
++        final MapTracker tracker = new MapTracker(null);
++        final BlockPosition origin = new BlockPosition(0, 0, 0);
++        final List<Long> family = List.of(300L, 17L, -44L, 8L, 700L);
++        tracker.updateData(300L, (byte) 0, false, origin, (byte) 0, family);
++        tracker.updateData(-44L, (byte) 0, false, origin, (byte) 2, null);
++        assertEquals(family, tracker.creationMapIds(-44L));
++        assertEquals(family, tracker.creationMapIds(8L));
++        assertTrue(tracker.creationMapIds(999L).isEmpty());
++        assertNull(tracker.mapData(8L));
++        assertThrows(UnsupportedOperationException.class, () -> tracker.creationMapIds(8L).clear());
++        tracker.updateData(300L, (byte) 0, false, origin, null, List.of());
++        assertTrue(tracker.creationMapIds(-44L).isEmpty());
 +    }
 +
 +}

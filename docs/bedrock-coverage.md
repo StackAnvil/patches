@@ -46,7 +46,7 @@ The [source guide](bedrock-development-sources.md) defines the version and enum 
 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
-| I1 | Cartography creation, extension, cloning, locking, locator conversion, and naming | Incomplete | Core retains multi-recipe IDs and map state and can refresh crafted item metadata. Implement the screen, crafting, and locked-copy requests. |
+| I1 | Cartography creation, extension, cloning, locking, locator conversion, and naming | Incomplete | Core implements the main screen, recipe selection, crafting, locked-copy requests, naming dialog, and metadata refresh. Verify Java and ViaProxy interactions; complete native UI and remaining operations. |
 | I2 | Structure and jigsaw editors | Incomplete | Implement screens, requests, structure responses, and jigsaw data. |
 | I3 | Stonecutter recipe updates | Incomplete | Handle server recipe selection and complete result and close behavior. |
 | I4 | Trading and loom | Implemented | Preserve their tested request and response paths. Complete remaining native and inventory edge comparisons. |
@@ -73,8 +73,23 @@ A native map-locking test confirms the refresh without closing cartography.
 The refreshed item has a different UUID from its preview and includes the server's final map subtype.
 The native client places that refreshed item successfully using its acknowledged network ID.
 Five correlation tests and the complete core build pass.
-Java client behavior through direct connections and ViaProxy still needs integration verification.
+Further Java behavior through direct connections and ViaProxy still needs integration verification.
 The [map notes](../patches/viabedrock/upstreamable/0002-restore-map-rendering.pr.md) record the implementation boundary and native evidence.
+
+The [cartography patch](../patches/viabedrock/deferred/0016-translate-bedrock-cartography-in-core.pr.md) now implements the main core container path.
+It supports advertised paper recipes, rename-only requests, clone, extension, lock, and locator conversion.
+The native client also accepts single-input creation and renaming in the lower slot.
+A single Shift-click crafts one result; the core follows that captured behavior.
+Java exposes naming through a text dialog.
+A live ViaProxy comparison confirms opening, paper placement, saving a name, and returning to the same menu.
+Java's cartography menu clears results when either input is empty.
+The [client patch](../patches/viafabricplus-bedrock/upstreamable/0018-preserve-authoritative-bedrock-cartography-results.pr.md) prevents that local deletion for native item context.
+The patched Java client displays paper-only output through ViaProxy, crafts one map, and places the refreshed result in its hotbar.
+Naming cancellation preserves inputs and restores the result without a phantom item.
+Saving and crafting retains the name in the server's final item, with no pending synchronization.
+Native inline naming, operation previews, and remaining container operations still need work and live comparisons.
+Seven focused cartography tests pass.
+The complete core suite reports 403 tests with one optional fixture skip.
 
 The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and-recipe-codecs.pr.md#dynamic-recipes) record their evidence and build results.
 

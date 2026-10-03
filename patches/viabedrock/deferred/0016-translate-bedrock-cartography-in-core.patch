@@ -1,0 +1,867 @@
+From 34741b5148508e3394f34fa17296c578faf0e3f0 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 13:22:54 +0200
+Subject: [PATCH] feat(inventory): translate Bedrock cartography in core
+
+Open cartography through ordinary Java menus and select creation, rename, clone, extension, lock, and locator operations from advertised recipes and retained map state. Preserve native slot identities, input consumption, naming filters, locked-copy requests, inventory acknowledgments, and crafted metadata synchronization across direct and proxy connections.
+
+Native Bedrock 1.26.51.1 build 51061372 protocol 2193 captures establish recipe UUIDs, single lower-slot operations, locator subtype, sparse map families, and clone request counts. Single Shift-click crafts one pair; right-click does not split the two-map clone. Keep those behaviors instead of automatically repeating Java quick moves.
+
+Ordinary Java uses a nonce-bound text dialog for naming because its cartography screen has no name field. Native inline naming and operation previews still need client rendering work and integration verification. Seven focused tests cover recipe selection, item identity, metadata preservation, request construction, and complete-result placement.
+---
+ .../container/block/CartographyContainer.java | 340 ++++++++++++++++++
+ .../container/block/CartographyRecipes.java   | 161 +++++++++
+ .../generated/bedrock/CustomBlockTags.java    |   1 +
+ .../protocol/packet/InventoryPackets.java     |  28 ++
+ .../protocol/packet/MapPackets.java           |   5 +
+ .../viabedrock/data/custom/block_tags.json    |   3 +
+ .../block/CartographyRecipesTest.java         | 193 ++++++++++
+ 7 files changed, 731 insertions(+)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/CartographyContainer.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/CartographyRecipes.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/block/CartographyRecipesTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/CartographyContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/CartographyContainer.java
+new file mode 100644
+index 00000000..c9950b68
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/container/block/CartographyContainer.java
+@@ -0,0 +1,340 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.container.block;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import com.viaversion.viaversion.api.minecraft.Holder;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.libs.mcstructs.dialog.AfterAction;
++import com.viaversion.viaversion.libs.mcstructs.dialog.action.CustomAllAction;
++import com.viaversion.viaversion.libs.mcstructs.dialog.Input;
++import com.viaversion.viaversion.libs.mcstructs.dialog.input.TextInput;
++import com.viaversion.viaversion.libs.mcstructs.dialog.impl.MultiActionDialog;
++import com.viaversion.viaversion.libs.mcstructs.dialog.ActionButton;
++import com.viaversion.viaversion.libs.mcstructs.dialog.serializer.DialogSerializer;
++import com.viaversion.viaversion.libs.mcstructs.converter.impl.v1_21_5.NbtConverter_v1_21_5;
++import com.viaversion.viaversion.libs.mcstructs.text.TextComponent;
++import com.viaversion.viaversion.libs.mcstructs.core.Identifier;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.raphimc.viabedrock.api.model.container.Container;
++import net.raphimc.viabedrock.api.model.container.InputContainer;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.api.util.TextUtil;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.TextProcessingEventOrigin;
++import net.raphimc.viabedrock.protocol.data.enums.java.generated.ContainerInput;
++import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.FullContainerName;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestInfo;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestSlotInfo;
++import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
++import net.raphimc.viabedrock.protocol.storage.CraftingDataTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryRequestStorage;
++import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import net.raphimc.viabedrock.protocol.storage.MapTracker;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.UUID;
++import java.util.concurrent.ThreadLocalRandom;
++
++public final class CartographyContainer extends InputContainer {
++
++    public static final String NAME_RESPONSE_PREFIX = "viabedrock:cartography_name/";
++    private boolean updatingContent;
++    private String renameText = "";
++    private String nameResponseId;
++    private Long lockedSourceId;
++    private Long lockedPreviewId;
++    private Integer pendingResult;
++    private CartographyRecipes.Selection selection;
++
++    public CartographyContainer(final UserConnection user, final byte containerId, final TextComponent title,
++                                final BlockPosition position) {
++        super(user, containerId, ContainerType.CARTOGRAPHY, title, position, 3, CustomBlockTags.CARTOGRAPHY_TABLE);
++    }
++
++    @Override
++    protected int[] inputSlots() {
++        return new int[]{12, 13};
++    }
++
++    @Override
++    public FullContainerName getFullContainerName(final int slot) {
++        final ContainerEnumName name = switch (slot) {
++            case 12 -> ContainerEnumName.CartographyInputContainer;
++            case 13 -> ContainerEnumName.CartographyAdditionalContainer;
++            case 50 -> ContainerEnumName.CartographyResultPreviewContainer;
++            default -> throw new IllegalArgumentException("Invalid cartography slot: " + slot);
++        };
++        return new FullContainerName(name, null);
++    }
++
++    @Override
++    public int javaSlot(final int slot) {
++        return slot == 12 ? 0 : slot == 13 ? 1 : slot == 50 ? 2 : -1;
++    }
++
++    @Override
++    public int bedrockSlot(final int slot) {
++        return slot == 0 ? 12 : slot == 1 ? 13 : slot == 2 ? 50 : -1;
++    }
++
++    @Override
++    protected int itemIndex(final int slot) {
++        return this.javaSlot(slot);
++    }
++
++    private String identifier(final BedrockItem item) {
++        return this.user.get(ItemRewriter.class).getItems().inverse().get(item.identifier());
++    }
++
++    @Override
++    public boolean setItems(final BedrockItem[] items) {
++        this.updatingContent = true;
++        final boolean updated;
++        try {
++            updated = super.setItems(items);
++        } finally {
++            this.updatingContent = false;
++        }
++        if (updated) {
++            this.refreshOutput();
++        }
++        return updated;
++    }
++
++    @Override
++    protected void onSlotChanged(final int slot, final BedrockItem previous, final BedrockItem item) {
++        if (slot < 2) {
++            final String identifier = this.identifier(item);
++            if (previous.isEmpty() && !item.isEmpty() && (slot == 0 || this.items[0].isEmpty())
++                    && ("minecraft:filled_map".equals(identifier) || "minecraft:empty_map".equals(identifier))) {
++                final CompoundTag display = item.tag() == null ? null : item.tag().getCompoundTag("display");
++                this.renameText = display == null ? "" : display.getString("Name", "");
++            }
++            if (!this.updatingContent) {
++                this.refreshOutput();
++            }
++        }
++    }
++
++    private void refreshOutput() {
++        final MapTracker maps = this.user.get(MapTracker.class);
++        final Long id = CartographyRecipes.mapId(this.items[0].isEmpty() ? this.items[1] : this.items[0]);
++        this.selection = CartographyRecipes.select(this.user.get(CraftingDataTracker.class).getCraftingDataList(),
++                this.items[0], this.identifier(this.items[0]), this.items[1], this.identifier(this.items[1]),
++                id == null ? null : maps.mapData(id), id == null ? List.of() : maps.creationMapIds(id),
++                this.renameText, (ingredient, item) -> ingredient.matchesItem(this.user, item));
++        this.items[2] = this.selection == null ? BedrockItem.empty() : this.selection.result();
++        if (this.selection != null && this.selection.operation() == CartographyRecipes.Operation.LOCK) {
++            if (!id.equals(this.lockedSourceId)) {
++                this.lockedSourceId = id;
++                this.lockedPreviewId = ThreadLocalRandom.current().nextLong(1, 1L << 32);
++                final PacketWrapper preview = PacketWrapper.create(ServerboundBedrockPackets.MAP_CREATE_LOCKED_COPY, this.user);
++                preview.write(BedrockTypes.VAR_LONG, id);
++                preview.write(BedrockTypes.VAR_LONG, this.lockedPreviewId);
++                preview.sendToServer(BedrockProtocol.class);
++            }
++            this.items[2].tag().putLong("map_uuid", this.lockedPreviewId);
++        }
++    }
++
++    public void refresh() {
++        final BedrockItem previous = this.items[2].copy();
++        this.refreshOutput();
++        if (previous.isDifferent(this.items[2]) || previous.amount() != this.items[2].amount()) {
++            PacketFactory.sendJavaContainerSetContent(this.user, this);
++        }
++    }
++
++    public void setRenameText(final String text) {
++        if (this.isClosing() || text.length() > 30) {
++            return;
++        }
++        this.renameText = text;
++        this.refreshOutput();
++        PacketFactory.sendJavaContainerSetContent(this.user, this);
++    }
++
++    @Override
++    protected List<QuickMoveRange> quickMoveRanges(final short javaSlot, final SlotRef source) {
++        final Container inventory = this.user.get(InventoryTracker.class).getInventoryContainer();
++        if (source.container() != inventory) {
++            return super.quickMoveRanges(javaSlot, source);
++        }
++        final String name = this.identifier(source.container().getItem(source.bedrockSlot()));
++        final int input = switch (name == null ? "" : name) {
++            case "minecraft:filled_map", "minecraft:paper" -> 0;
++            case "minecraft:compass", "minecraft:empty_map", "minecraft:glass_pane" -> 1;
++            default -> -1;
++        };
++        if (input >= 0) {
++            return List.of(new QuickMoveRange(this, input, input + 1, false));
++        }
++        return source.bedrockSlot() < 9 ? List.of(new QuickMoveRange(inventory, 9, inventory.size(), false))
++                : List.of(new QuickMoveRange(inventory, 0, 9, false));
++    }
++
++    @Override
++    public boolean handleClick(final int revision, final short slot, final byte button, final ContainerInput action) {
++        if (this.isClosing()) {
++            return false;
++        }
++        if (slot != 2) {
++            return super.handleClick(revision, slot, button, action);
++        }
++        if (action == ContainerInput.QUICK_MOVE && button == 1) {
++            this.openNameDialog();
++            return true;
++        }
++        if (this.pendingResult != null || action != ContainerInput.PICKUP && action != ContainerInput.QUICK_MOVE
++                || button != 0 && button != 1) {
++            return false;
++        }
++        this.refreshOutput();
++        if (this.selection == null || button == 1 && this.items[2].amount() != 1
++                || this.selection.inputCount() > 0 && this.items[0].netId() == null
++                || this.selection.additionalCount() > 0 && this.items[1].netId() == null) {
++            return false;
++        }
++        final InventoryTracker inventory = this.user.get(InventoryTracker.class);
++        final boolean quickMove = action == ContainerInput.QUICK_MOVE;
++        final Container target = quickMove ? inventory.getInventoryContainer() : inventory.getHudContainer();
++        final BedrockItem result = this.items[2];
++        final int maximum = this.user.get(ItemRewriter.class).maxStackSize(result);
++        final int destination = quickMove ? destination(target, result, maximum) : 0;
++        if (destination < 0) {
++            return false;
++        }
++        final BedrockItem current = target.getItem(destination);
++        if (!current.isEmpty() && (current.isDifferent(result) || current.netId() == null
++                || current.amount() + result.amount() > maximum)) {
++            return false;
++        }
++        final InventoryRequestTracker requests = this.user.get(InventoryRequestTracker.class);
++        final int requestId = requests.nextRequestId();
++        final ItemStackRequestInfo request = new ItemStackRequestInfo(requestId,
++                resultActions(this.selection, this.items[0], this.items[1], requestId,
++                        target.requestSlotInfo(destination, current.isEmpty() ? 0 : current.netId()), quickMove),
++                List.of(this.renameText), TextProcessingEventOrigin.CartographyText);
++        requests.addRequest(new InventoryRequestStorage(request, revision, inventory.getHudContainer().copy(),
++                quickMove ? List.of(this.copy(), target.copy()) : List.of(this.copy())));
++        this.pendingResult = requestId;
++        final int inputCount = this.selection.inputCount();
++        final int additionalCount = this.selection.additionalCount();
++        if (inputCount > 0) {
++            this.setItem(12, this.itemAfterRemovingAmount(this.items[0], inputCount));
++        }
++        if (additionalCount > 0) {
++            this.setItem(13, this.itemAfterRemovingAmount(this.items[1], additionalCount));
++        }
++        final BedrockItem placed = current.isEmpty() ? result.copy() : current.copy();
++        placed.setAmount(current.amount() + result.amount());
++        target.setItem(destination, placed);
++        PacketFactory.sendBedrockInventoryRequest(this.user, new ItemStackRequestInfo[]{request});
++        return true;
++    }
++
++    static List<ItemStackRequestAction> resultActions(final CartographyRecipes.Selection selection,
++                                                    final BedrockItem input, final BedrockItem additional,
++                                                    final int requestId, final ItemStackRequestSlotInfo destination,
++                                                    final boolean quickMove) {
++        final List<ItemStackRequestAction> actions = new ArrayList<>();
++        actions.add(new ItemStackRequestAction.CraftRecipeOptionalAction(selection.networkId(), 0));
++        if (selection.inputCount() > 0) {
++            actions.add(new ItemStackRequestAction.ConsumeAction(selection.inputCount(), new ItemStackRequestSlotInfo(
++                    new FullContainerName(ContainerEnumName.CartographyInputContainer, null), (byte) 12, input.netId())));
++        }
++        if (selection.additionalCount() > 0) {
++            actions.add(new ItemStackRequestAction.ConsumeAction(selection.additionalCount(), new ItemStackRequestSlotInfo(
++                    new FullContainerName(ContainerEnumName.CartographyAdditionalContainer, null), (byte) 13, additional.netId())));
++        }
++        final var source = new ItemStackRequestSlotInfo(new FullContainerName(ContainerEnumName.CreatedOutputContainer, null),
++                (byte) 50, requestId);
++        actions.add(quickMove ? new ItemStackRequestAction.PlaceAction(selection.result().amount(), source, destination)
++                : new ItemStackRequestAction.TakeAction(selection.result().amount(), source, destination));
++        return actions;
++    }
++
++    @Override
++    public boolean handleResponse(final int requestId, final boolean success) {
++        super.handleResponse(requestId, success);
++        if (this.pendingResult != null && this.pendingResult == requestId) {
++            this.pendingResult = null;
++            this.refreshOutput();
++        }
++        return false;
++    }
++
++    static int destination(final Container inventory, final BedrockItem result, final int maximum) {
++        for (final boolean merge : new boolean[]{true, false}) {
++            for (int slot = 0; slot < inventory.size(); slot++) {
++                final BedrockItem item = inventory.getItem(slot);
++                if (merge ? !item.isEmpty() && !item.isDifferent(result) && item.netId() != null
++                        && item.amount() + result.amount() <= maximum : item.isEmpty()) {
++                    return slot;
++                }
++            }
++        }
++        return -1;
++    }
++
++    @Override
++    public void beginClose() {
++        this.closeNameDialog();
++        super.beginClose();
++    }
++
++    public void closeNameDialog() {
++        if (this.nameResponseId != null) {
++            this.nameResponseId = null;
++            PacketWrapper.create(ClientboundPackets26_3.CLEAR_DIALOG, this.user).send(BedrockProtocol.class);
++        }
++    }
++
++    private void openNameDialog() {
++        PacketFactory.sendJavaContainerSetContent(this.user, this);
++        this.nameResponseId = NAME_RESPONSE_PREFIX + UUID.randomUUID();
++        final var id = Identifier.of(this.nameResponseId);
++        final var dialog = new MultiActionDialog(TextUtil.stringToTextComponent("Map name"), true, false, AfterAction.CLOSE,
++                new ArrayList<>(), new ArrayList<>(), new ArrayList<>(),
++                new ActionButton(TextUtil.stringToTextComponent("Cancel"), 150, new CustomAllAction(id, new CompoundTag())), 1);
++        final TextInput input = new TextInput(TextUtil.stringToTextComponent("Map name"));
++        input.setMaxLength(30);
++        input.setInitial(this.renameText);
++        dialog.getInputs().add(new Input("name", input));
++        final CompoundTag payload = new CompoundTag();
++        payload.putBoolean("save", true);
++        dialog.getActions().add(new ActionButton(TextUtil.stringToTextComponent("Save name"), 150, new CustomAllAction(id, payload)));
++        final PacketWrapper show = PacketWrapper.create(ClientboundPackets26_3.SHOW_DIALOG, this.user);
++        show.write(Types.TRUSTED_COMPOUND_TAG_HOLDER, Holder.of((CompoundTag) DialogSerializer.V1_21_6.getDirectCodec().serialize(NbtConverter_v1_21_5.INSTANCE, dialog).get()));
++        show.send(BedrockProtocol.class);
++    }
++
++    public void handleNameResponse(final String id, final CompoundTag payload) {
++        if (!id.equals(this.nameResponseId)) {
++            return;
++        }
++        this.nameResponseId = null;
++        if (!this.isClosing() && payload != null && payload.getBoolean("save") && payload.getString("name") != null) {
++            this.setRenameText(payload.getString("name"));
++        } else if (!this.isClosing()) {
++            PacketFactory.sendJavaContainerSetContent(this.user, this);
++        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/block/CartographyRecipes.java b/src/main/java/net/raphimc/viabedrock/api/model/container/block/CartographyRecipes.java
+new file mode 100644
+index 00000000..a857dced
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/container/block/CartographyRecipes.java
+@@ -0,0 +1,161 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.container.block;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.NumberTag;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptor;
++import net.raphimc.viabedrock.protocol.model.recipe.MultiRecipe;
++import net.raphimc.viabedrock.protocol.model.recipe.ShapelessRecipe;
++import net.raphimc.viabedrock.protocol.storage.CraftingDataStorage;
++import net.raphimc.viabedrock.protocol.storage.MapTracker;
++
++import java.util.List;
++import java.util.UUID;
++import java.util.function.BiPredicate;
++
++final class CartographyRecipes {
++
++    static Selection select(final List<CraftingDataStorage> recipes, final BedrockItem input, final String inputName,
++                            final BedrockItem additional, final String additionalName, final MapTracker.MapData map,
++                            final List<Long> family, final String name,
++                            final BiPredicate<ItemDescriptor, BedrockItem> matches) {
++        if (input.isEmpty()) {
++            if (additional.isEmpty()) {
++                return null;
++            }
++            final Selection swapped = select(recipes, additional, additionalName, input, inputName,
++                    map, family, name, matches);
++            return swapped == null ? null : new Selection(swapped.operation(), swapped.networkId(),
++                    swapped.result(), swapped.additionalCount(), swapped.inputCount());
++        }
++        if ("minecraft:paper".equals(inputName)) {
++            final boolean locator = "minecraft:compass".equals(additionalName);
++            if (!additional.isEmpty() && !locator) {
++                return null;
++            }
++            final String id = locator ? "minecraft:cartography_table_locator_map" : "minecraft:cartography_table_map";
++            for (final CraftingDataStorage entry : recipes) {
++                if (entry.recipe() instanceof ShapelessRecipe recipe && recipe.getUniqueId().equals(id)
++                        && recipe.getRecipeTag().equals("cartography_table") && recipe.getResults().size() == 1) {
++                    int inputCount = 0;
++                    int additionalCount = 0;
++                    boolean valid = true;
++                    for (final ItemDescriptor ingredient : recipe.getIngredients()) {
++                        if (matches.test(ingredient, input)) {
++                            inputCount += ingredient.amount();
++                        } else if (matches.test(ingredient, additional)) {
++                            additionalCount += ingredient.amount();
++                        } else {
++                            valid = false;
++                        }
++                    }
++                    if (valid && inputCount > 0 && input.amount() >= inputCount
++                            && additional.amount() >= additionalCount && locator == (additionalCount > 0)) {
++                        return new Selection(locator ? Operation.CREATE_LOCATOR : Operation.CREATE,
++                                entry.networkId(), named(recipe.getResults().get(0).copy(), name), inputCount, additionalCount);
++                    }
++                }
++            }
++            return null;
++        }
++        final boolean filled = "minecraft:filled_map".equals(inputName);
++        if (!filled && !"minecraft:empty_map".equals(inputName)) {
++            return null;
++        }
++        final Operation operation;
++        if (additional.isEmpty()) {
++            final BedrockItem result = input.copy();
++            result.setAmount(1);
++            return new Selection(Operation.RENAME, 0, named(result, name), 1, 0);
++        } else if ("minecraft:empty_map".equals(additionalName) && filled) {
++            operation = Operation.CLONE;
++        } else if ("minecraft:paper".equals(additionalName) && filled
++                && map != null && !map.locked() && map.scale() != null && map.scale() < 4) {
++            operation = Operation.EXTEND;
++        } else if ("minecraft:glass_pane".equals(additionalName) && filled
++                && map != null && !map.locked() && mapId(input) != null) {
++            operation = Operation.LOCK;
++        } else if ("minecraft:compass".equals(additionalName) && !hasLocator(input, filled)) {
++            operation = Operation.LOCATOR;
++        } else {
++            return null;
++        }
++        final UUID recipeId = switch (operation) {
++            case CLONE -> UUID.fromString("442d85ed-8272-4543-a6f1-418f90ded05d");
++            case EXTEND -> UUID.fromString("8b36268c-1829-483c-a0f1-993b7156a8f2");
++            case LOCK -> UUID.fromString("602234e4-cac1-4353-8bb7-b1ebff70024b");
++            case LOCATOR -> UUID.fromString("98c84b38-1085-46bd-b1ce-dd38c159e6cc");
++            default -> throw new IllegalStateException("Unexpected cartography operation: " + operation);
++        };
++        for (final CraftingDataStorage recipe : recipes) {
++            if (!(recipe.recipe() instanceof MultiRecipe) || !recipe.recipe().getRecipeId().equals(recipeId)) {
++                continue;
++            }
++            final BedrockItem result = input.copy();
++            result.setAmount(operation == Operation.CLONE ? 2 : 1);
++            if (operation == Operation.EXTEND) {
++                final Long id = mapId(input);
++                final int index = family.indexOf(id);
++                if (index >= 0 && index + 1 < family.size()) {
++                    result.tag().putLong("map_uuid", family.get(index + 1));
++                }
++            } else if (operation == Operation.LOCATOR) {
++                if (filled) {
++                    final CompoundTag tag = result.tag() == null ? new CompoundTag() : result.tag();
++                    tag.putByte("map_display_players", (byte) 1);
++                    result.setTag(tag);
++                } else {
++                    result.setData(2);
++                }
++            } else if (operation == Operation.LOCK) {
++                result.setData(6);
++            }
++            return new Selection(operation, recipe.networkId(), named(result, name), 1, 1);
++        }
++        return null;
++    }
++
++    static Long mapId(final BedrockItem item) {
++        return item.tag() != null && item.tag().get("map_uuid") instanceof NumberTag number ? number.asLong() : null;
++    }
++
++    private static boolean hasLocator(final BedrockItem map, final boolean filled) {
++        return filled ? map.tag() != null && map.tag().get("map_display_players") instanceof NumberTag flag && flag.asByte() != 0
++                : map.data() == 2;
++    }
++
++    private static BedrockItem named(final BedrockItem item, final String name) {
++        final CompoundTag tag = item.tag() == null ? new CompoundTag() : item.tag();
++        CompoundTag display = tag.getCompoundTag("display");
++        if (!name.isEmpty()) {
++            if (display == null) {
++                display = new CompoundTag();
++                tag.put("display", display);
++            }
++            display.putString("Name", name);
++        } else if (display != null) {
++            display.remove("Name");
++            if (display.isEmpty()) {
++                tag.remove("display");
++            }
++        }
++        item.setTag(tag.isEmpty() ? null : tag);
++        item.setNetId(null);
++        return item;
++    }
++
++    private CartographyRecipes() {
++    }
++
++    enum Operation {
++        CREATE, CREATE_LOCATOR, RENAME, CLONE, EXTEND, LOCK, LOCATOR
++    }
++
++    record Selection(Operation operation, int networkId, BedrockItem result, int inputCount, int additionalCount) { }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/data/generated/bedrock/CustomBlockTags.java b/src/main/java/net/raphimc/viabedrock/protocol/data/generated/bedrock/CustomBlockTags.java
+index 6ef8f93d..9d1c1819 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/data/generated/bedrock/CustomBlockTags.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/data/generated/bedrock/CustomBlockTags.java
+@@ -22,6 +22,7 @@ public class CustomBlockTags {
+     public static final String COMPARATOR = "comparator";
+     public static final String CONDUIT = "conduit";
+     public static final String COPPER_GOLEM_STATUE = "copper_golem_statue";
++    public static final String CARTOGRAPHY_TABLE = "cartography_table";
+     public static final String CRAFTER = "crafter";
+     public static final String CREAKING_HEART = "creaking_heart";
+     public static final String DAYLIGHT_DETECTOR = "daylight_detector";
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+index 63452ea1..ed253d00 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
+@@ -143,6 +143,9 @@ public final class InventoryPackets {
+             wrapper.cancel();
+             return;
+         }
++        if (container instanceof CartographyContainer cartography) {
++            cartography.closeNameDialog();
++        }
+         inventoryTracker.setCurrentContainerClosed(serverInitiated);
+         if (!serverInitiated && container instanceof InventoryContainer) {
+             wrapper.cancel();
+@@ -339,6 +342,7 @@ public final class InventoryPackets {
+                         container =
+                                         new SmithingContainer(
+                                                 wrapper.user(), containerId, title, position);
++                        case CARTOGRAPHY -> container = new CartographyContainer(wrapper.user(), containerId, title, position);
+                         case LOOM -> container = new LoomContainer(wrapper.user(), containerId, title, position);
+                         case STONECUTTER ->
+                         container =
+@@ -395,6 +399,10 @@ public final class InventoryPackets {
+                         }
+                     }
+                     inventoryTracker.setCurrentContainer(container);
++                    if (container instanceof CartographyContainer) {
++                        PacketFactory.sendJavaSystemChat(wrapper.user(), TextUtil.textComponentToNbt(
++                                TextUtil.stringToTextComponent("Shift-right-click the cartography output slot to edit the map name.")));
++                    }
+ 
+                     if (screenType == ContainerType.HORSE) {
+                         ((HorseContainer) container).writeJavaOpen(wrapper);
+@@ -445,6 +453,13 @@ public final class InventoryPackets {
+                                     (byte) containerId, containerName, storageItem);
+                     if (container != null && container.setItems(items)) {
+                         container.markServerUpdate();
++                        if (container == inventoryTracker.getHudContainer()
++                                && inventoryTracker.getCurrentContainer() instanceof CartographyContainer cartography
++                                && items.length > 13) {
++                            cartography.setItems(new BedrockItem[]{items[12], items[13], BedrockItem.empty()});
++                            cartography.markServerUpdate();
++                            PacketFactory.sendJavaContainerSetContent(wrapper.user(), cartography);
++                        }
+                         wrapper.user().get(InventoryRequestTracker.class)
+                                 .handleAuthoritativeContent(container);
+                         wrapper.user().get(InventoryRequestTracker.class)
+@@ -895,6 +910,9 @@ public final class InventoryPackets {
+                     wrapper.user().get(InventoryTracker.class).getInventoryContainer()
+                             .refreshCraftingOutput();
+                     tracker.sendJavaUpdateRecipes(wrapper.user());
++                    if (wrapper.user().get(InventoryTracker.class).getCurrentContainer() instanceof CartographyContainer cartography) {
++                        cartography.refresh();
++                    }
+                 });
+         protocol.registerClientbound(
+                 ClientboundBedrockPackets.UNLOCKED_RECIPES,
+@@ -1196,6 +1214,9 @@ public final class InventoryPackets {
+                     if (wrapper.user().get(InventoryTracker.class).getCurrentContainer()
+                             instanceof AnvilContainer anvil) {
+                         anvil.setRenameText(name);
++                    } else if (wrapper.user().get(InventoryTracker.class).getCurrentContainer()
++                            instanceof CartographyContainer cartography) {
++                        cartography.setRenameText(name);
+                     }
+                 });
+         protocol.registerServerbound(
+@@ -1230,6 +1251,13 @@ public final class InventoryPackets {
+                     final String id = wrapper.read(Types.STRING); // id
+                     final CompoundTag payload =
+                             (CompoundTag) wrapper.read(Types.CUSTOM_CLICK_ACTION_TAG); // payload
++                    if (id.startsWith(CartographyContainer.NAME_RESPONSE_PREFIX)) {
++                        wrapper.cancel();
++                        if (wrapper.user().get(InventoryTracker.class).getCurrentContainer() instanceof CartographyContainer cartography) {
++                            cartography.handleNameResponse(id, payload);
++                        }
++                        return;
++                    }
+                     if (NpcDialoguePackets.handleResponse(wrapper, id, payload)) {
+                         return;
+                     }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MapPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MapPackets.java
+index 5847a29c..dff5531e 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MapPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MapPackets.java
+@@ -25,6 +25,8 @@ import net.raphimc.viabedrock.protocol.util.map.JavaMapPaletteUtil;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.storage.MapTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import net.raphimc.viabedrock.api.model.container.block.CartographyContainer;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
+ import java.util.ArrayList;
+@@ -119,6 +121,9 @@ public final class MapPackets {
+ 
+             final MapTracker maps = wrapper.user().get(MapTracker.class);
+             final MapTracker.MapData mapData = maps.updateData(bedrockId, dimension, locked, origin, scale, creationMapIds);
++            if (wrapper.user().get(InventoryTracker.class).getCurrentContainer() instanceof CartographyContainer cartography) {
++                cartography.refresh();
++            }
+             wrapper.write(Types.VAR_INT, maps.javaId(bedrockId));
+             wrapper.write(Types.BYTE, mapData.javaScale());
+             wrapper.write(Types.BOOLEAN, locked);
+diff --git a/src/main/resources/assets/viabedrock/data/custom/block_tags.json b/src/main/resources/assets/viabedrock/data/custom/block_tags.json
+index fa60824c..3e13586a 100644
+--- a/src/main/resources/assets/viabedrock/data/custom/block_tags.json
++++ b/src/main/resources/assets/viabedrock/data/custom/block_tags.json
+@@ -42,6 +42,9 @@
+     "minecraft:campfire",
+     "minecraft:soul_campfire"
+   ],
++  "cartography_table": [
++    "minecraft:cartography_table"
++  ],
+   "cauldron": [
+     "minecraft:cauldron"
+   ],
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/block/CartographyRecipesTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/block/CartographyRecipesTest.java
+new file mode 100644
+index 00000000..dbcd6e4b
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/container/block/CartographyRecipesTest.java
+@@ -0,0 +1,193 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.container.block;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import net.raphimc.viabedrock.api.model.container.Container;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.FullContainerName;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestAction;
++import net.raphimc.viabedrock.protocol.model.inventory.ItemStackRequestSlotInfo;
++import net.raphimc.viabedrock.protocol.model.recipe.ItemDescriptor;
++import net.raphimc.viabedrock.protocol.model.recipe.MultiRecipe;
++import net.raphimc.viabedrock.protocol.model.recipe.RecipeType;
++import net.raphimc.viabedrock.protocol.model.recipe.ShapelessRecipe;
++import net.raphimc.viabedrock.protocol.storage.CraftingDataStorage;
++import net.raphimc.viabedrock.protocol.storage.MapTracker;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class CartographyRecipesTest {
++
++    @Test
++    void usesAdvertisedCreationOutputAndIngredientCountsInEitherSingleSlot() {
++        final BedrockItem paper = item(1, 3);
++        final BedrockItem output = item(2, 1);
++        final var recipe = new ShapelessRecipe("minecraft:cartography_table_map", UUID.randomUUID(), "cartography_table", 0,
++                List.of(new ItemDescriptor.ItemNameDescriptor("minecraft:paper", 0, 2)), List.of(output));
++        final var recipes = List.of(new CraftingDataStorage(RecipeType.SHAPELESS, 912, recipe, false));
++        final var first = select(recipes, paper, "minecraft:paper", BedrockItem.empty(), null, null, List.of(), "");
++        assertNotNull(first);
++        assertEquals(912, first.networkId());
++        assertEquals(2, first.inputCount());
++        assertEquals(0, first.additionalCount());
++        assertEquals(output.identifier(), first.result().identifier());
++        assertNull(first.result().netId());
++        final var lower = select(recipes, BedrockItem.empty(), null, paper, "minecraft:paper", null, List.of(), "");
++        assertEquals(0, lower.inputCount());
++        assertEquals(2, lower.additionalCount());
++        assertNull(select(recipes, item(1, 1), "minecraft:paper", BedrockItem.empty(), null, null, List.of(), ""));
++        assertNull(select(List.of(), paper, "minecraft:paper", BedrockItem.empty(), null, null, List.of(), ""));
++    }
++
++    @Test
++    void extendsOnlyUnlockedMapsWithKnownScaleAndUsesSparseServerFamilies() {
++        final BedrockItem map = map(400, false);
++        final var recipes = dynamic("8b36268c-1829-483c-a0f1-993b7156a8f2", 77);
++        final BedrockItem paper = item(1, 4);
++        final var data = new MapTracker.MapData((byte) 0, false, new BlockPosition(0, 0, 0), (byte) 2, List.of());
++        final var result = select(recipes, map, "minecraft:filled_map", paper, "minecraft:paper", data,
++                List.of(5L, 70L, 400L, -19L, 6L), "");
++        assertEquals(-19L, CartographyRecipes.mapId(result.result()));
++        assertEquals(400L, CartographyRecipes.mapId(map));
++        assertEquals(77, result.networkId());
++        assertNull(select(recipes, map, "minecraft:filled_map", paper, "minecraft:paper", null, List.of(), ""));
++        for (final Byte scale : new Byte[]{null, 4}) {
++            final var unknownOrMaximum = new MapTracker.MapData((byte) 0, false, data.origin(), scale, List.of());
++            assertNull(select(recipes, map, "minecraft:filled_map", paper, "minecraft:paper", unknownOrMaximum, List.of(), ""));
++        }
++        final var locked = new MapTracker.MapData((byte) 0, true, data.origin(), (byte) 2, List.of());
++        assertNull(select(recipes, map, "minecraft:filled_map", paper, "minecraft:paper", locked, List.of(), ""));
++        final var absentFamily = select(recipes, map, "minecraft:filled_map", paper, "minecraft:paper", data, List.of(), "");
++        assertEquals(400L, CartographyRecipes.mapId(absentFamily.result()));
++    }
++
++    @Test
++    void clonesAndRenamesWithoutMutatingInputOrReusingItsNetworkIdentity() {
++        final BedrockItem map = map(700, false);
++        final CompoundTag display = new CompoundTag();
++        display.putString("Name", "old");
++        map.tag().put("display", display);
++        final var clone = select(dynamic("442d85ed-8272-4543-a6f1-418f90ded05d", 81), map,
++                "minecraft:filled_map", item(2, 8), "minecraft:empty_map", null, List.of(), "new");
++        assertEquals(2, clone.result().amount());
++        assertEquals(1, clone.inputCount());
++        assertEquals(1, clone.additionalCount());
++        assertNull(clone.result().netId());
++        assertEquals("new", clone.result().tag().getCompoundTag("display").getString("Name"));
++        assertEquals("old", display.getString("Name"));
++        final var rename = select(List.of(), BedrockItem.empty(), null, map, "minecraft:filled_map", null, List.of(), "");
++        assertEquals(0, rename.networkId());
++        assertEquals(1, rename.additionalCount());
++        assertNull(rename.result().tag().get("display"));
++        assertEquals(700L, CartographyRecipes.mapId(rename.result()));
++    }
++
++    @Test
++    void convertsEmptyAndFilledLocatorsAndRejectsAlreadyConvertedMaps() {
++        final var recipes = dynamic("98c84b38-1085-46bd-b1ce-dd38c159e6cc", 95);
++        final BedrockItem compass = item(3, 5);
++        final var empty = select(recipes, item(2, 4), "minecraft:empty_map", compass, "minecraft:compass", null, List.of(), "");
++        assertEquals(2, empty.result().data());
++        assertNull(select(recipes, empty.result(), "minecraft:empty_map", compass, "minecraft:compass", null, List.of(), ""));
++        final var filled = select(recipes, map(40, false), "minecraft:filled_map", compass, "minecraft:compass", null, List.of(), "");
++        assertEquals(40L, CartographyRecipes.mapId(filled.result()));
++        assertEquals(1, filled.result().tag().getByte("map_display_players"));
++        assertNull(select(recipes, filled.result(), "minecraft:filled_map", compass, "minecraft:compass", null, List.of(), ""));
++        assertNull(select(recipes, item(2, 1), "minecraft:empty_map", item(1, 1), "minecraft:paper", null, List.of(), ""));
++    }
++
++    @Test
++    void locksOnlyKnownUnlockedMapsAndRetainsTheirTagsForAuthoritativeRefresh() {
++        final BedrockItem map = map(40, false);
++        map.tag().putByte("map_is_init", (byte) 1);
++        final BedrockItem glass = item(5, 2);
++        final var recipes = dynamic("602234e4-cac1-4353-8bb7-b1ebff70024b", 19);
++        final var data = new MapTracker.MapData((byte) 0, false, new BlockPosition(0, 0, 0), (byte) 1, List.of());
++        final var locked = select(recipes, map, "minecraft:filled_map", glass, "minecraft:glass_pane", data, List.of(), "");
++        assertEquals(6, locked.result().data());
++        assertEquals(1, locked.result().tag().getByte("map_is_init"));
++        assertEquals(40L, CartographyRecipes.mapId(locked.result()));
++        assertEquals(0, map.data());
++        assertNull(select(recipes, map, "minecraft:filled_map", glass, "minecraft:glass_pane", null, List.of(), ""));
++        final var lockedData = new MapTracker.MapData((byte) 0, true, data.origin(), (byte) 1, List.of());
++        assertNull(select(recipes, map, "minecraft:filled_map", glass, "minecraft:glass_pane", lockedData, List.of(), ""));
++    }
++
++    @Test
++    void constructsCreatedOutputRequestsAndOmitsUnusedLowerOrUpperInputs() {
++        final var cursor = new ItemStackRequestSlotInfo(new FullContainerName(ContainerEnumName.CursorContainer, null), (byte) 0, 0);
++        final var selection = new CartographyRecipes.Selection(CartographyRecipes.Operation.RENAME, 0, item(2, 1), 0, 1);
++        final BedrockItem lower = item(2, 4);
++        final var actions = CartographyContainer.resultActions(selection, BedrockItem.empty(), lower, -7, cursor, false);
++        assertEquals(3, actions.size());
++        assertEquals(0, assertInstanceOf(ItemStackRequestAction.CraftRecipeOptionalAction.class, actions.get(0)).recipeNetworkId());
++        final var consume = assertInstanceOf(ItemStackRequestAction.ConsumeAction.class, actions.get(1));
++        assertEquals(1, consume.count());
++        assertEquals(13, consume.item().slot());
++        assertEquals(lower.netId(), consume.item().stackNetworkId());
++        final var take = assertInstanceOf(ItemStackRequestAction.TakeAction.class, actions.get(2));
++        assertEquals(50, take.source().slot());
++        assertEquals(-7, take.source().stackNetworkId());
++        assertEquals(ContainerEnumName.CreatedOutputContainer, take.source().container().name());
++        assertEquals(cursor, take.destination());
++        final var quick = CartographyContainer.resultActions(selection, BedrockItem.empty(), lower, -9, cursor, true);
++        assertInstanceOf(ItemStackRequestAction.PlaceAction.class, quick.get(2));
++    }
++
++    @Test
++    void quickMoveMergesOnlyCompleteResultsWithAcknowledgedMatchingStacks() {
++        final Container inventory = new Container(null, (byte) 0, ContainerType.INVENTORY, null, null, 4) { };
++        final BedrockItem result = item(4, 2);
++        final BedrockItem full = item(4, 63);
++        final BedrockItem unconfirmed = item(4, 2);
++        unconfirmed.setNetId(null);
++        inventory.setItems(new BedrockItem[]{full, unconfirmed, BedrockItem.empty(), item(4, 60)});
++        assertEquals(3, CartographyContainer.destination(inventory, result, 64));
++        inventory.setItem(3, item(5, 1));
++        assertEquals(2, CartographyContainer.destination(inventory, result, 64));
++        inventory.setItem(2, item(5, 1));
++        assertEquals(-1, CartographyContainer.destination(inventory, result, 64));
++    }
++
++    private static CartographyRecipes.Selection select(final List<CraftingDataStorage> recipes, final BedrockItem input,
++                                                       final String inputName, final BedrockItem additional, final String additionalName,
++                                                       final MapTracker.MapData data, final List<Long> family, final String name) {
++        return CartographyRecipes.select(recipes, input, inputName, additional, additionalName, data, family, name,
++                (descriptor, item) -> descriptor instanceof ItemDescriptor.ItemNameDescriptor standard
++                        && !item.isEmpty() && standard.fullName().equals("minecraft:paper") && item.identifier() == 1);
++    }
++
++    private static List<CraftingDataStorage> dynamic(final String id, final int networkId) {
++        return List.of(new CraftingDataStorage(RecipeType.MULTI, networkId, new MultiRecipe(UUID.fromString(id)), false));
++    }
++
++    private static BedrockItem item(final int id, final int count) {
++        final BedrockItem item = new BedrockItem(id);
++        item.setAmount(count);
++        item.setNetId(id * 10);
++        return item;
++    }
++
++    private static BedrockItem map(final long id, final boolean locator) {
++        final BedrockItem map = item(4, 6);
++        final CompoundTag tag = new CompoundTag();
++        tag.putLong("map_uuid", id);
++        if (locator) {
++            tag.putByte("map_display_players", (byte) 1);
++        }
++        map.setTag(tag);
++        return map;
++    }
++
++}
+-- 
+2.55.0

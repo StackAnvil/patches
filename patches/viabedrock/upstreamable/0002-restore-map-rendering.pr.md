@@ -39,13 +39,19 @@ Raw packets, account data, and screenshots remain private.
 
 These observations establish metadata and request behavior.
 They do not establish complete Java cartography support.
-The cartography screen, locked-copy generation, naming interface, and full inventory comparisons remain incomplete.
+The [cartography patch](../deferred/0016-translate-bedrock-cartography-in-core.pr.md) implements the main screen and request path.
+Native UI and full inventory comparisons remain incomplete.
 
 ## Testing
 
-Three focused tests cover partial updates, explicit replacement, immutable creation lists, and independent map state.
+Four focused tests cover partial updates, explicit replacement, immutable creation lists, independent map state, and sparse family lookup.
+Family lookup follows advertised IDs without inventing metadata for other family members.
 Checkstyle passes.
 The complete 84-patch core stack replays successfully.
 `bun run build all` passes for all four targets.
 ViaBedrock reports 390 tests with no failures or errors and one optional fixture skip.
 The add-on reports 519 tests with no failures or errors and 109 optional fixture skips.
+
+The latest complete core stack contains 85 patches.
+Its 403 tests pass with one optional fixture skip.
+All four targets build successfully.
