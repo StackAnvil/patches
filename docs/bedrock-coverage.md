@@ -46,7 +46,7 @@ The [source guide](bedrock-development-sources.md) defines the version and enum 
 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
-| I1 | Cartography creation, extension, cloning, locking, locator conversion, and naming | Incomplete | Multi-recipe IDs now survive decoding. Implement the screen and crafting flows, and resolve authoritative map results. |
+| I1 | Cartography creation, extension, cloning, locking, locator conversion, and naming | Incomplete | Multi-recipe IDs and map state now survive decoding. Implement the screen, crafting, locked-copy requests, and authoritative results. |
 | I2 | Structure and jigsaw editors | Incomplete | Implement screens, requests, structure responses, and jigsaw data. |
 | I3 | Stonecutter recipe updates | Incomplete | Handle server recipe selection and complete result and close behavior. |
 | I4 | Trading and loom | Implemented | Preserve their tested request and response paths. Complete remaining native and inventory edge comparisons. |
@@ -59,6 +59,12 @@ These captures do not establish the Java implementation.
 
 The decoder tests retain known and unknown recipe UUIDs and unsigned network IDs.
 They also establish following-array alignment and truncated input rejection.
+Core now retains map dimension, origin, lock state, scale, and the server's creation map IDs.
+An omitted scale or creation list preserves previous state.
+A native extension selects the next ID in the advertised map family.
+Cloning preserves that ID; locking creates a separate map identity.
+The [map notes](../patches/viabedrock/upstreamable/0002-restore-map-rendering.pr.md) record the implementation boundary and native evidence.
+
 The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and-recipe-codecs.pr.md#dynamic-recipes) record their evidence and build results.
 
 ## Cameras and UI

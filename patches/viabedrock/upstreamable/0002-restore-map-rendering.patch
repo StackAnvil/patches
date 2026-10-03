@@ -1,27 +1,35 @@
-From 45c2c1c658b5e946e0011b4bcdec2aecdbcb51a7 Mon Sep 17 00:00:00 2001
+From 5e4643131346a2fd357973c3867e6e3e8a26991b Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:52:39 +0200
 Subject: [PATCH] fix(maps): restore held and framed map rendering
 
 Preserve the map rendering work from ViaBedrock PR #425 while retaining the current JUnit configuration introduced by the resource-pack cache patch.
+
+Retain map dimension, origin, lock state, optional scale, and creation map IDs in core. An omitted scale or creation list is a partial update and must not reset previous state; Java map packets always require a scale value.
+
+Bedrock 1.26.51.1 build 51061372, protocol 2193, native cartography captures advertise a five-ID map family, select its next ID for extension, and preserve that ID for cloning. This authoritative family data is needed by cartography result handling. Raw captures and proprietary assets remain private.
+
+Three focused state tests cover optional-field retention, explicit replacement, immutable family lists, and independent maps.
 ---
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
  .../protocol/packet/ClientPlayerPackets.java  |  15 +
  .../protocol/packet/InteractionPackets.java   | 264 ++++++++--------
- .../protocol/packet/MapPackets.java           | 168 ++++++++++
+ .../protocol/packet/MapPackets.java           | 175 +++++++++++
  .../protocol/packet/WorldPackets.java         |   1 +
  .../protocol/rewriter/ItemDataRewriter.java   |   5 -
  .../protocol/rewriter/ItemRewriter.java       |  38 ++-
  .../protocol/storage/ChunkTracker.java        |  22 +-
  .../protocol/storage/EntityTracker.java       |  56 +++-
- .../protocol/storage/MapTracker.java          |  31 +-
+ .../protocol/storage/MapTracker.java          |  60 +++-
  .../protocol/util/map/JavaMapPaletteUtil.java | 142 +++++++++
  .../protocol/util/map/MapColor.java           | 288 ++++++++++++++++++
+ .../protocol/storage/MapTrackerTest.java      |  59 ++++
  .../util/map/JavaMapPaletteUtilTest.java      |  29 ++
- 13 files changed, 892 insertions(+), 169 deletions(-)
+ 14 files changed, 987 insertions(+), 169 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/MapPackets.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/util/map/JavaMapPaletteUtil.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/util/map/MapColor.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/MapTrackerTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/util/map/JavaMapPaletteUtilTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
@@ -420,10 +428,10 @@ index 0fc8d66e..4a412097 100644
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MapPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MapPackets.java
 new file mode 100644
-index 00000000..1abaea17
+index 00000000..5847a29c
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MapPackets.java
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,175 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -444,6 +452,7 @@ index 00000000..1abaea17
 +package net.raphimc.viabedrock.protocol.packet;
 +
 +import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
 +import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
 +import net.raphimc.viabedrock.api.util.TextUtil;
 +import net.raphimc.viabedrock.protocol.util.map.JavaMapPaletteUtil;
@@ -463,18 +472,22 @@ index 00000000..1abaea17
 +    public static void register(final BedrockProtocol protocol) {
 +        protocol.registerClientbound(ClientboundBedrockPackets.MAP_ITEM_DATA, ClientboundPackets26_3.MAP_ITEM_DATA, wrapper -> {
 +            final long bedrockId = wrapper.read(BedrockTypes.VAR_LONG);
-+            wrapper.read(Types.BYTE); // dimension
++            final byte dimension = wrapper.read(Types.BYTE); // dimension
 +            final boolean locked = wrapper.read(Types.BOOLEAN);
-+            wrapper.read(BedrockTypes.BLOCK_POSITION); // origin
++            final BlockPosition origin = wrapper.read(BedrockTypes.BLOCK_POSITION); // origin
 +
++            final List<Long> creationMapIds;
 +            if (wrapper.read(Types.BOOLEAN)) { // creation map ids present
 +                final int count = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
++                creationMapIds = new ArrayList<>(count);
 +                for (int i = 0; i < count; i++) {
-+                    wrapper.read(BedrockTypes.VAR_LONG); // related map id
++                    creationMapIds.add(wrapper.read(BedrockTypes.VAR_LONG));
 +                }
++            } else {
++                creationMapIds = null;
 +            }
 +
-+            final byte scale = wrapper.read(Types.BOOLEAN) ? wrapper.read(Types.BYTE) : 0;
++            final Byte scale = wrapper.read(Types.BOOLEAN) ? wrapper.read(Types.BYTE) : null;
 +            if (wrapper.read(Types.BOOLEAN)) { // tracked actor ids present
 +                final int trackedCount = wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
 +                for (int i = 0; i < trackedCount; i++) {
@@ -538,8 +551,10 @@ index 00000000..1abaea17
 +                colors = JavaMapPaletteUtil.convertToJavaPalette(bedrockColors);
 +            }
 +
-+            wrapper.write(Types.VAR_INT, wrapper.user().get(MapTracker.class).javaId(bedrockId));
-+            wrapper.write(Types.BYTE, scale);
++            final MapTracker maps = wrapper.user().get(MapTracker.class);
++            final MapTracker.MapData mapData = maps.updateData(bedrockId, dimension, locked, origin, scale, creationMapIds);
++            wrapper.write(Types.VAR_INT, maps.javaId(bedrockId));
++            wrapper.write(Types.BYTE, mapData.javaScale());
 +            wrapper.write(Types.BOOLEAN, locked);
 +            wrapper.write(Types.BOOLEAN, hasDecorations);
 +            if (hasDecorations) {
@@ -900,13 +915,14 @@ index 85d216c7..aebd19b6 100644
 +
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/MapTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/MapTracker.java
-index 2af0a50c..39d92ceb 100644
+index 2af0a50c..e05effe4 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/MapTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/MapTracker.java
-@@ -19,6 +19,10 @@ package net.raphimc.viabedrock.protocol.storage;
+@@ -19,21 +19,75 @@ package net.raphimc.viabedrock.protocol.storage;
  
  import com.viaversion.viaversion.api.connection.StoredObject;
  import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
 +import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
@@ -914,11 +930,13 @@ index 2af0a50c..39d92ceb 100644
  
  import java.util.HashMap;
  import java.util.Map;
-@@ -26,14 +30,35 @@ import java.util.Map;
++import java.util.List;
+ 
  public class MapTracker extends StoredObject {
  
      private final Map<Long, Integer> javaIds = new HashMap<>();
 -    private int nextMapId;
++    private final Map<Long, MapData> maps = new HashMap<>();
 +    private int nextJavaId;
  
      public MapTracker(final UserConnection user) {
@@ -927,6 +945,20 @@ index 2af0a50c..39d92ceb 100644
  
 -    public int getJavaId(final long bedrockUuid) {
 -        return this.javaIds.computeIfAbsent(bedrockUuid, ignored -> this.nextMapId++);
++    public MapData updateData(final long bedrockId, final byte dimension, final boolean locked,
++                              final BlockPosition origin, final Byte scale, final List<Long> creationMapIds) {
++        final MapData previous = this.maps.get(bedrockId);
++        final MapData data = new MapData(dimension, locked, origin,
++                scale != null ? scale : previous != null ? previous.scale() : null,
++                creationMapIds != null ? creationMapIds : previous != null ? previous.creationMapIds() : List.of());
++        this.maps.put(bedrockId, data);
++        return data;
++    }
++
++    public MapData mapData(final long bedrockId) {
++        return this.maps.get(bedrockId);
++    }
++
 +    public int javaId(final long bedrockId) {
 +        final Integer existingId = this.javaIds.get(bedrockId);
 +        if (existingId != null) {
@@ -950,6 +982,18 @@ index 2af0a50c..39d92ceb 100644
 +        request.write(BedrockTypes.UNSIGNED_INT_LE, 0L); // client pixel count
 +        request.sendToServer(BedrockProtocol.class);
 +        return javaId;
++    }
++
++    public record MapData(byte dimension, boolean locked, BlockPosition origin, Byte scale, List<Long> creationMapIds) {
++
++        public MapData {
++            creationMapIds = List.copyOf(creationMapIds);
++        }
++
++        public byte javaScale() {
++            return this.scale != null ? this.scale : 0;
++        }
++
      }
  
  }
@@ -1392,6 +1436,71 @@ index 00000000..d0e3a174
 +
 +    public Color getColor() {
 +        return new Color((this.value >> 16) & 0xFF, (this.value >> 8) & 0xFF, this.value & 0xFF, (this.value >> 24) & 0xFF);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/MapTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/MapTrackerTest.java
+new file mode 100644
+index 00000000..79a1fbce
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/MapTrackerTest.java
+@@ -0,0 +1,59 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class MapTrackerTest {
++
++    @Test
++    void partialUpdatesRetainScaleAndServerMapFamily() {
++        final MapTracker tracker = new MapTracker(null);
++        final long id = -73014444008L;
++        final List<Long> family = new ArrayList<>(List.of(id, id + 1, id + 2, id + 3, id + 4));
++        tracker.updateData(id, (byte) 0, false, new BlockPosition(-128, 0, 0), (byte) 0, family);
++        family.clear();
++        final MapTracker.MapData result = tracker.updateData(id, (byte) 2, true, new BlockPosition(-192, 0, 64), null, null);
++        assertEquals((byte) 0, result.scale());
++        assertEquals((byte) 2, result.dimension());
++        assertTrue(result.locked());
++        assertEquals(new BlockPosition(-192, 0, 64), result.origin());
++        assertEquals(List.of(id, id + 1, id + 2, id + 3, id + 4), result.creationMapIds());
++        assertThrows(UnsupportedOperationException.class, () -> result.creationMapIds().clear());
++        assertSame(result, tracker.mapData(id));
++    }
++
++    @Test
++    void absentScalePreservesZoomWhileExplicitZeroAndEmptyFamilyReplaceState() {
++        final MapTracker tracker = new MapTracker(null);
++        final BlockPosition origin = new BlockPosition(0, 0, 0);
++        tracker.updateData(42L, (byte) 0, false, origin, (byte) 3, List.of(42L, 900L));
++        assertEquals((byte) 3, tracker.updateData(42L, (byte) 0, false, origin, null, null).javaScale());
++        final MapTracker.MapData reset = tracker.updateData(42L, (byte) 0, false, origin, (byte) 0, List.of());
++        assertEquals((byte) 0, reset.javaScale());
++        assertTrue(reset.creationMapIds().isEmpty());
++    }
++
++    @Test
++    void aPartialFirstUpdateKeepsScaleUnknownAndOtherMapStateIndependent() {
++        final MapTracker tracker = new MapTracker(null);
++        final BlockPosition origin = new BlockPosition(0, 0, 0);
++        tracker.updateData(1L, (byte) 0, true, origin, (byte) 4, List.of(1L));
++        final MapTracker.MapData partial = tracker.updateData(-1L, (byte) 1, false, origin, null, null);
++        assertNull(partial.scale());
++        assertEquals((byte) 0, partial.javaScale());
++        assertTrue(partial.creationMapIds().isEmpty());
++        assertEquals((byte) 4, tracker.mapData(1L).scale());
++        assertNull(tracker.mapData(2L));
 +    }
 +
 +}
