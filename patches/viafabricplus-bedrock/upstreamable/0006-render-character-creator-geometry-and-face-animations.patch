@@ -1,4 +1,4 @@
-From 7d585cac552979a703c2997a227eba0d2474bc73 Mon Sep 17 00:00:00 2001
+From 7f89183d1e82614d3880f7cb40256319b8a24e95 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 10:44:51 +0200
 Subject: [PATCH] feat(bedrock): render Character Creator geometry and face
@@ -39,24 +39,37 @@ spectating. Bedrock 1.26.51.1 persona controllers select player_animated,
 which inherits entity_alphatest with UV animation. Existing CPU frame
 cropping preserves its selected texels with identity shader UVs. Keep
 spectator and invisible surfaces on their existing fallback route.
+
+Submit animated skin arm and sleeve surfaces during Java's first-person
+hand pass. Matching licensed Bedrock 1.26.51.1 persona render controllers
+bind the face, 32x32, and 128x128 surfaces in first person, exposing only
+arms and sleeves. Keep each surface's bind pivot and existing frame
+texture, and share the native alpha-test material for body and animated layers. Java's hand renderer
+does not invoke world render layers, so those surfaces previously vanished.
+
+This completes surface submission where Java draws a hand. Native
+first-person graph, camera and item transforms, walking bob, and charged
+left-hand visibility require further integration and comparison.
 ---
  .../render/MixinEntityRenderDispatcher.java   |   2 +-
  .../features/render/MixinGuiSkinRenderer.java |  32 +++
  .../bedrock/render/BedrockGeometry.java       | 105 ++++++-
- .../bedrock/render/BedrockPersonaLayer.java   |  49 ++++
- .../bedrock/render/BedrockPlayerRenderer.java |  10 +-
+ .../bedrock/render/BedrockPersonaLayer.java   |  72 +++++
+ .../bedrock/render/BedrockPlayerRenderer.java |  53 +++-
  .../bedrock/render/BedrockPlayerSkins.java    | 269 ++++++++++++++++--
  .../bedrock/render/BedrockSkinAnimation.java  | 220 ++++++++++++++
  .../viafabricplus-bedrock.mixins.json         |   1 +
  .../render/BedrockPersonaCaptureTest.java     |  70 +++++
  .../render/BedrockPersonaGeometryTest.java    | 243 ++++++++++++++++
+ .../render/BedrockPersonaHandsTest.java       |  75 +++++
  .../render/BedrockSkinAnimationTest.java      | 157 ++++++++++
- 11 files changed, 1136 insertions(+), 22 deletions(-)
+ 12 files changed, 1273 insertions(+), 26 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinGuiSkinRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaLayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimation.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaCaptureTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaGeometryTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaHandsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimationTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
@@ -263,10 +276,10 @@ index 08fef85..088f2ac 100644
          final float pivotY = cube.getPivot().getY();
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaLayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaLayer.java
 new file mode 100644
-index 0000000..53a1cf5
+index 0000000..fe79e8a
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaLayer.java
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,72 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -278,6 +291,7 @@ index 0000000..53a1cf5
 +import java.util.HashMap;
 +import java.util.Map;
 +import net.minecraft.client.model.player.PlayerModel;
++import net.minecraft.client.model.geom.ModelPart;
 +import net.minecraft.client.renderer.SubmitNodeCollector;
 +import net.minecraft.client.renderer.entity.layers.RenderLayer;
 +import net.minecraft.client.renderer.entity.player.AvatarRenderer;
@@ -305,9 +319,7 @@ index 0000000..53a1cf5
 +        this.surfaceModel.setupAnim(state);
 +        final RenderType renderType;
 +        if (BedrockPlayerRenderer.usesNativeMaterial(state, !state.isInvisible, false)) {
-+            final boolean netherLighting = BedrockActorRenderTypes.usesNetherLighting();
-+            renderType = this.nativeMaterials.computeIfAbsent(netherLighting, _ -> BedrockActorRenderTypes.create(
-+                this.surfaceTexture, false, false, false, 1F, BedrockActorUvTransform.IDENTITY, netherLighting));
++            renderType = this.nativeMaterial();
 +        } else {
 +            renderType = RenderTypes.entityTranslucent(this.surfaceTexture);
 +        }
@@ -315,28 +327,59 @@ index 0000000..53a1cf5
 +            packedLight, OverlayTexture.NO_OVERLAY, state.outlineColor);
 +    }
 +
++    void submitHand(final PoseStack poseStack, final SubmitNodeCollector collector, final int packedLight,
++                    final boolean right, final boolean hasSleeve) {
++        final ModelPart arm = prepareHand(this.surfaceModel, right, hasSleeve);
++        collector.order(1).submitModelPart(arm, poseStack, this.nativeMaterial(), packedLight, OverlayTexture.NO_OVERLAY, null);
++    }
++
++    static ModelPart prepareHand(final PlayerModel model, final boolean right, final boolean hasSleeve) {
++        final ModelPart arm = right ? model.rightArm : model.leftArm;
++        // Keep this surface's bind pivot. World animation must not leak into Java's hand pass.
++        arm.getAllParts().forEach(ModelPart::resetPose);
++        arm.visible = true;
++        model.leftSleeve.visible = hasSleeve;
++        model.rightSleeve.visible = hasSleeve;
++        model.leftArm.zRot = -0.1F;
++        model.rightArm.zRot = 0.1F;
++        return arm;
++    }
++
++    private RenderType nativeMaterial() {
++        final boolean netherLighting = BedrockActorRenderTypes.usesNetherLighting();
++        return this.nativeMaterials.computeIfAbsent(netherLighting, _ -> BedrockActorRenderTypes.create(
++            this.surfaceTexture, false, false, false, 1F, BedrockActorUvTransform.IDENTITY, netherLighting));
++    }
++
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
-index 471807a..e5ea04b 100644
+index 471807a..f00c62a 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerRenderer.java
-@@ -19,6 +19,7 @@
+@@ -18,30 +18,41 @@
+ 
  package com.viaversion.viafabricplus.bedrock.render;
  
++import com.mojang.blaze3d.vertex.PoseStack;
++import java.util.ArrayList;
  import java.util.HashMap;
 +import java.util.List;
  import java.util.Map;
  import net.minecraft.client.model.player.PlayerModel;
  import net.minecraft.client.player.AbstractClientPlayer;
-@@ -26,14 +27,19 @@ import net.minecraft.client.renderer.entity.EntityRendererProvider;
++import net.minecraft.client.renderer.SubmitNodeCollector;
+ import net.minecraft.client.renderer.entity.EntityRendererProvider;
  import net.minecraft.client.renderer.entity.player.AvatarRenderer;
  import net.minecraft.client.renderer.entity.state.AvatarRenderState;
  import net.minecraft.client.renderer.rendertype.RenderType;
++import net.minecraft.client.renderer.texture.OverlayTexture;
 +import net.minecraft.resources.Identifier;
  
  final class BedrockPlayerRenderer extends AvatarRenderer<AbstractClientPlayer> {
  
-     private final Map<Boolean, RenderType> nativeMaterials = new HashMap<>();
+-    private final Map<Boolean, RenderType> nativeMaterials = new HashMap<>();
++    private final Map<MaterialKey, RenderType> nativeMaterials = new HashMap<>();
++    private final List<BedrockPersonaLayer> personaLayers = new ArrayList<>();
  
 -    BedrockPlayerRenderer(final EntityRendererProvider.Context context, final PlayerModel model, final boolean slim) {
 +    BedrockPlayerRenderer(final EntityRendererProvider.Context context, final PlayerModel model, final boolean slim,
@@ -344,15 +387,56 @@ index 471807a..e5ea04b 100644
          super(context, slim);
          this.model = model;
 +        for (final Surface surface : surfaces) {
-+            this.addLayer(new BedrockPersonaLayer(this, surface.model(), surface.texture()));
++            final var layer = new BedrockPersonaLayer(this, surface.model(), surface.texture());
++            this.personaLayers.add(layer);
++            this.addLayer(layer);
 +        }
      }
  
      @Override
-@@ -50,4 +56,6 @@ final class BedrockPlayerRenderer extends AvatarRenderer<AbstractClientPlayer> {
+     protected RenderType getRenderType(final AvatarRenderState state, final boolean visible, final boolean translucent, final boolean glowing) {
+         if (usesNativeMaterial(state, visible, translucent)) {
+-            final boolean netherLighting = BedrockActorRenderTypes.usesNetherLighting();
+-            return this.nativeMaterials.computeIfAbsent(netherLighting, _ -> BedrockActorRenderTypes.create(
+-                this.getTextureLocation(state), false, false, false, 1F, BedrockActorUvTransform.IDENTITY, netherLighting));
++            return this.nativeMaterial(this.getTextureLocation(state));
+         }
+         return super.getRenderType(state, visible, translucent, glowing);
+     }
+@@ -50,4 +61,36 @@ final class BedrockPlayerRenderer extends AvatarRenderer<AbstractClientPlayer> {
          return visible && !translucent && !state.isSpectator;
      }
  
++    @Override
++    public void renderRightHand(final PoseStack poseStack, final SubmitNodeCollector collector, final int packedLight,
++                                final Identifier skinTexture, final boolean hasSleeve) {
++        this.submitHand(poseStack, collector, packedLight, skinTexture, true, hasSleeve);
++    }
++
++    @Override
++    public void renderLeftHand(final PoseStack poseStack, final SubmitNodeCollector collector, final int packedLight,
++                               final Identifier skinTexture, final boolean hasSleeve) {
++        this.submitHand(poseStack, collector, packedLight, skinTexture, false, hasSleeve);
++    }
++
++    private void submitHand(final PoseStack poseStack, final SubmitNodeCollector collector, final int packedLight,
++                            final Identifier skinTexture, final boolean right, final boolean hasSleeve) {
++        final var arm = BedrockPersonaLayer.prepareHand(this.model, right, hasSleeve);
++        collector.submitModelPart(arm, poseStack, this.nativeMaterial(skinTexture), packedLight, OverlayTexture.NO_OVERLAY, null);
++        for (final BedrockPersonaLayer layer : this.personaLayers) {
++            layer.submitHand(poseStack, collector, packedLight, right, hasSleeve);
++        }
++    }
++
++    private RenderType nativeMaterial(final Identifier texture) {
++        final var key = new MaterialKey(texture, BedrockActorRenderTypes.usesNetherLighting());
++        return this.nativeMaterials.computeIfAbsent(key, material -> BedrockActorRenderTypes.create(
++            material.texture(), false, false, false, 1F, BedrockActorUvTransform.IDENTITY, material.netherLighting()));
++    }
++
++    private record MaterialKey(Identifier texture, boolean netherLighting) {
++    }
++
 +    record Surface(PlayerModel model, Identifier texture) {
 +    }
  }
@@ -1322,6 +1406,87 @@ index 0000000..0572790
 +            vector.add(value);
 +        }
 +        return vector;
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaHandsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaHandsTest.java
+new file mode 100644
+index 0000000..b22af0a
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPersonaHandsTest.java
+@@ -0,0 +1,75 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.mojang.blaze3d.vertex.PoseStack;
++import java.util.concurrent.atomic.AtomicInteger;
++import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockPersonaHandsTest {
++    @Test
++    void resetsEachSurfaceToItsOwnBindPoseWithoutLosingNestedGeometry() {
++        final var geometry = BedrockGeometryModel.fromJson("""
++            {"minecraft:geometry":[{"description":{"identifier":"geometry.hand","texture_width":32,"texture_height":32},
++            "bones":[{"name":"rightArm","pivot":[-6,21,2],"rotation":[12,34,56],
++            "cubes":[{"origin":[-9,9,0],"size":[4,12,4],"uv":[0,0]}]},
++            {"name":"rightSleeve","pivot":[-5,20,3]},
++            {"name":"leftArm","pivot":[7,23,-1],"rotation":[-10,20,30],
++            "cubes":[{"origin":[5,11,-3],"size":[4,12,4],"uv":[0,0]}]},
++            {"name":"leftSleeve","pivot":[6,21,0]}]}]}
++            """).getFirst();
++        final var model = BedrockGeometry.playerModel(geometry, false);
++        for (boolean right : new boolean[]{true, false}) {
++            final var arm = right ? model.rightArm : model.leftArm;
++            final var bind = arm.getInitialPose();
++            arm.setPos(100, 200, 300);
++            arm.setRotation(1, 2, 3);
++            arm.xScale = arm.yScale = arm.zScale = 4;
++            arm.visible = false;
++            final var sleeve = right ? model.rightSleeve : model.leftSleeve;
++            sleeve.loadPose(arm.storePose());
++            final var cube = arm.getChild("cube_0");
++            final var cubeBind = cube.getInitialPose();
++            cube.setPos(10, 20, 30);
++            cube.setRotation(1, 2, 3);
++            cube.xScale = 5;
++
++            assertSame(arm, BedrockPersonaLayer.prepareHand(model, right, false));
++            assertEquals(bind.x(), arm.x);
++            assertEquals(bind.y(), arm.y);
++            assertEquals(bind.z(), arm.z);
++            assertEquals(bind.xRot(), arm.xRot);
++            assertEquals(bind.yRot(), arm.yRot);
++            assertEquals(right ? 0.1F : -0.1F, arm.zRot);
++            assertEquals(1, arm.xScale);
++            assertEquals(1, arm.yScale);
++            assertEquals(1, arm.zScale);
++            assertTrue(arm.visible);
++            assertEquals(cubeBind, cube.storePose());
++            assertEquals(sleeve.getInitialPose(), sleeve.storePose());
++            assertFalse(model.rightSleeve.visible);
++            assertFalse(model.leftSleeve.visible);
++
++            // Converted arms hold their cubes in children, even when the arm itself is empty.
++            assertTrue(arm.isEmpty());
++            final var cubes = new AtomicInteger();
++            arm.visit(new PoseStack(), (_, _, _, _) -> cubes.incrementAndGet());
++            assertEquals(1, cubes.get());
++            BedrockPersonaLayer.prepareHand(model, right, true);
++            assertTrue(model.rightSleeve.visible);
++            assertTrue(model.leftSleeve.visible);
++        }
++        assertEquals(1, model.rightSleeve.x);
++        assertEquals(1, model.rightSleeve.y);
++        assertEquals(1, model.rightSleeve.z);
++        assertEquals(-1, model.leftSleeve.x);
++        assertEquals(2, model.leftSleeve.y);
++        assertEquals(1, model.leftSleeve.z);
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockSkinAnimationTest.java

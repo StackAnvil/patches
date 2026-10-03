@@ -37,3 +37,37 @@ The production Java renderer provides 1,247 observations across 45 seconds with 
 All ten Java eye closures match transitions in the renderer trace. Video and trace durations differ by less than 11 milliseconds. The visible closures range from approximately 25 to 183 milliseconds. Analysis uses recorded frame timestamps and decodes frames without duplication. Iris classification uses channel ratios because world lighting changes during the recording.
 
 These observations support the tested world clock and visible blink behavior. They do not establish identical random sequences, multiplayer phase, native lighting, remote receive behavior, or other facial combinations. Recordings, actor addresses, account files, and probes remain private.
+
+## First-person animated skin surfaces
+
+The matching licensed Bedrock 1.26.51.1 package supplies first-person controllers for all three animated surface types.
+The final player and persona definitions select their bound geometry and texture, with arm and sleeve visibility.
+Animated surfaces use `Material.animated`, which inherits the native alpha-test material.
+
+Java 26.3's hand renderer calls `AvatarRenderer.renderRightHand` or `renderLeftHand` directly.
+These methods do not submit world render layers.
+The Bedrock renderer now submits each surface's corresponding arm after the body arm, using its existing frame texture.
+Body and surface hands share the native alpha-test material family.
+Each surface keeps its authored bind pivot and resets its arm pose before submission.
+Sleeve visibility follows the hand call.
+
+A targeted test covers independent bind pivots, rotation and scale reset, both hands, nested cube geometry, and sleeve visibility.
+Native first-person graph playback, camera and item transforms, walking bob, and charged left-arm visibility remain incomplete.
+The Java hand call still determines which arms are submitted.
+Private package assets, probes, and screenshots remain outside the repository.
+
+The full build passes all four targets. The final add-on build passes 485 tests with no failures and 96 optional fixture skips.
+The new hand regression runs without a private fixture and passes.
+The north-star PR check and bundle generation also pass.
+
+A rebuilt Java 26.3 client joins Bedrock 1.26.51.1 through ViaProxy on the private display.
+A temporary probe installs a transparent body with a separate two-frame red/green arm strip.
+
+Both production hand methods submit body and surface geometry into their ordered opaque phases.
+Repeated draws keep the world layer list stable and preserve authored arm pivots.
+Eight captured frames per hand show both uploaded strip frames on the visible arm.
+The left-hand check sets the private actor's main arm directly; preferred-hand synchronization remains unverified.
+
+An opaque blue base texture does not obscure the overlapping animated surface in six additional captures.
+The probe restores the arm preference, and the test client stops afterward.
+These checks establish the tested surface draw path, not native first-person motion or complete skin parity.
