@@ -19,7 +19,8 @@ export const command = Effect.fn("command")(function* (program: string, args: st
     },
     catch: (cause) => {
       const error = cause as Error & { stdout?: string; stderr?: string };
-      return new Error(`${program} ${args.join(" ")} failed: ${error.stderr || error.message}`, { cause });
+      const output = [error.stdout, error.stderr].filter((value) => value?.trim()).join("\n");
+      return new Error(`${program} ${args.join(" ")} failed: ${output || error.message}`, { cause });
     },
   });
 });

@@ -8,12 +8,14 @@ import { command } from "../src/process.ts";
 test("command failures remain recoverable and preserve the subprocess cause", async () => {
   const exitCode = 29;
   const detail = crypto.randomUUID();
+  const context = crypto.randomUUID();
   const error = await Effect.runPromise(command(process.execPath, [
-    "-e", "process.stderr.write(process.argv[1]); process.exit(Number(process.argv[2]));", detail, String(exitCode),
+    "-e", "process.stdout.write(process.argv[3]); process.stderr.write(process.argv[1]); process.exit(Number(process.argv[2]));", detail, String(exitCode), context,
   ], import.meta.dir).pipe(Effect.flip));
 
   expect(error).toBeInstanceOf(Error);
   expect(error.message).toContain(detail);
+  expect(error.message).toContain(context);
   expect(error.cause).toBeInstanceOf(Error);
   expect((error.cause as { code: number }).code).toBe(exitCode);
 });
