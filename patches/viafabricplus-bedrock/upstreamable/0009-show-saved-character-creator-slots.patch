@@ -1,4 +1,4 @@
-From 99a8618a2bf11c5ccd4f252abfc172ddb01f4646 Mon Sep 17 00:00:00 2001
+From 2fc12dbf1413800c89d56a78f070ead70049ba4c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1255,6 +1255,14 @@ context, and subtracts each authored arm pivot Y from 22. Keep these
 values separate from Java's inverse swap transform. Private executable
 probes cover 343 height pairs and 100 arm-pivot pairs. This supplies graph
 inputs; native camera and item drawing still require integration.
+
+Keep first-person target rotation queries in the native zero-rotation scope
+while preserving real camera pitch in v.player_x_rotation. The target
+renderFirstPerson clears ActorRotationComponent storage, MobBodyRotationComponent
+(FNV32 d7f64bba), and ActorHeadRotationComponent (FNV32 babe7211) before
+actor dispatch, then restores them. Native pitch callback 0x14065a550
+executes against these cleared values in 567 private probe cases.
+Do not mutate world or preview queries when binding the hand frame.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   68 +
@@ -1352,7 +1360,7 @@ inputs; native camera and item drawing still require integration.
  .../sound/MixinBedrockSoundEngine.java        |   50 +
  .../sound/MixinBedrockSoundManager.java       |   16 +
  .../bedrock/render/BedrockAnimatedModel.java  |  210 +
- .../render/BedrockFirstPersonInput.java       |   32 +
+ .../render/BedrockFirstPersonInput.java       |   36 +
  .../bedrock/render/BedrockGeometry.java       |   18 +-
  .../render/BedrockGeometryQueries.java        |   59 +
  .../bedrock/render/BedrockModelLocators.java  |   92 +
@@ -1435,13 +1443,13 @@ inputs; native camera and item drawing still require integration.
  .../appearance/BedrockSoundEventTest.java     |  268 +
  .../appearance/BedrockSoundFileTest.java      |  108 +
  .../render/BedrockAnimatedModelTest.java      |   55 +
- .../render/BedrockFirstPersonInputTest.java   |   88 +
+ .../render/BedrockFirstPersonInputTest.java   |   97 +
  .../render/BedrockGeometryQueriesTest.java    |   99 +
  .../render/BedrockModelLocatorsTest.java      |  112 +
  .../render/BedrockPlayerActorStateTest.java   |  195 +
  .../render/BedrockPlayerModelTest.java        |  100 +
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 185 files changed, 40561 insertions(+), 110 deletions(-)
+ 185 files changed, 40574 insertions(+), 110 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -26552,10 +26560,10 @@ index 0000000..ffaf1a4
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInput.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInput.java
 new file mode 100644
-index 0000000..6e85f4d
+index 0000000..5401ab9
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInput.java
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,36 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -26576,8 +26584,12 @@ index 0000000..6e85f4d
 +                                            final float oldMainHeight, final float mainHeight,
 +                                            final float oldOffHeight, final float offHeight,
 +                                            final float partialTick) {
++        final var queries = new HashMap<>(actor.queries());
 +        final var variables = new HashMap<>(actor.variables());
 +        final var context = new HashMap<>(actor.context());
++        // Native clears actor, head, and body rotations while rendering hands. Camera pitch remains a variable.
++        queries.put("target_x_rotation", 0F);
++        queries.put("target_y_rotation", 0F);
 +        variables.put("player_arm_height", oldMainHeight + (mainHeight - oldMainHeight) * partialTick);
 +        context.put("player_offhand_arm_height", oldOffHeight + (offHeight - oldOffHeight) * partialTick);
 +        final var query = actor.queries().get("get_default_bone_pivot");
@@ -26585,7 +26597,7 @@ index 0000000..6e85f4d
 +            variables.put("short_arm_offset_right", 22F - ((Number) pivot.evaluate(List.of("rightarm", 1))).floatValue());
 +            variables.put("short_arm_offset_left", 22F - ((Number) pivot.evaluate(List.of("leftarm", 1))).floatValue());
 +        }
-+        return new BedrockActorAnimation.Frame(actor.queries(), variables, context);
++        return new BedrockActorAnimation.Frame(queries, variables, context);
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
@@ -43410,10 +43422,10 @@ index 0000000..b1a8fd7
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInputTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInputTest.java
 new file mode 100644
-index 0000000..5c3c516
+index 0000000..710d6f5
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonInputTest.java
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,97 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -43429,6 +43441,7 @@ index 0000000..5c3c516
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockActorAnimation;
 +import java.nio.file.Files;
 +import java.nio.file.Path;
++import java.util.HashMap;
 +import java.util.Map;
 +import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
 +import org.junit.jupiter.api.Test;
@@ -43437,8 +43450,11 @@ index 0000000..5c3c516
 +final class BedrockFirstPersonInputTest {
 +    @Test
 +    void preservesActorScopeAndUsesAuthoredPivotsForIndependentHands() throws Exception {
-+        final var actor = new BedrockActorAnimation.Frame(pivots(19.25F, 24F),
-+                Map.of("attack_time", .25F), Map.of("is_first_person", 1));
++        final var queries = new HashMap<>(pivots(19.25F, 24F));
++        queries.put("target_x_rotation", 37F);
++        queries.put("target_y_rotation", -80F);
++        final var actor = new BedrockActorAnimation.Frame(queries,
++                Map.of("attack_time", .25F, "player_x_rotation", 37F), Map.of("is_first_person", 1));
 +        final var hands = BedrockFirstPersonInput.bind(actor, .1F, .9F, .8F, .2F, .5F);
 +        assertEquals(.25F, hands.variables().get("attack_time"));
 +        assertEquals(.5F, hands.variables().get("player_arm_height"), .00001F);
@@ -43446,7 +43462,12 @@ index 0000000..5c3c516
 +        assertEquals(1, hands.context().get("is_first_person"));
 +        assertEquals(2.75F, hands.variables().get("short_arm_offset_right"));
 +        assertEquals(-2F, hands.variables().get("short_arm_offset_left"));
-+        assertEquals(actor.queries(), hands.queries());
++        assertEquals(37F, hands.variables().get("player_x_rotation"));
++        assertEquals(0F, hands.queries().get("target_x_rotation"));
++        assertEquals(0F, hands.queries().get("target_y_rotation"));
++        assertEquals(37F, actor.queries().get("target_x_rotation"));
++        assertEquals(-80F, actor.queries().get("target_y_rotation"));
++        assertEquals(actor.queries().get("get_default_bone_pivot"), hands.queries().get("get_default_bone_pivot"));
 +        assertFalse(actor.variables().containsKey("player_arm_height"));
 +        assertFalse(actor.context().containsKey("player_offhand_arm_height"));
 +        assertFalse(hands.variables().containsKey("player_offhand_arm_height"));

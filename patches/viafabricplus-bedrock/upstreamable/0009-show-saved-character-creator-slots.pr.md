@@ -1272,3 +1272,17 @@ These bindings use Java's equip clock. They do not establish native equip update
 The rebuilt Java 26.3 client passes a private live ViaProxy probe. Six equipment and spectator states receive different main-hand and offhand heights in their correct Molang scopes. Hidden hands submit no geometry. Independent playback, nested calls, and exception restoration still pass. The probe restores the player's held items and client appearance.
 
 All four build targets pass. The add-on suite reports 502 tests, no failures or errors, and 101 optional skips with the input and visibility fixtures enabled. The core suite reports 385 tests, no failures or errors, and one optional skip. The client bundle and north-star PR check pass.
+
+### First-person target rotations
+
+The matching renderer clears actor rotation at `0x1447cae89` before actor dispatch. It also clears head rotation and body rotation. Their FNV32 component hashes are `babe7211` and `d7f64bba`. The [head rotation fields](https://github.com/LiteLDev/LeviLamina/blob/main/src/mc/entity/components/ActorHeadRotationComponent.h) and [body rotation fields](https://github.com/LiteLDev/LeviLamina/blob/main/src/mc/entity/components/MobBodyRotationComponent.h) identify current and previous yaw values. The native renderer restores these values after drawing.
+
+The registered target-pitch callback is `0x14065a550`. The target-yaw callback is `0x14065a660`. First-person pitch and yaw queries therefore sample zero-valued actor rotations. The renderer preserves real camera pitch separately in `v.player_x_rotation`. Map tilt continues to use that variable.
+
+The hand-frame binding now isolates these query values from the world and preview frames. Private executable probes run the actual actor clear and target-pitch callback for 567 angle and frame-alpha combinations. Portable tests preserve camera pitch, authored geometry queries, and the original actor scope.
+
+A rebuilt Java 26.3 client through ViaProxy passes six controlled equipment and spectator states. The production graph receives zero target rotations and a separate camera pitch of 37 degrees. Existing equip inputs, visibility, independent playback, nested scopes, and exception restoration still pass. The probe restores held items and client appearance ownership.
+
+The add-on and its two dependency build targets pass. The add-on suite reports 502 tests, no failures or errors, and 101 optional skips. The bundled client passes the live probe. Native graph drawing and camera and item transforms remain unfinished.
+
+Further native tracing identifies `0x1404c4400` as the first-person camera and projection setup. It calls `renderFirstPerson` with flags `0x21`. This path applies view bobbing through `0x1446bd990` and integrates a time-based rotation spring before actor drawing. The actor path also applies its world matrix, model scale, and global animations. These calculations require integration and visible comparison before Java hand transforms can be removed.

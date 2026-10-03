@@ -503,7 +503,7 @@ First-person hand calls now submit animated arm and sleeve surfaces with their e
 
 The licensed downloader now includes render-controller files and archives. Cache format 8 refreshes older downloads that lack these resources. Fresh acquisition through the bundled helper passes without a local game installation. The controller evaluator uses the sampled graph variables and preserves conditional references and ordered visibility rules. Matching package assets pass 144 hand visibility combinations. A rebuilt Java client through ViaProxy also passes six controlled submission states. Hidden hands submit no geometry. Nested and exceptional submissions restore their frame. Visible native motion still needs verification.
 
-First-person graph sampling now receives each hand's interpolated equip height. Offhand height stays in the native context scope. Arm offsets use 22 minus each authored arm pivot Y, before animation or render conversion. Matching executable probes pass 343 height cases and 100 arm-offset cases. These inputs preserve Java's equip clock; native equip timing and graph drawing remain unfinished.
+First-person graph sampling now receives each hand's interpolated equip height. Offhand height stays in the native context scope. Arm offsets use 22 minus each authored arm pivot Y, before animation or render conversion. Matching executable probes pass 343 height cases and 100 arm-offset cases. These inputs preserve Java's equip clock; native equip timing and graph drawing remain unfinished. First-person target rotation queries now use the native zero-rotation scope. Camera pitch remains available separately, and world and preview query values stay unchanged.
 
 ### Verification still needed
 
