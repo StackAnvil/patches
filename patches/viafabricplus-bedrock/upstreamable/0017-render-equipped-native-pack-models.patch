@@ -1,4 +1,4 @@
-From 36cd6dc47445818383bcf2168f870105741ce241 Mon Sep 17 00:00:00 2001
+From 96a374fd8a3887cffc8d9a01d88bbf17aad87b6f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 18:26:58 +0200
 Subject: [PATCH] feat(attachables): render equipped native pack models
@@ -26,8 +26,7 @@ scope; this does not prevent independent equipped wing playback.
 Targeted tests cover identity collisions, equipment lifetime, held spawn
 playback, owner context, ordered visibility and animated body binding, including rotated native ancestor rest poses.
 ---
- .../appearance/BedrockActorAnimation.java     |  40 ++-
- .../bedrock/appearance/BedrockMolang.java     |   5 +
+ .../appearance/BedrockActorAnimation.java     |  33 ++-
  .../appearance/BedrockPlayerControllers.java  |  36 ++-
  .../render/MixinAvatarAnimationRenderer.java  |  18 +-
  .../render/MixinAvatarAnimationState.java     |  11 +-
@@ -41,7 +40,7 @@ playback, owner context, ordered visibility and animated body binding, including
  .../BedrockPlayerControllersTest.java         |  22 ++
  .../render/BedrockEquippedAttachableTest.java |  98 +++++++
  .../render/BedrockPlayerModelTest.java        |  58 ++++
- 15 files changed, 765 insertions(+), 18 deletions(-)
+ 14 files changed, 754 insertions(+), 17 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquipmentCache.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableLayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
@@ -49,7 +48,7 @@ playback, owner context, ordered visibility and animated body binding, including
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
-index eaddeaa..4aba35f 100644
+index 7bedd3f..66750c2 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 @@ -24,25 +24,34 @@ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
@@ -104,31 +103,7 @@ index eaddeaa..4aba35f 100644
          }
      }
      @FunctionalInterface
-@@ -59,10 +68,14 @@ public final class BedrockActorAnimation {
-         Object evaluate(List<Object> arguments);
-     }
- 
--    public record Frame(Map<String, Object> queries, Map<String, Float> variables) {
-+    public record Frame(Map<String, Object> queries, Map<String, Float> variables, Map<String, Object> context) {
-+        public Frame(final Map<String, Object> queries, final Map<String, Float> variables) {
-+            this(queries, variables, Map.of());
-+        }
-         public Frame {
-             queries = Map.copyOf(queries);
-             variables = Map.copyOf(variables);
-+            context = Map.copyOf(context);
-         }
-     }
- 
-@@ -301,6 +314,7 @@ public final class BedrockActorAnimation {
-                     "any_animation_finished",
-                     (Query) _ -> this.queryState != null && this.queryState.anyFinished());
-             this.molang.queries(queries, 0, time, this.delta);
-+            this.molang.context(input.context());
-             if (this.active == null) {
-                 this.active = this.create(roots);
-                 this.run(initialize);
-@@ -313,6 +327,12 @@ public final class BedrockActorAnimation {
+@@ -345,6 +354,12 @@ public final class BedrockActorAnimation {
              return this.pose;
          }
  
@@ -141,22 +116,6 @@ index eaddeaa..4aba35f 100644
          private void sound(final BedrockAnimationSound sound) {
              if (this.soundOutput == null) return;
              final SoundCue cue = this.soundCue(sound);
-diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java
-index 236679a..2028010 100644
---- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java
-+++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java
-@@ -174,6 +174,11 @@ final class BedrockMolang {
-         this.engine.scope().set(name, binding);
-     }
- 
-+    void context(final Map<String, ?> values) {
-+        this.binding("context", values);
-+        this.engine.scope().set("c", this.engine.scope().get("context"));
-+    }
-+
-     Value value(final Program program) {
-         this.iterations = 0;
-         try {
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
 index 4816f1e..28e2b34 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
@@ -812,19 +771,19 @@ index 2224643..4cf95ab 100644
 +
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index e93cd92..dd9c3a4 100644
+index b26d68c..0e23f11 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-@@ -501,7 +501,7 @@ public final class BedrockPlayerSkins {
-         return pose;
-     }
+@@ -551,7 +551,7 @@ public final class BedrockPlayerSkins {
+     record HandVisibility(boolean arm, boolean sleeve) {}
+     private record FirstPersonFrame(Identifier texture, BedrockActorAnimation.Visibility visibility) {}
  
 -    private static Map<String, Object> actorQueries(final Avatar entity, final AvatarRenderState state, final float partialTick) {
 +    static Map<String, Object> actorQueries(final Avatar entity, final AvatarRenderState state, final float partialTick) {
          final Map<String, Object> queries = new HashMap<>();
          queries.put("life_time", state.ageInTicks / 20F);
          queries.put("frame_alpha", partialTick);
-@@ -755,9 +755,27 @@ public final class BedrockPlayerSkins {
+@@ -805,9 +805,27 @@ public final class BedrockPlayerSkins {
      public static void rendererContext(final EntityRendererProvider.Context context) {
          rendererContext = context;
          rendererEpoch++;

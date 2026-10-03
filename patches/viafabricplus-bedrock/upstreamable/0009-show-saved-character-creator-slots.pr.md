@@ -1240,3 +1240,21 @@ Private executable probes run the actual native component update and query callb
 A rebuilt Java 26.3 client connected through ViaProxy passed the live binding probe. Both local and remote players expose separate walking state. Remote tick samples match six frame fractions. Standing stops extrapolation, and snap teleports preserve the accumulated walking phase. A licensed first-person player graph consumes the production query and changes its arm position with the walking phase.
 
 All four build targets, the client bundle, and the north-star PR check passed. The final add-on rebuild ran 493 tests without failures or errors; 101 optional cases were skipped. All three walking tests passed with the native fixture enabled and no skips. These checks cover the walking input and graph sampling, not visible first-person parity.
+
+
+### Native first-person hand visibility
+
+The licensed downloader now selects `render_controllers` JSON files and their `.brarchive` containers. Cache format 8 refreshes older downloads before player graph loading. Fresh acquisition through the bundled helper decrypts the matching package, expands its controllers, and reuses the verified cache. Production does not require a local Bedrock installation.
+
+The Bedrock 1.26.51.1 package selects its latest player definition and render controller by resource identifiers and overlay order. Its first-person rules select right and left arms and sleeves from map, shield, item-use, charged, and spectator state. JSON booleans, conditional controller references, ordered wildcard rules, and primary geometry selection reach the evaluator. Other geometry controllers cannot expose hidden body parts.
+
+Render visibility uses the sampled animation scope. It does not repeat initialization or pre-animation scripts. First-person playback has separate clocks, variables, and controller state from world playback. Its frame supplies first-person query, variable, and context values. This playback suppresses sound and particle events. Persona skins now load the licensed player graph too.
+
+Java hand submission applies the selected arm and sleeve visibility. A scoped wrapper restores its previous frame after nested calls and exceptions. It preserves Java hand transforms until native camera and item transforms are verified. Native graph drawing, held-item attachment, walking bob, and visible motion comparison remain incomplete.
+
+The matching private library passes 144 equipment, use, charged, and spectator combinations. Tests also cover actor scope isolation, ordered overrides, geometry isolation, and cache refresh from format 7. The fresh helper and cache test passes in 183 seconds. All four build targets pass. That add-on run reports 498 tests, no failures or errors, and 100 optional skips. These checks establish asset acquisition and visibility decisions, not complete first-person rendering parity.
+
+
+A rebuilt Java 26.3 client connected through ViaProxy passed a controlled live submission probe. Production queries and the licensed graph selected arms and sleeves for six equipment and spectator states. The renderer submitted no model parts for hidden hands. Nested scopes and exceptional submissions restored the previous frame. The probe used temporary client appearances and restored held items and appearance ownership. It did not write account recipes or purchase content.
+
+The final add-on build reports 499 tests, no failures or errors, and 101 optional skips. All four visibility tests pass with the licensed fixture enabled. The server pack override test also passes. The client bundle and north-star PR check pass. Native camera transforms, held-item transforms, and visible motion comparison remain unfinished.
