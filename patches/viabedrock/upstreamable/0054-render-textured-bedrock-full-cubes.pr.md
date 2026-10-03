@@ -17,3 +17,21 @@ The same target recording places red snapdragons at the left flowerbed. Their ru
 The matched local Hive replay now shows the missing red snapdragon silhouette. Its full transport and rendering checks pass with no runtime exceptions or unresolved actors. The final builds pass 339 core tests, 474 add-on tests and 16 converter tests, without skips. The rebuilt ViaProxy also passes three local joins, entity status and metadata probes, and resource-pack reuse and invalidation checks. These checks validate the reported defect; they do not establish full scene parity.
 
 After rebasing onto the trusted classic cape change, all 152 world rendering classes and the fixed core classes remain byte-identical to the replayed build. The combined build passes 829 tests without skips.
+
+## Legacy full-cube geometry
+
+The pinned Bedrock 1.26.51.1 server serializes `minecraft:geometry.full_block_v1` for a full-cube block with format version 1.21.80.
+The compiler previously treated that built-in identifier as an unavailable external model and skipped its custom visual.
+Core now compiles both full-cube variants and rotates only the legacy bottom face by 180 degrees.
+Collision, selection, material, and occlusion behavior remain consistent with the modern cube.
+
+[Microsoft's geometry reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/blockreference/examples/blockcomponents/minecraftblock_geometry?view=minecraft-bedrock-stable) records the compatibility mapping and bottom-face difference introduced in 1.26.0.
+A semantic test compares complete generated models after removing only the expected bottom rotation.
+It covers namespaced and short identifiers, plus simple and structured geometry fields.
+The private server fixture supplies its own procedural texture without a local game installation.
+
+Live direct and ViaProxy joins now load the supplemental pack and show the custom cube with its procedural texture.
+Private state inspection confirms one compiled custom visual and a completed pack gate.
+The bottom-face orientation has numerical coverage, but a matched native image comparison remains unverified.
+The final build passes 413 core tests, 521 add-on tests, and 16 converter tests without failures or errors.
+The core has one optional fixture skip, and the add-on has 109 optional fixture skips.

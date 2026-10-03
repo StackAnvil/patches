@@ -1,4 +1,4 @@
-From f7dd3c9e83d8765d002b9f77e4bda673f1300e7e Mon Sep 17 00:00:00 2001
+From 5a746450c37f85c4d0c187fcd6ccf1b0138df04e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:38:26 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -74,6 +74,18 @@ planes with alpha_test and disabled face dimming. Its broad plane faces
 away from the matched camera; Java culled the native-visible blossoms.
 Semantic tests cover every face axis, signed UVs and quarter-turn UV
 rotations, material partitions and immutable source geometry.
+
+Recognize minecraft:geometry.full_block_v1 and preserve its bottom face UV
+rotation. The pinned Bedrock 1.26.51.1 server (build 51061372, protocol
+2193) serializes this identifier for a format 1.21.80 full-block definition.
+Treating it as an external model silently discarded the custom visual and
+skipped the supplemental pack. Microsoft documents the compatibility
+mapping and the 180-degree bottom-face difference introduced in 1.26.0:
+https://learn.microsoft.com/en-us/minecraft/creator/reference/content/blockreference/examples/blockcomponents/minecraftblock_geometry
+
+Tests compare complete modern and legacy models after removing only the
+expected bottom rotation, including simple and structured geometry fields,
+collision, selection and opaque occlusion.
 ---
  .../api/model/CustomBlockVisual.java          |  26 +
  .../definition/BlockDefinitions.java          |  17 +-
@@ -86,19 +98,19 @@ rotations, material partitions and immutable source geometry.
  .../protocol/packet/ResourcePackPackets.java  |  44 +-
  .../protocol/rewriter/BlockStateRewriter.java |  60 ++-
  .../rewriter/ResourcePackRewriter.java        |   2 +
- .../resourcepack/CustomBlockModel.java        | 489 ++++++++++++++++++
- .../CustomBlockResourceRewriter.java          | 202 ++++++++
+ .../resourcepack/CustomBlockModel.java        | 493 ++++++++++++++++++
+ .../CustomBlockResourceRewriter.java          | 202 +++++++
  .../CustomBlockStateDefinitions.java          | 153 ++++++
  .../protocol/storage/ChunkTracker.java        |  33 +-
  .../storage/CustomBlockPackStorage.java       | 103 ++++
  .../protocol/storage/ResourcePackStorage.java |  34 ++
  .../rewriter/CustomBlockBoneGeometryTest.java | 177 +++++++
- .../CustomBlockModelSelectionTest.java        | 341 ++++++++++++
+ .../CustomBlockModelSelectionTest.java        | 366 +++++++++++++
  .../CustomBlockPlaneGeometryTest.java         | 170 ++++++
  .../CustomBlockStateDefinitionsTest.java      | 218 ++++++++
  .../protocol/storage/ChunkTrackerTest.java    |  23 +
  .../storage/CustomBlockPackStorageTest.java   | 168 ++++++
- 23 files changed, 2421 insertions(+), 21 deletions(-)
+ 23 files changed, 2450 insertions(+), 21 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockVisual.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/CustomBlockDefinition.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
@@ -390,7 +402,7 @@ index 9dae7790..1aa82f66 100644
          final byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
          output.writeInt(bytes.length);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
-index e76b2f9a..19b2cf3c 100644
+index a083986a..da2a9702 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 @@ -53,7 +53,12 @@ import net.raphimc.viabedrock.protocol.task.*;
@@ -407,7 +419,7 @@ index e76b2f9a..19b2cf3c 100644
  
      public static final BedrockMappingData MAPPINGS = new BedrockMappingData();
  
-@@ -174,7 +179,22 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
+@@ -175,7 +180,22 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
                  ViaBedrock.getPlatform().getLogger().warning("Received unknown packet " + wrapper.getId() + " in state " + serverState + " with content: " + ByteBufUtil.hexDump(content));
                  throw CancelException.generate();
              }
@@ -432,7 +444,7 @@ index e76b2f9a..19b2cf3c 100644
                  final PacketWrapper playStatus = PacketWrapper.create(ClientboundBedrockPackets.PLAY_STATUS, wrapper.user());
                  playStatus.write(Types.INT, PlayStatus.LoginSuccess.getValue()); // status
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-index 4c895fd8..32346829 100644
+index 67d3faf4..0f3f6dd3 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 @@ -383,7 +383,7 @@ public final class JoinPackets {
@@ -700,10 +712,10 @@ index 07a19fa9..9b746b0c 100644
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
 new file mode 100644
-index 00000000..4ddcc38c
+index 00000000..a4674c78
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
-@@ -0,0 +1,489 @@
+@@ -0,0 +1,493 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -804,10 +816,11 @@ index 00000000..4ddcc38c
 +                renderMethod = method;
 +            }
 +        }
-+        final boolean fullCube = geometry.equals("minecraft:geometry.full_block") || geometry.equals("geometry.full_block");
++        final boolean legacyFullCube = geometry.equals("minecraft:geometry.full_block_v1") || geometry.equals("geometry.full_block_v1");
++        final boolean fullCube = legacyFullCube || geometry.equals("minecraft:geometry.full_block") || geometry.equals("geometry.full_block");
 +        final JsonObject model;
 +        if (fullCube) {
-+            model = fullCube(textureIds);
++            model = fullCube(textureIds, legacyFullCube);
 +        } else {
 +            final BedrockGeometryModel bedrockModel = storage.getModels().blockModels().get(geometry);
 +            if (bedrockModel == null) {
@@ -961,7 +974,7 @@ index 00000000..4ddcc38c
 +        return model;
 +    }
 +
-+    private static JsonObject fullCube(final Map<Direction, String> textureIds) {
++    private static JsonObject fullCube(final Map<Direction, String> textureIds, final boolean legacyOrientation) {
 +        final JsonObject model = new JsonObject();
 +        final JsonObject textures = new JsonObject();
 +        for (Map.Entry<Direction, String> entry : textureIds.entrySet()) {
@@ -975,6 +988,9 @@ index 00000000..4ddcc38c
 +        for (String direction : List.of("down", "up", "north", "south", "west", "east")) {
 +            final JsonObject face = new JsonObject();
 +            face.addProperty("texture", "#" + direction);
++            if (legacyOrientation && direction.equals("down")) {
++                face.addProperty("rotation", 180);
++            }
 +            faces.add(direction, face);
 +        }
 +        element.add("faces", faces);
@@ -2033,10 +2049,10 @@ index 00000000..a347e5aa
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
 new file mode 100644
-index 00000000..a48616db
+index 00000000..530b7ce6
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
-@@ -0,0 +1,341 @@
+@@ -0,0 +1,366 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2066,6 +2082,31 @@ index 00000000..a48616db
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class CustomBlockModelSelectionTest {
++
++    @Test
++    void preservesLegacyFullCubeBottomOrientationAndPhysicalProperties() {
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB))));
++        final CustomBlockVisual modern = CustomBlockModel.compile(storage, "test:block", 1,
++                components("minecraft:geometry.full_block", "ruby", "opaque"));
++        for (String identifier : List.of("minecraft:geometry.full_block_v1", "geometry.full_block_v1")) {
++            final CompoundTag components = components(identifier, "ruby", "opaque");
++            for (boolean simple : new boolean[]{false, true}) {
++                if (simple) {
++                    components.putString("minecraft:geometry", identifier);
++                }
++                final CustomBlockVisual legacy = CustomBlockModel.compile(storage, "test:block", 1, components);
++                assertNotNull(legacy);
++                assertEquals(modern.collisionBoxes(), legacy.collisionBoxes());
++                assertEquals(modern.selectionBoxes(), legacy.selectionBoxes());
++                assertEquals(modern.occluding(), legacy.occluding());
++                final JsonObject legacyModel = JsonParser.parseString(legacy.modelJson()).getAsJsonObject();
++                final JsonObject modernModel = JsonParser.parseString(modern.modelJson()).getAsJsonObject();
++                final JsonObject legacyFaces = legacyModel.getAsJsonArray("elements").get(0).getAsJsonObject().getAsJsonObject("faces");
++                assertEquals(180, legacyFaces.getAsJsonObject("down").remove("rotation").getAsInt());
++                assertEquals(modernModel, legacyModel);
++            }
++        }
++    }
 +
 +    @Test
 +    void preservesNetworkLightFilteringAndEmission() throws Exception {

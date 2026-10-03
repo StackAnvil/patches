@@ -51,8 +51,17 @@ The inventory excludes commented enum entries and includes transition registrati
 | P3 | Target packets absent from enums | Incomplete | Compare definitions with protocol 2193. Later preview packets do not establish target support. |
 | P4 | Intentional exclusions | Incomplete | Record versioned evidence for each telemetry, Education, platform, or obsolete exclusion. |
 
-A live ViaProxy join also logs startup inventory, clock, jigsaw, and voxel packets ignored outside the Java play state.
-Their lifecycle and required retained state need an audit before packet coverage can be complete.
+Live joins log startup inventory, player-list, jigsaw, and voxel packets ignored outside the Java play state.
+Their lifecycle and required retained state still need an audit.
+A separate wire capture places inventory after StartGame, so these logs alone do not establish a general buffering policy.
+
+The [clock patch](../patches/viabedrock/upstreamable/0014-initialize-and-preserve-bedrock-clock-time.pr.md) now accepts explicit clock packets during configuration.
+The pinned server sends a state sync before StartGame and its registry afterward.
+Direct and ViaProxy joins retain the registry while a supplemental custom-block pack loads.
+Java starts at the captured 72,046 ticks after that pack completes.
+Tests preserve running and paused snapshots, independent clocks, legacy fallback, and explicit sync after legacy time updates.
+The server advertises a running clock while its disabled daylight rule keeps queried daytime fixed.
+Native handling of those conflicting signals and live paused-clock behavior remain unverified.
 
 The [source guide](bedrock-development-sources.md) defines the version and enum research process.
 
@@ -144,7 +153,7 @@ The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and
 | R2 | Server particle dispatch | Incomplete | Retain actor identity and Molang variables, then route effects into native playback through both connection routes. |
 | R3 | Particle runtime | Incomplete | Complete components, actor contexts, child effects, concurrency, and visible lifecycle comparisons. |
 | R4 | Server audio | Incomplete | Retain handles, loops, playback position, and range behavior. Complete supported controls, captions, and audible comparisons. |
-| R5 | Custom block geometry and lighting | Incomplete | Complete rotated nonuniform scale, legacy texture variation, and directional light occlusion. |
+| R5 | Custom block geometry and lighting | Incomplete | Legacy full-cube models now load on direct and ViaProxy routes. Complete rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, and directional light occlusion. |
 | R6 | Equipped attachables | Incomplete | Transport graphs through ViaProxy. Complete variants, explicit bindings, per-bone materials, and material families. |
 
 The attachable matrix tests establish supported same-name affine bindings.
@@ -183,3 +192,14 @@ Every applicable requirement needs production behavior and evidence that matches
 Each exclusion needs evidence for the pinned version.
 Direct and ViaProxy results must name any required client integration.
 The goal remains active while any required row is incomplete or unverified.
+
+## Latest validation
+
+The final complete stack build passes after replaying the clock and legacy full-cube changes into their owning patches.
+The core suite reports 413 tests with one optional fixture skip.
+The add-on suite reports 521 tests with 109 optional fixture skips.
+The converter suite reports 16 tests without skips.
+All three suites have zero failures and errors.
+Core Checkstyle passes.
+Private direct and ViaProxy comparisons establish clock retention through supplemental pack loading and visible custom-cube texture conversion.
+They do not establish full protocol, rendering, or platform parity.
