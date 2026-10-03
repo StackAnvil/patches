@@ -35,3 +35,44 @@ Private state inspection confirms one compiled custom visual and a completed pac
 The bottom-face orientation has numerical coverage, but a matched native image comparison remains unverified.
 The final build passes 413 core tests, 521 add-on tests, and 16 converter tests without failures or errors.
 The core has one optional fixture skip, and the add-on has 109 optional fixture skips.
+
+## Physical properties through ViaProxy
+
+The supplemental converted pack now includes protocol-bound collision, selection, occlusion, and lighting properties.
+The add-on reads these properties from the accepted server pack on both connection routes.
+The cache fingerprint includes physical properties, so a changed collision box cannot reuse a previous archive.
+Local packs cannot override the server mapping.
+
+A private Bedrock 1.26.51.1 fixture sends half-height collision, full-height selection, emission 12, and filtering 3.
+Its StartGame definition uses `minecraft:light_dampening.lightLevel`, while the target Hive recording uses `minecraft:block_light_filter.lightLevel`.
+Core now reads both observed wire forms and prefers the filter field when both exist.
+Network NBT tests exercise transparent, partial, and opaque values for both forms.
+
+The direct and ViaProxy clients both land at Y=120.5 on the fixture at Y=120.
+Live block-state inspection confirms separate selection bounds and the native emission/filter values.
+A ViaProxy resource reload preserves these values and the standing height.
+Disconnect clears the client mapping.
+The fixture uses a procedural texture and requires no local game installation.
+These results require the client add-on for custom physics.
+Directional light occlusion and other rendering limits remain incomplete.
+
+## Native voxel registry
+
+Core now handles packet 337, VoxelShapes, during configuration and play.
+The decoder retains its shape grids, coordinate boundaries, name handles, and custom shape count atomically.
+Truncated or invalid input cannot replace the previous registry.
+A procedural four-box fixture establishes X/Y/Z ordering with Z varying fastest and low-bit-first occupancy.
+The target server sends 288 shapes, 221 names, and one custom shape for this fixture.
+ViaProxy retains this registry during configuration while the supplemental pack queues up to 233 world packets.
+The direct connection retains the same registry through joining.
+
+[Mojang's target packet reference](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/voxel-shapes-packet/) describes the registry structure.
+[Microsoft's voxel shape guide](https://learn.microsoft.com/en-us/minecraft/creator/documents/voxelshapes?view=minecraft-bedrock-stable) describes its culling purpose.
+Voxel grids do not replace physical collision or selection boxes.
+Applying culling rules, transformed face slices, and culling-layer conditions remains incomplete.
+
+The final full stack builds successfully.
+Core reports 419 tests with one optional fixture skip.
+The add-on reports 524 tests with 109 optional fixture skips.
+The converter reports 16 tests without skips.
+All suites have zero failures and errors, and core Checkstyle passes.

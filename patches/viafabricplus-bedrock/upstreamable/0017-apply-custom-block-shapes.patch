@@ -1,4 +1,4 @@
-From aa1a05cc146314740baa675564c841e58b7b56b8 Mon Sep 17 00:00:00 2001
+From b93dad2cf10979b7a65dbd2f6cb8276c3a0b4080 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:39:38 +0200
 Subject: [PATCH] feat(blocks): apply native custom block shapes and lighting
@@ -23,30 +23,126 @@ only for registered custom carriers with that override. Preserve ordinary
 states, world light, emission and ambient occlusion. Decode generated mixed
 face models through the Java cuboid loader in a focused integration test.
 The target Hive protocol 2193 capture contains 136 disabled material instances.
+
+Load protocol-bound physical properties from the accepted converted server
+pack when ViaBedrock runs in ViaProxy. Use the same collision, selection,
+lighting and carrier integration as direct connections. Keep properties
+through asynchronous reloads, replace them atomically, clear on disconnect
+and prevent a stale prepared reload from restoring a previous session.
+Local resource packs cannot override this server-owned mapping.
+
+Targeted tests cover server-pack precedence, shape and light values,
+reload ordering, removal and disconnect during preparation. The native
+VoxelShapes registry represents rendering culling and remains separate
+from the physical boxes transported here.
 ---
- .../bedrock/block/BedrockCustomBlocks.java    |  85 ++++++++++
+ .../block/BedrockCustomBlockResources.java    |  70 ++++++++
+ .../bedrock/block/BedrockCustomBlocks.java    |  92 +++++++++++
  .../features/block/MixinBlockColors.java      |  34 ++++
+ .../block/MixinCustomBlockConnection.java     |  24 +++
  .../block/MixinCustomBlockLighting.java       |  29 ++++
+ .../block/MixinCustomBlockResources.java      |  24 +++
  .../features/block/MixinCustomBlockState.java | 149 ++++++++++++++++++
  .../block/MixinRedstoneWireBlock.java         |  29 ++++
- .../viafabricplus-bedrock.mixins.json         |   4 +
+ .../viafabricplus-bedrock.mixins.json         |   6 +
  .../block/BedrockCustomBlockLightingTest.java |  54 +++++++
- .../block/BedrockCustomBlocksTest.java        |  62 ++++++++
- 8 files changed, 446 insertions(+)
+ .../BedrockCustomBlockResourcesTest.java      |  90 +++++++++++
+ .../block/BedrockCustomBlocksTest.java        |  63 ++++++++
+ 12 files changed, 664 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResources.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBlockColors.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockConnection.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockLighting.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockResources.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinRedstoneWireBlock.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockLightingTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResourcesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocksTest.java
 
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResources.java
+new file mode 100644
+index 0000000..a9c23d4
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResources.java
+@@ -0,0 +1,70 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.block;
++
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.minecraft.resources.Identifier;
++import net.minecraft.server.packs.repository.PackSource;
++import net.minecraft.server.packs.resources.ResourceManager;
++import net.minecraft.server.packs.resources.SimplePreparableReloadListener;
++import net.minecraft.util.profiling.ProfilerFiller;
++import net.raphimc.viabedrock.api.model.CustomBlockProperties;
++import org.apache.logging.log4j.LogManager;
++import org.apache.logging.log4j.Logger;
++
++import java.io.IOException;
++import java.nio.charset.StandardCharsets;
++import java.util.Map;
++import java.util.concurrent.atomic.AtomicReference;
++
++/** Physical block properties from the accepted, versioned server pack on either connection route. */
++public final class BedrockCustomBlockResources extends SimplePreparableReloadListener<BedrockCustomBlockResources.Prepared> {
++    private static final Logger LOGGER = LogManager.getLogger("Bedrock custom blocks");
++    private static final Identifier LOCATION = Identifier.fromNamespaceAndPath("viabedrock", "custom_blocks.json");
++    private static final AtomicReference<State> STATE = new AtomicReference<>(new State(Map.of()));
++
++    public static Map<Integer, CustomBlockProperties> current() {
++        return STATE.get().definitions();
++    }
++
++    public static void clear() {
++        STATE.set(new State(Map.of()));
++    }
++
++    @Override
++    protected Prepared prepare(final ResourceManager resources, final ProfilerFiller profiler) {
++        final State pending = STATE.updateAndGet(current -> new State(current.definitions()));
++        final var stack = resources.getResourceStack(LOCATION);
++        for (int i = stack.size() - 1; i >= 0; i--) {
++            final var resource = stack.get(i);
++            if (resource.source().location().source() != PackSource.SERVER) continue;
++            try (final var input = resource.open()) {
++                final byte[] content = input.readNBytes(CustomBlockProperties.MAX_BYTES + 1);
++                if (content.length > CustomBlockProperties.MAX_BYTES) {
++                    throw new IOException("Custom block metadata exceeds the byte limit");
++                }
++                final Map<Integer, CustomBlockProperties> definitions = CustomBlockProperties.decode(
++                    JsonParser.parseString(new String(content, StandardCharsets.UTF_8)));
++                return new Prepared(pending, definitions);
++            } catch (IOException | RuntimeException error) {
++                LOGGER.warn("Could not load Bedrock custom block properties", error);
++                return new Prepared(pending, Map.of());
++            }
++        }
++        return new Prepared(pending, Map.of());
++    }
++
++    @Override
++    protected void apply(final Prepared prepared, final ResourceManager resources, final ProfilerFiller profiler) {
++        STATE.compareAndSet(prepared.pending(), new State(prepared.definitions()));
++    }
++
++    record State(Map<Integer, CustomBlockProperties> definitions) {
++    }
++
++    record Prepared(State pending, Map<Integer, CustomBlockProperties> definitions) {
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java
 new file mode 100644
-index 0000000..8f37e78
+index 0000000..f91dda7
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,92 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -62,6 +158,7 @@ index 0000000..8f37e78
 +import net.minecraft.world.phys.shapes.Shapes;
 +import net.minecraft.world.phys.shapes.VoxelShape;
 +import net.raphimc.viabedrock.api.model.CustomBlockVisual;
++import net.raphimc.viabedrock.api.model.CustomBlockProperties;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 +import org.jetbrains.annotations.Nullable;
 +
@@ -72,9 +169,13 @@ index 0000000..8f37e78
 +/** Session-specific shapes for block states reserved by the resource-pack converter. */
 +public final class BedrockCustomBlocks {
 +
-+    private static volatile Snapshot snapshot = new Snapshot(null, Map.of(), Map.of());
++    private static volatile Snapshot snapshot = new Snapshot(null, Map.of(), Map.of(), Map.of());
 +
 +    private BedrockCustomBlocks() {
++    }
++
++    public static void clear() {
++        snapshot = new Snapshot(null, Map.of(), Map.of(), Map.of());
 +    }
 +
 +    public static @Nullable Visual current(final BlockState state) {
@@ -83,27 +184,34 @@ index 0000000..8f37e78
 +        }
 +        final UserConnection connection = ViaFabricPlus.api().userConnection();
 +        final ResourcePackStorage storage = connection != null ? connection.get(ResourcePackStorage.class) : null;
-+        final Map<Integer, CustomBlockVisual> definitions = storage != null ? storage.getCustomBlockVisuals() : Map.of();
++        final Map<Integer, CustomBlockVisual> direct = storage != null ? storage.getCustomBlockVisuals() : Map.of();
++        final Map<Integer, CustomBlockProperties> remote = BedrockCustomBlockResources.current();
++        final Object owner = Minecraft.getInstance().getConnection().getConnection();
 +        Snapshot current = snapshot;
-+        if (current.connection() != connection || current.definitions() != definitions) {
-+            current = createSnapshot(connection, definitions);
++        if (current.connection() != owner || current.direct() != direct || current.remote() != remote) {
++            current = createSnapshot(owner, direct, remote);
 +        }
 +        return current.visuals().isEmpty() ? null : current.visuals().get(Block.getId(state));
 +    }
 +
-+    private static synchronized Snapshot createSnapshot(final UserConnection connection, final Map<Integer, CustomBlockVisual> definitions) {
++    private static synchronized Snapshot createSnapshot(final Object connection, final Map<Integer, CustomBlockVisual> direct,
++                                                        final Map<Integer, CustomBlockProperties> remote) {
 +        final Snapshot current = snapshot;
-+        if (current.connection() == connection && current.definitions() == definitions) {
++        if (current.connection() == connection && current.direct() == direct && current.remote() == remote) {
 +            return current;
 +        }
-+        final Map<Integer, Visual> visuals = new HashMap<>(definitions.size());
-+        definitions.forEach((state, definition) -> visuals.put(state, visual(definition)));
-+        final Snapshot updated = new Snapshot(connection, definitions, Map.copyOf(visuals));
++        final Map<Integer, Visual> visuals = new HashMap<>();
++        if (!direct.isEmpty()) {
++            direct.forEach((state, definition) -> visuals.put(state, visual(CustomBlockProperties.of(definition))));
++        } else {
++            remote.forEach((state, definition) -> visuals.put(state, visual(definition)));
++        }
++        final Snapshot updated = new Snapshot(connection, direct, remote, Map.copyOf(visuals));
 +        snapshot = updated;
 +        return updated;
 +    }
 +
-+    static Visual visual(final CustomBlockVisual definition) {
++    static Visual visual(final CustomBlockProperties definition) {
 +        final VoxelShape collision = shape(definition.collisionBoxes());
 +        final VoxelShape selection = shape(definition.selectionBoxes());
 +        final boolean fullCollision = Shapes.equal(collision, Shapes.block());
@@ -115,21 +223,16 @@ index 0000000..8f37e78
 +    static VoxelShape shape(final List<CustomBlockVisual.Box> boxes) {
 +        VoxelShape shape = Shapes.empty();
 +        for (final CustomBlockVisual.Box box : boxes) {
-+            if (!Double.isFinite(box.minX()) || !Double.isFinite(box.minY()) || !Double.isFinite(box.minZ())
-+                || !Double.isFinite(box.maxX()) || !Double.isFinite(box.maxY()) || !Double.isFinite(box.maxZ())
-+                || box.minX() >= box.maxX() || box.minY() >= box.maxY() || box.minZ() >= box.maxZ()) {
-+                continue;
-+            }
 +            shape = Shapes.or(shape, Shapes.box(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ()));
 +        }
 +        return shape.optimize();
 +    }
 +
-+    public record Visual(CustomBlockVisual definition, VoxelShape collision, VoxelShape selection, VoxelShape occlusion,
++    public record Visual(CustomBlockProperties definition, VoxelShape collision, VoxelShape selection, VoxelShape occlusion,
 +                         boolean fullCollision, boolean largeCollision) {
 +    }
 +
-+    private record Snapshot(UserConnection connection, Map<Integer, CustomBlockVisual> definitions, Map<Integer, Visual> visuals) {
++    private record Snapshot(Object connection, Map<Integer, CustomBlockVisual> direct, Map<Integer, CustomBlockProperties> remote, Map<Integer, Visual> visuals) {
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBlockColors.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinBlockColors.java
@@ -172,6 +275,36 @@ index 0000000..48b052b
 +    }
 +
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockConnection.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockConnection.java
+new file mode 100644
+index 0000000..e101d6c
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockConnection.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
++
++import com.viaversion.viafabricplus.bedrock.block.BedrockCustomBlockResources;
++import com.viaversion.viafabricplus.bedrock.block.BedrockCustomBlocks;
++import net.minecraft.client.multiplayer.ClientCommonPacketListenerImpl;
++import net.minecraft.network.DisconnectionDetails;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(ClientCommonPacketListenerImpl.class)
++public abstract class MixinCustomBlockConnection {
++    @Inject(method = "onDisconnect", at = @At("HEAD"))
++    private void clearCustomBlockProperties(final DisconnectionDetails details, final CallbackInfo ci) {
++        BedrockCustomBlockResources.clear();
++        BedrockCustomBlocks.clear();
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockLighting.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockLighting.java
 new file mode 100644
 index 0000000..8e5c0e3
@@ -205,6 +338,36 @@ index 0000000..8e5c0e3
 +        // Converted custom models mark face_dimming=false with an upward override.
 +        // Honor that explicit setting even when the dimension dims upward faces.
 +        return quad.materialInfo().shadeDirectionOverride() == Direction.UP && BedrockCustomBlocks.current(state) != null ? 1F : original;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockResources.java
+new file mode 100644
+index 0000000..7ccca9d
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockResources.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
++
++import com.viaversion.viafabricplus.bedrock.block.BedrockCustomBlockResources;
++import net.minecraft.server.packs.PackType;
++import net.minecraft.server.packs.resources.ReloadableResourceManager;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(ReloadableResourceManager.class)
++public abstract class MixinCustomBlockResources {
++    @Inject(method = "<init>", at = @At("RETURN"))
++    private void registerCustomBlockMetadata(final PackType type, final CallbackInfo ci) {
++        if (type == PackType.CLIENT_RESOURCES) {
++            ((ReloadableResourceManager) (Object) this).registerReloadListener(new BedrockCustomBlockResources());
++        }
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockState.java
@@ -398,10 +561,10 @@ index 0000000..c05289d
 +
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 8cd3e15..9984869 100644
+index 8cd3e15..8ccbdfe 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -30,10 +30,13 @@
+@@ -30,10 +30,15 @@
      "features.block.MixinBambooStalkBlock",
      "features.block.MixinBedBlock",
      "features.block.MixinBlockBehaviour_Properties",
@@ -411,11 +574,13 @@ index 8cd3e15..9984869 100644
      "features.block.MixinChestBlock",
      "features.block.MixinConduitBlock",
 +    "features.block.MixinCustomBlockState",
++    "features.block.MixinCustomBlockResources",
++    "features.block.MixinCustomBlockConnection",
 +    "features.block.MixinCustomBlockLighting",
      "features.block.MixinDoorBlock",
      "features.block.MixinDragonEggBlock",
      "features.block.MixinEndPortalFrameBlock",
-@@ -41,6 +44,7 @@
+@@ -41,6 +46,7 @@
      "features.block.MixinLadderBlock",
      "features.block.MixinLanternBlock",
      "features.block.MixinLecternBlock",
@@ -483,18 +648,115 @@ index 0000000..49dcd6e
 +        assertTrue(model.ambientOcclusion());
 +    }
 +}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResourcesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResourcesTest.java
+new file mode 100644
+index 0000000..21d76e3
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResourcesTest.java
+@@ -0,0 +1,90 @@
++package com.viaversion.viafabricplus.bedrock.block;
++
++import net.minecraft.network.chat.Component;
++import net.minecraft.server.packs.PackLocationInfo;
++import net.minecraft.server.packs.PackResources;
++import net.minecraft.server.packs.repository.PackSource;
++import net.minecraft.server.packs.resources.Resource;
++import net.minecraft.server.packs.resources.ResourceManager;
++import net.raphimc.viabedrock.api.model.CustomBlockProperties;
++import net.raphimc.viabedrock.api.model.CustomBlockVisual;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.Test;
++
++import java.io.ByteArrayInputStream;
++import java.lang.reflect.Proxy;
++import java.nio.charset.StandardCharsets;
++import java.util.List;
++import java.util.Map;
++import java.util.Optional;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockCustomBlockResourcesTest {
++
++    @AfterEach
++    void clear() {
++        BedrockCustomBlockResources.clear();
++    }
++
++    @Test
++    void readsAcceptedServerPackPropertiesAndIgnoresLocalOverrides() {
++        final var visual = definition(0.5, 3);
++        final var ignored = definition(1, 15);
++        final ResourceManager resources = resources(List.of(resource(PackSource.SERVER, visual), resource(PackSource.DEFAULT, ignored)));
++        final var listener = new BedrockCustomBlockResources();
++        listener.apply(listener.prepare(resources, null), resources, null);
++        assertEquals(Map.of(42, CustomBlockProperties.of(visual)), BedrockCustomBlockResources.current());
++        final var loaded = BedrockCustomBlocks.visual(BedrockCustomBlockResources.current().get(42));
++        assertEquals(0.5, loaded.collision().max(net.minecraft.core.Direction.Axis.Y));
++        assertEquals(3, loaded.definition().lightDampening());
++    }
++
++    @Test
++    void keepsExistingPhysicsDuringReloadAndPreventsLateReloadAfterDisconnect() {
++        final ResourceManager resources = resources(List.of(resource(PackSource.SERVER, definition(0.5, 3))));
++        final var listener = new BedrockCustomBlockResources();
++        listener.apply(listener.prepare(resources, null), resources, null);
++        final var previous = BedrockCustomBlockResources.current();
++        final var pending = listener.prepare(resources, null);
++        assertSame(previous, BedrockCustomBlockResources.current());
++        BedrockCustomBlockResources.clear();
++        listener.apply(pending, resources, null);
++        assertTrue(BedrockCustomBlockResources.current().isEmpty());
++    }
++
++    @Test
++    void latestServerPackAndLatestReloadReplacePreviousState() {
++        final var first = definition(0.5, 3);
++        final var second = definition(1, 15);
++        final ResourceManager resources = resources(List.of(resource(PackSource.SERVER, first), resource(PackSource.SERVER, second)));
++        final var listener = new BedrockCustomBlockResources();
++        final var stale = listener.prepare(resources, null);
++        final var latest = listener.prepare(resources, null);
++        listener.apply(stale, resources, null);
++        assertTrue(BedrockCustomBlockResources.current().isEmpty());
++        listener.apply(latest, resources, null);
++        assertEquals(CustomBlockProperties.of(second), BedrockCustomBlockResources.current().get(42));
++        final ResourceManager empty = resources(List.of());
++        listener.apply(listener.prepare(empty, null), empty, null);
++        assertTrue(BedrockCustomBlockResources.current().isEmpty());
++    }
++
++    private static CustomBlockVisual definition(final double height, final int dampening) {
++        return new CustomBlockVisual("test:block", 42, "texture", "{}", "opaque",
++                List.of(new CustomBlockVisual.Box(0, 0, 0, 1, height, 1)), List.of(), false, 0, dampening, Map.of(), Map.of());
++    }
++
++    private static Resource resource(final PackSource source, final CustomBlockVisual visual) {
++        final PackLocationInfo location = new PackLocationInfo("test", Component.empty(), source, Optional.empty());
++        final PackResources pack = (PackResources) Proxy.newProxyInstance(PackResources.class.getClassLoader(), new Class[]{PackResources.class},
++                (proxy, method, arguments) -> method.getName().equals("location") ? location : null);
++        final byte[] content = CustomBlockProperties.encode(List.of(visual)).toString().getBytes(StandardCharsets.UTF_8);
++        return new Resource(pack, () -> new ByteArrayInputStream(content));
++    }
++
++    private static ResourceManager resources(final List<Resource> stack) {
++        return (ResourceManager) Proxy.newProxyInstance(ResourceManager.class.getClassLoader(), new Class[]{ResourceManager.class},
++                (proxy, method, arguments) -> method.getName().equals("getResourceStack") ? stack : null);
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocksTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocksTest.java
 new file mode 100644
-index 0000000..66c7660
+index 0000000..1f059a1
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocksTest.java
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,63 @@
 +package com.viaversion.viafabricplus.bedrock.block;
 +
 +import net.minecraft.core.Direction;
 +import net.minecraft.world.phys.shapes.BooleanOp;
 +import net.minecraft.world.phys.shapes.Shapes;
 +import net.raphimc.viabedrock.api.model.CustomBlockVisual;
++import net.raphimc.viabedrock.api.model.CustomBlockProperties;
 +import org.junit.jupiter.api.Test;
 +
 +import java.util.List;
@@ -507,7 +769,7 @@ index 0000000..66c7660
 +
 +    @Test
 +    void keepsSelectionWhenCollisionIsDisabledAndDoesNotOccludeCutoutGeometry() {
-+        final CustomBlockVisual definition = definition(List.of(), List.of(box(0.25, 0, 0.25, 0.75, 0.5, 0.75)), false);
++        final CustomBlockProperties definition = definition(List.of(), List.of(box(0.25, 0, 0.25, 0.75, 0.5, 0.75)), false);
 +        final var visual = BedrockCustomBlocks.visual(definition);
 +
 +        assertTrue(visual.collision().isEmpty());
@@ -532,10 +794,10 @@ index 0000000..66c7660
 +    }
 +
 +    @Test
-+    void joinsFullBlockBoxesAndRejectsNonFiniteOrEmptyBounds() {
++    void joinsOverlappingBoxesIntoAFullBlock() {
 +        final var visual = BedrockCustomBlocks.visual(definition(List.of(
 +            box(0, 0, 0, 0.5, 1, 1), box(0.5, 0, 0, 1, 1, 1),
-+            box(0, 0, 0, 0, 1, 1), box(Double.NaN, 0, 0, 1, 1, 1)), List.of(), true));
++            box(0, 0, 0, 0.5, 1, 1)), List.of(), true));
 +
 +        assertTrue(visual.fullCollision());
 +        assertFalse(visual.largeCollision());
@@ -543,8 +805,8 @@ index 0000000..66c7660
 +        assertTrue(Shapes.equal(Shapes.block(), visual.collision()));
 +    }
 +
-+    private static CustomBlockVisual definition(final List<CustomBlockVisual.Box> collision, final List<CustomBlockVisual.Box> selection, final boolean occluding) {
-+        return new CustomBlockVisual("test:block", 1, "test_texture", "{}", occluding ? "opaque" : "alpha_test", collision, selection, occluding, 0, 0, java.util.Map.of(), java.util.Map.of());
++    private static CustomBlockProperties definition(final List<CustomBlockVisual.Box> collision, final List<CustomBlockVisual.Box> selection, final boolean occluding) {
++        return new CustomBlockProperties("test:block", 1, collision, selection, occluding, 0, 0);
 +    }
 +
 +    private static CustomBlockVisual.Box box(final double minX, final double minY, final double minZ, final double maxX, final double maxY, final double maxZ) {

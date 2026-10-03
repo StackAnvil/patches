@@ -1,4 +1,4 @@
-From 5a746450c37f85c4d0c187fcd6ccf1b0138df04e Mon Sep 17 00:00:00 2001
+From 8d290e30ed6cd1aa1b334f1474ec5f8e6d52b670 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:38:26 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -86,43 +86,178 @@ https://learn.microsoft.com/en-us/minecraft/creator/reference/content/blockrefer
 Tests compare complete modern and legacy models after removing only the
 expected bottom rotation, including simple and structured geometry fields,
 collision, selection and opaque occlusion.
+
+Transport protocol-bound collision, selection, occlusion and lighting
+properties in the accepted supplemental Java resource pack. ViaProxy
+clients cannot access ResourcePackStorage in the proxy process. Include
+these properties in the converted-pack fingerprint so changes to physics
+invalidate an otherwise identical model cache entry.
+
+Retain the target VoxelShapes registry before StartGame with atomic, bounded
+decoding. Bedrock 1.26.51.1 (protocol 2193) emits packet 337; a procedural
+four-box fixture establishes X/Y/Z cell order with Z varying fastest and
+low-bit-first packed occupancy. This registry describes culling, not
+collision or selection. Rendering its culling rules remains incomplete.
+Malformed and truncated payload tests preserve the previous registry.
 ---
+ .../api/model/CustomBlockProperties.java      | 105 ++++
  .../api/model/CustomBlockVisual.java          |  26 +
  .../definition/BlockDefinitions.java          |  17 +-
  .../definition/CustomBlockDefinition.java     |  57 ++
  .../definition/ModelDefinitions.java          |   7 +
  .../definition/TextureDefinitions.java        |  54 ++
- .../http/ConvertedResourcePackCache.java      |  11 +-
- .../viabedrock/protocol/BedrockProtocol.java  |  24 +-
+ .../http/ConvertedResourcePackCache.java      |  12 +-
+ .../viabedrock/protocol/BedrockProtocol.java  |  27 +-
  .../protocol/packet/JoinPackets.java          |  29 +-
  .../protocol/packet/ResourcePackPackets.java  |  44 +-
+ .../protocol/packet/VoxelShapePackets.java    |  35 ++
  .../protocol/rewriter/BlockStateRewriter.java |  60 ++-
  .../rewriter/ResourcePackRewriter.java        |   2 +
- .../resourcepack/CustomBlockModel.java        | 493 ++++++++++++++++++
- .../CustomBlockResourceRewriter.java          | 202 +++++++
+ .../resourcepack/CustomBlockModel.java        | 494 ++++++++++++++++++
+ .../CustomBlockResourceRewriter.java          | 204 ++++++++
  .../CustomBlockStateDefinitions.java          | 153 ++++++
  .../protocol/storage/ChunkTracker.java        |  33 +-
  .../storage/CustomBlockPackStorage.java       | 103 ++++
  .../protocol/storage/ResourcePackStorage.java |  34 ++
+ .../protocol/storage/VoxelShapeRegistry.java  | 125 +++++
+ .../api/model/CustomBlockPropertiesTest.java  |  50 ++
+ .../http/ConvertedResourcePackCacheTest.java  |  16 +
  .../rewriter/CustomBlockBoneGeometryTest.java | 177 +++++++
- .../CustomBlockModelSelectionTest.java        | 366 +++++++++++++
+ .../CustomBlockModelSelectionTest.java        | 368 +++++++++++++
  .../CustomBlockPlaneGeometryTest.java         | 170 ++++++
  .../CustomBlockStateDefinitionsTest.java      | 218 ++++++++
  .../protocol/storage/ChunkTrackerTest.java    |  23 +
  .../storage/CustomBlockPackStorageTest.java   | 168 ++++++
- 23 files changed, 2450 insertions(+), 21 deletions(-)
+ .../storage/VoxelShapeRegistryTest.java       | 130 +++++
+ 29 files changed, 2920 insertions(+), 21 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockVisual.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/CustomBlockDefinition.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/VoxelShapePackets.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorage.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistry.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CustomBlockPropertiesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockBoneGeometryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockPlaneGeometryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockStateDefinitionsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorageTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistryTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java
+new file mode 100644
+index 00000000..99212b4e
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java
+@@ -0,0 +1,105 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.libs.gson.Gson;
++import com.viaversion.viaversion.libs.gson.JsonElement;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++
++import java.util.Collection;
++import java.util.Comparator;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++/** Physical properties transported with the converted server pack, independently of its connection route. */
++public record CustomBlockProperties(String bedrockState, int javaState, List<CustomBlockVisual.Box> collisionBoxes,
++                                    List<CustomBlockVisual.Box> selectionBoxes, boolean occluding, int lightEmission, int lightDampening) {
++
++    public static final String RESOURCE_PATH = "assets/viabedrock/custom_blocks.json";
++    public static final int MAX_BYTES = 8 * 1024 * 1024;
++    private static final int MAX_STATES = 4096;
++    private static final int MAX_BOXES = 512;
++    private static final Gson GSON = new Gson();
++
++    public CustomBlockProperties {
++        if (bedrockState == null || bedrockState.isBlank() || bedrockState.length() > 4096 || javaState < 0
++                || lightEmission < 0 || lightEmission > 15 || lightDampening < 0 || lightDampening > 15) {
++            throw new IllegalArgumentException("Invalid custom block properties");
++        }
++        collisionBoxes = validatedBoxes(collisionBoxes);
++        selectionBoxes = validatedBoxes(selectionBoxes);
++    }
++
++    public static CustomBlockProperties of(final CustomBlockVisual visual) {
++        return new CustomBlockProperties(visual.bedrockState(), visual.javaState(), visual.collisionBoxes(), visual.selectionBoxes(),
++                visual.occluding(), visual.lightEmission(), visual.lightDampening());
++    }
++
++    public static JsonObject encode(final Collection<CustomBlockVisual> visuals) {
++        if (visuals.size() > MAX_STATES) {
++            throw new IllegalArgumentException("Too many custom block states");
++        }
++        final JsonObject result = new JsonObject();
++        result.addProperty("format", 1);
++        result.addProperty("bedrock_protocol", ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++        result.addProperty("java_protocol", ProtocolConstants.JAVA_VERSION.getVersion());
++        result.add("states", GSON.toJsonTree(visuals.stream().sorted(Comparator.comparingInt(CustomBlockVisual::javaState))
++                .map(CustomBlockProperties::of).toList()));
++        return result;
++    }
++
++    public static Map<Integer, CustomBlockProperties> decode(final JsonElement metadata) {
++        final JsonObject root = metadata.getAsJsonObject();
++        if (integer(root.get("format")) != 1
++                || integer(root.get("bedrock_protocol")) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION
++                || integer(root.get("java_protocol")) != ProtocolConstants.JAVA_VERSION.getVersion()) {
++            throw new IllegalArgumentException("Unsupported custom block metadata version");
++        }
++        final var states = root.getAsJsonArray("states");
++        if (states.size() > MAX_STATES) {
++            throw new IllegalArgumentException("Too many custom block states");
++        }
++        final Map<Integer, CustomBlockProperties> result = new LinkedHashMap<>();
++        for (JsonElement state : states) {
++            final JsonObject object = state.getAsJsonObject();
++            integer(object.get("javaState"));
++            integer(object.get("lightEmission"));
++            integer(object.get("lightDampening"));
++            if (!object.get("occluding").isJsonPrimitive() || !object.get("occluding").getAsJsonPrimitive().isBoolean()) {
++                throw new IllegalArgumentException("Invalid custom block occlusion flag");
++            }
++            final CustomBlockProperties properties = GSON.fromJson(state, CustomBlockProperties.class);
++            if (result.putIfAbsent(properties.javaState(), properties) != null) {
++                throw new IllegalArgumentException("Duplicate custom block state");
++            }
++        }
++        return Map.copyOf(result);
++    }
++
++    private static int integer(final JsonElement value) {
++        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) {
++            throw new IllegalArgumentException("Expected an integer in custom block metadata");
++        }
++        return value.getAsBigDecimal().intValueExact();
++    }
++
++    private static List<CustomBlockVisual.Box> validatedBoxes(final List<CustomBlockVisual.Box> boxes) {
++        if (boxes == null || boxes.size() > MAX_BOXES) {
++            throw new IllegalArgumentException("Too many custom block boxes");
++        }
++        for (CustomBlockVisual.Box box : boxes) {
++            if (!Double.isFinite(box.minX()) || !Double.isFinite(box.minY()) || !Double.isFinite(box.minZ())
++                    || !Double.isFinite(box.maxX()) || !Double.isFinite(box.maxY()) || !Double.isFinite(box.maxZ())
++                    || box.minX() >= box.maxX() || box.minY() >= box.maxY() || box.minZ() >= box.maxZ()) {
++                throw new IllegalArgumentException("Invalid custom block box");
++            }
++        }
++        return List.copyOf(boxes);
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockVisual.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockVisual.java
 new file mode 100644
 index 00000000..e311ad4d
@@ -373,7 +508,7 @@ index ba8c2db5..56c12e58 100644
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-index 9dae7790..1aa82f66 100644
+index 9dae7790..4fde0c4e 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 @@ -87,7 +87,7 @@ public class ConvertedResourcePackCache {
@@ -385,7 +520,7 @@ index 9dae7790..1aa82f66 100644
              final CompletableFuture<Pack> future = this.pending.computeIfAbsent(key, ignored -> CompletableFuture.supplyAsync(() ->
                      this.mode == ViaBedrockConfig.PackCacheMode.DISK ? this.loadOrConvert(key, storage) : this.convert(storage), this.executor));
              return future.thenApply(pack -> {
-@@ -197,6 +197,15 @@ public class ConvertedResourcePackCache {
+@@ -197,6 +197,16 @@ public class ConvertedResourcePackCache {
          return HexFormat.of().formatHex(digest.digest());
      }
  
@@ -393,7 +528,8 @@ index 9dae7790..1aa82f66 100644
 +        final StringBuilder identity = new StringBuilder(fingerprint(storage.getPackStackTopToBottom()));
 +        storage.getCustomBlockVisuals().entrySet().stream().sorted(java.util.Map.Entry.comparingByKey()).forEach(entry -> {
 +            final var visual = entry.getValue();
-+            identity.append('\n').append(entry.getKey()).append(':').append(visual.bedrockState()).append(':').append(visual.modelJson());
++            identity.append('\n').append(entry.getKey()).append(':').append(visual.bedrockState()).append(':').append(visual.modelJson())
++                    .append(':').append(net.raphimc.viabedrock.api.model.CustomBlockProperties.of(visual));
 +        });
 +        return HexFormat.of().formatHex(digest("SHA-256").digest(identity.toString().getBytes(StandardCharsets.UTF_8)));
 +    }
@@ -402,7 +538,7 @@ index 9dae7790..1aa82f66 100644
          final byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
          output.writeInt(bytes.length);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
-index a083986a..da2a9702 100644
+index a083986a..41c70790 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 @@ -53,7 +53,12 @@ import net.raphimc.viabedrock.protocol.task.*;
@@ -419,7 +555,31 @@ index a083986a..da2a9702 100644
  
      public static final BedrockMappingData MAPPINGS = new BedrockMappingData();
  
-@@ -175,7 +180,22 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
+@@ -75,6 +80,7 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
+         ClientboundBedrockPackets.DIMENSION_DATA,
+         ClientboundBedrockPackets.AVAILABLE_COMMANDS,
+         ClientboundBedrockPackets.SYNC_WORLD_CLOCKS,
++        ClientboundBedrockPackets.VOXEL_SHAPES,
+         ClientboundBedrockPackets.START_GAME
+     );
+ 
+@@ -98,6 +104,7 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
+         ClientPlayerPackets.register(this);
+         OtherPlayerPackets.register(this);
+         WorldPackets.register(this);
++        VoxelShapePackets.register(this);
+         MapPackets.register(this);
+         EntityPackets.register(this);
+         HudPackets.register(this);
+@@ -145,6 +152,7 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
+         user.put(new ClientSettingsStorage("en_us", 12, 0, true, (short) 127, 1, false, true, 0));
+         user.put(new GameSessionStorage(user));
+         user.put(new WorldClockTracker());
++        user.put(new VoxelShapeRegistry());
+         user.put(new BlockInteractionSoundTracker());
+         user.put(new ResourcePackDownloadTracker());
+         user.put(new BlobCache(user));
+@@ -175,7 +183,22 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
                  ViaBedrock.getPlatform().getLogger().warning("Received unknown packet " + wrapper.getId() + " in state " + serverState + " with content: " + ByteBufUtil.hexDump(content));
                  throw CancelException.generate();
              }
@@ -574,6 +734,47 @@ index 376a1a04..5a54fc63 100644
      private static boolean shouldTranslate(final UserConnection user) {
          return ViaBedrock.getConfig().shouldTranslateResourcePacks() && user.getProtocolInfo().protocolVersion().newerThanOrEqualTo(ProtocolConstants.JAVA_VERSION);
      }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/VoxelShapePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/VoxelShapePackets.java
+new file mode 100644
+index 00000000..9c9d6637
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/VoxelShapePackets.java
+@@ -0,0 +1,35 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.protocol.remapper.PacketHandler;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.storage.VoxelShapeRegistry;
++
++public final class VoxelShapePackets {
++
++    private VoxelShapePackets() {
++    }
++
++    public static void register(final BedrockProtocol protocol) {
++        final PacketHandler handler = wrapper -> {
++            wrapper.cancel();
++            final var input = Unpooled.wrappedBuffer(wrapper.read(Types.REMAINING_BYTES));
++            try {
++                wrapper.user().get(VoxelShapeRegistry.class).read(input);
++            } finally {
++                input.release();
++            }
++        };
++        protocol.registerClientboundTransition(ClientboundBedrockPackets.VOXEL_SHAPES,
++                State.CONFIGURATION, handler, State.PLAY, handler);
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
 index 2cb4a79b..80324f7e 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
@@ -712,10 +913,10 @@ index 07a19fa9..9b746b0c 100644
      }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
 new file mode 100644
-index 00000000..a4674c78
+index 00000000..cb33fd94
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
-@@ -0,0 +1,493 @@
+@@ -0,0 +1,494 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -849,7 +1050,8 @@ index 00000000..a4674c78
 +                boxes(components.getCompoundTag("minecraft:collision_box"), false, transformation),
 +                boxes(components.getCompoundTag("minecraft:selection_box"), true, transformation), occluding,
 +                light(components, "minecraft:light_emission", "emission", 0),
-+                light(components, "minecraft:block_light_filter", "lightLevel", 15), textureBindings, textureMethods);
++                light(components, "minecraft:block_light_filter", "lightLevel",
++                        light(components, "minecraft:light_dampening", "lightLevel", 15)), textureBindings, textureMethods);
 +    }
 +
 +    private static void addPlaneBackFaces(final JsonObject element, final Map<Direction, String> methods, final Set<String> authoredFaces) {
@@ -1211,10 +1413,10 @@ index 00000000..a4674c78
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java
 new file mode 100644
-index 00000000..48b6f889
+index 00000000..7114f6a6
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockResourceRewriter.java
-@@ -0,0 +1,202 @@
+@@ -0,0 +1,204 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1237,6 +1439,7 @@ index 00000000..48b6f889
 +import com.viaversion.viaversion.libs.gson.JsonObject;
 +import net.raphimc.viabedrock.api.model.BlockState;
 +import net.raphimc.viabedrock.api.model.CustomBlockVisual;
++import net.raphimc.viabedrock.api.model.CustomBlockProperties;
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 +import net.raphimc.viabedrock.api.resourcepack.content.Content;
 +import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
@@ -1348,6 +1551,7 @@ index 00000000..48b6f889
 +
 +    private static Content convertVisuals(final ResourcePackStorage storage) {
 +        final Content result = new InMemoryContent();
++        result.putJson(CustomBlockProperties.RESOURCE_PATH, CustomBlockProperties.encode(storage.getCustomBlockVisuals().values()));
 +        for (CustomBlockVisual visual : storage.getCustomBlockVisuals().values()) {
 +            result.putString("assets/viabedrock/models/block/custom/slot_" + visual.javaState() + ".json", visual.modelJson());
 +            for (Map.Entry<String, String> texture : visual.textures().entrySet()) {
@@ -1864,6 +2068,227 @@ index d3dc4315..bc708a96 100644
      public void setLoadedOnJavaClient() {
          this.loadedOnJavaClient = true;
      }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistry.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistry.java
+new file mode 100644
+index 00000000..d8425be5
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistry.java
+@@ -0,0 +1,125 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.StorableObject;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++import java.util.ArrayList;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++
++/** Session-scoped culling grids sent before StartGame. These do not define collision or selection. */
++public final class VoxelShapeRegistry implements StorableObject {
++
++    private static final int MAX_SHAPES = 8192;
++    private static final int MAX_CUSTOM_SHAPES = 4500;
++    private static final int MAX_BYTES = 64 * 1024 * 1024;
++    private volatile Snapshot snapshot = new Snapshot(List.of(), Map.of(), 0);
++
++    public Snapshot snapshot() {
++        return this.snapshot;
++    }
++
++    public void read(final ByteBuf input) {
++        if (input.readableBytes() > MAX_BYTES) {
++            throw new IllegalArgumentException("Voxel shape registry exceeds the byte limit");
++        }
++        final int shapeCount = count(input, MAX_SHAPES);
++        final List<Shape> shapes = new ArrayList<>(shapeCount);
++        for (int i = 0; i < shapeCount; i++) {
++            final int xSize = input.readUnsignedByte();
++            final int ySize = input.readUnsignedByte();
++            final int zSize = input.readUnsignedByte();
++            final int expectedBytes = (xSize * ySize * zSize + 7) / 8;
++            if (count(input, expectedBytes) != expectedBytes || input.readableBytes() < expectedBytes) {
++                throw new IllegalArgumentException("Invalid voxel cell storage length");
++            }
++            final byte[] cells = new byte[expectedBytes];
++            input.readBytes(cells);
++            shapes.add(new Shape(xSize, ySize, zSize, cells, coordinates(input, xSize), coordinates(input, ySize), coordinates(input, zSize)));
++        }
++        final int nameCount = count(input, MAX_SHAPES);
++        final Map<String, Integer> names = new LinkedHashMap<>();
++        for (int i = 0; i < nameCount; i++) {
++            final String name = BedrockTypes.STRING.read(input);
++            final int handle = input.readUnsignedShortLE();
++            if (name.isBlank() || name.length() > 4096 || handle >= shapes.size() || names.putIfAbsent(name, handle) != null) {
++                throw new IllegalArgumentException("Invalid voxel shape name mapping");
++            }
++        }
++        final int customCount = input.readUnsignedShortLE();
++        if (customCount > MAX_CUSTOM_SHAPES || customCount > names.size() || input.isReadable()) {
++            throw new IllegalArgumentException("Invalid voxel shape registry trailer");
++        }
++        this.snapshot = new Snapshot(shapes, names, customCount);
++    }
++
++    private static int count(final ByteBuf input, final int maximum) {
++        final int count = BedrockTypes.UNSIGNED_VAR_INT.read(input);
++        if (count < 0 || count > maximum) {
++            throw new IllegalArgumentException("Voxel shape array exceeds its limit");
++        }
++        return count;
++    }
++
++    private static List<Float> coordinates(final ByteBuf input, final int cells) {
++        if (count(input, cells + 1) != cells + 1 || input.readableBytes() < (cells + 1) * Float.BYTES) {
++            throw new IllegalArgumentException("Invalid voxel coordinate count");
++        }
++        final List<Float> coordinates = new ArrayList<>(cells + 1);
++        float previous = Float.NEGATIVE_INFINITY;
++        for (int i = 0; i <= cells; i++) {
++            final float coordinate = input.readFloatLE();
++            if (!Float.isFinite(coordinate) || coordinate <= previous) {
++                throw new IllegalArgumentException("Invalid voxel coordinate boundary");
++            }
++            coordinates.add(coordinate);
++            previous = coordinate;
++        }
++        return List.copyOf(coordinates);
++    }
++
++    public record Snapshot(List<Shape> shapes, Map<String, Integer> names, int customShapeCount) {
++
++        public Snapshot {
++            shapes = List.copyOf(shapes);
++            names = Map.copyOf(names);
++        }
++
++        public Shape shape(final String name) {
++            final Integer handle = this.names.get(name);
++            return handle != null ? this.shapes.get(handle) : null;
++        }
++    }
++
++    public record Shape(int xSize, int ySize, int zSize, byte[] cells,
++                        List<Float> xCoordinates, List<Float> yCoordinates, List<Float> zCoordinates) {
++
++        public Shape {
++            cells = cells.clone();
++            xCoordinates = List.copyOf(xCoordinates);
++            yCoordinates = List.copyOf(yCoordinates);
++            zCoordinates = List.copyOf(zCoordinates);
++        }
++
++        @Override
++        public byte[] cells() {
++            return this.cells.clone();
++        }
++
++        public boolean occupied(final int x, final int y, final int z) {
++            if (x < 0 || x >= this.xSize || y < 0 || y >= this.ySize || z < 0 || z >= this.zSize) {
++                throw new IndexOutOfBoundsException("Voxel cell outside the grid");
++            }
++            final int index = (x * this.ySize + y) * this.zSize + z;
++            return (this.cells[index / 8] & 1 << (index % 8)) != 0;
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockPropertiesTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockPropertiesTest.java
+new file mode 100644
+index 00000000..eab6b53d
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockPropertiesTest.java
+@@ -0,0 +1,50 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class CustomBlockPropertiesTest {
++
++    @Test
++    void roundTripsIndependentPhysicalPropertiesWithoutRenderingGraphs() {
++        final CustomBlockVisual visual = new CustomBlockVisual("test:block", 42, "texture", "{}", "alpha_test",
++                List.of(new CustomBlockVisual.Box(-0.25, 0, 0, 0.75, 0.5, 1)),
++                List.of(new CustomBlockVisual.Box(0, 0, 0, 1, 1.5, 1)), false, 12, 3, Map.of(), Map.of());
++        final var metadata = CustomBlockProperties.encode(List.of(visual));
++        final var decoded = CustomBlockProperties.decode(JsonParser.parseString(metadata.toString()));
++        assertEquals(Map.of(42, CustomBlockProperties.of(visual)), decoded);
++        assertNotEquals(decoded.get(42).collisionBoxes(), decoded.get(42).selectionBoxes());
++        assertThrows(UnsupportedOperationException.class, () -> decoded.clear());
++        assertThrows(UnsupportedOperationException.class, () -> decoded.get(42).collisionBoxes().clear());
++    }
++
++    @Test
++    void rejectsAmbiguousVersionsDuplicateStatesAndInvalidBounds() {
++        final CustomBlockVisual visual = new CustomBlockVisual("test:block", 42, "texture", "{}", "opaque",
++                List.of(), List.of(), true, 0, 15, Map.of(), Map.of());
++        final var metadata = CustomBlockProperties.encode(List.of(visual));
++        final var wrongProtocol = metadata.deepCopy();
++        wrongProtocol.addProperty("java_protocol", -1);
++        assertThrows(IllegalArgumentException.class, () -> CustomBlockProperties.decode(wrongProtocol));
++        final var fractional = metadata.deepCopy();
++        fractional.getAsJsonArray("states").get(0).getAsJsonObject().addProperty("javaState", 42.5);
++        assertThrows(ArithmeticException.class, () -> CustomBlockProperties.decode(fractional));
++        metadata.getAsJsonArray("states").add(metadata.getAsJsonArray("states").get(0).deepCopy());
++        assertThrows(IllegalArgumentException.class, () -> CustomBlockProperties.decode(metadata));
++        assertThrows(IllegalArgumentException.class, () -> new CustomBlockProperties("test:block", 42,
++                List.of(new CustomBlockVisual.Box(0, 0, 0, Double.POSITIVE_INFINITY, 1, 1)), List.of(), true, 0, 15));
++        assertThrows(IllegalArgumentException.class, () -> new CustomBlockProperties("test:block", 42,
++                List.of(new CustomBlockVisual.Box(1, 0, 0, 0, 1, 1)), List.of(), true, 0, 15));
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
+index 7c032274..451304fc 100644
+--- a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
+@@ -18,6 +18,7 @@
+ package net.raphimc.viabedrock.api.resourcepack.http;
+ 
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.model.CustomBlockVisual;
+ import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
+ import net.raphimc.viabedrock.protocol.provider.impl.InMemoryResourcePackProvider;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+@@ -39,6 +40,21 @@ class ConvertedResourcePackCacheTest {
+     @TempDir
+     Path directory;
+ 
++    @Test
++    void physicalPropertiesInvalidateAnOtherwiseIdenticalCustomModel() {
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of());
++        final var full = new CustomBlockVisual("test:block", 42, "texture", "{}", "opaque",
++                List.of(new CustomBlockVisual.Box(0, 0, 0, 1, 1, 1)), List.of(), true, 0, 15, Map.of(), Map.of());
++        final var half = new CustomBlockVisual("test:block", 42, "texture", "{}", "opaque",
++                List.of(new CustomBlockVisual.Box(0, 0, 0, 1, 0.5, 1)), List.of(), true, 0, 15, Map.of(), Map.of());
++        storage.setCustomBlockVisuals(Map.of(42, full));
++        final String original = ConvertedResourcePackCache.fingerprint(storage);
++        storage.setCustomBlockVisuals(Map.of(42, half));
++        assertNotEquals(original, ConvertedResourcePackCache.fingerprint(storage));
++        storage.setCustomBlockVisuals(Map.of(42, full));
++        assertEquals(original, ConvertedResourcePackCache.fingerprint(storage));
++    }
++
+     @Test
+     void effectivePackOrderChangesCacheIdentity() {
+         final ResourcePack first = pack(UUID.randomUUID(), new byte[]{1});
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockBoneGeometryTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockBoneGeometryTest.java
 new file mode 100644
 index 00000000..a347e5aa
@@ -2049,10 +2474,10 @@ index 00000000..a347e5aa
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
 new file mode 100644
-index 00000000..530b7ce6
+index 00000000..5abcd9e0
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
-@@ -0,0 +1,366 @@
+@@ -0,0 +1,368 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2111,25 +2536,27 @@ index 00000000..530b7ce6
 +    @Test
 +    void preservesNetworkLightFilteringAndEmission() throws Exception {
 +        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB))));
-+        for (final int filter : new int[]{0, 2, 15}) {
-+            for (final int emission : new int[]{0, 12, 15}) {
-+                final CompoundTag components = components("minecraft:geometry.full_block", "ruby", "opaque");
-+                final CompoundTag filtering = new CompoundTag();
-+                filtering.putByte("lightLevel", (byte) filter);
-+                components.put("minecraft:block_light_filter", filtering);
-+                final CompoundTag emitting = new CompoundTag();
-+                emitting.putByte("emission", (byte) emission);
-+                components.put("minecraft:light_emission", emitting);
-+                final var buffer = Unpooled.buffer();
-+                try {
-+                    BedrockTypes.NETWORK_TAG.write(buffer, components);
-+                    final CompoundTag decoded = (CompoundTag) BedrockTypes.NETWORK_TAG.read(buffer);
-+                    final CustomBlockVisual visual = CustomBlockModel.compile(storage, "test:block", 1, decoded);
-+                    assertNotNull(visual);
-+                    assertEquals(filter, visual.lightDampening());
-+                    assertEquals(emission, visual.lightEmission());
-+                } finally {
-+                    buffer.release();
++        for (final String component : new String[]{"minecraft:block_light_filter", "minecraft:light_dampening"}) {
++            for (final int filter : new int[]{0, 2, 15}) {
++                for (final int emission : new int[]{0, 12, 15}) {
++                    final CompoundTag components = components("minecraft:geometry.full_block", "ruby", "opaque");
++                    final CompoundTag filtering = new CompoundTag();
++                    filtering.putByte("lightLevel", (byte) filter);
++                    components.put(component, filtering);
++                    final CompoundTag emitting = new CompoundTag();
++                    emitting.putByte("emission", (byte) emission);
++                    components.put("minecraft:light_emission", emitting);
++                    final var buffer = Unpooled.buffer();
++                    try {
++                        BedrockTypes.NETWORK_TAG.write(buffer, components);
++                        final CompoundTag decoded = (CompoundTag) BedrockTypes.NETWORK_TAG.read(buffer);
++                        final CustomBlockVisual visual = CustomBlockModel.compile(storage, "test:block", 1, decoded);
++                        assertNotNull(visual);
++                        assertEquals(filter, visual.lightDampening());
++                        assertEquals(emission, visual.lightEmission());
++                    } finally {
++                        buffer.release();
++                    }
 +                }
 +            }
 +        }
@@ -3033,6 +3460,142 @@ index 00000000..3b4c5631
 +
 +        void apply(State state, PacketWrapper wrapper) throws CancelException;
 +
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistryTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistryTest.java
+new file mode 100644
+index 00000000..7359689d
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistryTest.java
+@@ -0,0 +1,130 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class VoxelShapeRegistryTest {
++
++    @Test
++    void decodesNativeAsymmetricGridWithoutChangingItsCoordinateSystem() {
++        final VoxelShapeRegistry registry = new VoxelShapeRegistry();
++        final ByteBuf input = asymmetric();
++        try {
++            registry.read(input);
++            assertFalse(input.isReadable());
++            final var snapshot = registry.snapshot();
++            final var shape = snapshot.shape("test:asymmetric");
++            assertEquals(1, snapshot.customShapeCount());
++            assertNull(snapshot.shape("test:absent"));
++            final float[][][] boxes = {
++                {{0, 0, 0}, {0.25F, 0.5F, 0.75F}}, {{0.5F, 0.5F, 0.75F}, {1, 1, 1}},
++                {{0.25F, 0, 0.75F}, {0.5F, 0.25F, 1}}, {{0, 0.75F, 0.25F}, {0.25F, 1, 0.5F}}
++            };
++            for (int x = 0; x < shape.xSize(); x++) {
++                for (int y = 0; y < shape.ySize(); y++) {
++                    for (int z = 0; z < shape.zSize(); z++) {
++                        final float[] midpoint = {(shape.xCoordinates().get(x) + shape.xCoordinates().get(x + 1)) / 2,
++                            (shape.yCoordinates().get(y) + shape.yCoordinates().get(y + 1)) / 2,
++                            (shape.zCoordinates().get(z) + shape.zCoordinates().get(z + 1)) / 2};
++                        boolean occupied = false;
++                        for (float[][] box : boxes) {
++                            occupied |= midpoint[0] >= box[0][0] && midpoint[0] < box[1][0]
++                                && midpoint[1] >= box[0][1] && midpoint[1] < box[1][1]
++                                && midpoint[2] >= box[0][2] && midpoint[2] < box[1][2];
++                        }
++                        assertEquals(occupied, shape.occupied(x, y, z));
++                    }
++                }
++            }
++            final byte[] copy = shape.cells();
++            copy[0] = 0;
++            assertTrue(shape.occupied(0, 0, 0));
++            assertThrows(UnsupportedOperationException.class, () -> shape.xCoordinates().clear());
++        } finally {
++            input.release();
++        }
++    }
++
++    @Test
++    void rejectsEveryTruncatedPrefixWithoutReplacingThePreviousRegistry() {
++        final VoxelShapeRegistry registry = new VoxelShapeRegistry();
++        final ByteBuf valid = asymmetric();
++        try {
++            final byte[] bytes = new byte[valid.readableBytes()];
++            valid.getBytes(0, bytes);
++            registry.read(valid);
++            final var previous = registry.snapshot();
++            for (int size = 0; size < bytes.length; size++) {
++                final ByteBuf truncated = Unpooled.wrappedBuffer(bytes, 0, size);
++                try {
++                    assertThrows(RuntimeException.class, () -> registry.read(truncated));
++                    assertSame(previous, registry.snapshot());
++                } finally {
++                    truncated.release();
++                }
++            }
++            final ByteBuf replacement = Unpooled.buffer();
++            try {
++                BedrockTypes.UNSIGNED_VAR_INT.write(replacement, 0);
++                BedrockTypes.UNSIGNED_VAR_INT.write(replacement, 0);
++                replacement.writeShortLE(0);
++                registry.read(replacement);
++                assertTrue(registry.snapshot().names().isEmpty());
++                assertTrue(registry.snapshot().shapes().isEmpty());
++            } finally {
++                replacement.release();
++            }
++        } finally {
++            valid.release();
++        }
++    }
++
++    @Test
++    void rejectsOversizedArraysUnorderedCoordinatesAndUnknownHandles() {
++        final VoxelShapeRegistry registry = new VoxelShapeRegistry();
++        final ByteBuf oversized = Unpooled.buffer();
++        final ByteBuf unordered = asymmetric();
++        final ByteBuf unknown = asymmetric();
++        try {
++            BedrockTypes.UNSIGNED_VAR_INT.write(oversized, 8193);
++            assertThrows(IllegalArgumentException.class, () -> registry.read(oversized));
++            unordered.setFloatLE(12, Float.NaN);
++            assertThrows(IllegalArgumentException.class, () -> registry.read(unordered));
++            unknown.setShortLE(unknown.writerIndex() - 4, 1);
++            assertThrows(IllegalArgumentException.class, () -> registry.read(unknown));
++            assertTrue(registry.snapshot().shapes().isEmpty());
++        } finally {
++            oversized.release();
++            unordered.release();
++            unknown.release();
++        }
++    }
++
++    private static ByteBuf asymmetric() {
++        final ByteBuf input = Unpooled.buffer();
++        BedrockTypes.UNSIGNED_VAR_INT.write(input, 1);
++        input.writeByte(3).writeByte(4).writeByte(4);
++        BedrockTypes.UNSIGNED_VAR_INT.write(input, 6);
++        input.writeBytes(new byte[]{0x77, 0x20, 0x08, 0, 0, (byte) 0x88});
++        for (float[] axis : new float[][]{{0, 0.25F, 0.5F, 1}, {0, 0.25F, 0.5F, 0.75F, 1}, {0, 0.25F, 0.5F, 0.75F, 1}}) {
++            BedrockTypes.UNSIGNED_VAR_INT.write(input, axis.length);
++            for (float coordinate : axis) {
++                input.writeFloatLE(coordinate);
++            }
++        }
++        BedrockTypes.UNSIGNED_VAR_INT.write(input, 1);
++        BedrockTypes.STRING.write(input, "test:asymmetric");
++        input.writeShortLE(0).writeShortLE(1);
++        return input;
 +    }
 +
 +}

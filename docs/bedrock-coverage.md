@@ -40,7 +40,7 @@ These comparisons establish the tested Linux routes; other transports and platfo
 ## Protocol inventory
 
 The complete applied source defines 168 inbound packet types.
-There are 104 explicit registrations, 20 explicit cancellations, and 44 automatic fallback cancellations.
+There are 105 explicit registrations, 20 explicit cancellations, and 43 automatic fallback cancellations.
 These counts describe source registration, not feature completion.
 The inventory excludes commented enum entries and includes transition registrations.
 
@@ -51,7 +51,7 @@ The inventory excludes commented enum entries and includes transition registrati
 | P3 | Target packets absent from enums | Incomplete | Compare definitions with protocol 2193. Later preview packets do not establish target support. |
 | P4 | Intentional exclusions | Incomplete | Record versioned evidence for each telemetry, Education, platform, or obsolete exclusion. |
 
-Live joins log startup inventory, player-list, jigsaw, and voxel packets ignored outside the Java play state.
+Live joins still log startup inventory, player-list, and jigsaw packets ignored outside the Java play state.
 Their lifecycle and required retained state still need an audit.
 A separate wire capture places inventory after StartGame, so these logs alone do not establish a general buffering policy.
 
@@ -140,7 +140,7 @@ The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and
 | --- | --- | --- | --- |
 | G1 | Input locks | Incomplete | Preserve server permissions and apply movement and camera restrictions. |
 | G2 | Movement effects and prediction corrections | Incomplete | Implement missing packets and compare translated movement timing with the native client. |
-| G3 | Voxel shapes | Incomplete | Decode shape updates and apply collision and selection behavior. |
+| G3 | Voxel shapes | Incomplete | Core retains the native culling registry during configuration and play. Apply culling rules, transformed face slices, and culling-layer conditions. These grids do not define collision or selection. |
 | G4 | Animation commands, entity overrides, mob properties, and equipment updates | Incomplete | Connect server updates to authoritative state and runtime playback. |
 | G5 | Movement attributes and attack/use prediction | Incomplete | Apply ignored movement attributes and complete native input and cooldown behavior. |
 | G6 | Interaction and entity metadata | Incomplete | Audit variant mappings, interactions, flags, properties, and unsupported metadata. |
@@ -153,7 +153,7 @@ The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and
 | R2 | Server particle dispatch | Incomplete | Retain actor identity and Molang variables, then route effects into native playback through both connection routes. |
 | R3 | Particle runtime | Incomplete | Complete components, actor contexts, child effects, concurrency, and visible lifecycle comparisons. |
 | R4 | Server audio | Incomplete | Retain handles, loops, playback position, and range behavior. Complete supported controls, captions, and audible comparisons. |
-| R5 | Custom block geometry and lighting | Incomplete | Legacy full-cube models now load on direct and ViaProxy routes. Complete rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, and directional light occlusion. |
+| R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties through ViaProxy. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Complete rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, and directional light occlusion. |
 | R6 | Equipped attachables | Incomplete | Transport graphs through ViaProxy. Complete variants, explicit bindings, per-bone materials, and material families. |
 
 The attachable matrix tests establish supported same-name affine bindings.
@@ -195,11 +195,23 @@ The goal remains active while any required row is incomplete or unverified.
 
 ## Latest validation
 
-The final complete stack build passes after replaying the clock and legacy full-cube changes into their owning patches.
-The core suite reports 413 tests with one optional fixture skip.
-The add-on suite reports 521 tests with 109 optional fixture skips.
+The complete stack build passes after replaying the block transport and voxel registry changes into their owning patches.
+The core suite reports 419 tests with one optional fixture skip.
+The add-on suite reports 524 tests with 109 optional fixture skips.
 The converter suite reports 16 tests without skips.
 All three suites have zero failures and errors.
 Core Checkstyle passes.
-Private direct and ViaProxy comparisons establish clock retention through supplemental pack loading and visible custom-cube texture conversion.
-They do not establish full protocol, rendering, or platform parity.
+
+Private direct and ViaProxy comparisons verify half-height custom collision, full-height selection, and native emission/filter values with the add-on.
+Both clients land at Y=120.5 on the fixture at Y=120.
+ViaProxy resource reload preserves these properties, and disconnect clears the client mapping.
+Core reads both observed target wire forms for light filtering.
+Its cache identity now changes with physical properties.
+The [block converter notes](../patches/viabedrock/upstreamable/0054-render-textured-bedrock-full-cubes.pr.md) record the fixture and limits.
+
+Core retains packet 337's 288 voxel grids, 221 names, and one custom shape from the target fixture.
+ViaProxy retains these during configuration while its supplemental pack queues up to 233 world packets.
+The direct route retains the same registry after joining.
+An asymmetric native fixture and numerical tests establish cell ordering and coordinate bounds.
+Full voxel culling remains incomplete.
+These comparisons do not establish full protocol, rendering, or platform parity.
