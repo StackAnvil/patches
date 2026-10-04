@@ -1145,3 +1145,26 @@ The direct add-on replay also passes full transport and rendering checks with a 
 Its complete scene hash matches the same original recording, and all 216 skin updates retain their recorded bytes.
 Core reports 2159 ms for the first conversion and 1942 ms for the custom-block conversion.
 These checks establish cache, loading, and rendering regressions on both routes, without establishing complete visual parity.
+
+
+### Server animation commands: retained states and queued selection
+
+**New native evidence:** Inspection uses the matching licensed Bedrock 1.26.51.1 executable.
+Its SHA-256 is `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+The packet handler updates retained states in a controller named by the command, then queues selection for the next controller update.
+States use animation names as their identities.
+The next-state alias can bind an animation before that state receives any command.
+Transitions remain in order, and duplicate target/expression pairs retain the earlier expression version.
+
+Six private probes execute the native selection and controller-update routines with synthetic child callbacks.
+Repeated selection resets the current state and its children.
+The last selection before an update wins and takes priority over stop expressions in that update.
+Blending uses the outgoing state's curve, including a repeated selection of that same state.
+An incoming curve alone does not start a blend.
+The repeated-state blend samples the same child twice in one update.
+
+**Boundary:** These checks establish controller selection, clocks, and ordinary blend weights.
+They do not establish rendered poses, shortest-path rotations, first-person playback, or effect timing.
+The runtime command path remains incomplete and the add-on still does not advertise its animation channel.
+Client playback must retain states and queued selections rather than replace each controller with a single animation.
+See [the core patch notes](../patches/viabedrock/upstreamable/0086-transport-native-actor-animation-commands.pr.md) for function references and probe cases.

@@ -30,8 +30,41 @@ All captured commands use stop-expression version 1.
 
 The new native screenshots establish that declared animation aliases resolve to their arm poses.
 The capture also exercises repeated finite animations, two controller slots, a two-second blend, and a next state never commanded in that slot.
-The video needs further timing analysis before those details can define the runtime implementation.
 Raw captures, resource packs, and video remain private.
+
+### Runtime controller evidence
+
+Executable inspection uses the matching licensed build, with SHA-256 `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+The packet handler at `141327de0` updates a state definition, then queues that state's selection for the next controller update.
+The state builder at `141bbe700` finds or creates a controller by the command's controller name.
+Each animation name identifies a retained state inside that controller.
+
+The builder creates a named next state even before that state receives a command.
+It binds that state's actor animation alias when the alias exists.
+An unavailable alias leaves the state without that animation child.
+A transition requires both a next-state name and a nonempty stop expression.
+Existing transitions remain in order.
+Transition insertion at `141e6bfa0` skips a duplicate target and expression text, without comparing expression versions.
+
+Each command replaces its state's blend curve and enables rotation blending through the shortest path.
+A nonzero blend time creates curve points `(0, 1)` and `(blend_out_time, 0)`.
+The controller at `141e6d180` uses the outgoing state's curve during a transition.
+The incoming command's blend time therefore describes its later departure.
+
+Six private executable probes exercise the real selection and controller-update routines with synthetic child callbacks.
+They cover no curve, an outgoing curve, an incoming curve, both curves, successive selections, and a pending selection with a true condition.
+The probes establish these controller behaviors:
+
+- Selecting the current state resets its state time and child playback.
+- The last selection before an update wins.
+- A pending selection takes priority over transition expressions in that update.
+- An incoming state's curve does not start a blend when the outgoing state lacks a curve.
+- Selecting the current state with an outgoing curve samples that same state twice during the blend.
+- At 0.25 seconds into a two-second outgoing curve, the ordinary blend weights are 0.875 and 0.125.
+
+These probes establish selection, clock, and weight behavior.
+They use synthetic children and do not establish rendered poses, shortest-path rotation output, first-person playback, or effect timing.
+The native video still needs visible timing comparisons against the production client implementation.
 
 ## Verification and remaining work
 
