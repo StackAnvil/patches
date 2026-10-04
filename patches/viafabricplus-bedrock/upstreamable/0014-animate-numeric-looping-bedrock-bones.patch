@@ -1,4 +1,4 @@
-From d332676d8cff4887f4f086b21bc83fccc9415a0f Mon Sep 17 00:00:00 2001
+From b3c0c231326d716bb74e796e1828b2ed47fb9f04 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:56:50 +0200
 Subject: [PATCH] feat(entities): evaluate custom actors with shared animation
@@ -31,33 +31,81 @@ animation scale. Saved CubeCraft and Hive packs exercise camera-facing
 bones, held position and scale, and explicit legacy controller roots.
 Their assets and executable inspection remain private.
 
-This generalizes existing graph playback to custom actors. Server
-ANIMATE_ENTITY commands still require separate core delivery and runtime
-controller playback. Passing semantic tests alone does not establish
-complete visible actor or animation parity.
+This generalizes existing graph playback to custom actors. Server animation
+commands use lifetime-bound core state and negotiated delivery. Resolve
+command-only aliases and global resources lazily, retain named states and
+transitions, queue the final valid selection before a frame, and reset
+repeated selections with the outgoing state blend curve. Create runtime
+slots in the order of their first resolvable commands so ignored commands
+cannot change shared-variable evaluation order.
+
+Keep native query binding to the state selected before the update,
+including forced selections. Nested controllers clear that binding.
+Apply commands to custom actor and player graphs, including animation
+effect callbacks. First-person graph sampling uses independent clocks but
+its current hand renderer does not yet apply sampled bone poses. Ordinary
+mob drawing and visible native timing comparisons remain required work.
+Passing semantic tests alone does not establish complete visible actor or
+animation parity.
+
+Native evidence includes the target state builder 141bbe700, transition
+insertion 141e6bfa0, selection 141e6bb40, and controller update 141e6d180.
+Executable probes establish forced-selection priority, same-state reset,
+and the shared-state double sample during an outgoing blend. Raw licensed
+assets and executable probes remain private.
 ---
- .../appearance/BedrockActorAnimation.java     |  93 ++++++++-
+ .../bedrock/ViaFabricPlusBedrock.java         |   5 +
+ .../appearance/BedrockActorAnimation.java     | 287 +++++++++++++++++-
  .../appearance/BedrockResourceLibrary.java    |  10 +
- .../bedrock/render/BedrockActorFrame.java     |  53 ++++++
+ .../bedrock/render/BedrockActorFrame.java     |  53 ++++
+ .../bedrock/render/BedrockActorState.java     |  16 +-
  .../render/BedrockActorUvAnimation.java       |  21 ++
- .../bedrock/render/BedrockAnimatedModel.java  |  24 ++-
- .../bedrock/render/BedrockEntityRenderer.java | 180 +++++++++++++++++-
- .../bedrock/render/BedrockGeometry.java       |  22 ++-
- .../BedrockServerEntityAnimationTest.java     | 156 +++++++++++++++
- .../render/BedrockActorUvAnimationTest.java   |  63 ++++++
- .../render/BedrockCustomActorModelTest.java   |  57 ++++++
- 10 files changed, 655 insertions(+), 24 deletions(-)
+ .../bedrock/render/BedrockAnimatedModel.java  |  24 +-
+ .../bedrock/render/BedrockEntityRenderer.java | 181 ++++++++++-
+ .../bedrock/render/BedrockGeometry.java       |  22 +-
+ .../bedrock/render/BedrockPlayerSkins.java    |   2 +
+ .../render/NativeAnimationPayload.java        |  24 ++
+ .../BedrockAnimationCommandsTest.java         | 180 +++++++++++
+ .../BedrockServerEntityAnimationTest.java     | 156 ++++++++++
+ .../render/BedrockActorUvAnimationTest.java   |  63 ++++
+ .../render/BedrockCustomActorModelTest.java   |  57 ++++
+ 15 files changed, 1069 insertions(+), 32 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorFrame.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvAnimation.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeAnimationPayload.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationCommandsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerEntityAnimationTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvAnimationTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCustomActorModelTest.java
 
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+index 54ea4e4..37fa602 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+@@ -25,6 +25,7 @@ import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
+ import com.viaversion.viafabricplus.bedrock.render.NativeSkinPayload;
+ import com.viaversion.viafabricplus.bedrock.render.NativeCustomEntityPayload;
+ import com.viaversion.viafabricplus.bedrock.render.NativeActorPayload;
++import com.viaversion.viafabricplus.bedrock.render.NativeAnimationPayload;
+ import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
+ import com.viaversion.viafabricplus.bedrock.render.CustomEntityRenderStore;
+ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
+@@ -83,6 +84,10 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+             ClientPlayNetworking.registerReceiver(NativeActorPayload.TYPE,
+                 (payload, context) -> BedrockActorState.accept(listener.getConnection(), payload.message())));
+         ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> BedrockActorState.clear());
++        PayloadTypeRegistry.clientboundPlay().register(NativeAnimationPayload.TYPE, NativeAnimationPayload.CODEC);
++        ClientPlayConnectionEvents.INIT.register((listener, client) ->
++            ClientPlayNetworking.registerReceiver(NativeAnimationPayload.TYPE,
++                (payload, context) -> BedrockActorState.accept(listener.getConnection(), payload.message())));
+         PayloadTypeRegistry.clientboundPlay().register(NativeBlockIdentifiersPayload.TYPE, NativeBlockIdentifiersPayload.CODEC);
+         ClientPlayNetworking.registerGlobalReceiver(NativeBlockIdentifiersPayload.TYPE,
+                 (payload, context) -> BedrockNativeBlocks.accept(payload.message()));
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
-index f3e2caa..fbafc8c 100644
+index f3e2caa..1d9c413 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
-@@ -7,6 +7,7 @@ package com.viaversion.viafabricplus.bedrock.appearance;
+@@ -7,9 +7,11 @@ package com.viaversion.viafabricplus.bedrock.appearance;
  
  import com.google.gson.JsonElement;
  import com.google.gson.JsonObject;
@@ -65,11 +113,16 @@ index f3e2caa..fbafc8c 100644
  
  import java.io.IOException;
  import java.util.ArrayList;
-@@ -17,9 +18,49 @@ import java.util.List;
++import java.util.Comparator;
+ import java.util.HashMap;
+ import java.util.HashSet;
+ import java.util.LinkedHashMap;
+@@ -17,9 +19,50 @@ import java.util.List;
  import java.util.Map;
  import java.util.Set;
  import java.util.function.Consumer;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import net.raphimc.viabedrock.api.model.NativeAnimationControllers;
  
  /** A resource-defined actor graph with shared variables and independent playback clocks. */
  public final class BedrockActorAnimation {
@@ -115,7 +168,25 @@ index f3e2caa..fbafc8c 100644
      @FunctionalInterface
      public interface Query {
          Object evaluate(List<Object> arguments);
-@@ -87,17 +128,27 @@ public final class BedrockActorAnimation {
+@@ -36,6 +79,8 @@ public final class BedrockActorAnimation {
+         }
+     }
+ 
++    private final Map<String, JsonObject> animationDefinitions;
++    private final Map<String, ControllerResource> controllerDefinitions;
+     private final Map<String, String> aliases;
+     private final Map<String, String> soundAliases;
+     private final Map<String, String> particleAliases;
+@@ -52,6 +97,8 @@ public final class BedrockActorAnimation {
+             final Map<String, ControllerResource> controllerDefinitions,
+             final BedrockResourceLibrary resources) throws IOException {
+         this.resources = resources;
++        this.animationDefinitions = Map.copyOf(animationDefinitions);
++        this.controllerDefinitions = Map.copyOf(controllerDefinitions);
+         final Map<String, JsonObject> renderControllers = new LinkedHashMap<>();
+         if (resources != null)
+             resources.definitions("render_controllers", "render_controllers")
+@@ -87,17 +134,27 @@ public final class BedrockActorAnimation {
              declaredAnimations.entrySet()
                      .forEach(entry -> aliases.put(entry.getKey(), entry.getValue().getAsString()));
          }
@@ -145,7 +216,7 @@ index f3e2caa..fbafc8c 100644
      }
  
      static BedrockActorAnimation read(
-@@ -160,14 +211,14 @@ public final class BedrockActorAnimation {
+@@ -160,14 +217,14 @@ public final class BedrockActorAnimation {
              final Map<String, JsonObject> animations,
              final Map<String, ControllerResource> controllers,
              final Set<String> chain,
@@ -163,7 +234,7 @@ index f3e2caa..fbafc8c 100644
              if (!this.controllers.containsKey(name)) {
                  final ControllerResource resource = controllers.get(name);
                  if (resource != null) {
-@@ -175,7 +226,7 @@ public final class BedrockActorAnimation {
+@@ -175,7 +232,7 @@ public final class BedrockActorAnimation {
                              Controller.read(resource.definition, resource.deferredEntry);
                      for (final State state : controller.states.values())
                          for (final Reference reference : state.animations)
@@ -172,7 +243,18 @@ index f3e2caa..fbafc8c 100644
                      this.controllers.put(name, controller);
                  }
              }
-@@ -260,6 +311,26 @@ public final class BedrockActorAnimation {
+@@ -252,6 +309,10 @@ public final class BedrockActorAnimation {
+     public final class Playback {
+         private BedrockMolang molang = new BedrockMolang();
+         private List<Active> active;
++        private NativeAnimationControllers commandSource;
++        private long commandRevision;
++        private final Map<String, Active> commandSlots = new LinkedHashMap<>();
++        private final Map<String, Long> selections = new HashMap<>();
+         private StatePlayback queryState;
+         private float previousTime = Float.NaN;
+         private float delta;
+@@ -260,6 +321,139 @@ public final class BedrockActorAnimation {
          private boolean eventsEnabled;
          private Consumer<SoundCue> soundOutput;
          private Consumer<ParticleCue> particleOutput;
@@ -182,6 +264,119 @@ index f3e2caa..fbafc8c 100644
 +                return this.size() > 256;
 +            }
 +        };
++
++        /** Supplies retained commands for this actor lifetime, independently for each perspective. */
++        public void commands(final NativeAnimationControllers source) {
++            if (this.commandSource == source) return;
++            if (this.commandSource != null) {
++                this.molang = new BedrockMolang();
++                this.active = null;
++                this.previousTime = Float.NaN;
++                this.allocated = 0;
++                this.commandSlots.clear();
++                this.selections.clear();
++            }
++            this.commandSource = source;
++            this.commandRevision = 0;
++        }
++
++        private Reference commandReference(final String alias) throws IOException {
++            resolve(alias, animationDefinitions, controllerDefinitions, new HashSet<>(), 0, false);
++            final String mapped = aliases.get(alias);
++            if (mapped != null && (animations.containsKey(mapped) || controllers.containsKey(mapped)))
++                return new Reference(alias, BedrockMolang.Program.parse(null, 1));
++            resolve(alias, animationDefinitions, controllerDefinitions, new HashSet<>(), 0, true);
++            return animations.containsKey(alias) || controllers.containsKey(alias)
++                    ? new Reference(alias, BedrockMolang.Program.parse(null, 1), true) : null;
++        }
++
++        private Active commandSlot(final String name, final String initial) throws IOException {
++            final Active existing = this.commandSlots.get(name);
++            if (existing != null) return existing;
++            for (final Active root : this.active) {
++                if (root.reference.name.equals(name)) {
++                    if (!root.controllerReference || root.controller == null) return null;
++                    this.commandSlots.put(name, root);
++                    return root;
++                }
++            }
++            Controller controller = new Controller(initial, Map.of(), Set.of(), true);
++            if (aliases.containsKey(name)) {
++                final Reference reference = this.commandReference(name);
++                if (reference != null) {
++                    final Controller declared = controllers.get(aliases.get(name));
++                    if (declared == null) return null;
++                    controller = declared;
++                }
++            }
++            final Active slot = new Active(new Reference(name, BedrockMolang.Program.parse(null, 1)),
++                    true, null, controller);
++            this.commandSlots.put(name, slot);
++            return slot;
++        }
++
++        private void updateCommands() {
++            if (this.commandSource == null) return;
++            final var snapshot = this.commandSource.snapshot();
++            if (snapshot.revision() == this.commandRevision) return;
++            this.commandRevision = snapshot.revision();
++            final List<CommandController> resolved = new ArrayList<>();
++            for (final var controller : snapshot.controllers().entrySet()) {
++                final List<CommandState> states = new ArrayList<>();
++                for (final var entry : controller.getValue().entrySet()) {
++                    if (entry.getValue().firstCommand() == 0) continue;
++                    try {
++                        final Reference animation = this.commandReference(entry.getKey());
++                        // Native contexts ignore a command whose animation resource cannot resolve.
++                        if (animation != null) states.add(new CommandState(entry.getKey(), entry.getValue(), animation));
++                    } catch (IOException invalid) {
++                        this.invalidCommand(entry.getKey(), invalid);
++                    }
++                }
++                states.sort(Comparator.comparingLong(state -> state.definition.firstCommand()));
++                if (!states.isEmpty()) resolved.add(new CommandController(controller.getKey(), states));
++            }
++            // An unavailable animation must not reserve a controller's position in the native update order.
++            resolved.sort(Comparator.comparingLong(controller -> controller.states.getFirst().definition.firstCommand()));
++            for (final CommandController controller : resolved) {
++                Active slot = null;
++                String selected = null;
++                long selection = this.selections.getOrDefault(controller.name, 0L);
++                for (final CommandState entry : controller.states) {
++                    final var definition = entry.definition;
++                    try {
++                        if (slot == null) slot = this.commandSlot(controller.name, entry.name);
++                        if (slot == null) break;
++                        final StatePlayback state = slot.state(entry.name);
++                        state.bind(entry.animation);
++                        for (final String next : definition.nextStates()) {
++                            final StatePlayback target = slot.state(next);
++                            final Reference child = this.commandReference(next);
++                            if (child != null) target.bind(child);
++                        }
++                        state.command(definition);
++                        if (definition.selection() > selection) {
++                            selected = entry.name;
++                            selection = definition.selection();
++                        }
++                    } catch (IOException invalid) {
++                        this.invalidCommand(entry.name, invalid);
++                    }
++                }
++                if (slot != null && selected != null) {
++                    slot.pending = slot.state(selected);
++                    this.selections.put(controller.name, selection);
++                }
++            }
++        }
++
++        private void invalidCommand(final String animation, final IOException invalid) {
++            java.util.logging.Logger.getLogger(BedrockActorAnimation.class.getName()).log(
++                    java.util.logging.Level.WARNING, "Invalid server actor animation " + animation, invalid);
++        }
++
++        private record CommandState(String name, NativeAnimationControllers.State definition, Reference animation) {}
++        private record CommandController(String name, List<CommandState> states) {}
 +
 +        /** Evaluates a render expression in the variables left by the sampled actor graph. */
 +        public float expression(final String source, final float fallback) {
@@ -199,7 +394,30 @@ index f3e2caa..fbafc8c 100644
  
          public Map<String, BedrockBoneAnimation.Transform> sample(
                  final float time, final Frame input) {
-@@ -347,13 +418,13 @@ public final class BedrockActorAnimation {
+@@ -284,6 +478,9 @@ public final class BedrockActorAnimation {
+                 this.molang = new BedrockMolang();
+                 this.active = null;
+                 this.allocated = 0;
++                this.commandSlots.clear();
++                this.selections.clear();
++                this.commandRevision = 0;
+             }
+             this.delta = this.active == null ? 0 : Math.max(0, time - this.previousTime);
+             this.previousTime = time;
+@@ -304,9 +501,12 @@ public final class BedrockActorAnimation {
+                 this.run(initialize);
+             }
+             this.molang.variables(input.variables);
++            this.updateCommands();
+             this.run(preAnimation);
+             final Map<String, BedrockBoneAnimation.Transform> result = new LinkedHashMap<>();
+             for (final Active value : this.active) value.apply(time, 1, queries, result);
++            for (final Active value : this.commandSlots.values())
++                if (!this.active.contains(value)) value.apply(time, 1, queries, result);
+             this.pose = Map.copyOf(result);
+             return this.pose;
+         }
+@@ -347,13 +547,13 @@ public final class BedrockActorAnimation {
          private List<Active> create(final List<Reference> references) {
              final List<Active> values = new ArrayList<>();
              for (final Reference reference : references) {
@@ -215,7 +433,99 @@ index f3e2caa..fbafc8c 100644
                                  animations.get(name),
                                  controllers.get(name)));
              }
-@@ -539,7 +610,11 @@ public final class BedrockActorAnimation {
+@@ -371,7 +571,7 @@ public final class BedrockActorAnimation {
+             private final Controller controller;
+             private final Map<String, StatePlayback> states = new HashMap<>();
+             private BedrockBoneAnimation.Playback playback;
+-            private StatePlayback current, outgoing;
++            private StatePlayback current, outgoing, pending;
+             private float elapsed, blendTime;
+ 
+             private Active(
+@@ -401,7 +601,7 @@ public final class BedrockActorAnimation {
+ 
+             private StatePlayback state(final String name) {
+                 return this.states.computeIfAbsent(
+-                        name, key -> new StatePlayback(this.controller.states.get(key)));
++                        name, key -> new StatePlayback(this.controller.states.getOrDefault(key, EMPTY_STATE)));
+             }
+ 
+             private void apply(
+@@ -427,7 +627,24 @@ public final class BedrockActorAnimation {
+                 try {
+                     final boolean first = this.current == null;
+                     if (first) this.current = this.state(this.controller.initial);
+-                    if (first && this.controller.deferredEntry) {
++                    if (this.pending != null) {
++                        final StatePlayback previous = this.current;
++                        if (!first) {
++                            queryState = previous;
++                            previous.time += delta;
++                        }
++                        this.current = this.pending;
++                        this.pending = null;
++                        this.current.reset();
++                        this.outgoing = first || previous.definition.blend.isEmpty() ? null : previous;
++                        this.blendTime = 0;
++                        if (!first && previous != this.current && eventsEnabled)
++                            run(previous.definition.exit);
++                        if (first || previous != this.current) {
++                            if (eventsEnabled) run(this.current.definition.entry);
++                            entered = this.current;
++                        }
++                    } else if (first && this.controller.deferredEntry) {
+                         this.current.reset();
+                         if (eventsEnabled) run(this.current.definition.entry);
+                         entered = this.current;
+@@ -501,14 +718,45 @@ public final class BedrockActorAnimation {
+         }
+ 
+         private final class StatePlayback {
+-            private final State definition;
++            private State definition;
+             private final List<Active> children;
++            private long commandRevision;
+             private float time;
+             private boolean completed;
+ 
+             private StatePlayback(final State definition) {
+                 this.definition = definition;
+-                this.children = create(definition.animations);
++                this.children = new ArrayList<>(create(definition.animations));
++            }
++
++            private void bind(final Reference reference) {
++                if (this.children.stream().noneMatch(child -> child.reference.name.equals(reference.name)))
++                    this.children.addAll(create(List.of(reference)));
++            }
++
++            private void command(final NativeAnimationControllers.State command) throws IOException {
++                if (this.commandRevision == command.selection()) return;
++                final List<Transition> transitions = new ArrayList<>(this.definition.transitions);
++                for (final var transition : command.transitions()) {
++                    if (transitions.stream().noneMatch(existing -> existing.target.equals(transition.target())
++                            && existing.source.equals(transition.expression()))) {
++                        BedrockMolang.Program condition;
++                        try {
++                            condition = BedrockMolang.Program.parse(
++                                    new com.google.gson.JsonPrimitive(transition.expression()), 0);
++                        } catch (IOException invalid) {
++                            java.util.logging.Logger.getLogger(BedrockActorAnimation.class.getName()).log(
++                                    java.util.logging.Level.WARNING, "Invalid server actor stop expression", invalid);
++                            condition = BedrockMolang.Program.parse(null, 0);
++                        }
++                        transitions.add(new Transition(transition.target(), condition, transition.expression()));
++                    }
++                }
++                this.definition = new State(this.definition.animations, List.copyOf(transitions),
++                        this.definition.entry, this.definition.exit, this.definition.sounds, this.definition.particles,
++                        this.definition.variables, command.blendOutTime() == 0 ? List.of()
++                                : List.of(new Point(0, 1), new Point(command.blendOutTime(), 0)), true);
++                this.commandRevision = command.selection();
+             }
+ 
+             private boolean allFinished() {
+@@ -539,9 +787,13 @@ public final class BedrockActorAnimation {
          }
      }
  
@@ -226,8 +536,30 @@ index f3e2caa..fbafc8c 100644
 +        }
 +    }
  
-     private record Transition(String target, BedrockMolang.Program condition) {}
+-    private record Transition(String target, BedrockMolang.Program condition) {}
++    private record Transition(String target, BedrockMolang.Program condition, String source) {}
  
+     private record Point(float input, float output) {}
+ 
+@@ -576,6 +828,9 @@ public final class BedrockActorAnimation {
+             List<Point> blend,
+             boolean shortestPath) {}
+ 
++    private static final State EMPTY_STATE = new State(List.of(), List.of(), List.of(), List.of(),
++            List.of(), List.of(), Map.of(), List.of(), false);
++
+     private record ControllerResource(JsonObject definition, boolean deferredEntry) {}
+ 
+     private record Controller(
+@@ -604,7 +859,7 @@ public final class BedrockActorAnimation {
+                         transitions.add(
+                                 new Transition(
+                                         target.getKey(),
+-                                        BedrockMolang.Program.parse(target.getValue(), 0)));
++                                        BedrockMolang.Program.parse(target.getValue(), 0), target.getValue().getAsString()));
+                     }
+                 final Map<String, Variable> variables = new LinkedHashMap<>();
+                 if (state.has("variables"))
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
 index 8481d64..58084cf 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
@@ -308,6 +640,52 @@ index 0000000..aa87681
 +            : (float) -Math.toDegrees(Math.atan2(y, Math.sqrt(x * x + z * z)));
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java
+index 4283321..e3de6e8 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java
+@@ -10,6 +10,8 @@ import net.minecraft.client.Minecraft;
+ import net.minecraft.network.Connection;
+ import net.raphimc.viabedrock.api.model.NativeActorMessage;
+ import net.raphimc.viabedrock.api.model.NativeActorStates;
++import net.raphimc.viabedrock.api.model.NativeAnimationControllers;
++import net.raphimc.viabedrock.api.model.NativeAnimationMessage;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
+ 
+ import java.util.UUID;
+@@ -22,12 +24,20 @@ public final class BedrockActorState {
+     private BedrockActorState() {}
+ 
+     public static void accept(final Connection connection, final NativeActorMessage message) {
++        accept(connection, localPlayer -> apply(message, localPlayer));
++    }
++
++    public static void accept(final Connection connection, final NativeAnimationMessage message) {
++        accept(connection, localPlayer -> ACTORS.apply(message, localPlayer));
++    }
++
++    private static void accept(final Connection connection, final java.util.function.Consumer<UUID> update) {
+         final long receivedGeneration = generation;
+         Minecraft.getInstance().execute(() -> {
+             final var listener = Minecraft.getInstance().getConnection();
+             if (generation == receivedGeneration && connection.isConnected()
+                     && listener != null && listener.getConnection() == connection) {
+-                apply(message, listener.getLocalGameProfile().id());
++                update.accept(listener.getLocalGameProfile().id());
+             }
+         });
+     }
+@@ -49,6 +59,10 @@ public final class BedrockActorState {
+         return state == null ? null : state.lifetime();
+     }
+ 
++    public static NativeAnimationControllers animations(final UUID uuid) {
++        return ACTORS.animations(uuid);
++    }
++
+     public static boolean isCharging(final UUID uuid) {
+         final var state = state(uuid);
+         return state != null && state.flags().contains(ActorFlags.CHARGING);
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvAnimation.java
 new file mode 100644
 index 0000000..c7d9e7b
@@ -411,7 +789,7 @@ index 6b3463c..9ac8e16 100644
          final String normalized = name.toLowerCase(Locale.ROOT).replace("_", "");
          return normalized.equals("hip") ? "waist" : normalized;
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
-index 66bd0e5..2e539f6 100644
+index 66bd0e5..4285662 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 @@ -19,6 +19,16 @@
@@ -519,7 +897,7 @@ index 66bd0e5..2e539f6 100644
          state.yaw = entity.getYRot();
      }
  
-@@ -133,32 +183,122 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -133,32 +183,123 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
                  final Model<EntityRenderState> model = this.models.computeIfAbsent(modelKey, _ -> BedrockGeometry.entityModel(geometry, material.getValue()));
                  final var alphaTest = this.materialDefinitions.alphaTest(material.getKey());
                  final RenderType type;
@@ -586,6 +964,7 @@ index 66bd0e5..2e539f6 100644
 +            actor.models = state.models.stream().map(RenderedModel::geometry).distinct().toList();
 +            actor.queries = Map.copyOf(queries);
 +            actor.scale = state.scale;
++            actor.playback.commands(BedrockActorState.animations(state.actor.getUUID()));
 +            state.pose = actor.playback.sample(state.ageInTicks / 20F, new BedrockActorAnimation.Frame(queries, Map.of()),
 +                    !Minecraft.getInstance().isPaused(), sounds::add, particles::add);
 +            actor.pose = state.pose;
@@ -646,7 +1025,7 @@ index 66bd0e5..2e539f6 100644
      static void applyActorTransform(final PoseStack poseStack, final float yaw, final float scale) {
          // Scale around the native actor origin before compensating for the Java model origin.
          poseStack.scale(scale, scale, scale);
-@@ -169,17 +309,41 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
+@@ -169,17 +310,41 @@ public final class BedrockEntityRenderer extends EntityRenderer<Interaction, Ent
  
      public static final class State extends EntityRenderState {
          private List<RenderedModel> models = List.of();
@@ -733,6 +1112,242 @@ index 90f81f1..8c326ba 100644
      private static ModelPart root(final BedrockGeometryModel geometry, final boolean player,
                                    final Predicate<String> selectedBones) {
          return root(geometry, player, Map.of(), null, null, selectedBones);
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
+index b8f9e5c..ed4a879 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
+@@ -331,6 +331,7 @@ public final class BedrockPlayerSkins {
+             return emote;
+         }
+         if (actor == null) return Map.of();
++        actor.commands(BedrockActorState.animations(entity.getUUID()));
+         final Map<String, Float> variables = actorVariables(entity, state, false);
+         final var pose = actor.sample(
+                 (System.nanoTime() - appearance.started) / 1_000_000_000F,
+@@ -404,6 +405,7 @@ public final class BedrockPlayerSkins {
+         final var frame = BedrockFirstPersonInput.bind(
+                 new BedrockActorAnimation.Frame(queries, actorVariables(player, state, true), Map.of("is_first_person", 1)),
+                 items.oldMainHandHeight, items.mainHandHeight, items.oldOffHandHeight, items.offHandHeight, partialTick);
++        appearance.firstPersonActor.commands(BedrockActorState.animations(player.getUUID()));
+         appearance.firstPersonActor.sample((System.nanoTime() - appearance.started) / 1_000_000_000F,
+                 frame, false, null, null);
+         final var camera = Minecraft.getInstance().options.bobView().get()
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeAnimationPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeAnimationPayload.java
+new file mode 100644
+index 0000000..0e81470
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeAnimationPayload.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.NativeAnimationMessage;
++
++public record NativeAnimationPayload(NativeAnimationMessage message) implements CustomPacketPayload {
++    public static final Type<NativeAnimationPayload> TYPE = new Type<>(Identifier.parse(NativeAnimationMessage.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, NativeAnimationPayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> NativeAnimationMessage.TYPE.write(buffer, payload.message),
++            buffer -> new NativeAnimationPayload(NativeAnimationMessage.TYPE.read(buffer)));
++
++    @Override
++    public Type<NativeAnimationPayload> type() {
++        return TYPE;
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationCommandsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationCommandsTest.java
+new file mode 100644
+index 0000000..223ecab
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationCommandsTest.java
+@@ -0,0 +1,180 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.google.gson.JsonObject;
++import com.google.gson.JsonParser;
++import java.io.IOException;
++import java.util.ArrayList;
++import java.util.Map;
++import net.raphimc.viabedrock.api.model.NativeAnimationControllers;
++import net.raphimc.viabedrock.protocol.model.ActorAnimationCommand;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockAnimationCommandsTest {
++    private static final BedrockActorAnimation.Frame FRAME = new BedrockActorAnimation.Frame(Map.of(), Map.of());
++
++    private static BedrockActorAnimation graph() throws IOException {
++        return BedrockActorAnimation.read(json("""
++                {"animations":{"raise":"animation.raise","lower":"animation.lower","finite":"animation.finite"},
++                 "sound_effects":{"cue":"fixture.cue"}, "particle_effects":{"spark":"fixture:spark"}}
++                """), Map.of(), json("""
++                {"animation.raise":{"loop":true,"animation_length":100,
++                   "bones":{"arm":{"position":["q.anim_time","q.state_time",10]}}},
++                 "animation.lower":{"loop":true,"animation_length":100,
++                   "bones":{"arm":{"position":["q.anim_time","q.state_time",-10]}}},
++                 "animation.finite":{"animation_length":0.5,
++                   "bones":{"head":{"position":["q.anim_time",0,0]}},
++                   "sound_effects":{"0":{"effect":"cue"}},
++                   "particle_effects":{"0":{"effect":"spark"}}},
++                 "animation.global":{"loop":true,"animation_length":100,
++                   "bones":{"hand":{"position":[2,0,0]}}}}
++                """), new JsonObject(), "1.10.0");
++    }
++
++    private static JsonObject json(final String value) {
++        return JsonParser.parseString(value).getAsJsonObject();
++    }
++
++    private static ActorAnimationCommand command(final String animation, final String next, final String condition,
++                                                 final String slot, final float blend) {
++        return new ActorAnimationCommand(animation, next, condition, 1, slot, blend);
++    }
++
++    @Test
++    void resetsRepeatedSelectionsAndAppliesOnlyTheLastSelectionInAFrame() throws IOException {
++        final var playback = graph().playback();
++        final var commands = new NativeAnimationControllers();
++        playback.commands(commands);
++        commands.apply(command("raise", "default", "0", "slot", 0));
++        assertEquals(new BedrockBoneAnimation.Vector(0, 0, 10), playback.sample(0, FRAME).get("arm").position());
++        assertEquals(new BedrockBoneAnimation.Vector(0.5F, 0.5F, 10), playback.sample(0.5F, FRAME).get("arm").position());
++        commands.apply(command("lower", "default", "0", "slot", 0));
++        commands.apply(command("raise", "default", "0", "slot", 0));
++        assertEquals(new BedrockBoneAnimation.Vector(0.25F, 0, 10), playback.sample(0.75F, FRAME).get("arm").position());
++        assertEquals(0.25F, playback.sample(1, FRAME).get("arm").position().y());
++    }
++
++    @Test
++    void transitionsToUncommandedAliasesAndUsesPreviousChildCompletion() throws IOException {
++        final var playback = graph().playback();
++        final var commands = new NativeAnimationControllers();
++        playback.commands(commands);
++        commands.apply(command("finite", "lower", "q.any_animation_finished", "slot", 0));
++        assertTrue(playback.sample(0, FRAME).containsKey("head"));
++        assertTrue(playback.sample(0.5F, FRAME).containsKey("head"));
++        final var after = playback.sample(0.75F, FRAME);
++        assertFalse(after.containsKey("head"));
++        assertEquals(new BedrockBoneAnimation.Vector(0.25F, 0.75F, -10), after.get("arm").position());
++        commands.apply(command("lower", "default", "1", "slot", 0));
++        assertTrue(playback.sample(1, FRAME).containsKey("arm"));
++        assertTrue(playback.sample(1.25F, FRAME).isEmpty());
++    }
++
++    @Test
++    void usesTheOutgoingCurveAndPreservesTheNativeSameStateDoubleSample() throws IOException {
++        final var playback = graph().playback();
++        final var commands = new NativeAnimationControllers();
++        playback.commands(commands);
++        commands.apply(command("raise", "default", "0", "slot", 2));
++        playback.sample(0, FRAME);
++        playback.sample(0.5F, FRAME);
++        commands.apply(command("lower", "default", "0", "slot", 0));
++        final var blended = playback.sample(0.75F, FRAME).get("arm").position();
++        assertEquals(7.5F, blended.z(), 0.00001F);
++        assertEquals(0.6875F, blended.x(), 0.00001F);
++        assertEquals(1, blended.y(), 0.00001F);
++        commands.apply(command("lower", "default", "0", "slot", 2));
++        assertEquals(-10, playback.sample(1, FRAME).get("arm").position().z());
++        commands.apply(command("lower", "default", "0", "slot", 2));
++        assertEquals(0.28125F, playback.sample(1.25F, FRAME).get("arm").position().x(), 0.00001F);
++    }
++
++    @Test
++    void ignoresUnavailableAnimationsAndKeepsSlotsAndPerspectivesIndependent() throws IOException {
++        final var body = graph().playback();
++        final var firstPerson = body.fork();
++        final var commands = new NativeAnimationControllers();
++        body.commands(commands);
++        firstPerson.commands(commands);
++        commands.apply(command("raise", "default", "0", "one", 0));
++        commands.apply(command("animation.global", "default", "0", "two", 0));
++        final var pose = body.sample(0, FRAME);
++        assertEquals(10, pose.get("arm").position().z());
++        assertEquals(2, pose.get("hand").position().x());
++        body.sample(0.5F, FRAME);
++        commands.apply(command("missing", "raise", "1", "one", 0));
++        assertEquals(0.75F, body.sample(0.75F, FRAME).get("arm").position().x());
++        assertEquals(0, firstPerson.sample(0.75F, FRAME).get("arm").position().x());
++        body.commands(null);
++        assertTrue(body.sample(1, FRAME).isEmpty());
++        assertTrue(body.sample(0, FRAME).isEmpty());
++    }
++
++    @Test
++    void replaysFiniteEffectsAfterAForcedResetWithoutSharingThemAcrossPerspectives() throws IOException {
++        final var playback = graph().playback();
++        final var commands = new NativeAnimationControllers();
++        final var sounds = new ArrayList<BedrockActorAnimation.SoundCue>();
++        final var particles = new ArrayList<BedrockActorAnimation.ParticleCue>();
++        playback.commands(commands);
++        commands.apply(command("finite", "default", "q.any_animation_finished", "slot", 0));
++        playback.sample(0, FRAME, true, sounds::add, particles::add);
++        assertEquals(1, sounds.size());
++        assertEquals(1, particles.size());
++        playback.sample(0.25F, FRAME, true, sounds::add, particles::add);
++        assertEquals(1, sounds.size());
++        commands.apply(command("finite", "default", "q.any_animation_finished", "slot", 0));
++        playback.sample(0.5F, FRAME, true, sounds::add, particles::add);
++        assertEquals(2, sounds.size());
++        assertEquals(2, particles.size());
++        final var firstPerson = playback.fork();
++        firstPerson.commands(commands);
++        firstPerson.sample(0.5F, FRAME, false, sounds::add, particles::add);
++        assertEquals(2, sounds.size());
++        assertEquals(2, particles.size());
++    }
++
++    @Test
++    void selectsAnAuthoredControllerWithoutSamplingItTwiceOrReplacingItsStates() throws IOException {
++        final var graph = BedrockActorAnimation.read(json("""
++                {"animations":{"slot":"controller.animation.slot","raise":"animation.raise","lower":"animation.lower"},
++                 "scripts":{"animate":["slot"]}}
++                """), Map.of(), json("""
++                {"animation.raise":{"loop":true,"bones":{"arm":{"position":[0,0,10]}}},
++                 "animation.lower":{"loop":true,"bones":{"arm":{"position":[0,0,-10]}}}}
++                """), json("""
++                {"controller.animation.slot":{"states":{"default":{"animations":["lower"]}}}}
++                """), "1.10.0");
++        final var playback = graph.playback();
++        final var commands = new NativeAnimationControllers();
++        playback.commands(commands);
++        assertEquals(-10, playback.sample(0, FRAME).get("arm").position().z());
++        commands.apply(command("raise", "default", "1", "slot", 0));
++        assertEquals(10, playback.sample(0.25F, FRAME).get("arm").position().z());
++        assertEquals(-10, playback.sample(0.5F, FRAME).get("arm").position().z());
++    }
++
++    @Test
++    void createsSlotsInTheOrderOfTheirFirstResolvableCommands() throws IOException {
++        final var graph = BedrockActorAnimation.read(json("""
++                {"animations":{"write":"animation.write","read":"animation.read"}}
++                """), Map.of(), json("""
++                {"animation.write":{"loop":true,"bones":{"writer":{"position":["v.shared = 7; return v.shared;",0,0]}}},
++                 "animation.read":{"loop":true,"bones":{"reader":{"position":["v.shared",0,0]}}}}
++                """), new JsonObject(), "1.10.0");
++        final var playback = graph.playback();
++        final var commands = new NativeAnimationControllers();
++        playback.commands(commands);
++        commands.apply(command("missing", "default", "0", "reader", 0));
++        commands.apply(command("write", "default", "0", "writer", 0));
++        commands.apply(command("read", "default", "0", "reader", 0));
++        assertEquals(7, playback.sample(0, FRAME).get("reader").position().x());
++    }
++
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerEntityAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerEntityAnimationTest.java
 new file mode 100644
 index 0000000..226b216

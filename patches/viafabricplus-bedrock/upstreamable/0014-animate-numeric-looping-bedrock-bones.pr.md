@@ -68,5 +68,41 @@ This patch does not claim support for that material.
 Native comparisons of dynamic custom-actor transitions, weighted poses, and effect timing remain necessary.
 The replay and numerical tests do not establish complete visual parity.
 
-`ANIMATE_ENTITY` still needs core decoding, negotiated delivery, and runtime controller playback for every supported actor type.
-This patch supplies the shared custom-actor graph required by that work.
+## Server animation commands
+
+The client advertises the core animation channel and binds received commands to the current connection and actor lifetime.
+The shared graph consumes core's retained controller definitions separately for each actor and perspective.
+It resolves declared aliases and global resources outside `scripts.animate` when a command needs them.
+Unresolved animation commands leave the current selection unchanged.
+They also cannot reserve a controller position before a later command resolves.
+Runtime slots follow the order of their first resolvable commands.
+Named next states can bind their animation before receiving a command.
+
+Runtime states retain ordered stop conditions and reuse their child players.
+The last valid selection before a frame wins, takes priority over conditions, and resets even the current state.
+An outgoing state supplies its blend curve.
+Selecting that same state during a blend samples its shared child twice, matching the native controller.
+The runtime also selects authored controller states without sampling the controller twice.
+Sound and particle callbacks use the existing effect runtimes.
+First-person graph sampling has independent clocks and suppresses duplicate effects through its existing event policy.
+The current hand renderer consumes visibility and camera state but does not apply those sampled bone poses.
+
+Native query binding remains attached to the state selected before the update during child sampling.
+Nested controllers clear that binding.
+The full suite rejected an attempted parent-binding restoration, and the production path now follows the executable callback results.
+
+Targeted numerical tests cover repeated selection, pending-selection priority, uncommanded next states, completion timing, outgoing blends, shared-state sampling, independent slots, perspectives, and effects.
+They also check authored controller reuse, shared variables after unavailable commands, and cleanup after command state changes.
+The core patch notes identify the native builder, selection, transition, and update routines.
+
+Ordinary mob drawing, other stop-expression versions, emote composition, and complete first-person and visible effect timing remain open.
+This implementation does not establish animation parity for every actor type.
+
+
+The native command recording now passes transport and rendering checks through direct connections and ViaProxy.
+Both routes deliver all 13 commands with the complete original scene hash.
+Required private instrumentation observes the production graph after sampling.
+It checks finite-animation resets, simultaneous slots, and the uncommanded next-state alias.
+Both routes finish in `fixture_raise` with right-arm rotation `(-90, 0, 0)`.
+The complete build passes 993 tests and skips 113 optional tests.
+These checks cover player bodies; custom-actor command scenes and complete visible timing comparisons still require work.

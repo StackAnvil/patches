@@ -74,3 +74,15 @@ The bool, int, enum string, and float retain their values and types.
 Both routes remove and restore local inputs at each dimension change.
 Final screenshots show the grounded blue costume and green equipment on both routes, consistent with the native selection.
 Camera framing, lighting, full animation timing, and broader lifecycle behavior remain unverified.
+
+## Command graphs for classic players
+
+A classic player without a server costume can load the accepted built-in player graph when an animation command arrives.
+The renderer reevaluates graph demand after an earlier lookup without commands.
+The resource cache retains server provenance separately from graph availability.
+Built-in player definitions therefore remain ordinary skin resources and do not become costume overrides.
+Players without commands or server overrides retain their existing renderer selection.
+
+A targeted resource test loads built-in command resources after an earlier lookup without commands, then samples their production graph.
+It also checks server provenance and resource-cache replacement.
+Native command playback remains part of the shared actor graph patch.

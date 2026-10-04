@@ -161,3 +161,13 @@ Neither run reports unresolved model errors or rejected skins.
 These observations verify transport and supported rendering within this recorded scene.
 They do not establish complete native visual parity, actor event support, or broader lifecycle behavior.
 Raw packets, assets, account data, and screenshots remain private.
+
+
+## Local skin identity before player creation
+
+Transported local skins now use the current play listener's Java profile UUID.
+That profile exists before the local player entity.
+A ViaProxy connection can use a Java UUID different from the original Bedrock account UUID.
+The previous entity-based fallback installed early fragments under the Bedrock UUID.
+Connection checks still reject updates from a different or disconnected source.
+The runtime replay results are recorded in the coverage ledger.

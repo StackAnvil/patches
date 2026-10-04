@@ -1,4 +1,4 @@
-From 307b690cb2b71d8c80fe1ea29029a9b710b22df2 Mon Sep 17 00:00:00 2001
+From a7078226974547e61bc2bd10c11be75dd99be635 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 18:50:27 +0200
 Subject: [PATCH] feat(animations): decode and transport native actor commands
@@ -8,20 +8,181 @@ Decode every field of protocol 2193 AnimateEntity packets, including the stop-ex
 Keep authored animation, controller, transition, and blend values intact for native client integrations. Split large target groups into bounded payloads. Ordinary Java cannot faithfully execute arbitrary resource-defined bone commands, so transport requires both actor-state and animation capabilities.
 
 Match the wire order against official Bedrock 1.26.51.1 build 51061372 captures and the protocol 2193 schema. Client controller playback and native timing comparisons remain separate required work.
+
+Retain per-lifetime command controllers in the shared actor registry. Keep named next states, ordered transitions, native target/expression deduplication, and selection revisions without an ever-growing packet journal. Resource availability remains specific to each rendering context. Follow the target executable state builder and controller-update probes, including repeated selections and outgoing blend curves.
 ---
- .../api/model/NativeAnimationMessage.java     | 74 +++++++++++++++++++
- .../protocol/model/ActorAnimationCommand.java | 34 +++++++++
- .../protocol/model/AnimateEntity.java         | 46 ++++++++++++
- .../protocol/packet/EntityPackets.java        | 41 ++++++++++
- .../api/model/NativeAnimationMessageTest.java | 52 +++++++++++++
- .../protocol/model/AnimateEntityTest.java     | 69 +++++++++++++++++
- 6 files changed, 316 insertions(+)
+ .../api/model/NativeActorStates.java          | 21 +++++
+ .../api/model/NativeAnimationControllers.java | 86 ++++++++++++++++++
+ .../api/model/NativeAnimationMessage.java     | 74 +++++++++++++++
+ .../protocol/model/ActorAnimationCommand.java | 34 +++++++
+ .../protocol/model/AnimateEntity.java         | 46 ++++++++++
+ .../protocol/packet/EntityPackets.java        | 41 +++++++++
+ .../model/NativeAnimationControllersTest.java | 91 +++++++++++++++++++
+ .../api/model/NativeAnimationMessageTest.java | 52 +++++++++++
+ .../protocol/model/AnimateEntityTest.java     | 69 ++++++++++++++
+ 9 files changed, 514 insertions(+)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeAnimationControllers.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeAnimationMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/ActorAnimationCommand.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/AnimateEntity.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeAnimationControllersTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeAnimationMessageTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/AnimateEntityTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
+index f33b953a6..fc0a26ba3 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
+@@ -14,6 +14,7 @@ public final class NativeActorStates {
+ 
+     private final Map<UUID, NativeActorMessage.Snapshot> actors = new HashMap<>();
+     private final Map<Long, UUID> runtimeIds = new HashMap<>();
++    private final Map<UUID, NativeAnimationControllers> animations = new HashMap<>();
+ 
+     public void apply(final NativeActorMessage message, final UUID localPlayer) {
+         final UUID uuid = message.localPlayer() ? java.util.Objects.requireNonNull(localPlayer) : message.uuid();
+@@ -21,15 +22,20 @@ public final class NativeActorStates {
+             final var previous = this.actors.put(uuid, snapshot);
+             if (previous != null) {
+                 this.runtimeIds.remove(previous.runtimeId(), uuid);
++                if (!previous.lifetime().equals(snapshot.lifetime())) {
++                    this.animations.remove(uuid);
++                }
+             }
+             final UUID previousUuid = this.runtimeIds.put(snapshot.runtimeId(), uuid);
+             if (previousUuid != null && !previousUuid.equals(uuid)) {
+                 this.actors.remove(previousUuid);
++                this.animations.remove(previousUuid);
+             }
+         } else if (message instanceof NativeActorMessage.Remove remove) {
+             final var current = this.actors.get(uuid);
+             if (current != null && current.lifetime().equals(remove.lifetime())) {
+                 this.actors.remove(uuid);
++                this.animations.remove(uuid);
+                 this.runtimeIds.remove(current.runtimeId(), uuid);
+             }
+         }
+@@ -39,6 +45,20 @@ public final class NativeActorStates {
+         return this.actors.get(uuid);
+     }
+ 
++    public void apply(final NativeAnimationMessage message, final UUID localPlayer) {
++        for (final var target : message.targets()) {
++            final UUID uuid = target.localPlayer() ? java.util.Objects.requireNonNull(localPlayer) : target.uuid();
++            final var actor = this.actors.get(uuid);
++            if (actor != null && actor.lifetime().equals(target.lifetime())) {
++                this.animations.computeIfAbsent(uuid, _ -> new NativeAnimationControllers()).apply(message.command());
++            }
++        }
++    }
++
++    public NativeAnimationControllers animations(final UUID uuid) {
++        return this.animations.get(uuid);
++    }
++
+     public NativeActorMessage.Snapshot getByRuntimeId(final long runtimeId) {
+         return this.actors.get(this.runtimeIds.get(runtimeId));
+     }
+@@ -46,6 +66,7 @@ public final class NativeActorStates {
+     public void clear() {
+         this.actors.clear();
+         this.runtimeIds.clear();
++        this.animations.clear();
+     }
+ 
+ }
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeAnimationControllers.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeAnimationControllers.java
+new file mode 100644
+index 000000000..259c80712
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeAnimationControllers.java
+@@ -0,0 +1,86 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.LinkedHashMap;
++import java.util.LinkedHashSet;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import net.raphimc.viabedrock.protocol.model.ActorAnimationCommand;
++
++/** Retained command definitions; each rendering context resolves its own animation resources. */
++public final class NativeAnimationControllers {
++
++    private final Map<String, Map<String, MutableState>> controllers = new LinkedHashMap<>();
++    private long revision;
++    private Snapshot snapshot;
++
++    public void apply(final ActorAnimationCommand command) {
++        final var states = this.controllers.computeIfAbsent(command.controller(), _ -> new LinkedHashMap<>());
++        final var state = states.computeIfAbsent(command.animation(), _ -> new MutableState());
++        state.selection = ++this.revision;
++        if (state.firstCommand == 0) {
++            state.firstCommand = this.revision;
++        }
++        state.blendOutTime = command.blendOutTime();
++        if (!command.nextState().isEmpty()) {
++            states.computeIfAbsent(command.nextState(), _ -> new MutableState());
++            state.nextStates.add(command.nextState());
++            if (!command.stopExpression().isEmpty()) {
++                final boolean duplicate = state.transitions.stream().anyMatch(transition ->
++                        transition.target().equals(command.nextState()) && transition.expression().equals(command.stopExpression()));
++                if (!duplicate) {
++                    state.transitions.add(new Transition(command.nextState(), command.stopExpression(), command.stopExpressionVersion()));
++                }
++            }
++        }
++        this.snapshot = null;
++    }
++
++    public Snapshot snapshot() {
++        if (this.snapshot == null) {
++            final Map<String, Map<String, State>> result = new LinkedHashMap<>();
++            for (final var controller : this.controllers.entrySet()) {
++                final Map<String, State> states = new LinkedHashMap<>();
++                controller.getValue().forEach((name, state) -> states.put(name, new State(state.blendOutTime,
++                        state.firstCommand, state.selection, List.copyOf(state.nextStates), List.copyOf(state.transitions))));
++                result.put(controller.getKey(), Collections.unmodifiableMap(states));
++            }
++            this.snapshot = new Snapshot(this.revision, Collections.unmodifiableMap(result));
++        }
++        return this.snapshot;
++    }
++
++    public record Snapshot(long revision, Map<String, Map<String, State>> controllers) {
++        public Snapshot {
++            final Map<String, Map<String, State>> copy = new LinkedHashMap<>();
++            controllers.forEach((name, states) -> copy.put(name, Collections.unmodifiableMap(new LinkedHashMap<>(states))));
++            controllers = Collections.unmodifiableMap(copy);
++        }
++    }
++
++    public record State(float blendOutTime, long firstCommand, long selection, List<String> nextStates, List<Transition> transitions) {
++        public State {
++            nextStates = List.copyOf(nextStates);
++            transitions = List.copyOf(transitions);
++        }
++    }
++
++    public record Transition(String target, String expression, int expressionVersion) {
++    }
++
++    private static final class MutableState {
++        private float blendOutTime;
++        private long firstCommand;
++        private long selection;
++        private final Set<String> nextStates = new LinkedHashSet<>();
++        private final List<Transition> transitions = new ArrayList<>();
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeAnimationMessage.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeAnimationMessage.java
 new file mode 100644
 index 000000000..d148ffb7a
@@ -274,6 +435,103 @@ index 8cd512e79..b066520bd 100644
          protocol.registerClientbound(ClientboundBedrockPackets.ADD_ENTITY, ClientboundPackets26_3.ADD_ENTITY, wrapper -> {
              final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
              final GameSessionStorage gameSession = wrapper.user().get(GameSessionStorage.class);
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeAnimationControllersTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeAnimationControllersTest.java
+new file mode 100644
+index 000000000..d9c47c948
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeAnimationControllersTest.java
+@@ -0,0 +1,91 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import java.util.UUID;
++import net.raphimc.viabedrock.protocol.model.ActorAnimationCommand;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeAnimationControllersTest {
++
++    @Test
++    void retainsStatesAndTransitionOrderWhileDeduplicatingAcrossExpressionVersions() {
++        final var model = new NativeAnimationControllers();
++        final var first = new ActorAnimationCommand("raise", "lower", "q.state_time>2", 1, "slot", 2);
++        model.apply(first);
++        final var before = model.snapshot();
++        model.apply(new ActorAnimationCommand(first.animation(), first.nextState(), first.stopExpression(), 9, first.controller(), 0));
++        model.apply(new ActorAnimationCommand(first.animation(), "idle", "q.any_animation_finished", 1, first.controller(), 3));
++        final var after = model.snapshot();
++        final var old = before.controllers().get(first.controller()).get(first.animation());
++        final var current = after.controllers().get(first.controller()).get(first.animation());
++        assertEquals(1, old.selection());
++        assertEquals(3, current.selection());
++        assertEquals(1, current.firstCommand());
++        assertEquals(2, old.blendOutTime());
++        assertEquals(3, current.blendOutTime());
++        assertEquals(1, old.transitions().size());
++        assertEquals(2, current.transitions().size());
++        assertEquals(1, current.transitions().getFirst().expressionVersion());
++        assertEquals(first.nextState(), current.transitions().getFirst().target());
++        assertEquals(3, after.controllers().get(first.controller()).size());
++        assertEquals(0, after.controllers().get(first.controller()).get(first.nextState()).selection());
++        assertThrows(UnsupportedOperationException.class, () -> after.controllers().clear());
++        assertThrows(UnsupportedOperationException.class, () -> current.transitions().clear());
++        assertSame(after, model.snapshot());
++    }
++
++    @Test
++    void createsEmptyNextStatesWithoutConditionsAndKeepsSlotsIndependent() {
++        final var model = new NativeAnimationControllers();
++        final var first = new ActorAnimationCommand("raise", "idle", "", 1, "one", 0);
++        model.apply(first);
++        model.apply(new ActorAnimationCommand(first.animation(), "", "1", 1, "two", 2));
++        final var slots = model.snapshot().controllers();
++        assertEquals(2, slots.get(first.controller()).size());
++        assertTrue(slots.get(first.controller()).get(first.animation()).transitions().isEmpty());
++        assertEquals(List.of(first.nextState()), slots.get(first.controller()).get(first.animation()).nextStates());
++        assertEquals(1, slots.get("two").size());
++        assertTrue(slots.get("two").get(first.animation()).transitions().isEmpty());
++        assertNotEquals(slots.get(first.controller()).get(first.animation()).selection(), slots.get("two").get(first.animation()).selection());
++    }
++
++    @Test
++    void bindsCommandsToLocalIdentityAndClearsThemOnlyWhenTheLifetimeEnds() {
++        final var actors = new NativeActorStates();
++        final UUID local = UUID.randomUUID();
++        final var actor = new NativeActorMessage.Snapshot(UUID.randomUUID(), UUID.randomUUID(), true, 17,
++                "minecraft:player", 1F, Set.of(), 0, 0, null, Map.of());
++        actors.apply(actor, local);
++        final var command = new ActorAnimationCommand("raise", "default", "0", 1, "slot", 0);
++        final var target = new NativeAnimationMessage.Target(actor.uuid(), actor.lifetime(), true);
++        actors.apply(new NativeAnimationMessage(command, List.of(target)), local);
++        final var state = actors.animations(local);
++        assertNotNull(state);
++        assertNull(actors.animations(actor.uuid()));
++        actors.apply(actor, local);
++        actors.apply(new NativeActorMessage.Remove(actor.uuid(), UUID.randomUUID(), true), local);
++        assertSame(state, actors.animations(local));
++        actors.apply(new NativeAnimationMessage(command, List.of(new NativeAnimationMessage.Target(actor.uuid(), UUID.randomUUID(), true))), local);
++        assertEquals(1, state.snapshot().revision());
++        final var replacement = new NativeActorMessage.Snapshot(actor.uuid(), UUID.randomUUID(), true, actor.runtimeId(),
++                actor.identifier(), actor.scale(), actor.flags(), 0, 0, null, Map.of());
++        actors.apply(replacement, local);
++        assertNull(actors.animations(local));
++        actors.apply(new NativeAnimationMessage(command, List.of(target)), local);
++        assertNull(actors.animations(local));
++        actors.apply(new NativeAnimationMessage(command, List.of(new NativeAnimationMessage.Target(actor.uuid(), replacement.lifetime(), true))), local);
++        assertNotNull(actors.animations(local));
++        actors.clear();
++        assertNull(actors.animations(local));
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeAnimationMessageTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeAnimationMessageTest.java
 new file mode 100644
 index 000000000..af57cca2e

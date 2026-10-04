@@ -195,7 +195,7 @@ These results do not complete U2.
 | G1 | Input locks | Incomplete | Core retains all eleven target permission categories and filters auth input. Raw movement and jump/sneak input survive movement locks. The add-on applies movement, directional, jump, sneak, camera, and passenger dismount restrictions through direct connections and ViaProxy. Manual mounting, broader native control comparisons, and vehicle tests remain incomplete. |
 | G2 | Movement effects and prediction corrections | Incomplete | Implement missing packets and compare translated movement timing with the native client. |
 | G3 | Voxel shapes | Incomplete | Core retains the registry and compiles custom face rules, transformed slices, and culling layers into accepted server packs. Direct and ViaProxy add-on terrain paths apply the conditions. Broader native comparisons, vanilla partial-block slices, registry replacement, and alternative terrain renderers remain incomplete. These grids do not define collision or selection. |
-| G4 | Animation commands, entity overrides, mob properties, and equipment updates | Incomplete | Connect server updates to authoritative state and runtime playback. |
+| G4 | Animation commands, entity overrides, mob properties, and equipment updates | Incomplete | Core retains lifetime-bound command state, and the add-on plays runtime controllers for supported actor and player graphs. Player command delivery and sampling pass direct and ViaProxy replays. Complete ordinary mob drawing, first-person bone drawing, expression versions, emote composition, other entity overrides, and native visible comparisons. |
 | G5 | Movement attributes and attack/use prediction | Incomplete | Apply ignored movement attributes and complete native input and cooldown behavior. |
 | G6 | Interaction and entity metadata | Incomplete | Audit variant mappings, interactions, flags, properties, and unsupported metadata. Core now derives local armor and toughness from vanilla and custom wearable definitions. Both routes verify updates, dimension changes, and retained or cleared equipment after respawns. Remote equipment, custom equip interactions, and rejection recovery still need comparisons. Core now preserves effect icons independently of particles. |
 
@@ -1168,3 +1168,54 @@ They do not establish rendered poses, shortest-path rotations, first-person play
 The runtime command path remains incomplete and the add-on still does not advertise its animation channel.
 Client playback must retain states and queued selections rather than replace each controller with a single animation.
 See [the core patch notes](../patches/viabedrock/upstreamable/0086-transport-native-actor-animation-commands.pr.md) for function references and probe cases.
+
+
+### Server animation commands: production playback
+
+**Implemented:** Core now retains command definitions separately for each authoritative actor lifetime.
+Replacement, runtime-ID reuse, removal, and connection cleanup release the retained state.
+The add-on advertises the animation channel and rejects callbacks from replaced connections.
+Its shared graph resolves command aliases, retains states, and queues the last valid selection before each frame.
+It also binds an uncommanded next-state alias, preserves outgoing blend curves, and resets repeated selections.
+Unavailable commands do not reserve a position in the runtime controller order.
+
+Native custom actors and player body graphs consume these definitions.
+Classic players can load the accepted built-in graph for a command without creating a server costume.
+The same registry serves direct connections and ViaProxy.
+Sound and particle callbacks use the existing graph effect paths.
+
+**Automated evidence:** The complete add-on build and its dependencies pass 993 tests with no failures or errors.
+It skips 113 optional tests.
+Targeted tests cover retained definitions, lifetime cleanup, controller ordering, queued selection, clocks, blends, perspectives, and callbacks.
+They also cover authored controller reuse and classic-player resource loading without server override provenance.
+The matching executable probes establish the native state-query binding during child sampling.
+The implementation preserves that binding, including its removal by nested controllers.
+
+**Runtime evidence:** The direct replay delivers all 13 recorded commands and retains the complete original scene hash.
+It passes transport and rendering checks and installs both recorded geometry skins unchanged.
+A required private mixin observes the production graph after sampling.
+It records repeated finite playback, independent slots, and a transition into an uncommanded animation alias.
+Its final retained-state revision is 13, with `fixture.unseen_next` in `fixture_raise`.
+The sampled right-arm rotation is `(-90, 0, 0)`.
+The final screenshot shows the raised arm from the Java camera.
+The native screenshot uses a different viewing angle, so these images do not establish pixel parity.
+
+The repeated ViaProxy replay also passes full transport and rendering checks with the same scene hash.
+It installs both recorded geometry skins unchanged and submits 10,588 native player frames.
+Both routes reach retained-state revision 13 and the same final sampled pose.
+The private graph audit checks finite-animation resets, simultaneous independent slots, and the uncommanded next state.
+
+The first proxy report failed its skin gate with counters that did not update periodically.
+The private recorder now flushes those counters each second.
+Local skin installation also uses the play listener's Java profile, independent of player entity creation.
+The repeated proxy run verifies two local transfers whose Bedrock UUID differs from that Java profile.
+The failed report alone does not establish a packet-delivery defect.
+
+**Incomplete and unverified:** Ordinary mob drawing and other stop-expression versions remain open.
+First-person graph sampling currently changes visibility and camera state but does not apply the sampled bone pose to hand drawing.
+Active emote composition, complete effect timing, and dynamic visible comparisons still require work.
+The current native command fixture covers player bodies and does not establish custom-actor command drawing through either route.
+These results supersede the earlier statement that the client does not advertise the animation channel.
+See the [core notes](../patches/viabedrock/upstreamable/0086-transport-native-actor-animation-commands.pr.md),
+[graph notes](../patches/viafabricplus-bedrock/upstreamable/0014-animate-numeric-looping-bedrock-bones.pr.md),
+and [player notes](../patches/viafabricplus-bedrock/upstreamable/0016-render-server-player-costumes.pr.md).

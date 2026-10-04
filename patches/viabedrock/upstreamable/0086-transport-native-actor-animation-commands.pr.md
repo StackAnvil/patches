@@ -16,6 +16,14 @@ It has an explicit schema and Bedrock protocol version, immutable targets, size 
 Arbitrary resource-defined bone animations require a client renderer.
 Ordinary Java clients cannot execute this payload.
 
+The shared actor registry now retains command state for each authoritative lifetime.
+It resolves the local Java identity and rejects commands for unknown or replaced lifetimes.
+Actor replacement, runtime-ID reuse, removal, and connection cleanup release that state.
+Named controllers retain their states, ordered transitions, next-state names, blend times, and selection revisions.
+Snapshots remain immutable and stable until another command arrives.
+Repeated packets update retained definitions without an accumulating packet journal.
+Each rendering context still resolves its own available resources.
+
 ## Target evidence
 
 Mojang's [AnimateEntity schema](https://mojang.github.io/bedrock-protocol-docs/1.26.50/packets/animate-entity-packet/) identifies protocol 2193 and all seven wire fields.
@@ -24,7 +32,7 @@ The packet includes a stop-expression version between its expression and control
 
 Private captures use official Bedrock 1.26.51.1, build 51061372, protocol 2193.
 The earlier capture contains seven animation commands.
-A new 300-second native capture contains 13 commands and has scene SHA-256 `8febed2837f1535b30badff75e520bf3498fb5b560515a3cbc5314f1748a26db`.
+A new 314-second native capture contains 13 commands and has scene SHA-256 `8febed2837f1535b30badff75e520bf3498fb5b560515a3cbc5314f1748a26db`.
 The production codec reproduces all 20 captured command payloads byte for byte and consumes every field.
 All captured commands use stop-expression version 1.
 
@@ -69,10 +77,15 @@ The native video still needs visible timing comparisons against the production c
 ## Verification and remaining work
 
 Targeted tests check independent native field encoding, unsigned runtime IDs, immutable targets, expression versions, malformed counts, truncation, and trailing payload data.
+Additional state tests cover transition order, duplicate expressions with different versions, next states without conditions, independent slots, snapshot retention, and lifetime cleanup.
 The full-stack build result is recorded in the coverage ledger.
 
-This patch implements core decoding and negotiated transport.
-The add-on does not advertise the animation channel yet.
-Runtime controller playback, client lifetime checks, ordinary mob rendering, first-person behavior, and effect playback remain required work.
-Direct and ViaProxy command delivery and visible playback still need end-to-end verification.
+This patch implements core decoding, retained state, and negotiated transport.
+The add-on now advertises the animation channel and checks the receiving connection before updating core state.
+Its shared graph plays commands for native custom actors and player perspectives, with animation effect callbacks.
+Classic players can load the accepted built-in graph when a command requires it, without creating a server costume.
+Ordinary mob drawing, other expression-version semantics, and complete visible behavior remain required work.
+Direct and ViaProxy replays deliver all 13 commands with the complete unchanged scene hash.
+Both pass transport and rendering checks and reach the same final retained state and sampled arm pose.
+The coverage ledger records the private runtime observations and the remaining visible-comparison boundary.
 Passing codec tests does not establish animation parity.
