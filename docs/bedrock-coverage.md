@@ -259,13 +259,44 @@ Ordinary Java clients retain standard sound translations; their protocol cannot 
 The captured native session replays through both direct and ViaProxy routes and loads the converted resource pack.
 Private instrumentation observes repeating playback, pitch 1.3, seek to 0.01 seconds, OpenAL pause and resume, and stop.
 ViaProxy envelope samples reach 0.2 from 0.3 over two seconds.
-The full build passes 907 tests with 110 optional asset skips.
-The core patch's seven targeted tests and both Checkstyle tasks also pass alone on the upstream base.
+The full build passes 915 tests with 110 optional asset skips.
+The core patch's fourteen targeted tests and both Checkstyle tasks also pass alone on the upstream base.
 
 These muted checks establish the tested controls, not audible parity.
 The sample uses a mapped Java fallback without Store sign-in.
-Live custom samples, listener-range eligibility, captions, stream interruption policies, replacement races, finite-loop controls, and broader lifecycle comparisons remain required.
+The custom sample transport and control checks below also pass without Store sign-in.
+Listener-range eligibility, captions, stream interruption policies, replacement races, finite-loop controls, and broader lifecycle comparisons remain required.
 The direct replay still fails its separate skin rendering gate; the audio checks use transport-only verification.
+
+### WAV sample processing
+
+Core now transports server WAV files in the converted resource pack and decodes their sample data.
+The add-on resolves each pack in native FSB, OGG, WAV order before trying a lower pack.
+Custom events without a Java mapping still require the add-on; ordinary Java clients retain mapped playback.
+The 1.26.51.1 executable declares these extensions in that order at `0x140275490`.
+[Microsoft's sound guide](https://learn.microsoft.com/en-us/minecraft/creator/documents/introductiontosound?view=minecraft-bedrock-stable) documents the three supported formats.
+
+The shared decoder supports mono and stereo integer PCM at 8, 16, 24, and 32 bits, IEEE floating-point PCM at 32 and 64 bits, and 4-bit IMA ADPCM.
+Extensible PCM preserves left-aligned valid-bit precision.
+Chunk bounds, even-byte padding, format identity, frame alignment, IMA predictors, and decoded allocation limits are checked before playback.
+IMA output ends at the RIFF `fact` frame count instead of exposing encoder padding.
+
+Seven core tests cover numeric conversions and malformed layouts.
+Fourteen private comparisons against FFmpeg cover 252,000 scalar samples.
+Integer PCM and IMA samples match exactly; floating-point PCM differs by at most one quantization step.
+FFmpeg emits IMA block padding beyond `fact`; the comparison excludes that encoder padding.
+These checks verify decoding, not the native client's mixer.
+
+A pinned native session reaches spawn and loads a server pack containing PCM WAV, IMA WAV, and OGG samples.
+It captures three custom PlaySound instances and each instance's seven controls.
+The unchanged session passes complete transport checks on both direct and ViaProxy routes.
+Both clients load the converted pack with no Store account and no mapped Java fallback.
+Private OpenAL observations verify repeated playback, pitch 1.3, a fade from 0.3 to 0.2, seek to 0.25 seconds, and pause and resume for all three samples.
+ViaProxy's stop controls remove all three tracked requests and handles.
+The lab stays muted; these checks establish resource resolution and controls rather than audible output.
+The separate skin rendering gates remain incomplete on both routes.
+
+WAV loop metadata, multichannel output, additional WAVE codecs, native quantization comparisons, and audible playback parity remain required.
 
 ### Native caption behavior
 

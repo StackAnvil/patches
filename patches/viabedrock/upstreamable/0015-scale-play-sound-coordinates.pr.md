@@ -34,11 +34,11 @@ Listener-range eligibility, captions, and native stream interruption policies re
 
 ## Testing
 
-Seven targeted tests pass with both Checkstyle tasks in a checkout containing only this patch on the pinned upstream base.
+Fourteen targeted tests pass with both Checkstyle tasks in a checkout containing only this patch on the pinned upstream base.
 They cover coordinate limits, optional fields, signed loops, each control layout, final-variant selection, malformed messages, archive overrides, deterministic ordering, and invalid paths.
 
 Both complete stacks replay successfully: 91 ViaBedrock patches and 23 add-on patches.
-`bun run build all` passes with matching StackAnvil dependencies: 907 tests pass and 110 optional asset tests skip.
+`bun run build all` passes with matching StackAnvil dependencies: 915 tests pass and 110 optional asset tests skip.
 ViaProxy also builds.
 
 A controlled native 1.26.51.1 capture reaches StartGame and spawn and supplies all seven controls.
@@ -50,8 +50,31 @@ Stop removes the direct route's handle; the ViaProxy route stops producing activ
 
 The lab uses zero volume. These observations establish the tested control path, not audible parity.
 The sample uses a mapped Java fallback without Store sign-in.
-Live custom samples, finite-loop controls, replacement races, global pause interactions, and broader lifecycle comparisons remain unverified.
+The custom sample checks below also pass. Finite-loop controls, replacement races, global pause interactions, and broader lifecycle comparisons remain unverified.
 The direct replay's existing skin rendering gate fails; the sound checks use the transport-only gate.
 Mixed wire variants are covered by tests and Gophertunnel's implementation, but have not been compared with the pinned native client.
 
 Private captures, instrumentation, and game assets remain outside the repository.
+
+## WAV resources and decoder
+
+Include WAV samples in the same bounded archive used by both connection routes.
+Decode RIFF/WAVE in core, keeping the client adapter limited to its existing PCM player.
+The pinned 1.26.51.1 extension initializer at `0x140275490` declares FSB, OGG, then WAV.
+[Microsoft](https://learn.microsoft.com/en-us/minecraft/creator/documents/introductiontosound?view=minecraft-bedrock-stable) documents these formats.
+[Its extensible format specification](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ksmedia/ns-ksmedia-waveformatextensible) establishes valid-bit alignment and subtype identity.
+
+Seven additional tests cover integer and floating-point PCM, extensible precision, stereo IMA groups, final sample counts, chunk ordering and padding, malformed headers, and incomplete frames.
+Fourteen private FFmpeg comparisons cover 252,000 scalar samples.
+Integer PCM and IMA match exactly, and floating-point PCM differs by at most one quantization step.
+IMA comparison excludes block padding beyond the RIFF fact count.
+The converted-pack cache includes the implementation commit in its fingerprint, so older archives cannot hide newly included WAV files.
+Native audible mixing, quantization comparisons, loop metadata, and multichannel playback remain required.
+
+A pinned native session downloads a server pack with PCM WAV, IMA WAV, and OGG samples and captures three custom instances with 21 controls.
+The unchanged capture passes full scene transport checks through both direct and ViaProxy routes.
+Both clients use the transported samples with no Store account and an empty Java fallback.
+Private OpenAL instrumentation verifies repeating playback, pitch 1.3, fade from 0.3 to 0.2, seek to 0.25 seconds, pause, and resume for each sample.
+ViaProxy's stop controls reduce tracked requests and handles from three to zero.
+Both routes retain their separate skin rendering limitations.
+These muted observations establish resource resolution and controls, not audible parity.

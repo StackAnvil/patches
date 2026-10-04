@@ -1462,13 +1462,13 @@ Cancellation and generation checks cover queued decoding, channel allocation, en
 Animation cleanup uses a separate generation and leaves server voices active.
 
 Four targeted tests cover PCM frame alignment, finite and infinite repetition, remaining loops, and fade replacement.
-The full stack build passes 907 tests with 110 optional asset skips across all projects.
+The full stack build passes 915 tests with 110 optional asset skips across all projects.
 A captured native control session replays through direct and ViaProxy routes, reaches spawn, and loads the converted pack.
 Private OpenAL instrumentation observes looping, pitch 1.3, seek to 0.01 seconds, independent pause and resume, and stop.
 The ViaProxy route's envelope reaches 0.2 from 0.3 over two seconds.
 The fixture uses the mapped Java sample without a Store account.
 
-The lab remains at zero volume. Audible parity, listener-range eligibility, captions, stream interruption policies, custom sample playback, handle replacement, finite-loop seeking, and broader pause/reset comparisons remain unverified or incomplete.
+The lab remains at zero volume. Audible parity, listener-range eligibility, captions, stream interruption policies, handle replacement, finite-loop seeking, and broader pause/reset comparisons remain unverified or incomplete.
 These additions follow 0.3.2 and are not included in that release.
 
 
@@ -1482,3 +1482,21 @@ The marker's originating caller remains unverified.
 
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-caption-behavior) records the supplied boundaries and remaining work.
 These findings guide caption transport and playback integration; they do not add a production caption HUD or establish visible parity.
+
+### WAV resources and custom server audio
+
+Resolve FSB, OGG, then WAV within the highest pack before trying lower packs.
+Dispatch WAV decoding to ViaBedrock core and include WAV files in server effect libraries.
+An adapter test checks sample data and dimensions; resolver tests cover cross-format overrides and precedence.
+The updated core patch passes fourteen tests and both Checkstyle tasks alone on the pinned upstream base.
+Both full stacks replay and all four projects build: 915 tests pass with 110 optional asset skips.
+
+A pinned native session loads PCM WAV, IMA WAV, and OGG samples from a custom server pack.
+Its unchanged capture passes complete transport checks through direct and ViaProxy connections.
+Neither test client has a Store account, and all three custom events have an empty Java fallback.
+Private OpenAL observations show looping, pitch 1.3, fading from 0.3 to 0.2, seek to 0.25 seconds, pause, and resume.
+ViaProxy stop commands remove all tracked requests and handles.
+
+The lab stays muted. Native audible mixing, WAV loop metadata, multichannel output, other WAVE codecs, and native quantization comparisons remain required.
+The separate skin rendering gates remain incomplete.
+These changes follow the published 0.3.2 release.

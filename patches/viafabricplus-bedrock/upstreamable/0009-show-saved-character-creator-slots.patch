@@ -1,4 +1,4 @@
-From ee842c749512747bcc71d274d5f2e9b39a993d56 Mon Sep 17 00:00:00 2001
+From c827bc334e6a0add4ee32361658f290169913da3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -632,7 +632,8 @@ animation dispatch, audible output, captions, or completed effect parity.
 Resolve the licensed catalog's OGG samples as well as FSB banks. Search each
 pack's formats before lower packs so an OGG replacement can override FSB.
 The target 1.26.51.1 extension initializer declares FSB, OGG, then WAV;
-Microsoft documents replacements across those formats. WAV remains pending.
+Microsoft documents replacements across those formats. The shared core decoder
+now supplies WAV samples through the same playback path.
 
 Use Minecraft's JOrbis decoder after checking container bounds, stream
 identity, dimensions, and the final frame count. Bound PCM before allocation
@@ -647,7 +648,7 @@ The target 1.26.51.1 player is independently executed in 19 queue fixtures;
 its attached backend snapshots locator or actor position once with gain 2
 and pitch 1. An absent alias never becomes a global event-name fallback.
 
-Decode selected licensed FSB or OGG assets off the render thread, then create
+Decode selected FSB, OGG, or WAV assets off the render thread, then create
 PCM channels in Minecraft's existing listener and audio device. Bound pending
 decodes and active PCM, invalidate requests across audio reload and disconnect,
 and release static buffers after their channels. Match category sliders,
@@ -1365,6 +1366,13 @@ use generation checks to discard work from a replaced resource context.
 The pinned native capture establishes packet layouts and API availability.
 Audible native comparisons, listener-range eligibility, captions, and
 stream interruption policies remain separate verification requirements.
+
+Resolve WAV replacements in the native FSB, OGG, WAV order within each pack,
+so a higher pack still overrides every lower format. Dispatch RIFF samples
+to the shared ViaBedrock decoder and include WAV in server effect resources.
+This keeps custom server audio independent of Store sign-in and uses the same
+converted-pack resource transport for direct and ViaProxy connections.
+WAV loop metadata and multichannel playback remain incomplete.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   54 +
@@ -1439,12 +1447,12 @@ stream interruption policies remain separate verification requirements.
  .../appearance/BedrockPersonaProfile.java     |  184 +
  .../appearance/BedrockPersonaSources.java     |  253 +
  .../appearance/BedrockPersonaTint.java        |  325 ++
- .../appearance/BedrockResourceLibrary.java    |  368 ++
+ .../appearance/BedrockResourceLibrary.java    |  367 ++
  .../appearance/BedrockServerSounds.java       |   82 +
  .../bedrock/appearance/BedrockSoundBank.java  |  137 +
  .../appearance/BedrockSoundEnvelope.java      |   40 +
  .../bedrock/appearance/BedrockSoundEvent.java |  174 +
- .../bedrock/appearance/BedrockSoundFile.java  |   94 +
+ .../bedrock/appearance/BedrockSoundFile.java  |   99 +
  .../appearance/BedrockSoundPlayback.java      |  402 ++
  .../appearance/BedrockStoreBrowser.java       |  151 +
  .../appearance/BedrockStoreSignIn.java        |   99 +
@@ -1564,7 +1572,7 @@ stream interruption policies remain separate verification requirements.
  .../appearance/BedrockSoundBankTest.java      |  122 +
  .../appearance/BedrockSoundEnvelopeTest.java  |   30 +
  .../appearance/BedrockSoundEventTest.java     |  268 +
- .../appearance/BedrockSoundFileTest.java      |  108 +
+ .../appearance/BedrockSoundFileTest.java      |  129 +
  .../appearance/BedrockStoreBrowserTest.java   |   43 +
  .../appearance/BedrockStoreSignInTest.java    |   90 +
  .../appearance/BedrockStoreTokensTest.java    |   45 +
@@ -1580,7 +1588,7 @@ stream interruption policies remain separate verification requirements.
  .../render/BedrockPlayerModelTest.java        |  100 +
  .../render/BedrockViewBobbingTest.java        |   93 +
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 214 files changed, 40577 insertions(+), 110 deletions(-)
+ 214 files changed, 40602 insertions(+), 110 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -22967,10 +22975,10 @@ index 0000000..fdd5aa6
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
 new file mode 100644
-index 0000000..937b7cb
+index 0000000..115c6e0
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
-@@ -0,0 +1,368 @@
+@@ -0,0 +1,367 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -23165,12 +23173,11 @@ index 0000000..937b7cb
 +    byte[] sound(final String path) throws IOException {
 +        BedrockBuiltinAssets.validPath(path);
 +        if (!path.startsWith("sounds/")) throw new IOException("Invalid built-in sound path");
-+        if (path.endsWith(".fsb") || path.endsWith(".ogg")) return this.file(path);
-+        // A higher pack can replace an FSB bank with an Ogg file. Resolve the pack
-+        // before its extension, retaining the native FSB-before-Ogg search order.
++        if (path.endsWith(".fsb") || path.endsWith(".ogg") || path.endsWith(".wav")) return this.file(path);
++        // Search the highest pack first, then the native FSB, OGG, WAV format order.
 +        for (int index = this.packs.size() - 1; index >= 0; index--) {
 +            final Map<String, byte[]> files = this.packs.get(index).files;
-+            for (final String extension : List.of(".fsb", ".ogg")) {
++            for (final String extension : List.of(".fsb", ".ogg", ".wav")) {
 +                final byte[] bytes = files.get(path + extension);
 +                if (bytes != null) return bytes;
 +            }
@@ -23798,10 +23805,10 @@ index 0000000..fe55e7f
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundFile.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundFile.java
 new file mode 100644
-index 0000000..8357e8a
+index 0000000..fed8518
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundFile.java
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,99 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -23810,13 +23817,14 @@ index 0000000..8357e8a
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import net.minecraft.client.sounds.JOrbisAudioStream;
++import net.raphimc.viabedrock.api.resourcepack.WaveSound;
 +
 +import java.io.ByteArrayInputStream;
 +import java.io.IOException;
 +import java.nio.ByteBuffer;
 +import java.nio.ByteOrder;
 +
-+/** Decodes licensed samples without an audio device or an external converter. */
++/** Decodes Bedrock samples without an audio device or an external converter. */
 +final class BedrockSoundFile {
 +    private BedrockSoundFile() {}
 +
@@ -23827,6 +23835,10 @@ index 0000000..8357e8a
 +        return switch (data.getInt(0)) {
 +            case 0x35425346 -> BedrockSoundBank.read(bytes);
 +            case 0x5367674F -> vorbis(bytes, data);
++            case 0x46464952 -> {
++                final var wave = WaveSound.read(bytes);
++                yield new BedrockSoundBank.Audio(wave.pcm(), wave.sampleRate(), wave.channels(), wave.frames(), 0, 0);
++            }
 +            default -> throw new IOException("Unsupported Bedrock sound file format");
 +        };
 +    }
@@ -42956,10 +42968,10 @@ index 0000000..7b1fc62
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundFileTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundFileTest.java
 new file mode 100644
-index 0000000..3a8b25e
+index 0000000..e3c00bd
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundFileTest.java
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,129 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -42982,15 +42994,36 @@ index 0000000..3a8b25e
 +        final byte[] base = {1}, replacement = {2}, preferred = {3};
 +        final var library = BedrockResourceLibrary.read(Map.of(
 +                "library/vanilla/sounds/sample.fsb", base,
-+                "library/vanilla_base/sounds/sample.ogg", replacement,
++                "library/vanilla_base/sounds/sample.wav", replacement,
 +                "library/vanilla_base/sounds/dual.fsb", preferred,
-+                "library/vanilla_base/sounds/dual.ogg", replacement));
++                "library/vanilla_base/sounds/dual.ogg", replacement,
++                "library/vanilla_base/sounds/dual.wav", replacement,
++                "library/vanilla_base/sounds/pair.ogg", preferred,
++                "library/vanilla_base/sounds/pair.wav", replacement));
 +        assertSame(replacement, library.sound("sounds/sample"));
 +        assertSame(preferred, library.sound("sounds/dual"));
++        assertSame(preferred, library.sound("sounds/pair"));
++        assertSame(replacement, library.sound("sounds/sample.wav"));
 +        assertSame(base, library.sound("sounds/sample.fsb"));
 +        assertNull(library.sound("sounds/missing"));
 +        for (final String path : new String[] {"sounds/../sample", "models/sample", "/sounds/sample"})
 +            assertThrows(IOException.class, () -> library.sound(path));
++    }
++
++    @Test
++    void dispatchesWaveSamplesThroughTheCoreDecoder() throws Exception {
++        final ByteBuffer wave = ByteBuffer.allocate(48).order(ByteOrder.LITTLE_ENDIAN);
++        wave.putInt(0x46464952).putInt(40).putInt(0x45564157).putInt(0x20746D66).putInt(16)
++                .putShort((short) 1).putShort((short) 1).putInt(48000).putInt(96000)
++                .putShort((short) 2).putShort((short) 16).putInt(0x61746164).putInt(4)
++                .putShort((short) -12345).putShort((short) 12345);
++        final var audio = BedrockSoundFile.read(wave.array());
++        assertEquals(48000, audio.sampleRate());
++        assertEquals(1, audio.channels());
++        assertEquals(2, audio.samples());
++        assertArrayEquals(new byte[] {-57, -49, 57, 48}, audio.pcm());
++        assertEquals(0, audio.loopStart());
++        assertEquals(0, audio.loopEnd());
 +    }
 +
 +    @Test

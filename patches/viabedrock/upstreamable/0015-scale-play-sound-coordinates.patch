@@ -1,4 +1,4 @@
-From 1f597a2b12e7d51c5e15058df63d0592a89eb6bb Mon Sep 17 00:00:00 2001
+From 4ff72d41895de95e234dfb221c9735f5f8f37d37 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 19:48:51 +0200
 Subject: [PATCH] feat(audio): transport native server sound playback and
@@ -21,26 +21,46 @@ paths, and decompressed resources, and keep generated ZIP bytes stable.
 
 Test coordinate precision, signed loops, optional fields, all seven
 update variants, wire alignment, archive overrides, and invalid paths.
+
+Include server WAV samples in the native resource archive and decode them in
+core so direct and ViaProxy clients share one bounded asset processor. The
+1.26.51.1 extension initializer at 0x140275490 lists FSB, OGG, then WAV.
+Microsoft documents all three Bedrock formats. Parse RIFF chunks and padding
+before allocating PCM; support integer and floating-point PCM, extensible
+precision, and mono/stereo IMA ADPCM with final-block sample counts. Bound
+encoded and decoded sizes and reject truncated or ambiguous sample layouts.
+Decoder tests establish numeric and validation behavior. Native mixing, WAV
+loop metadata, and multichannel playback remain separate parity work.
+
+IMA truncates each step contribution before addition. Fourteen private
+FFmpeg comparisons cover 252,000 scalar samples: integer PCM and IMA are
+exact, and floating-point PCM differs by at most one quantization step. Trim
+IMA padding to the RIFF fact frame count rather than exposing encoder padding.
+These comparisons verify the decoder, not the native client's audible mix.
 ---
  build.gradle                                  |   6 +
- .../api/model/SoundPlaybackMessage.java       |  76 ++++++++++
- .../api/resourcepack/NativeSoundLibrary.java  | 137 ++++++++++++++++++
+ .../api/model/SoundPlaybackMessage.java       |  76 ++++++
+ .../api/resourcepack/NativeSoundLibrary.java  | 137 +++++++++++
+ .../api/resourcepack/WaveSound.java           | 228 ++++++++++++++++++
  .../protocol/ClientboundBedrockPackets.java   |   4 +-
  .../bedrock/generated/MinecraftPacketIds.java |   1 +
- .../viabedrock/protocol/model/PlaySound.java  |  50 +++++++
- .../protocol/model/SoundUpdate.java           | 114 +++++++++++++++
- .../protocol/packet/WorldEffectPackets.java   | 110 ++++++--------
+ .../viabedrock/protocol/model/PlaySound.java  |  50 ++++
+ .../protocol/model/SoundUpdate.java           | 114 +++++++++
+ .../protocol/packet/WorldEffectPackets.java   | 110 ++++-----
  .../rewriter/ResourcePackRewriter.java        |   2 +
- .../NativeSoundResourceRewriter.java          |  35 +++++
- .../packet/NativeSoundLibraryTest.java        |  60 ++++++++
- .../protocol/packet/PlaySoundPacketsTest.java |  88 +++++++++++
- .../protocol/packet/SoundUpdateTest.java      |  79 ++++++++++
- 13 files changed, 694 insertions(+), 68 deletions(-)
+ .../NativeSoundResourceRewriter.java          |  35 +++
+ .../api/resourcepack/WaveSoundTest.java       | 182 ++++++++++++++
+ .../packet/NativeSoundLibraryTest.java        |  60 +++++
+ .../protocol/packet/PlaySoundPacketsTest.java |  88 +++++++
+ .../protocol/packet/SoundUpdateTest.java      |  79 ++++++
+ 15 files changed, 1104 insertions(+), 68 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SoundPlaybackMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/WaveSound.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/PlaySound.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/SoundUpdate.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeSoundResourceRewriter.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/WaveSoundTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/NativeSoundLibraryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlaySoundPacketsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/SoundUpdateTest.java
@@ -143,7 +163,7 @@ index 000000000..e20d2267d
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java
 new file mode 100644
-index 000000000..6e8a5658b
+index 000000000..9f69df9b4
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java
 @@ -0,0 +1,137 @@
@@ -197,7 +217,7 @@ index 000000000..6e8a5658b
 +                if (pack.contains("sounds.json")) {
 +                    paths.add("sounds.json");
 +                }
-+                for (final String extension : List.of(".json", ".ogg", ".fsb")) {
++                for (final String extension : List.of(".json", ".ogg", ".fsb", ".wav")) {
 +                    paths.addAll(pack.getFilesDeep("sounds/", extension));
 +                }
 +                for (final String path : paths) {
@@ -281,6 +301,240 @@ index 000000000..6e8a5658b
 +    }
 +
 +    private NativeSoundLibrary() {
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/WaveSound.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/WaveSound.java
+new file mode 100644
+index 000000000..415730f3d
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/WaveSound.java
+@@ -0,0 +1,228 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack;
++
++import java.io.IOException;
++import java.nio.ByteBuffer;
++import java.nio.ByteOrder;
++
++/** Bounded RIFF/WAVE decoding to interleaved signed little-endian 16-bit PCM. */
++public final class WaveSound {
++
++    private static final int MAX_FILE_BYTES = 32 * 1024 * 1024;
++    private static final int MAX_PCM_BYTES = 64 * 1024 * 1024;
++    private static final int[] IMA_STEPS = {
++        7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31,
++        34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88, 97, 107, 118, 130, 143,
++        157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449, 494, 544,
++        598, 658, 724, 796, 876, 963, 1060, 1166, 1282, 1411, 1552, 1707,
++        1878, 2066, 2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871,
++        5358, 5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635,
++        13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767
++    };
++
++    public static Audio read(final byte[] bytes) throws IOException {
++        if (bytes == null || bytes.length < 12 || bytes.length > MAX_FILE_BYTES) {
++            throw new IOException("Missing or oversized WAVE file");
++        }
++        final ByteBuffer data = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
++        final long end = 8 + Integer.toUnsignedLong(data.getInt(4));
++        if (data.getInt(0) != 0x46464952 || data.getInt(8) != 0x45564157 || end < 12 || end > bytes.length) {
++            throw new IOException("Invalid RIFF/WAVE header");
++        }
++        Format format = null;
++        int start = -1;
++        int size = 0;
++        long fact = -1;
++        for (int cursor = 12; cursor < end; ) {
++            if (cursor + 8L > end) {
++                throw new IOException("Truncated WAVE chunk header");
++            }
++            final int kind = data.getInt(cursor);
++            final long length = Integer.toUnsignedLong(data.getInt(cursor + 4));
++            final long next = cursor + 8L + length + (length & 1);
++            if (next > end) {
++                throw new IOException("Truncated WAVE chunk");
++            }
++            final int content = cursor + 8;
++            switch (kind) {
++                case 0x20746D66 -> {
++                    if (format != null) {
++                        throw new IOException("Duplicate WAVE format");
++                    }
++                    format = format(data, content, (int) length);
++                }
++                case 0x61746164 -> {
++                    if (start != -1) {
++                        throw new IOException("Duplicate WAVE sample data");
++                    }
++                    start = content;
++                    size = (int) length;
++                }
++                case 0x74636166 -> {
++                    if (fact != -1 || length < 4) {
++                        throw new IOException("Invalid WAVE sample count");
++                    }
++                    fact = Integer.toUnsignedLong(data.getInt(content));
++                }
++                default -> { /* Skip bounded metadata and its even-byte padding. */ }
++            }
++            cursor = (int) next;
++        }
++        if (format == null || start == -1 || size == 0) {
++            throw new IOException("Missing WAVE format or samples");
++        }
++        final int frames;
++        if (format.codec == 17) {
++            final int tail = size % format.block;
++            if (tail != 0 && (tail < 4 * format.channels || (tail - 4 * format.channels) % (4 * format.channels) != 0)) {
++                throw new IOException("Truncated WAVE IMA block");
++            }
++            final long capacity = (long) (size / format.block) * format.blockFrames
++                    + (tail == 0 ? 0 : 1 + (tail - 4 * format.channels) * 2 / format.channels);
++            if (fact == 0 || fact > capacity || fact != -1 && fact <= capacity - (tail == 0 ? format.blockFrames : 1 + (tail - 4 * format.channels) * 2 / format.channels)) {
++                throw new IOException("Invalid WAVE IMA frame count");
++            }
++            frames = boundedFrames(fact == -1 ? capacity : fact, format.channels);
++        } else {
++            if (size % format.block != 0) {
++                throw new IOException("Incomplete WAVE PCM frame");
++            }
++            frames = boundedFrames(size / format.block, format.channels);
++        }
++        final ByteBuffer pcm = ByteBuffer.allocate(frames * format.channels * 2).order(ByteOrder.LITTLE_ENDIAN);
++        if (format.codec == 17) {
++            ima(data, start, size, format, frames, pcm);
++        } else {
++            final int width = format.bits / 8;
++            for (int cursor = start; cursor < start + size; cursor += width) {
++                final int sample;
++                if (format.codec == 3) {
++                    final double value = width == 4 ? data.getFloat(cursor) : data.getDouble(cursor);
++                    if (!Double.isFinite(value)) {
++                        throw new IOException("Non-finite WAVE sample");
++                    }
++                    sample = (int) Math.max(Short.MIN_VALUE, Math.min(Short.MAX_VALUE, Math.round(value * 32768)));
++                } else if (width == 1) {
++                    sample = ((Byte.toUnsignedInt(data.get(cursor)) - 128) >> (8 - format.validBits)) << (16 - format.validBits);
++                } else {
++                    int value = 0;
++                    for (int index = 0; index < width; index++) {
++                        value |= Byte.toUnsignedInt(data.get(cursor + index)) << (index * 8);
++                    }
++                    // Extensible PCM puts valid bits at the left of the container.
++                    // Removing unused low bits also handles signed 24-bit containers.
++                    value = (value << (32 - format.bits)) >> (32 - format.validBits);
++                    sample = format.validBits >= 16 ? value >> (format.validBits - 16) : value << (16 - format.validBits);
++                }
++                pcm.putShort((short) sample);
++            }
++        }
++        return new Audio(pcm.array(), format.rate, format.channels, frames);
++    }
++
++    private static Format format(final ByteBuffer data, final int start, final int size) throws IOException {
++        if (size < 16 || size == 17 || size >= 18 && unsignedShort(data, start + 16) > size - 18) {
++            throw new IOException("Invalid WAVE format length");
++        }
++        int codec = unsignedShort(data, start);
++        final int channels = unsignedShort(data, start + 2);
++        final int rate = data.getInt(start + 4);
++        final int block = unsignedShort(data, start + 12);
++        final int bits = unsignedShort(data, start + 14);
++        int validBits = bits;
++        if (codec == 0xFFFE) {
++            if (size < 40 || unsignedShort(data, start + 16) < 22
++                    || data.getInt(start + 28) != 0x00100000 || data.getLong(start + 32) != 0x719B3800AA000080L) {
++                throw new IOException("Invalid extensible WAVE format");
++            }
++            validBits = unsignedShort(data, start + 18);
++            if (validBits == 0) {
++                validBits = bits;
++            }
++            codec = data.getInt(start + 24);
++        }
++        if (channels < 1 || channels > 2 || rate < 1000 || rate > 192000 || block == 0) {
++            throw new IOException("Unsupported WAVE dimensions");
++        }
++        int blockFrames = 0;
++        if (codec == 17) {
++            if (bits != 4 || size < 20 || unsignedShort(data, start + 16) < 2
++                    || block < 4 * channels || (block - 4 * channels) % (4 * channels) != 0) {
++                throw new IOException("Invalid WAVE IMA format");
++            }
++            blockFrames = 1 + (block - 4 * channels) * 2 / channels;
++            if (unsignedShort(data, start + 18) != blockFrames) {
++                throw new IOException("Inconsistent WAVE IMA block size");
++            }
++        } else if ((codec != 1 || bits != 8 && bits != 16 && bits != 24 && bits != 32)
++                && (codec != 3 || bits != 32 && bits != 64)
++                || block != channels * (bits / 8) || validBits < 1 || validBits > bits || codec == 3 && validBits != bits) {
++            throw new IOException("Unsupported WAVE encoding");
++        }
++        return new Format(codec, channels, rate, block, bits, validBits, blockFrames);
++    }
++
++    private static void ima(final ByteBuffer data, final int start, final int size, final Format format,
++                            final int frames, final ByteBuffer pcm) throws IOException {
++        int frame = 0;
++        final int[] predictor = new int[format.channels];
++        final int[] stepIndex = new int[format.channels];
++        for (int block = start; block < start + size; block += format.block) {
++            final int end = Math.min(start + size, block + format.block);
++            for (int channel = 0; channel < format.channels; channel++) {
++                predictor[channel] = data.getShort(block + channel * 4);
++                stepIndex[channel] = Byte.toUnsignedInt(data.get(block + channel * 4 + 2));
++                if (stepIndex[channel] > 88 || data.get(block + channel * 4 + 3) != 0) {
++                    throw new IOException("Invalid WAVE IMA predictor");
++                }
++                if (frame < frames) {
++                    pcm.putShort((frame * format.channels + channel) * 2, (short) predictor[channel]);
++                }
++            }
++            frame++;
++            for (int group = block + 4 * format.channels; group < end; group += 4 * format.channels) {
++                for (int channel = 0; channel < format.channels; channel++) {
++                    for (int nibble = 0; nibble < 8; nibble++) {
++                        final int value = (Byte.toUnsignedInt(data.get(group + channel * 4 + nibble / 2)) >> ((nibble & 1) * 4)) & 15;
++                        final int magnitude = value & 7;
++                        final int step = IMA_STEPS[stepIndex[channel]];
++                        // IMA truncates each contribution before adding, not their sum.
++                        final int delta = (step >> 3) + ((magnitude & 4) == 0 ? 0 : step)
++                                + ((magnitude & 2) == 0 ? 0 : step >> 1) + ((magnitude & 1) == 0 ? 0 : step >> 2);
++                        predictor[channel] = Math.max(Short.MIN_VALUE, Math.min(Short.MAX_VALUE, predictor[channel] + ((value & 8) == 0 ? delta : -delta)));
++                        stepIndex[channel] = Math.max(0, Math.min(88, stepIndex[channel] + (magnitude < 4 ? -1 : (magnitude - 3) * 2)));
++                        if (frame + nibble < frames) {
++                            pcm.putShort(((frame + nibble) * format.channels + channel) * 2, (short) predictor[channel]);
++                        }
++                    }
++                }
++                frame += 8;
++            }
++        }
++    }
++
++    private static int boundedFrames(final long frames, final int channels) throws IOException {
++        if (frames <= 0 || frames > MAX_PCM_BYTES / (channels * 2)) {
++            throw new IOException("Oversized WAVE sample data");
++        }
++        return (int) frames;
++    }
++
++    private static int unsignedShort(final ByteBuffer data, final int offset) {
++        return Short.toUnsignedInt(data.getShort(offset));
++    }
++
++    private WaveSound() {
++    }
++
++    public record Audio(byte[] pcm, int sampleRate, int channels, int frames) {
++    }
++
++    private record Format(int codec, int channels, int rate, int block, int bits, int validBits, int blockFrames) {
 +    }
 +
 +}
@@ -705,9 +959,197 @@ index 000000000..787ff3fc3
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/WaveSoundTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/WaveSoundTest.java
+new file mode 100644
+index 000000000..c05fd528d
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/WaveSoundTest.java
+@@ -0,0 +1,182 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack;
++
++import org.junit.jupiter.api.Test;
++
++import java.io.IOException;
++import java.nio.ByteBuffer;
++import java.nio.ByteOrder;
++import java.util.Arrays;
++
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++
++class WaveSoundTest {
++
++    @Test
++    void convertsIntegerWidthsAndInterleavedChannels() throws Exception {
++        for (final int bits : new int[]{8, 16, 24, 32}) {
++            final ByteBuffer samples = buffer(6 * bits / 8);
++            for (final int value : new int[]{Short.MIN_VALUE, -256, 0, 256, 32512, Short.MIN_VALUE}) {
++                final int encoded = bits == 8 ? (value >> 8) + 128 : value << (bits - 16);
++                for (int index = 0; index < bits / 8; index++) {
++                    samples.put((byte) (encoded >> (index * 8)));
++                }
++            }
++            final var audio = WaveSound.read(wave(format(1, 2, bits), samples.array()));
++            assertEquals(48000, audio.sampleRate());
++            assertEquals(2, audio.channels());
++            assertEquals(3, audio.frames());
++            assertArrayEquals(new short[]{Short.MIN_VALUE, -256, 0, 256, 32512, Short.MIN_VALUE}, shorts(audio.pcm()));
++        }
++    }
++
++    @Test
++    void clampsFloatingSamplesAndRejectsNonFiniteValues() throws Exception {
++        for (final int bits : new int[]{32, 64}) {
++            final ByteBuffer samples = buffer(6 * bits / 8);
++            for (final double value : new double[]{-2, -1, -0.5, 0, 0.5, 2}) {
++                if (bits == 32) {
++                    samples.putFloat((float) value);
++                } else {
++                    samples.putDouble(value);
++                }
++            }
++            assertArrayEquals(new short[]{-32768, -32768, -16384, 0, 16384, 32767},
++                    shorts(WaveSound.read(wave(format(3, 1, bits), samples.array())).pcm()));
++            for (final double value : new double[]{Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
++                if (bits == 32) {
++                    samples.putFloat(0, (float) value);
++                } else {
++                    samples.putDouble(0, value);
++                }
++                assertThrows(IOException.class, () -> WaveSound.read(wave(format(3, 1, bits), samples.array())));
++            }
++        }
++    }
++
++    @Test
++    void respectsExtensiblePrecisionAndSubtype() throws Exception {
++        final ByteBuffer format = buffer(40);
++        format.put(format(0xFFFE, 1, 24)).putShort((short) 22).putShort((short) 20).putInt(4)
++                .putInt(1).putInt(0x00100000).putLong(0x719B3800AA000080L);
++        final byte[] samples = {15, 0, (byte) 128, 15, 0, 0, (byte) 255, (byte) 255, 127};
++        assertArrayEquals(new short[]{-32768, 0, 32767}, shorts(WaveSound.read(wave(format.array(), samples)).pcm()));
++        format.putLong(32, 0);
++        assertThrows(IOException.class, () -> WaveSound.read(wave(format.array(), samples)));
++    }
++
++    @Test
++    void readsReorderedChunksAndOddMetadataWithPadding() throws Exception {
++        final byte[] data = {1, 0, 2, 0};
++        final byte[] file = chunks(chunk(0x4B4E554A, new byte[]{1}), chunk(0x61746164, data),
++                chunk(0x20746D66, format(1, 1, 16)));
++        assertArrayEquals(new short[]{1, 2}, shorts(WaveSound.read(file).pcm()));
++        for (final int size : new int[]{0, 4, 11, file.length - 1}) {
++            assertThrows(IOException.class, () -> WaveSound.read(Arrays.copyOf(file, size)));
++        }
++        buffer(file).putInt(16, Integer.MAX_VALUE);
++        assertThrows(IOException.class, () -> WaveSound.read(file));
++    }
++
++    @Test
++    void decodesStereoImaGroupsAndTrimsFinalPadding() throws Exception {
++        final ByteBuffer format = buffer(20);
++        format.put(format(17, 2, 4)).putShort((short) 2).putShort((short) 9).putShort(12, (short) 16);
++        final ByteBuffer samples = buffer(32);
++        for (int block = 0; block < 2; block++) {
++            samples.putShort((short) (1000 + block)).putShort((short) 0)
++                    .putShort((short) (-1000 - block)).putShort((short) 0)
++                    .putInt(0x11111111).putInt(0x99999999);
++        }
++        final var audio = WaveSound.read(chunks(chunk(0x20746D66, format.array()),
++                chunk(0x74636166, buffer(4).putInt(14).array()), chunk(0x61746164, samples.array())));
++        assertEquals(14, audio.frames());
++        final short[] expected = new short[28];
++        for (int frame = 0; frame < 14; frame++) {
++            final int base = frame < 9 ? 1000 : 1001;
++            final int value = base + frame % 9;
++            expected[frame * 2] = (short) value;
++            expected[frame * 2 + 1] = (short) -value;
++        }
++        assertArrayEquals(expected, shorts(audio.pcm()));
++        samples.put(2, (byte) 89);
++        assertThrows(IOException.class, () -> WaveSound.read(wave(format.array(), samples.array())));
++    }
++
++    @Test
++    void rejectsTruncatedImaGroupsAndInvalidFrameCounts() {
++        final ByteBuffer format = buffer(20);
++        format.put(format(17, 1, 4)).putShort((short) 2).putShort((short) 9).putShort(12, (short) 8);
++        for (final int size : new int[]{0, 3, 5, 7, 9}) {
++            assertThrows(IOException.class, () -> WaveSound.read(wave(format.array(), new byte[size])));
++        }
++        for (final int count : new int[]{0, 10, Integer.MAX_VALUE}) {
++            assertThrows(IOException.class, () -> WaveSound.read(chunks(chunk(0x20746D66, format.array()),
++                    chunk(0x74636166, buffer(4).putInt(count).array()), chunk(0x61746164, new byte[8]))));
++        }
++        final byte[] invalid = new byte[8];
++        invalid[3] = 1;
++        assertThrows(IOException.class, () -> WaveSound.read(wave(format.array(), invalid)));
++    }
++
++    @Test
++    void rejectsAmbiguousLayoutsAndIncompleteFrames() {
++        final byte[] format = format(1, 2, 16);
++        assertThrows(IOException.class, () -> WaveSound.read(wave(format, new byte[3])));
++        assertThrows(IOException.class, () -> WaveSound.read(chunks(chunk(0x20746D66, format),
++                chunk(0x20746D66, format), chunk(0x61746164, new byte[4]))));
++        assertThrows(IOException.class, () -> WaveSound.read(chunks(chunk(0x20746D66, format),
++                chunk(0x61746164, new byte[4]), chunk(0x61746164, new byte[4]))));
++        final byte[] invalidRate = format.clone();
++        buffer(invalidRate).putInt(4, -1);
++        assertThrows(IOException.class, () -> WaveSound.read(wave(invalidRate, new byte[4])));
++        for (final int offset : new int[]{0, 2, 12, 14}) {
++            final byte[] invalid = format.clone();
++            buffer(invalid).putShort(offset, (short) 65535);
++            assertThrows(IOException.class, () -> WaveSound.read(wave(invalid, new byte[4])));
++        }
++    }
++
++    private static byte[] format(final int codec, final int channels, final int bits) {
++        return buffer(16).putShort((short) codec).putShort((short) channels).putInt(48000)
++                .putInt(48000 * channels * bits / 8).putShort((short) (channels * bits / 8)).putShort((short) bits).array();
++    }
++
++    private static byte[] wave(final byte[] format, final byte[] samples) {
++        return chunks(chunk(0x20746D66, format), chunk(0x61746164, samples));
++    }
++
++    private static byte[] chunk(final int kind, final byte[] bytes) {
++        return buffer(8 + bytes.length + (bytes.length & 1)).putInt(kind).putInt(bytes.length).put(bytes).array();
++    }
++
++    private static byte[] chunks(final byte[]... chunks) {
++        final int size = Arrays.stream(chunks).mapToInt(chunk -> chunk.length).sum();
++        final ByteBuffer data = buffer(12 + size).putInt(0x46464952).putInt(4 + size).putInt(0x45564157);
++        for (final byte[] chunk : chunks) {
++            data.put(chunk);
++        }
++        return data.array();
++    }
++
++    private static short[] shorts(final byte[] bytes) {
++        final short[] samples = new short[bytes.length / 2];
++        buffer(bytes).asShortBuffer().get(samples);
++        return samples;
++    }
++
++    private static ByteBuffer buffer(final int size) {
++        return ByteBuffer.allocate(size).order(ByteOrder.LITTLE_ENDIAN);
++    }
++
++    private static ByteBuffer buffer(final byte[] bytes) {
++        return ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeSoundLibraryTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeSoundLibraryTest.java
 new file mode 100644
-index 000000000..833e8c3e6
+index 000000000..44f9a13cc
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeSoundLibraryTest.java
 @@ -0,0 +1,60 @@
@@ -742,7 +1184,7 @@ index 000000000..833e8c3e6
 +        final var lower = new InMemoryContent();
 +        final var upper = new InMemoryContent();
 +        lower.put("sounds/test.ogg", new byte[]{1});
-+        upper.put("sounds/test.ogg", new byte[]{2});
++        upper.put("sounds/test.wav", new byte[]{2});
 +        upper.put("textures/test.png", new byte[]{3});
 +        final byte[] archive = NativeSoundLibrary.encode(List.of(lower, upper));
 +        final var packs = NativeSoundLibrary.decode(new ByteArrayInputStream(archive));
@@ -750,7 +1192,7 @@ index 000000000..833e8c3e6
 +        assertEquals(1, packs.get(0).size());
 +        assertEquals(1, packs.get(1).size());
 +        assertArrayEquals(new byte[]{1}, packs.get(0).get("sounds/test.ogg"));
-+        assertArrayEquals(new byte[]{2}, packs.get(1).get("sounds/test.ogg"));
++        assertArrayEquals(new byte[]{2}, packs.get(1).get("sounds/test.wav"));
 +        assertArrayEquals(archive, NativeSoundLibrary.encode(List.of(lower, upper)));
 +    }
 +
