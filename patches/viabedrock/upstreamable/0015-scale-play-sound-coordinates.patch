@@ -1,29 +1,262 @@
-From b8001aabee6f91f579323624d35a4269916c6cb4 Mon Sep 17 00:00:00 2001
+From c2415877b9f87d80a4b30b49f099d8aaa5f98f11 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 19:48:51 +0200
-Subject: [PATCH] fix(audio): encode PlaySound coordinates in Java units
+Subject: [PATCH] fix(audio): preserve native PlaySound coordinate units
 
-Bedrock sends PlaySound positions in blocks, while the Java sound packet expects positions in eighths of a block. Scale all three coordinates so sounds play at their actual world location.
+A controlled 1.26.51.1 capture on protocol 2193 sends (-33, 567, -18)
+for a sound at (-4.125, 70.875, -2.25). Bedrock and Java both encode
+PlaySound positions in eighths of a block. Preserve the signed integers
+instead of multiplying them or converting through floating point.
+
+Decode the full Bedrock payload into a typed value, including signed loop
+counts and independent optional handle and playback-position fields.
+These fields remain available for native playback integration; ordinary
+Java playback still cannot reproduce server handle controls or loops.
+
+Test fractional negative positions, integer limits, signed loops, optional
+field combinations, and byte alignment of both protocol representations.
 ---
- .../viabedrock/protocol/packet/WorldEffectPackets.java      | 6 +++---
- 1 file changed, 3 insertions(+), 3 deletions(-)
+ build.gradle                                  |  6 ++
+ .../viabedrock/protocol/model/PlaySound.java  | 50 +++++++++++
+ .../protocol/packet/WorldEffectPackets.java   | 40 ++++-----
+ .../protocol/packet/PlaySoundPacketsTest.java | 88 +++++++++++++++++++
+ 4 files changed, 161 insertions(+), 23 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/PlaySound.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlaySoundPacketsTest.java
 
+diff --git a/build.gradle b/build.gradle
+index 4cc0760e1..912a6321c 100644
+--- a/build.gradle
++++ b/build.gradle
+@@ -170,3 +170,9 @@ registerToolTask("sortJson", "net.raphimc.viabedrock.tool.JsonSorter",
+     "Sorts data asset json files in place. Options: --file (required), --deep")
+ registerToolTask("convertResourcePack", "net.raphimc.viabedrock.test.ResourcePackConverterTest",
+     "Converts a bedrock .mcpack to a java resource pack. Options: --input (required), --output")
++
++configurations.testImplementation.extendsFrom configurations.compileOnly
++
++testing.suites.test {
++    useJUnitJupiter("6.1.3")
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/PlaySound.java b/src/main/java/net/raphimc/viabedrock/protocol/model/PlaySound.java
+new file mode 100644
+index 000000000..fe55dfca7
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/PlaySound.java
+@@ -0,0 +1,50 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import com.viaversion.viaversion.api.type.Type;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++/** PlaySound positions are signed fixed-point coordinates in eighths of a block. */
++public record PlaySound(String name, BlockPosition positionEighths, float volume, float pitch,
++                        int loopCount, boolean bypassListenerRange, Long serverHandle, Float playbackPosition) {
++
++    public static final Type<PlaySound> TYPE = new Type<>(PlaySound.class) {
++        @Override
++        public PlaySound read(final ByteBuf buffer) {
++            final String name = BedrockTypes.STRING.read(buffer);
++            final BlockPosition position = BedrockTypes.BLOCK_POSITION.read(buffer);
++            final float volume = buffer.readFloatLE();
++            final float pitch = buffer.readFloatLE();
++            final int loops = BedrockTypes.VAR_INT.readPrimitive(buffer);
++            final boolean bypassRange = buffer.readBoolean();
++            final Long handle = buffer.readBoolean() ? buffer.readLongLE() : null;
++            final Float playbackPosition = buffer.readBoolean() ? buffer.readFloatLE() : null;
++            return new PlaySound(name, position, volume, pitch, loops, bypassRange, handle, playbackPosition);
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final PlaySound value) {
++            BedrockTypes.STRING.write(buffer, value.name);
++            BedrockTypes.BLOCK_POSITION.write(buffer, value.positionEighths);
++            buffer.writeFloatLE(value.volume);
++            buffer.writeFloatLE(value.pitch);
++            BedrockTypes.VAR_INT.writePrimitive(buffer, value.loopCount);
++            buffer.writeBoolean(value.bypassListenerRange);
++            buffer.writeBoolean(value.serverHandle != null);
++            if (value.serverHandle != null) {
++                buffer.writeLongLE(value.serverHandle);
++            }
++            buffer.writeBoolean(value.playbackPosition != null);
++            if (value.playbackPosition != null) {
++                buffer.writeFloatLE(value.playbackPosition);
++            }
++        }
++    };
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
-index 2539fa126..8046c8c0c 100644
+index 2539fa126..650c2b050 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
-@@ -135,9 +135,9 @@ public final class WorldEffectPackets {
+@@ -50,6 +50,7 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.SoundSource;
+ import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
+ import net.raphimc.viabedrock.protocol.model.BedrockItem;
+ import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.model.PlaySound;
+ import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+ import net.raphimc.viabedrock.protocol.storage.BreakingTracker;
+@@ -113,34 +114,15 @@ public final class WorldEffectPackets {
+          *     // TODO: Server handle based sound manager
+          * });*/
+         protocol.registerClientbound(ClientboundBedrockPackets.PLAY_SOUND, ClientboundPackets26_3.SOUND, wrapper -> {
+-            final String name = wrapper.read(BedrockTypes.STRING); // sound name
+-            final BlockPosition position = wrapper.read(BedrockTypes.BLOCK_POSITION); // position
+-            final float volume = wrapper.read(BedrockTypes.FLOAT_LE); // volume
+-            final float pitch = wrapper.read(BedrockTypes.FLOAT_LE); // pitch
+-            wrapper.read(BedrockTypes.UNSIGNED_VAR_INT); // loop count
+-            wrapper.read(Types.BOOLEAN); // bypass listener range check
+-            if (wrapper.read(Types.BOOLEAN)) { // has server sound handle
+-                wrapper.read(BedrockTypes.LONG_LE); // server sound handle
+-            }
+-            if (wrapper.read(Types.BOOLEAN)) { // has playback position
+-                wrapper.read(BedrockTypes.FLOAT_LE); // playback position
+-            }
+-
+-            final BedrockMappingData.JavaSound javaSound = BedrockProtocol.MAPPINGS.getBedrockToJavaSounds().get(name);
++            final PlaySound sound = wrapper.read(PlaySound.TYPE);
++            final BedrockMappingData.JavaSound javaSound = BedrockProtocol.MAPPINGS.getBedrockToJavaSounds().get(sound.name());
+             if (javaSound == null) {
+-                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown bedrock sound: " + name);
++                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown bedrock sound: " + sound.name());
+                 wrapper.cancel();
+                 return;
+             }
  
-             wrapper.write(Types.SOUND_EVENT, Holder.of(javaSound.id())); // sound id
-             wrapper.write(Types.VAR_INT, javaSound.category().ordinal()); // category
+-            wrapper.write(Types.SOUND_EVENT, Holder.of(javaSound.id())); // sound id
+-            wrapper.write(Types.VAR_INT, javaSound.category().ordinal()); // category
 -            wrapper.write(Types.INT, position.x()); // x
 -            wrapper.write(Types.INT, position.y()); // y
 -            wrapper.write(Types.INT, position.z()); // z
-+            wrapper.write(Types.INT, position.x() * 8); // x
-+            wrapper.write(Types.INT, position.y() * 8); // y
-+            wrapper.write(Types.INT, position.z() * 8); // z
-             wrapper.write(Types.FLOAT, volume); // volume
-             wrapper.write(Types.FLOAT, pitch); // pitch
-             wrapper.write(Types.LONG, ThreadLocalRandom.current().nextLong()); // seed
+-            wrapper.write(Types.FLOAT, volume); // volume
+-            wrapper.write(Types.FLOAT, pitch); // pitch
+-            wrapper.write(Types.LONG, ThreadLocalRandom.current().nextLong()); // seed
++            writePlaySound(wrapper, sound, javaSound.id(), javaSound.category().ordinal(), ThreadLocalRandom.current().nextLong());
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.STOP_SOUND, ClientboundPackets26_3.STOP_SOUND, wrapper -> {
+             final String name = wrapper.read(BedrockTypes.STRING); // sound name
+@@ -747,6 +729,18 @@ public final class WorldEffectPackets {
+         return configuredSound;
+     }
+ 
++    static void writePlaySound(final PacketWrapper wrapper, final PlaySound sound, final int soundId, final int category, final long seed) {
++        wrapper.write(Types.SOUND_EVENT, Holder.of(soundId));
++        wrapper.write(Types.VAR_INT, category);
++        // Both protocols encode these fields in eighths of a block. Preserve the integers exactly.
++        wrapper.write(Types.INT, sound.positionEighths().x());
++        wrapper.write(Types.INT, sound.positionEighths().y());
++        wrapper.write(Types.INT, sound.positionEighths().z());
++        wrapper.write(Types.FLOAT, sound.volume());
++        wrapper.write(Types.FLOAT, sound.pitch());
++        wrapper.write(Types.LONG, seed);
++    }
++
+     private WorldEffectPackets() {
+     }
+ 
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/PlaySoundPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlaySoundPacketsTest.java
+new file mode 100644
+index 000000000..11aa77cad
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlaySoundPacketsTest.java
+@@ -0,0 +1,88 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.model.PlaySound;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class PlaySoundPacketsTest {
++
++    @Test
++    void preservesFractionalNegativeAndLargePositionsInJavaPacket() throws Exception {
++        for (final BlockPosition position : new BlockPosition[]{
++            new BlockPosition(-33, 567, -18),
++            new BlockPosition(Integer.MIN_VALUE, -1, Integer.MAX_VALUE)
++        }) {
++            final PlaySound sound = new PlaySound("", position, 0.5F, 1.3F, -1, false, null, null);
++            final var wrapper = new PacketWrapperImpl(ClientboundPackets26_3.SOUND, null, null);
++            WorldEffectPackets.writePlaySound(wrapper, sound, 42, 3, 17);
++            final ByteBuf buffer = Unpooled.buffer();
++            try {
++                wrapper.writeToBuffer(buffer);
++                assertEquals(ClientboundPackets26_3.SOUND.getId(), Types.VAR_INT.readPrimitive(buffer));
++                assertEquals(42, Types.SOUND_EVENT.read(buffer).id());
++                assertEquals(3, Types.VAR_INT.readPrimitive(buffer));
++                assertEquals(position.x(), buffer.readInt());
++                assertEquals(position.y(), buffer.readInt());
++                assertEquals(position.z(), buffer.readInt());
++                assertEquals(sound.volume(), buffer.readFloat());
++                assertEquals(sound.pitch(), buffer.readFloat());
++                assertEquals(17, buffer.readLong());
++                assertEquals(0, buffer.readableBytes());
++            } finally {
++                buffer.release();
++            }
++        }
++    }
++
++    @Test
++    void readsSignedLoopsAndIndependentOptionalFieldsWithoutConsumingNextValue() throws Exception {
++        for (final int loops : new int[]{-1, 0, 3, Integer.MAX_VALUE}) {
++            for (final Long handle : new Long[]{null, 0L, Long.MIN_VALUE}) {
++                for (final Float offset : new Float[]{null, 0F, 2.5F}) {
++                    final ByteBuf buffer = Unpooled.buffer();
++                    try {
++                        final BlockPosition position = new BlockPosition(-33, 567, -18);
++                        // Write the native wire fields independently of the codec under test.
++                        BedrockTypes.STRING.write(buffer, "");
++                        BedrockTypes.BLOCK_POSITION.write(buffer, position);
++                        buffer.writeFloatLE(0.5F).writeFloatLE(1);
++                        BedrockTypes.VAR_INT.writePrimitive(buffer, loops);
++                        buffer.writeBoolean(true).writeBoolean(handle != null);
++                        if (handle != null) {
++                            buffer.writeLongLE(handle);
++                        }
++                        buffer.writeBoolean(offset != null);
++                        if (offset != null) {
++                            buffer.writeFloatLE(offset);
++                        }
++                        buffer.writeInt(0x12345678);
++                        final PlaySound expected = new PlaySound("", position, 0.5F, 1, loops, true, handle, offset);
++                        assertEquals(expected, PlaySound.TYPE.read(buffer));
++                        assertEquals(0x12345678, buffer.readInt());
++                        assertEquals(0, buffer.readableBytes());
++
++                        PlaySound.TYPE.write(buffer, expected);
++                        assertEquals(expected, PlaySound.TYPE.read(buffer));
++                        assertEquals(0, buffer.readableBytes());
++                    } finally {
++                        buffer.release();
++                    }
++                }
++            }
++        }
++    }
++
++}
 -- 
 2.55.0

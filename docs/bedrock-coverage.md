@@ -229,12 +229,31 @@ Core still needs to derive equipment attributes from target item definitions, in
 | R1 | General actor controllers and scripts | Incomplete | Complete transitions, weighted entries, variables, events, queries, and render-controller selection. |
 | R2 | Server particle dispatch | Incomplete | Retain actor identity and Molang variables, then route effects into native playback through both connection routes. |
 | R3 | Particle runtime | Incomplete | Complete components, actor contexts, child effects, concurrency, and visible lifecycle comparisons. |
-| R4 | Server audio | Incomplete | Retain handles, loops, playback position, and range behavior. Complete supported controls, captions, and audible comparisons. |
+| R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core decodes signed loops and optional playback fields. Complete playback integration for handles, loops, seeking, range behavior, controls, captions, and audible comparisons. |
 | R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties through ViaProxy. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, and directional light occlusion. |
 | R6 | Equipped attachables | Incomplete | Transport graphs through ViaProxy. Complete variants, explicit bindings, per-bone materials, and material families. |
 
 The attachable matrix tests establish supported same-name affine bindings.
 They do not establish explicit binding expressions or complete native equipment parity.
+
+### Native server audio evidence
+
+A native 1.26.51.1 session on protocol 2193 plays a sound at `(-4.125, 70.875, -2.25)`.
+Its PlaySound packet sends `(-33, 567, -18)`, which already uses the Java packet's fixed-point units.
+The corrected core handler preserves those integers.
+The typed decoder also preserves signed loop counts, handle bits, and optional playback position.
+The [owning patch notes](../patches/viabedrock/upstreamable/0015-scale-play-sound-coordinates.pr.md) contain the source comparisons and tests.
+
+The same target's beta script API successfully sends volume, pitch, fade, seek, pause, resume, and stop controls.
+Its UPDATE_SOUND_DATA payload carries a little-endian 64-bit handle, then seven tagged variants.
+Each captured message repeats the same variant seven times.
+Fade carries duration before target volume.
+The commented-out core decoder instead expects optional booleans and reverses the fade fields.
+[Gophertunnel's implementation](https://github.com/Sandertv/gophertunnel/blob/80c811b6186016b3860c358368cfa47e507f26e9/minecraft/protocol/packet/clientbound_update_sound_data.go) documents that only the final variant supplies the client's value.
+Mixed variants have not been compared with the pinned native client.
+
+These captures establish the packet format and available target API.
+They do not establish working StackAnvil handle controls or audible parity.
 
 ## Skins, persona, and Dressing Room
 
