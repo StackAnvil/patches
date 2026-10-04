@@ -345,7 +345,7 @@ The sound-control change also passes the [complete main-branch CI build](https:/
 | S2 | Complete local persona assembly | Incomplete | Resolve unavailable free assets and remaining geometry, layering, and animation sources. |
 | S3 | Classic geometry and animation formats | Incomplete | Complete inherited legacy sources, aliases, metadata, and inheritance comparisons. |
 | S4 | Emotes and animation fidelity | Incomplete | Complete unavailable remote assets, events, effects, platform filters, timing, rotations, and scale comparisons. |
-| S5 | Native first-person and held-item drawing | Incomplete | Classic and persona graphs submit their sampled hierarchy with authored scale, death roll, and raw-name transforms. Verify native visible timing and persona overlap, then complete costume hands, other global transforms, held items, charging, equipment, and input timing. |
+| S5 | Native first-person and held-item drawing | Incomplete | Classic and persona graphs submit their sampled hierarchy with authored scale, death roll, and raw-name transforms. Server costumes now select resolved hand-view surfaces in the sampled actor scope. Verify native costume placement, visible timing, and persona overlap, then complete other global transforms, held items, charging, equipment, and input timing. |
 | S6 | Complete incoming skin records through ViaProxy | Implemented | Complete records and local-avatar ownership pass isolated direct and proxy playback. Broader remote-player, lifecycle, and native visual comparisons remain required. |
 | D1 | Palettes, color channels, and limb editing | Unverified | Compare remaining palette options, asynchronous saves, and fresh native limb edits. |
 | D2 | Classic packs and imported-skin synchronization | Incomplete | Complete imported images without downloadable pack references and remaining account/platform flows. |
@@ -1293,3 +1293,30 @@ The current death counter uses the Java entity clock.
 Other actor roots, selected costume hands, held-item placement, persona overlap, and native visible timing remain open.
 These matrix cases do not establish complete visual or lifecycle parity.
 This section supersedes the missing first-person global integration described above for death roll and explicit raw names.
+
+## First-person server costume selection
+
+**Implemented:** Server player overrides now select native hand-view geometry, textures, and visibility from the sampled actor scope.
+The selection retains variables from animation, scale, and first-person query inputs without a second initialization or pre-animation pass.
+Each selected controller retains an independent model hierarchy and ordered visibility rules.
+Original skin selections retain their persona surfaces.
+Replacement costume bodies omit those original surfaces.
+
+Accepted resources and actor snapshots supply the same path on direct connections and ViaProxy.
+Supported alpha-test materials retain culling, emissive flags, lighting inputs, and enabled native UV transforms.
+The renderer uploads complete source images for those transforms.
+Pack changes clear hand models and release textures.
+Missing active geometry, textures, or material families produce bounded diagnostics.
+
+**Automated evidence:** The shared-scope test covers animation-entry variables, scale mutations, multiple texture draws, UVs, lighting, repeated selection, and independent perspectives.
+The dependency build passes 1,001 tests with 115 optional skips and no failures or errors.
+
+**Runtime evidence:** An authored pack overrides `minecraft:player` with two conditional hand controllers, separate geometry, and separate textures.
+Both direct and ViaProxy clients accept the pack, submit two distinct model hierarchies through the actual hand-render entry, and show both textured cubes.
+The probe also checks the sampled scale, Java arm replacement, and scope restoration.
+The matching native client accepts identical fixture resources and shows selected hand geometry.
+Its visible placement differs from the Java capture, so this comparison does not establish coordinate parity.
+All fixture assets, captures, and probe output remain private.
+
+**Incomplete or unverified:** Per-bone materials, other material families, costume effects, equipped items, native timing, and complete visible parity remain open.
+This section supersedes the missing hand-view costume selection described above for supported resolved resources.

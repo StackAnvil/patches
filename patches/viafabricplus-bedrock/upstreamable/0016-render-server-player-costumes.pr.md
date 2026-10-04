@@ -90,3 +90,31 @@ Players without commands or server overrides retain their existing renderer sele
 A targeted resource test loads built-in command resources after an earlier lookup without commands, then samples their production graph.
 It also checks server provenance and resource-cache replacement.
 Native command playback remains part of the shared actor graph patch.
+
+## Native hand-view costumes
+
+Server player graphs now select hand-view draws in the sampled first-person actor scope.
+The native local first-person flag selects controller references on the matching build.
+Matching player definitions retain separate first-person and third-person render controllers.
+The target render pass at `0x141c362e0` evaluates and draws each selected controller independently after root scaling.
+The [Creator reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/visualreference/render_controller.v1.8.0?view=minecraft-bedrock-stable) describes geometry, texture, material, and visibility selection.
+
+The hand renderer resolves each selected geometry and texture from the accepted pack stack.
+Each controller retains its own model, so visibility rules do not merge unrelated geometry draws.
+Selected original skin bodies retain their persona surfaces.
+Custom replacement bodies omit those original surfaces.
+Supported alpha-test materials retain native culling, emissive flags, lighting inputs, and enabled UV transforms.
+Texture uploads retain complete source images for native UV transformation.
+Pack changes release costume textures and clear hand models.
+Unresolved active geometry, textures, and material families emit bounded diagnostics.
+
+These changes supersede the retained Java hand fallback described above for supported resolved server costume draws.
+Other material families, per-bone materials, equipment, native timing, and complete visible parity remain open.
+
+An authored two-controller pack passes the actual hand-render entry on direct and ViaProxy connections.
+The probe checks distinct model hierarchies, sampled scale, Java arm replacement, and scope restoration.
+Both Java captures show the separate textured cubes.
+The matching native client accepts identical pack resources and shows selected hand geometry.
+Its visible placement differs from Java, which remains an explicit comparison gap.
+The dependency build passes 1,001 tests with 115 optional skips and no failures or errors.
+Fixture assets, screenshots, and raw journals remain private.

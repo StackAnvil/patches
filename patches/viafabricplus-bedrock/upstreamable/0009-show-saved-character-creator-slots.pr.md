@@ -1718,3 +1718,15 @@ Both actual Minecraft hand entries submit the expected matrix for combined death
 They suppress duplicate Java hands and restore the pose and appearance scopes.
 The fixture then clears the name, and both final screenshots show the native arm.
 These supplied packet and graph inputs verify transport and draw-time composition, not native lifecycle or pixel parity.
+
+### Hand-view controller selection
+
+The shared render selector can use the sampled actor scope after animation and scale expressions.
+It does not rerun initialization or pre-animation scripts for the hand view.
+This scope retains controller entry changes, query inputs, scale side effects, and independent perspective clocks.
+The full selection includes the original body alongside custom geometries and multiple texture draws.
+
+A portable test selects geometry through an animation entry variable and admits draws through a scale mutation.
+It verifies UV values, lighting inputs, independent perspectives, repeated selection, and original-body classification.
+The selector now belongs to the shared actor graph patch.
+Costumes and equipped items use the same implementation.

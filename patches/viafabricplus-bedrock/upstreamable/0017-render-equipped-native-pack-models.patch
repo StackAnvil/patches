@@ -1,4 +1,4 @@
-From f0970a9746ea159b54e7887be50b1b0148bc55f6 Mon Sep 17 00:00:00 2001
+From 5fc6f16bbfed9c6e636afdd0ed59576fd2b8d224 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 18:26:58 +0200
 Subject: [PATCH] feat(attachables): render equipped native pack models
@@ -53,7 +53,6 @@ armor visible in Java. Unsupported native surfaces retain vanilla fallback.
 ---
  .../appearance/BedrockActorAnimation.java     |  10 +
  .../BedrockAttachableSelection.java           |  51 +++
- .../appearance/BedrockPlayerControllers.java  |  36 ++-
  .../render/MixinAvatarAnimationRenderer.java  |  18 +-
  .../render/MixinAvatarAnimationState.java     |  11 +-
  .../bedrock/render/BedrockAnimatedModel.java  |  63 +++-
@@ -68,7 +67,7 @@ armor visible in Java. Unsupported native surfaces retain vanilla fallback.
  .../render/BedrockAttachableMatricesTest.java | 150 +++++++++
  .../render/BedrockEquippedAttachableTest.java |  98 ++++++
  .../render/BedrockPlayerModelTest.java        |  58 ++++
- 17 files changed, 1005 insertions(+), 8 deletions(-)
+ 16 files changed, 973 insertions(+), 4 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableSelection.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquipmentCache.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableLayer.java
@@ -79,7 +78,7 @@ armor visible in Java. Unsupported native surfaces retain vanilla fallback.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
-index b8d7c8e..b4b243e 100644
+index 5077402..432ea54 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 @@ -28,6 +28,10 @@ public final class BedrockActorAnimation {
@@ -163,78 +162,6 @@ index 0000000..a66cd4c
 +        }
 +    }
 +}
-diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
-index a70dacc..672bfe4 100644
---- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
-+++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
-@@ -47,6 +47,13 @@ public final class BedrockPlayerControllers {
-             final Map<String, Object> queries,
-             final Map<String, Float> variables)
-             throws IOException {
-+        return this.select(time, properties, queries, variables, Map.of());
-+    }
-+
-+    public Selection select(final float time, final Map<String, Object> properties,
-+                            final Map<String, Object> queries, final Map<String, Float> variables,
-+                            final Map<String, Object> context) throws IOException {
-+        this.molang.context(context);
-         final Map<String, Object> frame = new HashMap<>(queries);
-         frame.put("life_time", time);
-         frame.put("property", (BedrockActorAnimation.Query) args -> args.isEmpty() ? 0 : properties.getOrDefault(String.valueOf(args.getFirst()), 0));
-@@ -77,17 +84,24 @@ public final class BedrockPlayerControllers {
-             this.molang.binding("array", arrays);
-             final String geometry = this.value(controller.geometryExpression()).getAsString();
-             final String material = controller.materialsMap().containsKey("*") ? this.value(controller.materialsMap().get("*")).getAsString() : "entity_alphatest";
--            final UvAnimation animation = this.uvAnimations.get(reference.identifier());
--            final Uv uv = animation == null ? Uv.IDENTITY : new Uv(
-+            final var nativeUv = controller.uvAnimation();
-+            final UvAnimation animation = this.uvAnimations.getOrDefault(reference.identifier(),
-+                    new UvAnimation(nativeUv.offsetU(), nativeUv.offsetV(), nativeUv.scaleU(), nativeUv.scaleV()));
-+            final Uv uv = new Uv(
-                     (float) this.value(animation.offsetX()).getAsNumber(), (float) this.value(animation.offsetY()).getAsNumber(),
-                     (float) this.value(animation.scaleX()).getAsNumber(), (float) this.value(animation.scaleY()).getAsNumber());
-+            final List<Visibility> visibility = new ArrayList<>();
-+            for (final var rule : controller.partVisibility()) {
-+                visibility.add(new Visibility(rule.pattern(), this.value(rule.expression()).getAsBoolean()));
-+            }
-+            final float lightMultiplier = (float) this.value(controller.lightColorMultiplierExpression()).getAsNumber();
-             for (final String expression : controller.textureExpressions()) {
-                 final String texture = this.value(expression).getAsString();
-                 if ((geometry.equals("geometry.humanoid.custom") || geometry.equals("geometry.humanoid.customSlim"))
-                         && (texture.equals("textures/entity/steve") || texture.equals("textures/entity/alex"))) {
-                     body = true;
-                 } else if (!geometry.isBlank() && !texture.isBlank()) {
--                    surfaces.add(new Surface(reference.identifier(), geometry, texture, material, uv));
-+                    surfaces.add(new Surface(reference.identifier(), geometry, texture, material, uv, List.copyOf(visibility), controller.ignoreLighting(), lightMultiplier));
-                 }
-             }
-         }
-@@ -112,10 +126,24 @@ public final class BedrockPlayerControllers {
-         return this.molang.value(program);
-     }
- 
-+    /** Attachable setup runs in the owner's controller variable scope. */
-+    public void parentSetup(final List<String> expressions, final Map<String, Object> context) throws IOException {
-+        this.molang.context(context);
-+        this.run(expressions);
-+    }
-+
-+    public record Visibility(String pattern, boolean visible) {
-+        public boolean matches(final String bone) {
-+            final String regex = java.util.regex.Pattern.quote(this.pattern).replace("*", "\\E.*\\Q");
-+            return bone.matches(regex);
-+        }
-+    }
-+
-     public record UvAnimation(String offsetX, String offsetY, String scaleX, String scaleY) {}
-     public record Uv(float offsetX, float offsetY, float scaleX, float scaleY) {
-         public static final Uv IDENTITY = new Uv(0, 0, 1, 1);
-     }
--    public record Surface(String controller, String geometry, String texture, String material, Uv uv) {}
-+    public record Surface(String controller, String geometry, String texture, String material, Uv uv,
-+                          List<Visibility> visibility, boolean ignoreLighting, float lightMultiplier) {}
-     public record Selection(boolean bodyVisible, List<Surface> surfaces) {}
- }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationRenderer.java
 index dc7282e..a871253 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAvatarAnimationRenderer.java
@@ -847,10 +774,10 @@ index 2224643..4cf95ab 100644
 +
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 60b2309..eed1d7a 100644
+index bd67d20..5dbaf40 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-@@ -687,7 +687,7 @@ public final class BedrockPlayerSkins {
+@@ -767,7 +767,7 @@ public final class BedrockPlayerSkins {
                                      BedrockFirstPersonCamera.Rotation camera, List<FirstPersonSurface> surfaces,
                                      org.joml.Matrix4f root) {}
  
@@ -859,7 +786,7 @@ index 60b2309..eed1d7a 100644
          final Map<String, Object> queries = new HashMap<>();
          queries.put("life_time", state.ageInTicks / 20F);
          queries.put("frame_alpha", partialTick);
-@@ -940,10 +940,28 @@ public final class BedrockPlayerSkins {
+@@ -1020,10 +1020,28 @@ public final class BedrockPlayerSkins {
          BedrockActorResources.clear();
          rendererContext = context;
          rendererEpoch++;
