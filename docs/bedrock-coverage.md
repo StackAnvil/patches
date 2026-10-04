@@ -43,12 +43,17 @@ The complete applied source defines 168 inbound packet types.
 There are 106 explicit registrations, 19 explicit cancellations, and 43 automatic fallback cancellations.
 These counts describe source registration, not feature completion.
 The inventory excludes commented enum entries and includes transition registrations.
+One declared packet, `STONECUTTER_SET_RECIPE` (355), is absent from the matching protocol 2193 schema.
+Its serverbound counterpart (354) is also absent.
+Mojang introduces both in [1.26.60-preview.21, protocol 2207](https://mojang.github.io/bedrock-protocol-docs/1.26.60-preview.21/packets/clientbound-stonecutter-set-recipe-packet/).
+Their missing handlers are outside the pinned target's coverage requirements.
+The matching schema contains 167 of the inbound declarations and 80 of the 81 outbound declarations.
 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
 | P1 | Every inbound packet and field | Incomplete | Audit registered handlers for discarded fields and implement applicable missing behavior. |
 | P2 | Every outbound packet and field | Incomplete | Audit request generation, flags, enum values, state transitions, and native client ordering. |
-| P3 | Target packets absent from enums | Incomplete | Compare definitions with protocol 2193. Later preview packets do not establish target support. |
+| P3 | Target packets absent from enums | Incomplete | Matching schema comparison identifies 21 packet IDs absent from both direction enums, listed below. Audit native applicability and direction before adding production paths. |
 | P4 | Intentional exclusions | Incomplete | Record versioned evidence for each telemetry, Education, platform, or obsolete exclusion. |
 
 A private capture of the rebuilt ViaProxy route records the target server's startup order on 2026-10-03.
@@ -67,6 +72,25 @@ Tests preserve running and paused snapshots, independent clocks, legacy fallback
 The server advertises a running clock while its disabled daylight rule keeps queried daytime fixed.
 Native handling of those conflicting signals and live paused-clock behavior remain unverified.
 
+### Target packets absent from both direction enums
+
+The [Mojang 1.26.51 metadata release](https://github.com/Mojang/bedrock-protocol-docs/releases/tag/v1.26.51) declares protocol 2193.
+Its schema contains 231 packet IDs; 21 appear in neither direction enum.
+Some have commented declarations, which provide no runtime handling.
+This audit establishes missing declarations, not native applicability or complete field behavior.
+
+| Area | Missing packet names |
+| --- | --- |
+| Controls and script drawing | `ClientboundControlSchemeSetPacket`, `PrimitiveShapesPacket` |
+| Pack settings | `ServerboundPackSettingChangePacket`, `ResourcePacksReadyForValidationPacket` |
+| Data stores | `ClientboundDataStorePacket`, `ServerboundDataStorePacket` |
+| Script UI | `ClientboundDataDrivenUIShowScreenPacket`, `ClientboundDataDrivenUICloseScreenPacket`, `ClientboundDataDrivenUIReloadPacket`, `ServerboundDataDrivenScreenClosedPacket` |
+| Presentation | `GraphicsOverrideParameterPacket`, `ClientboundTextureShiftPacket`, `CameraAimAssistActorPriorityPacket`, `LocatorBarPacket` |
+| Environment | `ClientboundAttributeLayerSyncPacket`; the matching schema describes it as currently disabled |
+| Store and presence | `ServerStoreInfoPacket`, `ServerPresenceInfoPacket` |
+| Audio | `ClientboundUpdateSoundDataPacket` |
+| Parties | `PartyChangedPacket`, `SendPartyDestinationCookiePacket`, `PartyDestinationCookieResponsePacket` |
+
 The [source guide](bedrock-development-sources.md) defines the version and enum research process.
 
 ## Inventory and editors
@@ -75,7 +99,7 @@ The [source guide](bedrock-development-sources.md) defines the version and enum 
 | --- | --- | --- | --- |
 | I1 | Cartography creation, extension, cloning, locking, locator conversion, and naming | Incomplete | Core implements recipes, crafting, locking, naming, state transport, and metadata refresh. The add-on renders inline naming and previews through ViaProxy. Verify remaining operations and direct connections. |
 | I2 | Structure and jigsaw editors | Incomplete | Jigsaw settings and edit requests work in core on tested direct and ViaProxy routes. Normal right-click opening works with server operator permission through both routes. Complete native container lifecycle, rejection flows, structure responses, generation, and jigsaw data. |
-| I3 | Stonecutter recipe updates | Incomplete | Handle server recipe selection and complete result and close behavior. |
+| I3 | Stonecutter operations | Incomplete | Verify recipe selection, result acquisition, close behavior, and inventory reconciliation. Dedicated recipe-selection packets belong to protocol 2207 and are excluded from target 2193. |
 | I4 | Trading and loom | Implemented | Preserve their tested request and response paths. Complete remaining native and inventory edge comparisons. |
 | I5 | Every container operation | Incomplete | Audit bulk transfer, acknowledgments, rejection recovery, closing, reconciliation, and legacy inventory paths. |
 
