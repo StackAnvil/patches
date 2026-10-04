@@ -1320,3 +1320,25 @@ All fixture assets, captures, and probe output remain private.
 
 **Incomplete or unverified:** Per-bone materials, other material families, costume effects, equipped items, native timing, and complete visible parity remain open.
 This section supersedes the missing hand-view costume selection described above for supported resolved resources.
+
+## Live first-person geometry origin
+
+**Implemented:** The hand root converts the hierarchy's 24-pixel Y origin to the native mesh origin.
+It uses local eye height instead of half the entity's collision height.
+This applies to classic, persona, and resolved server costume hierarchies on both routes.
+
+**Native evidence:** Runtime inspection of the matching standing hand pass reads render offset `1.6200100183486938` and model scale `1/16`.
+The matrix captured immediately after `0x14558dfa1` exposes the origin error that supplied-input tests did not check.
+The portable vertex test compares all eight corners of the fixture cube with that matrix.
+The yaw-zero private root cases pass with the geometry basis conversion accounted for.
+The full dependency build passes 1,002 tests with 115 optional skips and no failures or errors.
+
+**Runtime evidence:** The corrected direct and ViaProxy clients accept the server fixture, retain independent hand models, and restore drawing scope.
+The native and Java screenshots still differ in placement, and native omits one fixture draw.
+The root matrix check therefore does not establish complete visible parity.
+
+**Incomplete or unverified:** Trace the remaining draw and placement differences beyond the root matrix.
+Native render-offset changes across poses, scaling, and dimensions remain unverified.
+Java eye height differs from the captured standing value by about `0.00001` blocks.
+Held items, equipment, persona overlap, and native timing remain open.
+This section supersedes the earlier half-height assumption for the standing hand root.

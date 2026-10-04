@@ -1,4 +1,4 @@
-From 51e910cd242d266583129582dd0607470498c32f Mon Sep 17 00:00:00 2001
+From d46435fcdd2e57943a2337fd304fde9f3b442b52 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1509,6 +1509,14 @@ assignments, and scale expressions remain visible without rerunning actor
 scripts. Include original skin surfaces when the drawing pass requests them,
 and preserve independent controller visibility, texture, UV, and lighting.
 Server costumes and equipped models use the same selector in later patches.
+
+Convert the ModelPart hierarchy origin when submitting first-person actor
+geometry. ModelPart roots use pixel 24 as their Y origin, while the native
+mesh starts at zero. Keep this basis conversion after the actor root matrix
+and use the local eye height instead of half the collision height. A live
+1.26.51.1 hand pass uses render height 1.620010 and model scale 1/16; the live
+matrix and converted coordinates expose the missing origin adjustment that supplied matrix inputs
+did not test. Pose-dependent native offset lifecycle remains unverified.
 ---
  .gitignore                                    |    4 +-
  .../kotlin/base.settings.settings.gradle.kts  |    3 +
@@ -1628,7 +1636,7 @@ Server costumes and equipped models use the same selector in later patches.
  .../bedrock/render/BedrockActorState.java     |   67 +
  .../bedrock/render/BedrockAnimatedModel.java  |  174 +
  .../bedrock/render/BedrockBoneTransform.java  |   27 +
- .../render/BedrockFirstPersonActor.java       |   34 +
+ .../render/BedrockFirstPersonActor.java       |   35 +
  .../render/BedrockFirstPersonCamera.java      |   61 +
  .../render/BedrockFirstPersonInput.java       |   36 +
  .../render/BedrockFirstPersonProjection.java  |   28 +
@@ -1732,7 +1740,7 @@ Server costumes and equipped models use the same selector in later patches.
  .../bedrock/render/BedrockActorStateTest.java |  134 +
  .../render/BedrockAnimatedModelTest.java      |   87 +
  .../render/BedrockBoneTransformTest.java      |   69 +
- .../render/BedrockFirstPersonActorTest.java   |   90 +
+ .../render/BedrockFirstPersonActorTest.java   |  110 +
  .../render/BedrockFirstPersonCameraTest.java  |   86 +
  .../render/BedrockFirstPersonInputTest.java   |   97 +
  .../BedrockFirstPersonProjectionTest.java     |   88 +
@@ -1742,7 +1750,7 @@ Server costumes and equipped models use the same selector in later patches.
  .../render/BedrockPlayerModelTest.java        |  100 +
  .../render/BedrockViewBobbingTest.java        |   93 +
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 232 files changed, 41815 insertions(+), 110 deletions(-)
+ 232 files changed, 41836 insertions(+), 110 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -26544,10 +26552,10 @@ index 0000000..3841693
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonActor.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonActor.java
 new file mode 100644
-index 0000000..c2cd68e
+index 0000000..a834cc1
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonActor.java
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,35 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -26567,7 +26575,8 @@ index 0000000..c2cd68e
 +        final var matrix = new Matrix4f().translation(0, -heightOffset, 0)
 +                .scale(-1, 1, -1).mul(global).scale(-scriptScale.x, -scriptScale.y, scriptScale.z);
 +        if (!skipOffset) matrix.translate(0, modelScale * -24F - 1F / 128F, 0);
-+        return matrix.scale(modelScale * 16F);
++        // Converted ModelPart roots place Y=0 at pixel 24; native geometry starts at pixel 0.
++        return matrix.scale(modelScale * 16F).translate(0, -24F / 16F, 0);
 +    }
 +
 +    static Matrix4f global(final int deathTicks, final float frameAlpha, final String name, final float height) {
@@ -27120,7 +27129,7 @@ index f00c62a..5ddf747 100644
      }
  
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 87aa8e4..d482136 100644
+index 87aa8e4..5103624 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -19,37 +19,64 @@
@@ -27462,7 +27471,7 @@ index 87aa8e4..d482136 100644
 +        }
 +        return new FirstPersonFrame(appearance.bodyId, visibility, camera,
 +                nativeDrawing ? appearance.firstPersonModels : List.of(),
-+                nativeDrawing ? BedrockFirstPersonActor.root(player.getBbHeight() * .5F, player.getScale() / 16F,
++                nativeDrawing ? BedrockFirstPersonActor.root(player.getEyeHeight(), player.getScale() / 16F,
 +                        new org.joml.Vector3f(scale.x(), scale.y(), scale.z()), false,
 +                        BedrockFirstPersonActor.global(player.deathTime, partialTick,
 +                                nativeState == null ? "" : nativeState.name(), player.getBbHeight())) : null);
@@ -45042,10 +45051,10 @@ index 0000000..6d6690a
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonActorTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonActorTest.java
 new file mode 100644
-index 0000000..941e3b0
+index 0000000..a3a1694
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonActorTest.java
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,110 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -45067,12 +45076,29 @@ index 0000000..941e3b0
 +    @Test
 +    void placesConvertedPixelsInCameraSpaceWithoutJavaHandTransforms() {
 +        final var matrix = BedrockFirstPersonActor.root(.9F, 1F / 16F, new Vector3f(1), false, new Matrix4f());
-+        final var pivot = matrix.transformPosition(new Vector3f(5F / 16F, 2F / 16F, 0));
++        final var pivot = matrix.transformPosition(new Vector3f(5F / 16F, 26F / 16F, 0));
 +        assertEquals(5F / 16F, pivot.x);
-+        assertEquals(1.5078125F - .9F - 2F / 16F, pivot.y);
++        assertEquals(1.5078125F - .9F - 2F / 16F, pivot.y, .000001F);
 +        assertEquals(0, pivot.z);
 +        final var near = matrix.transformPosition(new Vector3f(0, 0, 12F / 16F));
 +        assertEquals(-12F / 16F, near.z);
++    }
++
++    @Test
++    void matchesVisibleGeometryAgainstTheLiveNativeHandMatrix() {
++        // Captured after the native root pass in 1.26.51.1: camera-space native pixels.
++        final var nativeRoot = new Matrix4f().scaling(-.05859375F, -.05859375F, .05859375F)
++                .setTranslation(0, -.20643579959869385F, 0);
++        final var convertedRoot = BedrockFirstPersonActor.root(1.6200100183486938F, 1F / 16F,
++                new Vector3f(.9375F), false, new Matrix4f());
++        for (final float x : new float[]{4, 8}) for (final float y : new float[]{8, 12})
++            for (final float z : new float[]{16, 20}) {
++                final var nativePoint = nativeRoot.transformPosition(new Vector3f(-x, -y, z));
++                final var convertedPoint = convertedRoot.transformPosition(new Vector3f(x, 24F - y, z).div(16F));
++                assertEquals(nativePoint.x, convertedPoint.x, .000001F);
++                assertEquals(nativePoint.y, convertedPoint.y, .000001F);
++                assertEquals(-nativePoint.z, convertedPoint.z, .000001F);
++            }
 +    }
 +
 +    @Test
@@ -45083,7 +45109,10 @@ index 0000000..941e3b0
 +        assertEquals(-.9F - 3F / 128F, point.y);
 +        assertEquals(0, point.z);
 +        final var skipped = BedrockFirstPersonActor.root(.9F, .125F, new Vector3f(2, -3, 4), true, new Matrix4f());
-+        assertEquals(new Vector3f(4, 5.1F, -24), skipped.transformPosition(new Vector3f(1, 1, 3)));
++        final var expanded = skipped.transformPosition(new Vector3f(1, 2.5F, 3));
++        assertEquals(4, expanded.x);
++        assertEquals(5.1F, expanded.y, .000001F);
++        assertEquals(-24, expanded.z);
 +    }
 +
 +    @Test
@@ -45092,7 +45121,7 @@ index 0000000..941e3b0
 +        assertEquals(new Matrix4f(), normal);
 +        final var dying = BedrockFirstPersonActor.global(21, 0, "Dinnerbone", 1.8F);
 +        final var root = BedrockFirstPersonActor.root(.9F, 1F / 16F, new Vector3f(1), false, dying);
-+        final var point = root.transformPosition(new Vector3f());
++        final var point = root.transformPosition(new Vector3f(0, 24F / 16F, 0));
 +        assertEquals(.3921875F, point.x, .000001F);
 +        assertEquals(-.9F, point.y, .000001F);
 +        assertEquals(0, point.z, .000001F);
@@ -45131,7 +45160,7 @@ index 0000000..941e3b0
 +            final var position = row.getAsJsonArray("position");
 +            final var actual = new Matrix4f().set(input).translate(position.get(0).getAsFloat(), position.get(1).getAsFloat(), position.get(2).getAsFloat())
 +                    .mul(BedrockFirstPersonActor.root(row.get("height").getAsFloat(), row.get("model_scale").getAsFloat(), scale, row.get("skip_offset").getAsBoolean(), new Matrix4f()))
-+                    .scale(1F / 16F).get(new float[16]);
++                    .scale(1F / 16F).translate(0, 24F, 0).get(new float[16]);
 +            for (int i = 0; i < 16; i++) assertEquals(row.getAsJsonArray("result").get(i).getAsFloat(), actual[i], .00001F);
 +        }
 +    }

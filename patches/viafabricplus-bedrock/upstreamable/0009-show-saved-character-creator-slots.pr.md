@@ -1612,7 +1612,8 @@ The matching 1.26.51.1 executable draws the actor before its separate item pass.
 `renderFirstPerson` at `0x1447ca170` passes zero position and clears actor rotations.
 The actor root block at `0x14558da04` subtracts the render height offset, converts axes, and applies model scale.
 Its ordinary offset is `24 * modelScale + 1/128` blocks before bone drawing.
-Player height updates, including `0x1433433f0`, set the render offset to half the collision height.
+The earlier half-collision-height assumption does not describe the live standing hand pass.
+Runtime inspection of the matching build reads a render offset of `1.6200100183486938` blocks and model scale `1/16`.
 
 The add-on now retains the sampled first-person pose and submits the complete hierarchy before Java item transforms.
 It keeps separate models for this view and applies the same pose to persona surfaces.
@@ -1730,3 +1731,22 @@ A portable test selects geometry through an animation entry variable and admits 
 It verifies UV values, lighting inputs, independent perspectives, repeated selection, and original-body classification.
 The selector now belongs to the shared actor graph patch.
 Costumes and equipped items use the same implementation.
+
+### Live hand geometry origin
+
+The converted `ModelPart` hierarchy places its root Y origin at pixel 24.
+Native mesh coordinates start at pixel zero.
+Apply that geometry basis conversion after the actor root and use the local eye height for drawing.
+This fixes the missing origin adjustment and replaces the earlier half-height input.
+
+Runtime inspection captures the matrix immediately after `0x14558dfa1` in the matching native hand pass.
+A portable test checks eight converted fixture vertices against that captured matrix, including camera Z conversion.
+The yaw-zero private root cases pass with geometry basis conversion accounted for in the comparison.
+The dependency build passes 1,002 tests with 115 optional skips and no failures or errors.
+
+Direct and ViaProxy accepted-pack probes retain two distinct hand submissions and scope restoration.
+The visible comparison still differs, and native omits one fixture draw.
+Those remaining draw and placement differences require tracing beyond the root matrix.
+Native render-offset changes across poses and dimensions remain unverified.
+Java eye height also differs from the captured standing value by about `0.00001` blocks.
+Runtime records, fixture assets, and native screenshots remain private.
