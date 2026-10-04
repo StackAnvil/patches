@@ -226,7 +226,7 @@ Core still needs to derive equipment attributes from target item definitions, in
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
 | R1 | General actor controllers and scripts | Incomplete | Complete transitions, weighted entries, variables, events, queries, and render-controller selection. |
-| R2 | Server particle dispatch | Incomplete | Retain actor identity and Molang variables, then route effects into native playback through both connection routes. |
+| R2 | Server particle dispatch | Incomplete | Core now retains every packet field, resolves actor offsets for the standard Java fallback, and drops unresolved actors. Native effect graphs, typed Molang evaluation, actor binding, and resource transport through ViaProxy remain incomplete. |
 | R3 | Particle runtime | Incomplete | Complete components, actor contexts, child effects, concurrency, and visible lifecycle comparisons. |
 | R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core transports signed loops, optional playback fields, handle controls, and ordered sound resources through direct connections and ViaProxy. Add-on playback controls pass captured-session OpenAL checks on both routes. Native request admission now matches the tested float range gate on both add-on routes. Server captions now have core state, transported translations, client controls, and a HUD on both add-on routes. Complete actor/local captions, localization/layout comparisons, stream policies, range behavior for other sources, audible comparisons, and broader lifecycle verification. |
 | R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties through ViaProxy. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, and directional light occlusion. |
@@ -607,3 +607,24 @@ A separate native execution probe covers 800 actor-marker cases in `1447185c0`. 
 The complete build passes 926 Java tests with 110 optional asset tests skipped. The audio patch applies alone to the pinned base and passes 24 tests plus both Checkstyle tasks. The targeted particle/resource-library run enables private native reference fixtures and passes 12 tests with two unrelated optional conditions skipped.
 
 **Remaining:** Network level-sound actor identity and global-position handling, attached-animation caption behavior, local gameplay captions, complete localization/layout comparisons, and audible parity remain incomplete or unverified. Native global level-sound inspection places generic cues two blocks from the listener toward their source; this differs from bypassing the server PlaySound range gate. No production behavior depends on an installed native game.
+
+### Server particle packet admission and actor offsets
+
+The [core particle correction](../patches/viabedrock/upstreamable/0085-resolve-server-effects-relative-to-their-actor.pr.md) retains packet 118's unsigned dimension, signed actor ID, float position, effect name, and optional Molang JSON.
+The standard Java fallback resolves actor-relative offsets from the actor's Java feet position.
+It drops effects for unresolved actors and other dimensions.
+This code runs in core on direct and ViaProxy connections, without new add-on integration.
+
+The pinned native serializer still writes an optional flag before the JSON string, despite the versioned schema declaring a required map.
+Its value serializers emit a typed array with recursive `member_array` values.
+A flat map of numbers would lose vectors and colors.
+The packet model preserves the original JSON; the Java fallback does not evaluate it.
+
+**Verified within scope:** 100 native serialization cases and 1,600 native handler cases establish field order, optional-flag dispatch, dimension admission, actor lookup, and unchanged factory coordinates.
+Their harness supplies primitive stream codecs, authored JSON, lookups, context copies, and factory sinks.
+Three unit tests cover wire order, nested JSON retention, field boundaries, signed IDs, actor offsets, and float precision.
+The complete core suite passes 474 tests with one optional skip, and both Checkstyle tasks pass.
+The particle patch also builds alone on the pinned upstream base, with three passing tests and both Checkstyle tasks passing.
+
+**Remaining:** Native resource and graph transport, typed variable evaluation, actor interpolation, lifetime binding, live player-origin comparisons, and visible particle parity on both routes.
+Java particles retain an initial position; their protocol packet cannot represent a persistent actor attachment.
