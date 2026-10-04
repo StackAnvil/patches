@@ -39,3 +39,7 @@ Include loose WAV files in the bounded server effect library. This lets actor al
 ### Particle caption resources
 
 Retain pack language files with server effect catalogs, so local particle sound captions receive the same translation ordering as their definitions. Effect-library tests select level-sound metadata separately from sample decoding. Proxy actor/effect graph transport remains incomplete; the shared sound resource transport is independent of that gap.
+
+## Shared effect selection
+
+Direct server actors now select audio, captions, particle definitions, controllers, and images through the core resource APIs. Preserve empty source indexes and texture-only overrides. Resolve a definition's texture when that definition is used; an unused invalid reference does not prevent unrelated effects from loading. Targeted tests verify ordinary overlays, missing textures, and rejected escaping references. This does not complete native actor state transport through ViaProxy.

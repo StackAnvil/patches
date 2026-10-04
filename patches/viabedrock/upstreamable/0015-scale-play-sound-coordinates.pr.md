@@ -1,6 +1,6 @@
 ## Purpose
 
-Decode native server sound playback and controls in core. Transport the complete commands and ordered sound resources through direct connections and ViaProxy. Preserve standard Java playback when the client does not advertise native sound support.
+Decode native server sound playback and controls in core. Transport complete sound commands and ordered audio, captions, and particle resources through direct connections and ViaProxy. Preserve standard Java playback when the client does not advertise native sound support.
 
 ## Upstream base
 
@@ -108,3 +108,13 @@ Share the native float listener gate with local particle sound emitters. Preserv
 
 
 Validation: the complete build passes 926 Java tests with 110 optional asset skips. The core audio patch builds alone with 24 tests and both Checkstyle tasks. The targeted particle/resource-library run passes 12 tests with private native references enabled and two unrelated optional conditions skipped. Synthetic direct and ViaProxy sessions invoke the production local-emitter entry point, retain a caption for a missing PCM sample, exclude quiet/distant cues, and expire rows. Screenshots show caption output with concurrent-row clipping. These checks do not cover incoming particle packets, proxy actor/effect graph transport, complete layout, or audible parity.
+
+## Shared particle resource transport
+
+Export particle definitions, render controllers, and PNG/TGA images in a separate native archive. Preserve empty pack indexes and texture-only overlays. Include images without discovering references through licensed built-in assets. The shared bounded codec keeps existing sound and caption archive bytes unchanged in 100 private comparison cases.
+
+The core selectors also support direct consumers without compression. Targeted tests verify ordering, child definitions, overlay images, protocol validation, and rejected paths. This patch builds alone with 26 passing tests and both Checkstyle tasks. The full stack passes 933 Java tests, with 110 optional asset tests skipped.
+
+Converted-pack format 3 belongs to the separate cache patch. Client resource snapshots belong to the Character Creator patch. Incoming particle dispatch, typed Molang variables, persistent actor binding, and visible particle comparisons remain incomplete.
+
+**Resource availability check:** An authored pack contains three particle definitions and one texture. Private main-thread instrumentation reads all three definitions and the identical texture bytes from the accepted converted resource pack on direct and ViaProxy connections. Both full replays reach spawn, transport every recorded payload, and load the Java resource pack without Store sign-in. This verifies resource availability, not incoming particle dispatch or visible effects. The existing direct skin-update failures and missing ViaProxy actor/appearance state remain open.

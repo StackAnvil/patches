@@ -1533,3 +1533,11 @@ Share the native float listener gate with local particle sound emitters. Preserv
 
 
 Validation: the complete build passes 926 Java tests with 110 optional asset skips. The core audio patch builds alone with 24 tests and both Checkstyle tasks. The targeted particle/resource-library run passes 12 tests with private native references enabled and two unrelated optional conditions skipped. Synthetic direct and ViaProxy sessions invoke the production local-emitter entry point, retain a caption for a missing PCM sample, exclude quiet/distant cues, and expire rows. Screenshots show caption output with concurrent-row clipping. These checks do not cover incoming particle packets, proxy actor/effect graph transport, complete layout, or audible parity.
+
+## Shared server resource snapshots
+
+Use one library snapshot for server audio, captions, particle graphs, controllers, and textures. Merge accepted archives by source pack index, including empty layers. Reject conflicting paths, mismatched indexes, and aggregate limits. Rebuild snapshots after world/resource lifecycle changes or a change to already loaded licensed assets. Loading this snapshot does not initiate Store sign-in.
+
+Direct server actors share core selection APIs with converted resource packs. Tests verify archive merging, immutable maps, mismatched layers, and domain collisions. The complete stack passes 933 Java tests, with 110 optional asset tests skipped. Incoming particle packets, actor binding, typed Molang evaluation, and visible effect parity remain incomplete.
+
+**Resource availability check:** An authored pack contains three particle definitions and one texture. Private main-thread instrumentation reads all three definitions and the identical texture bytes from the accepted converted resource pack on direct and ViaProxy connections. Both full replays reach spawn, transport every recorded payload, and load the Java resource pack without Store sign-in. This verifies resource availability, not incoming particle dispatch or visible effects. The existing direct skin-update failures and missing ViaProxy actor/appearance state remain open.

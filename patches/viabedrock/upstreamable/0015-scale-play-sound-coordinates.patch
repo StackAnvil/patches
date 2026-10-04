@@ -1,8 +1,7 @@
-From e545356213f6f7f5cc16982265dd3ebee68e1f64 Mon Sep 17 00:00:00 2001
+From 94e5868858a4bd16ab84cedc68b5a1a3ce670d42 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 19:48:51 +0200
-Subject: [PATCH] feat(audio): transport native server sound playback and
- controls
+Subject: [PATCH] feat(effects): transport native resources and sound commands
 
 Native 1.26.51.1 captures on protocol 2193 establish that PlaySound uses
 signed eighth-block positions and signed loop counts. UpdateSoundData
@@ -63,12 +62,28 @@ Share the native float listener gate with local emitters without quantizing
 particle positions into PlaySound's fixed-point packet domain. Native
 1.26.51.1 local-emitter execution verifies 444 admission cases; the existing
 server request gate retains its bypass behavior and coordinate conversion.
+
+Share one bounded, deterministic archive codec across sounds, captions
+and particles while preserving the published audio and translation bytes.
+Carry particle definitions, child graphs, render controllers and PNG/TGA
+textures in a separate archive with every source pack index preserved.
+Texture-only overlays can replace built-in particle textures even when
+the converter has no licensed built-in definition.
+
+Particle format evidence comes from the pinned 1.26.51.1 resources and
+existing native graph loader. Resource decoding rejects traversal, wrong
+protocols, unsupported paths, duplicate entries and decompressed limits.
+Tests preserve empty packs and independent texture overlays; 100 private
+comparisons confirm unchanged legacy sound and translation ZIP bytes.
+Native server packet dispatch and complete visible parity remain pending.
 ---
  build.gradle                                  |   6 +
  .../viabedrock/api/model/SoundCaptions.java   |  94 ++++++++
  .../api/model/SoundListenerRange.java         |  24 ++
  .../api/model/SoundPlaybackMessage.java       |  76 ++++++
- .../api/resourcepack/NativeSoundLibrary.java  | 160 ++++++++++++
+ .../resourcepack/NativeParticleLibrary.java   |  40 +++
+ .../resourcepack/NativeResourceArchive.java   | 157 ++++++++++++
+ .../api/resourcepack/NativeSoundLibrary.java  |  56 +++++
  .../api/resourcepack/SoundTranslations.java   |  52 ++++
  .../api/resourcepack/WaveSound.java           | 228 ++++++++++++++++++
  .../protocol/ClientboundBedrockPackets.java   |   4 +-
@@ -77,30 +92,34 @@ server request gate retains its bypass behavior and coordinate conversion.
  .../protocol/model/SoundUpdate.java           | 114 +++++++++
  .../protocol/packet/WorldEffectPackets.java   | 110 ++++-----
  .../rewriter/ResourcePackRewriter.java        |   2 +
- .../NativeSoundResourceRewriter.java          |  37 +++
+ .../NativeEffectsResourceRewriter.java        |  39 +++
  .../api/model/SoundCaptionsTest.java          |  80 ++++++
  .../api/model/SoundListenerRangeTest.java     |  27 +++
  .../resourcepack/SoundTranslationsTest.java   |  46 ++++
  .../api/resourcepack/WaveSoundTest.java       | 182 ++++++++++++++
  .../protocol/model/PlaySoundTest.java         |  66 +++++
+ .../packet/NativeParticleLibraryTest.java     |  76 ++++++
  .../packet/NativeSoundLibraryTest.java        |  60 +++++
  .../protocol/packet/PlaySoundPacketsTest.java |  88 +++++++
  .../protocol/packet/SoundUpdateTest.java      |  79 ++++++
- 22 files changed, 1526 insertions(+), 68 deletions(-)
+ 25 files changed, 1697 insertions(+), 68 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SoundCaptions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SoundListenerRange.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SoundPlaybackMessage.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeParticleLibrary.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeResourceArchive.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslations.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/WaveSound.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/PlaySound.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/SoundUpdate.java
- create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeSoundResourceRewriter.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/SoundCaptionsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/SoundListenerRangeTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslationsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/WaveSoundTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/PlaySoundTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/NativeParticleLibraryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/NativeSoundLibraryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlaySoundPacketsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/SoundUpdateTest.java
@@ -331,12 +350,58 @@ index 000000000..e20d2267d
 +    }
 +
 +}
-diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeParticleLibrary.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeParticleLibrary.java
 new file mode 100644
-index 000000000..735159531
+index 000000000..a92747977
 --- /dev/null
-+++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java
-@@ -0,0 +1,160 @@
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeParticleLibrary.java
+@@ -0,0 +1,40 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack;
++
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++
++import java.io.IOException;
++import java.io.InputStream;
++import java.util.List;
++import java.util.Map;
++
++/** Particle graphs, controllers and textures in bottom-to-top server pack order. */
++public final class NativeParticleLibrary {
++
++    public static final String PATH = "assets/viabedrock/particle_library.zip";
++
++    public static byte[] encode(final List<Content> packs) throws IOException {
++        // Texture-only overlays can override built-in effects unavailable to the converter.
++        return NativeResourceArchive.encode(packs, NativeParticleLibrary::resource, List.of(), List.of(".json", ".png", ".tga"));
++    }
++
++    public static List<Map<String, byte[]>> resources(final List<Content> packs) throws IOException {
++        return NativeResourceArchive.select(packs, NativeParticleLibrary::resource, List.of(), List.of(".json", ".png", ".tga"));
++    }
++
++    public static List<Map<String, byte[]>> decode(final InputStream input) throws IOException {
++        return NativeResourceArchive.decode(input, NativeParticleLibrary::resource);
++    }
++
++    private static boolean resource(final String path) {
++        return path.endsWith(".json") && (path.startsWith("particles/") || path.startsWith("render_controllers/"))
++                || path.endsWith(".png") || path.endsWith(".tga");
++    }
++
++    private NativeParticleLibrary() { }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeResourceArchive.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeResourceArchive.java
+new file mode 100644
+index 000000000..20a308fbd
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeResourceArchive.java
+@@ -0,0 +1,157 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -353,94 +418,94 @@ index 000000000..735159531
 +import java.io.InputStream;
 +import java.nio.ByteBuffer;
 +import java.util.ArrayList;
++import java.util.Collections;
 +import java.util.LinkedHashMap;
 +import java.util.List;
 +import java.util.Map;
 +import java.util.TreeSet;
++import java.util.function.Predicate;
 +import java.util.zip.Deflater;
 +import java.util.zip.ZipEntry;
 +import java.util.zip.ZipInputStream;
 +import java.util.zip.ZipOutputStream;
 +
-+/** Native sound resources in bottom-to-top pack order, carried by the Java resource pack. */
-+public final class NativeSoundLibrary {
++/** Bounded deterministic archives retain every source pack index, including empty packs. */
++final class NativeResourceArchive {
 +
-+    public static final String PATH = "assets/viabedrock/sound_library.zip";
-+    public static final String TRANSLATIONS_PATH = "assets/viabedrock/sound_translations.zip";
 +    private static final int MAX_PACKS = 4096;
 +    private static final int MAX_FILES = 32768;
 +    private static final int MAX_FILE_BYTES = 32 * 1024 * 1024;
 +    private static final int MAX_TOTAL_BYTES = 256 * 1024 * 1024;
 +
-+    public static byte[] encode(final List<Content> packs) throws IOException {
-+        return encode(packs, false);
-+    }
-+
-+    public static byte[] encodeTranslations(final List<Content> packs) throws IOException {
-+        return encode(packs, true);
-+    }
-+
-+    private static byte[] encode(final List<Content> packs, final boolean translations) throws IOException {
-+        if (packs.size() > MAX_PACKS) {
-+            throw new IOException("Too many native sound packs");
-+        }
++    static byte[] encode(final List<Content> packs, final Predicate<String> permitted,
++                         final List<String> paths, final List<String> extensions) throws IOException {
++        final List<Map<String, byte[]>> selected = select(packs, permitted, paths, extensions);
 +        final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-+        long total = 0;
-+        int count = 0;
 +        try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
 +            zip.setLevel(Deflater.BEST_SPEED);
-+            put(zip, "header", ByteBuffer.allocate(12).putInt(1).putInt(ProtocolConstants.BEDROCK_PROTOCOL_VERSION).putInt(packs.size()).array());
-+            for (int index = 0; index < packs.size(); index++) {
-+                final Content pack = packs.get(index);
-+                final TreeSet<String> paths = new TreeSet<>();
-+                if (translations) {
-+                    paths.addAll(pack.getFilesDeep("texts/", ".lang"));
-+                } else if (pack.contains("sounds.json")) {
-+                    paths.add("sounds.json");
-+                }
-+                if (!translations) {
-+                    for (final String extension : List.of(".json", ".ogg", ".fsb", ".wav")) {
-+                        paths.addAll(pack.getFilesDeep("sounds/", extension));
-+                    }
-+                }
-+                for (final String path : paths) {
-+                    validatePath(path, translations);
-+                    final byte[] file = pack.get(path);
-+                    total += file.length;
-+                    if (++count > MAX_FILES || file.length > MAX_FILE_BYTES || total > MAX_TOTAL_BYTES) {
-+                        throw new IOException("Native sound resources exceed limits");
-+                    }
-+                    put(zip, index + "/" + path, file);
++            put(zip, "header", ByteBuffer.allocate(12).putInt(1).putInt(ProtocolConstants.BEDROCK_PROTOCOL_VERSION).putInt(selected.size()).array());
++            for (int index = 0; index < selected.size(); index++) {
++                for (final var file : selected.get(index).entrySet()) {
++                    put(zip, index + "/" + file.getKey(), file.getValue());
 +                }
 +            }
 +        }
 +        return bytes.toByteArray();
 +    }
 +
-+    public static List<Map<String, byte[]>> decode(final InputStream input) throws IOException {
-+        return decode(input, false);
++    static List<Map<String, byte[]>> select(final List<Content> packs, final Predicate<String> permitted,
++                                          final List<String> paths, final List<String> extensions) throws IOException {
++        if (packs.size() > MAX_PACKS) {
++            throw new IOException("Too many native resource packs");
++        }
++        final List<Map<String, byte[]>> selected = new ArrayList<>();
++        long total = 0;
++        int count = 0;
++        for (final Content pack : packs) {
++            final TreeSet<String> ordered = new TreeSet<>();
++            for (final String path : paths) {
++                if (pack.contains(path)) {
++                    ordered.add(path);
++                }
++            }
++            for (final String extension : extensions) {
++                for (final String path : pack.getFilesDeep("", extension)) {
++                    if (permitted.test(path)) {
++                        ordered.add(path);
++                    }
++                }
++            }
++            final Map<String, byte[]> files = new LinkedHashMap<>();
++            for (final String path : ordered) {
++                validatePath(path, permitted);
++                final byte[] bytes = pack.get(path);
++                total += bytes.length;
++                if (++count > MAX_FILES || bytes.length > MAX_FILE_BYTES || total > MAX_TOTAL_BYTES) {
++                    throw new IOException("Native resources exceed limits");
++                }
++                files.put(path, bytes);
++            }
++            selected.add(Collections.unmodifiableMap(files));
++        }
++        return List.copyOf(selected);
 +    }
 +
-+    public static List<Map<String, byte[]>> decodeTranslations(final InputStream input) throws IOException {
-+        return decode(input, true);
-+    }
-+
-+    private static List<Map<String, byte[]>> decode(final InputStream input, final boolean translations) throws IOException {
++    static List<Map<String, byte[]>> decode(final InputStream input, final Predicate<String> permitted) throws IOException {
 +        final List<Map<String, byte[]>> packs = new ArrayList<>();
 +        long total = 0;
 +        int count = 0;
 +        try (ZipInputStream zip = new ZipInputStream(input)) {
 +            final ZipEntry header = zip.getNextEntry();
 +            if (header == null || !header.getName().equals("header")) {
-+                throw new IOException("Missing native sound library header");
++                throw new IOException("Missing native resource library header");
 +            }
 +            final DataInputStream fields = new DataInputStream(zip);
 +            if (fields.readInt() != 1 || fields.readInt() != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
-+                throw new IOException("Unsupported native sound library");
++                throw new IOException("Unsupported native resource library");
 +            }
 +            final int packCount = fields.readInt();
 +            if (packCount < 0 || packCount > MAX_PACKS || zip.read() != -1) {
-+                throw new IOException("Invalid native sound library header");
++                throw new IOException("Invalid native resource library header");
 +            }
 +            for (int index = 0; index < packCount; index++) {
 +                packs.add(new LinkedHashMap<>());
@@ -453,34 +518,31 @@ index 000000000..735159531
 +                try {
 +                    index = Integer.parseInt(name.substring(0, separator));
 +                } catch (final RuntimeException invalid) {
-+                    throw new IOException("Invalid native sound pack index", invalid);
++                    throw new IOException("Invalid native resource pack index", invalid);
 +                }
 +                final String path = name.substring(separator + 1);
-+                validatePath(path, translations);
++                validatePath(path, permitted);
 +                if (entry.isDirectory() || index < 0 || index >= packCount || ++count > MAX_FILES) {
-+                    throw new IOException("Invalid native sound entry");
++                    throw new IOException("Invalid native resource entry");
 +                }
 +                final int limit = (int) Math.min(MAX_FILE_BYTES, MAX_TOTAL_BYTES - total);
 +                final byte[] file = zip.readNBytes(limit + 1);
 +                total += file.length;
 +                if (file.length > limit || packs.get(index).putIfAbsent(path, file) != null) {
-+                    throw new IOException("Duplicate or oversized native sound entry");
++                    throw new IOException("Duplicate or oversized native resource entry");
 +                }
 +            }
 +        }
 +        return packs.stream().map(Map::copyOf).toList();
 +    }
 +
-+    private static void validatePath(final String path, final boolean translations) throws IOException {
-+        final boolean permitted = translations ? path.startsWith("texts/") && path.endsWith(".lang")
-+                : path.equals("sounds.json") || path.startsWith("sounds/");
-+        if (!permitted
-+                || path.length() > 512 || path.indexOf('\\') >= 0 || path.indexOf('\0') >= 0) {
-+            throw new IOException("Invalid native sound path");
++    private static void validatePath(final String path, final Predicate<String> permitted) throws IOException {
++        if (!permitted.test(path) || path.length() > 512 || path.indexOf('\\') >= 0 || path.indexOf('\0') >= 0) {
++            throw new IOException("Invalid native resource path");
 +        }
 +        for (final String part : path.split("/", -1)) {
 +            if (part.isEmpty() || part.equals(".") || part.equals("..")) {
-+                throw new IOException("Invalid native sound path");
++                throw new IOException("Invalid native resource path");
 +            }
 +        }
 +    }
@@ -493,8 +555,70 @@ index 000000000..735159531
 +        zip.closeEntry();
 +    }
 +
-+    private NativeSoundLibrary() {
++    private NativeResourceArchive() {
 +    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java
+new file mode 100644
+index 000000000..ddb9402d5
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java
+@@ -0,0 +1,56 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack;
++
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++
++import java.io.IOException;
++import java.io.InputStream;
++import java.util.List;
++import java.util.Map;
++
++/** Native audio and caption resources retain their existing independent archive formats. */
++public final class NativeSoundLibrary {
++
++    public static final String PATH = "assets/viabedrock/sound_library.zip";
++    public static final String TRANSLATIONS_PATH = "assets/viabedrock/sound_translations.zip";
++
++    public static byte[] encode(final List<Content> packs) throws IOException {
++        return NativeResourceArchive.encode(packs, NativeSoundLibrary::sound, List.of("sounds.json"), List.of(".json", ".ogg", ".fsb", ".wav"));
++    }
++
++    public static byte[] encodeTranslations(final List<Content> packs) throws IOException {
++        return NativeResourceArchive.encode(packs, NativeSoundLibrary::translation, List.of(), List.of(".lang"));
++    }
++
++    public static List<Map<String, byte[]>> resources(final List<Content> packs) throws IOException {
++        return NativeResourceArchive.select(packs, NativeSoundLibrary::sound, List.of("sounds.json"), List.of(".json", ".ogg", ".fsb", ".wav"));
++    }
++
++    public static List<Map<String, byte[]>> translationResources(final List<Content> packs) throws IOException {
++        return NativeResourceArchive.select(packs, NativeSoundLibrary::translation, List.of(), List.of(".lang"));
++    }
++
++    public static List<Map<String, byte[]>> decode(final InputStream input) throws IOException {
++        return NativeResourceArchive.decode(input, NativeSoundLibrary::sound);
++    }
++
++    public static List<Map<String, byte[]>> decodeTranslations(final InputStream input) throws IOException {
++        return NativeResourceArchive.decode(input, NativeSoundLibrary::translation);
++    }
++
++    private static boolean sound(final String path) {
++        return path.equals("sounds.json") || path.startsWith("sounds/")
++                && (path.endsWith(".json") || path.endsWith(".ogg") || path.endsWith(".fsb") || path.endsWith(".wav"));
++    }
++
++    private static boolean translation(final String path) {
++        return path.startsWith("texts/") && path.endsWith(".lang");
++    }
++
++    private NativeSoundLibrary() { }
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslations.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslations.java
@@ -1158,14 +1282,14 @@ index 8046c8c0c..9924e3a01 100644
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
-index 07a19fa95..42dcc34a7 100644
+index 07a19fa95..73867a4e9 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
 @@ -26,6 +26,7 @@ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomEntityResourc
  import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
  import net.raphimc.viabedrock.protocol.rewriter.resourcepack.GlyphSheetResourceRewriter;
  import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
-+import net.raphimc.viabedrock.protocol.rewriter.resourcepack.NativeSoundResourceRewriter;
++import net.raphimc.viabedrock.protocol.rewriter.resourcepack.NativeEffectsResourceRewriter;
  
  import java.util.ArrayList;
  import java.util.List;
@@ -1173,16 +1297,16 @@ index 07a19fa95..42dcc34a7 100644
          REWRITERS.add(new CustomItemTextureResourceRewriter());
          REWRITERS.add(new CustomAttachableResourceRewriter());
          REWRITERS.add(new CustomEntityResourceRewriter());
-+        REWRITERS.add(new NativeSoundResourceRewriter());
++        REWRITERS.add(new NativeEffectsResourceRewriter());
      }
  
      public static Content bedrockToJava(final ResourcePackStorage resourcePackStorage) throws InterruptedException {
-diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeSoundResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeSoundResourceRewriter.java
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java
 new file mode 100644
-index 000000000..2f820bc3e
+index 000000000..e7b7b5b5f
 --- /dev/null
-+++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeSoundResourceRewriter.java
-@@ -0,0 +1,37 @@
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java
+@@ -0,0 +1,39 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1191,6 +1315,7 @@ index 000000000..2f820bc3e
 +package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
 +
 +import net.raphimc.viabedrock.api.resourcepack.NativeSoundLibrary;
++import net.raphimc.viabedrock.api.resourcepack.NativeParticleLibrary;
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 +import net.raphimc.viabedrock.api.resourcepack.content.Content;
 +import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
@@ -1202,7 +1327,7 @@ index 000000000..2f820bc3e
 +import java.util.function.Consumer;
 +import java.util.function.Supplier;
 +
-+public final class NativeSoundResourceRewriter implements ResourcePackRewriter.Rewriter {
++public final class NativeEffectsResourceRewriter implements ResourcePackRewriter.Rewriter {
 +
 +    @Override
 +    public void submitTasks(final ResourcePackStorage storage, final Consumer<Supplier<Content>> submitter) {
@@ -1212,6 +1337,7 @@ index 000000000..2f820bc3e
 +                final var packs = storage.getPackStackBottomToTop().stream().map(ResourcePack::content).toList();
 +                result.put(NativeSoundLibrary.PATH, NativeSoundLibrary.encode(packs));
 +                result.put(NativeSoundLibrary.TRANSLATIONS_PATH, NativeSoundLibrary.encodeTranslations(packs));
++                result.put(NativeParticleLibrary.PATH, NativeParticleLibrary.encode(packs));
 +            } catch (final IOException invalid) {
 +                throw new UncheckedIOException(invalid);
 +            }
@@ -1648,6 +1774,88 @@ index 000000000..f89882ab8
 +
 +    private static PlaySound sound(final int x, final int y, final int z, final float volume, final boolean bypass) {
 +        return new PlaySound("", new BlockPosition(x, y, z), volume, 1, 0, bypass, null, null);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeParticleLibraryTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeParticleLibraryTest.java
+new file mode 100644
+index 000000000..0fd630ae5
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeParticleLibraryTest.java
+@@ -0,0 +1,76 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import net.raphimc.viabedrock.api.resourcepack.NativeParticleLibrary;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import org.junit.jupiter.api.Test;
++
++import java.io.ByteArrayInputStream;
++import java.io.ByteArrayOutputStream;
++import java.io.IOException;
++import java.nio.ByteBuffer;
++import java.util.List;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipOutputStream;
++
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++
++class NativeParticleLibraryTest {
++
++    @Test
++    void retainsEmptyPacksGraphsAndIndependentTextureOverlays() throws Exception {
++        final var empty = new InMemoryContent();
++        final var definition = new InMemoryContent();
++        final var overlay = new InMemoryContent();
++        definition.put("particles/root.json", new byte[]{1});
++        definition.put("particles/child.json", new byte[]{2});
++        definition.put("textures/particle/root.png", new byte[]{3});
++        definition.put("sounds/root.wav", new byte[]{4});
++        overlay.put("textures/particle/root.png", new byte[]{5});
++        overlay.put("textures/particle/builtin.tga", new byte[]{6});
++        overlay.put("render_controllers/actor.json", new byte[]{7});
++        final byte[] bytes = NativeParticleLibrary.encode(List.of(empty, definition, overlay));
++        final var decoded = NativeParticleLibrary.decode(new ByteArrayInputStream(bytes));
++        assertEquals(3, decoded.size());
++        assertEquals(0, decoded.get(0).size());
++        assertEquals(3, decoded.get(1).size());
++        assertEquals(3, decoded.get(2).size());
++        assertArrayEquals(new byte[]{2}, decoded.get(1).get("particles/child.json"));
++        assertArrayEquals(new byte[]{3}, decoded.get(1).get("textures/particle/root.png"));
++        assertArrayEquals(new byte[]{5}, decoded.get(2).get("textures/particle/root.png"));
++        assertArrayEquals(new byte[]{6}, decoded.get(2).get("textures/particle/builtin.tga"));
++        assertArrayEquals(bytes, NativeParticleLibrary.encode(List.of(empty, definition, overlay)));
++    }
++
++    @Test
++    void rejectsMismatchedProtocolAndEscapingOrUnsupportedPaths() throws Exception {
++        assertThrows(IOException.class, () -> decode(ProtocolConstants.BEDROCK_PROTOCOL_VERSION + 1, "0/particles/root.json"));
++        for (final String path : List.of("1/particles/root.json", "0/textures/../root.png", "0/textures//root.png", "0/particles/root.wav")) {
++            assertThrows(IOException.class, () -> decode(ProtocolConstants.BEDROCK_PROTOCOL_VERSION, path));
++        }
++        final var escaping = new InMemoryContent();
++        escaping.put("textures/../root.png", new byte[]{1});
++        assertThrows(IOException.class, () -> NativeParticleLibrary.encode(List.of(escaping)));
++    }
++
++    private static void decode(final int protocol, final String path) throws IOException {
++        final var bytes = new ByteArrayOutputStream();
++        try (var zip = new ZipOutputStream(bytes)) {
++            zip.putNextEntry(new ZipEntry("header"));
++            zip.write(ByteBuffer.allocate(12).putInt(1).putInt(protocol).putInt(1).array());
++            zip.closeEntry();
++            zip.putNextEntry(new ZipEntry(path));
++            zip.write(1);
++            zip.closeEntry();
++        }
++        NativeParticleLibrary.decode(new ByteArrayInputStream(bytes.toByteArray()));
 +    }
 +
 +}
