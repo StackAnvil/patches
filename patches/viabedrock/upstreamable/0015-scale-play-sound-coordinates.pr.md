@@ -30,15 +30,15 @@ Archive decoding validates paths, sizes, pack indexes, duplicate entries, and th
 Ordinary Java clients retain the mapped SOUND and STOP_SOUND translations.
 Java packets cannot express server instance handles, arbitrary loops, seeking, or independent pause controls.
 These controls require the client add-on.
-Listener-range eligibility, captions, and native stream interruption policies remain incomplete.
+Core exposes the native request range comparison. The add-on evaluates it against the actual audio listener before registering handles. Captions, other sound-source range paths, and native stream interruption policies remain incomplete.
 
 ## Testing
 
-Fourteen targeted tests pass with both Checkstyle tasks in a checkout containing only this patch on the pinned upstream base.
-They cover coordinate limits, optional fields, signed loops, each control layout, final-variant selection, malformed messages, archive overrides, deterministic ordering, and invalid paths.
+Eighteen targeted tests pass with both Checkstyle tasks in a checkout containing only this patch on the pinned upstream base.
+They cover coordinate limits, optional fields, signed loops, each control layout, final-variant selection, malformed messages, archive overrides, deterministic ordering, invalid paths, strict radius boundaries, volume scaling, large-coordinate float rounding, and unordered distances.
 
 Both complete stacks replay successfully: 91 ViaBedrock patches and 23 add-on patches.
-`bun run build all` passes with matching StackAnvil dependencies: 915 tests pass and 110 optional asset tests skip.
+`bun run build all` passes with matching StackAnvil dependencies: 919 tests pass and 110 optional asset tests skip.
 ViaProxy also builds.
 
 A controlled native 1.26.51.1 capture reaches StartGame and spawn and supplies all seven controls.
@@ -78,3 +78,12 @@ Private OpenAL instrumentation verifies repeating playback, pitch 1.3, fade from
 ViaProxy's stop controls reduce tracked requests and handles from three to zero.
 Both routes retain their separate skin rendering limitations.
 These muted observations establish resource resolution and controls, not audible parity.
+
+
+## Native request admission
+
+The pinned executable's `144719f20` request callback applies a float distance gate before playback or caption dispatch. It uses a radius of `16 × max(volume, 1)` blocks and rejects the boundary itself. Bypass skips the comparison. The calculation uses request volume, not catalog gain or attenuation distances.
+
+Core preserves the native operation order. A private Java comparison matches all 1,188 native execution cases in the packet coordinate domain. The cases cover different listener positions, float rounding at large coordinates, volumes, bypass, and non-finite inputs. The native probe stops at the admission branch.
+
+A private synthetic fixture over a native recording passes through direct and ViaProxy connections. It verifies eligible OpenAL voices, rejected requests, distant bypass, increased-volume admission, preservation of an active handle after a rejected replacement, and final cleanup. Both clients load the server samples without a Store account. The lab is muted. These checks do not establish audible parity, all camera contexts, other sound-source gates, or exact bypass behavior in an ordinary Java client.

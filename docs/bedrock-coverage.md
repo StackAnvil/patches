@@ -228,7 +228,7 @@ Core still needs to derive equipment attributes from target item definitions, in
 | R1 | General actor controllers and scripts | Incomplete | Complete transitions, weighted entries, variables, events, queries, and render-controller selection. |
 | R2 | Server particle dispatch | Incomplete | Retain actor identity and Molang variables, then route effects into native playback through both connection routes. |
 | R3 | Particle runtime | Incomplete | Complete components, actor contexts, child effects, concurrency, and visible lifecycle comparisons. |
-| R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core transports signed loops, optional playback fields, handle controls, and ordered sound resources through direct connections and ViaProxy. Add-on playback controls pass captured-session OpenAL checks on both routes. Complete listener-range eligibility, captions, stream policies, audible comparisons, and broader lifecycle verification. |
+| R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core transports signed loops, optional playback fields, handle controls, and ordered sound resources through direct connections and ViaProxy. Add-on playback controls pass captured-session OpenAL checks on both routes. Native request admission now matches the tested float range gate on both add-on routes. Complete captions, stream policies, range behavior for other sources, audible comparisons, and broader lifecycle verification. |
 | R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties through ViaProxy. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, and directional light occlusion. |
 | R6 | Equipped attachables | Incomplete | Transport graphs through ViaProxy. Complete variants, explicit bindings, per-bone materials, and material families. |
 
@@ -259,13 +259,14 @@ Ordinary Java clients retain standard sound translations; their protocol cannot 
 The captured native session replays through both direct and ViaProxy routes and loads the converted resource pack.
 Private instrumentation observes repeating playback, pitch 1.3, seek to 0.01 seconds, OpenAL pause and resume, and stop.
 ViaProxy envelope samples reach 0.2 from 0.3 over two seconds.
-The full build passes 915 tests with 110 optional asset skips.
-The core patch's fourteen targeted tests and both Checkstyle tasks also pass alone on the upstream base.
+The current full build passes 919 tests with 110 optional asset skips.
+The core audio patch's eighteen tests and both Checkstyle tasks also pass alone on the upstream base.
 
 These muted checks establish the tested controls, not audible parity.
 The sample uses a mapped Java fallback without Store sign-in.
 The custom sample transport and control checks below also pass without Store sign-in.
-Listener-range eligibility, captions, stream interruption policies, replacement races, finite-loop controls, and broader lifecycle comparisons remain required.
+The server request range gate is implemented through the add-on, as described below.
+Captions, other sound-source range paths, stream interruption policies, broader replacement races, finite-loop controls, and lifecycle comparisons remain required.
 The direct replay still fails its separate skin rendering gate; the audio checks use transport-only verification.
 
 ### WAV sample processing
@@ -370,10 +371,11 @@ The goal remains active while any required row is incomplete or unverified.
 
 ## Latest validation
 
-The complete stack build passes with the input permissions and HUD visibility changes.
+The complete stack build passes with the native server request range gate.
+The earlier input permissions and HUD visibility changes remain applied.
 The effect-icon correction also passes the complete core suite and applies independently to the pinned upstream base.
-The core suite reports 445 tests with one optional fixture skip.
-The add-on suite reports 530 tests with 109 optional fixture skips.
+The core suite reports 466 tests with one optional fixture skip.
+The add-on suite reports 547 tests with 109 optional fixture skips.
 The converter suite reports 16 tests without skips.
 All three suites have zero failures and errors.
 Core Checkstyle passes.
@@ -503,7 +505,7 @@ The request's bypass byte skips this gate.
 An executable probe verifies 888 cases with different volumes, positions, listeners, bypass values, boundary distances, and non-finite inputs.
 Float operations and summation order matter at the boundary.
 The probe stops at the accept or reject branch; it does not establish audible playback or range behavior for every sound source.
-StackAnvil still retains the bypass field without implementing this native admission gate.
+StackAnvil now implements this admission gate for server requests through the add-on, as described below.
 
 ### Loose WAV asset acquisition
 
@@ -515,3 +517,32 @@ The helper selector test verifies admitted sound paths and rejected unrelated ex
 The full build passes with 915 passing Java tests and 110 optional asset tests skipped.
 The separate Rust selector test passes.
 This closes two file-selection omissions; audible parity and production captions remain incomplete.
+
+### Server sound request range gate
+
+Core now exposes the pinned native range comparison in `PlaySound`.
+The comparison converts fixed-point coordinates to floats before subtracting the listener position.
+It preserves native summation order, supplied-volume scaling, strict boundary rejection, unordered-distance rejection, and bypass behavior.
+The Java result matches 1,188 native execution cases in the packet's coordinate domain.
+These include large coordinates, non-finite values, fractional positions, different listener positions, and bypass values.
+Four core tests cover the numerical regressions.
+
+The add-on applies the core comparison against `SoundEngine.getListenerTransform().position()`.
+It evaluates the request before registering handles or decoding its sample.
+This keeps an out-of-range request from replacing an active handle.
+The gate uses the supplied request volume and the actual audio listener, independent of sample positional flags and catalog attenuation.
+Core retains the same request transport for direct connections and ViaProxy.
+
+A private synthetic fixture changes sound requests over an existing native-client recording.
+It tests near playback, requests at the horizontal unit and doubled radii, increased-volume eligibility, distant bypass, and a rejected replacement.
+Both routes spawn, load the converted server pack, and finish the same modified scene.
+The four eligible handles enter OpenAL playback; the two ineligible new handles do not register or start.
+The rejected replacement preserves the four active handles, and subsequent stops leave zero requests and handles.
+No Store account is configured in either client.
+The lab remains muted.
+
+The full build passes with 919 Java tests passing and 110 optional asset tests skipped.
+The audio patch also builds alone on the pinned upstream base with eighteen passing tests and both Checkstyle tasks.
+These checks establish the tested server request admission and handle behavior.
+They do not establish audible parity, every camera context, range behavior for other sound sources, or exact bypass behavior in an ordinary Java client.
+Captions and native stream policies remain incomplete.

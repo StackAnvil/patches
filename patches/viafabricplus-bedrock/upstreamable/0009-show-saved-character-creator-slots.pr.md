@@ -1507,3 +1507,10 @@ These changes follow the published 0.3.2 release.
 The licensed package selector now admits WAV files under `sounds/`. Cache format 9 invalidates older selections. The resource validator accepts WAV as a sound asset. Path checks and size limits still apply.
 
 Validation: the Rust selector test passes with admitted WAV paths and rejected misleading extensions. The full build passes with 915 Java tests passing and 110 optional asset tests skipped. Native WAV playback and decoder comparisons are described in the audio coverage ledger.
+
+
+### Native server sound admission
+
+Apply core's native request distance comparison against the client's audio listener before registering handles or decoding samples. A distant replacement must leave the existing handle intact. Use request volume for eligibility; sample positional flags and attenuation do not change this gate.
+
+Validation: the Java comparison matches 1,188 native packet-domain cases. The full build passes with 919 Java tests passing and 110 optional asset skips. Muted direct and ViaProxy fixture replays verify the four eligible OpenAL voices, rejection of two new handles, preservation after a rejected replacement, and cleanup to zero requests and handles. The fixture changes sound requests over a native recording. Audible parity, other range paths, and broader camera contexts remain unverified.

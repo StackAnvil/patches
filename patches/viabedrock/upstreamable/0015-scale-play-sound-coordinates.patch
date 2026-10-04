@@ -1,4 +1,4 @@
-From 4ff72d41895de95e234dfb221c9735f5f8f37d37 Mon Sep 17 00:00:00 2001
+From d340e60a35b7b797fde54b900fb26a155c1d608e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 19:48:51 +0200
 Subject: [PATCH] feat(audio): transport native server sound playback and
@@ -37,6 +37,15 @@ FFmpeg comparisons cover 252,000 scalar samples: integer PCM and IMA are
 exact, and floating-point PCM differs by at most one quantization step. Trim
 IMA padding to the RIFF fact frame count rather than exposing encoder padding.
 These comparisons verify the decoder, not the native client's audible mix.
+
+Expose the native server request listener-range gate in the core PlaySound
+model. The 1.26.51.1 client (executable SHA-256
+537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7)
+checks this gate in function 144719f20 before sound dispatch or captions.
+Its float radius is 16 times the supplied volume above one, otherwise 16.
+It rejects the radius boundary and unordered distances unless bypass is
+set. Preserve coordinate conversion and summation order at float precision
+instead of measuring with Java doubles or catalog attenuation settings.
 ---
  build.gradle                                  |   6 +
  .../api/model/SoundPlaybackMessage.java       |  76 ++++++
@@ -44,16 +53,17 @@ These comparisons verify the decoder, not the native client's audible mix.
  .../api/resourcepack/WaveSound.java           | 228 ++++++++++++++++++
  .../protocol/ClientboundBedrockPackets.java   |   4 +-
  .../bedrock/generated/MinecraftPacketIds.java |   1 +
- .../viabedrock/protocol/model/PlaySound.java  |  50 ++++
+ .../viabedrock/protocol/model/PlaySound.java  |  63 +++++
  .../protocol/model/SoundUpdate.java           | 114 +++++++++
  .../protocol/packet/WorldEffectPackets.java   | 110 ++++-----
  .../rewriter/ResourcePackRewriter.java        |   2 +
  .../NativeSoundResourceRewriter.java          |  35 +++
  .../api/resourcepack/WaveSoundTest.java       | 182 ++++++++++++++
+ .../protocol/model/PlaySoundTest.java         |  66 +++++
  .../packet/NativeSoundLibraryTest.java        |  60 +++++
  .../protocol/packet/PlaySoundPacketsTest.java |  88 +++++++
  .../protocol/packet/SoundUpdateTest.java      |  79 ++++++
- 15 files changed, 1104 insertions(+), 68 deletions(-)
+ 16 files changed, 1183 insertions(+), 68 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SoundPlaybackMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/WaveSound.java
@@ -61,6 +71,7 @@ These comparisons verify the decoder, not the native client's audible mix.
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/SoundUpdate.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeSoundResourceRewriter.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/WaveSoundTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/PlaySoundTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/NativeSoundLibraryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlaySoundPacketsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/SoundUpdateTest.java
@@ -567,10 +578,10 @@ index 8ad52855f..f0d478948 100644
      ;
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/PlaySound.java b/src/main/java/net/raphimc/viabedrock/protocol/model/PlaySound.java
 new file mode 100644
-index 000000000..fe55dfca7
+index 000000000..1750d727a
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/PlaySound.java
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,63 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -619,6 +630,19 @@ index 000000000..fe55dfca7
 +            }
 +        }
 +    };
++
++    /** Bedrock 1.26.51.1 admits a request strictly inside its supplied-volume listener radius. */
++    public boolean passesListenerRange(final float listenerX, final float listenerY, final float listenerZ) {
++        if (this.bypassListenerRange) {
++            return true;
++        }
++        final float x = this.positionEighths.x() / 8F - listenerX;
++        final float y = this.positionEighths.y() / 8F - listenerY;
++        final float z = this.positionEighths.z() / 8F - listenerZ;
++        // Match the native float operations, including unordered volume and distance comparisons.
++        final float radius = 16F * (this.volume > 1F ? this.volume : 1F);
++        return radius * radius > z * z + (y * y + x * x);
++    }
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/SoundUpdate.java b/src/main/java/net/raphimc/viabedrock/protocol/model/SoundUpdate.java
@@ -1144,6 +1168,78 @@ index 000000000..c05fd528d
 +
 +    private static ByteBuffer buffer(final byte[] bytes) {
 +        return ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/PlaySoundTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/PlaySoundTest.java
+new file mode 100644
+index 000000000..f89882ab8
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/PlaySoundTest.java
+@@ -0,0 +1,66 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.viaversion.api.minecraft.BlockPosition;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class PlaySoundTest {
++
++    @Test
++    void rejectsTheRadiusBoundaryAndExpandsOnlyAboveUnitVolume() {
++        for (final float volume : new float[]{-2, 0, 0.5F, 1, Float.NaN}) {
++            assertTrue(sound(127, 0, 0, volume, false).passesListenerRange(0, 0, 0));
++            assertFalse(sound(128, 0, 0, volume, false).passesListenerRange(0, 0, 0));
++        }
++        for (final float volume : new float[]{1.5F, 2, 4}) {
++            final int boundary = (int) (volume * 128);
++            assertTrue(sound(boundary - 1, 0, 0, volume, false).passesListenerRange(0, 0, 0));
++            assertFalse(sound(boundary, 0, 0, volume, false).passesListenerRange(0, 0, 0));
++        }
++    }
++
++    @Test
++    void measuresAllAxesFromTheListener() {
++        assertTrue(sound(-200, 560, -400, 1, false).passesListenerRange(-25, 70, -50));
++        assertTrue(sound(-104, 624, -368, 1, false).passesListenerRange(-25, 70, -50));
++        assertFalse(sound(-96, 624, -352, 1, false).passesListenerRange(-25, 70, -50));
++        for (final BlockPosition position : new BlockPosition[]{
++            new BlockPosition(-72, 560, -400),
++            new BlockPosition(-200, 688, -400),
++            new BlockPosition(-200, 560, -272)
++        }) {
++            assertFalse(new PlaySound("", position, 1, 1, 0, false, null, null).passesListenerRange(-25, 70, -50));
++        }
++    }
++
++    @Test
++    void roundsSourceCoordinatesBeforeSubtractingTheListener() {
++        final int origin = 268435456;
++        final float listener = 33554432;
++        assertTrue(sound(origin + 96, 0, 0, 1, false).passesListenerRange(listener, 0, 0));
++        assertFalse(sound(origin + 120, 0, 0, 1, false).passesListenerRange(listener, 0, 0));
++    }
++
++    @Test
++    void rejectsUnorderedDistancesAndPreservesTheBypass() {
++        for (final float listener : new float[]{Float.NaN, Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY}) {
++            assertFalse(sound(0, 0, 0, 1, false).passesListenerRange(listener, 0, 0));
++            assertTrue(sound(0, 0, 0, 1, true).passesListenerRange(listener, 0, 0));
++        }
++        assertFalse(sound(Integer.MAX_VALUE, 0, 0, 1, false).passesListenerRange(0, 0, 0));
++        assertTrue(sound(Integer.MAX_VALUE, 0, 0, 1, true).passesListenerRange(0, 0, 0));
++        assertTrue(sound(Integer.MAX_VALUE, 0, 0, Float.POSITIVE_INFINITY, false).passesListenerRange(0, 0, 0));
++    }
++
++    private static PlaySound sound(final int x, final int y, final int z, final float volume, final boolean bypass) {
++        return new PlaySound("", new BlockPosition(x, y, z), volume, 1, 0, bypass, null, null);
 +    }
 +
 +}
