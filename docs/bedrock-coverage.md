@@ -967,13 +967,15 @@ Packet reflection function `141087ea0` and command execution function `14857c450
 They do not establish the client playback algorithm.
 Raw packets, screenshots, executable bytes, and decompiled output remain private.
 
-**Remaining implementation:** Core must decode all fields and resolve targets against authoritative actor identities and lifetimes.
-Negotiated command delivery must work through ViaProxy and direct connections.
+**Core implementation:** Patch 0086 now decodes all fields and resolves targets against authoritative actor identities and lifetimes.
+It publishes current snapshots before sending commands over a versioned, negotiated Java payload channel.
+The add-on does not advertise that channel yet.
+Direct and ViaProxy command delivery remain unverified.
 The add-on needs per-actor runtime controller slots, command-defined states, resource resolution, stop-expression evaluation, transitions, blending, and effect playback.
 Playback must release state on actor removal, world changes, disconnect, and resource replacement.
 Further native comparisons must cover alias resolution, clock resets, blending, independent slots, multiple targets, and missing resources.
 Direct and ViaProxy playback of this command capture remain unverified.
-This research does not change packet handling or establish complete animation parity.
+The packet handler and codec tests establish the core path, without establishing complete animation parity.
 
 
 ### macOS Modrinth joining: NetherNet timeout
@@ -1029,3 +1031,26 @@ The CubeCraft scene exposes an unsupported opaque particle effect with texture `
 Other material families, dynamic geometry selection, additional queries, and named actor events remain incomplete.
 Server animation commands also remain part of the full coverage goal.
 See [the owning patch notes](../patches/viafabricplus-bedrock/upstreamable/0014-animate-numeric-looping-bedrock-bones.pr.md) for target evidence and scope.
+
+
+### Server animation commands: native alias and timing capture
+
+**New native evidence:** A 300-second local capture uses Bedrock 1.26.51.1, build 51061372, protocol 2193.
+Its scene hash is `8febed2837f1535b30badff75e520bf3498fb5b560515a3cbc5314f1748a26db`.
+The production codec reproduces all 13 command packets unchanged.
+It also reproduces all seven commands from the earlier capture unchanged.
+Both recordings reach spawn and complete resource-pack reconstruction.
+
+Native screenshots show declared animation aliases playing their arm poses.
+A private 60-frame-per-second video records repeated finite animations, independent slots, and a two-second blend command.
+The capture also transitions toward an animation alias never commanded in that slot.
+Further timing and state-resolution analysis remains necessary before implementing those runtime details.
+
+**Implemented:** Core decodes the complete packet and binds negotiated commands to current actor lifetimes.
+Three targeted tests cover the packet and payload codecs.
+The complete add-on build and its dependencies pass 979 tests, with 113 optional tests skipped.
+They check unsigned runtime IDs, immutable targets, malformed counts, truncation, versions, and trailing bytes.
+
+**Incomplete:** Client runtime controllers, ordinary mob integration, first-person drawing, and command effects remain missing.
+Direct and ViaProxy delivery and visible native comparisons remain unverified.
+See [the core patch notes](../patches/viabedrock/upstreamable/0086-transport-native-actor-animation-commands.pr.md) for the implemented boundary.
