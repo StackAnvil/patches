@@ -110,12 +110,17 @@ public final class ReplaySelfTest {
         require(!playback.advance(100, emitted::add) && emitted.size() == 2);
         require(!playback.advance(109, emitted::add) && emitted.size() == 2);
         require(!playback.advance(110, emitted::add) && emitted.size() == 3);
-        require(!playback.advance(120, emitted::add) && emitted.size() == 3); // Consumed request cannot release the overlapping batch twice.
-        request(playback, 0, offsets); // A fully matched batch also releases without changing its bytes.
-        require(!playback.advance(2030, emitted::add) && emitted.size() == 4);
-        require(playback.advance(2040, emitted::add) && emitted.size() == scene.size());
+        // Native retry replies stay unchanged even when Java does not repeat its request.
+        require(!playback.advance(120, emitted::add) && emitted.size() == 4);
+        require(playback.advance(130, emitted::add) && emitted.size() == scene.size());
         for (int i = 0; i < scene.size(); i++) require(Arrays.equals(scene.get(i).payload(), emitted.get(i)));
         require(Arrays.equals(reply, snapshot));
+
+        byte[] airReply = subchunkAirReply(0, offsets);
+        ScenePlayback air = new ScenePlayback(List.of(new PacketJournal.Entry(true, 0, airReply)), 0, 0);
+        List<byte[]> airOutput = new ArrayList<>();
+        require(air.advance(0, airOutput::add) && airOutput.size() == 1);
+        require(Arrays.equals(airReply, airOutput.getFirst()));
 
         ScenePlayback cold = new ScenePlayback(scene.subList(0, 3), 0, 0);
         List<byte[]> coldOutput = new ArrayList<>();
@@ -152,6 +157,23 @@ public final class ReplaySelfTest {
             packet.writeIntLE(10).writeIntLE(4).writeIntLE(-10);
             playback.request(packet);
             require(packet.readerIndex() == 0);
+        } finally { packet.release(); }
+    }
+
+    private static byte[] subchunkAirReply(int dimension, List<BlockPosition> offsets) {
+        ByteBuf packet = Unpooled.buffer();
+        try {
+            Types.VAR_INT.writePrimitive(packet, 174);
+            packet.writeBoolean(false); BedrockTypes.VAR_INT.writePrimitive(packet, dimension);
+            packet.writeIntLE(10).writeIntLE(4).writeIntLE(-10);
+            BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(packet, offsets.size());
+            for (var offset : offsets) {
+                BedrockTypes.SUB_CHUNK_OFFSET.write(packet, offset);
+                packet.writeByte(6).writeBoolean(false);
+                packet.writeByte(0).writeBoolean(false);
+                packet.writeByte(0).writeBoolean(false).writeBoolean(false);
+            }
+            return ReplayPackets.bytes(packet);
         } finally { packet.release(); }
     }
 

@@ -5,6 +5,7 @@ import com.viaversion.viaversion.api.type.Types;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.SubChunkPacketPayload_SubChunkRequestResult;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -69,7 +70,9 @@ final class ScenePlayback {
                 frozenTime = due;
                 return false;
             }
-            requested.removeAll(frame.subchunks());
+            // The recording can contain replies to native retries. A Java client
+            // can accept the first reply without repeating that request. Retain
+            // request history for this world so duplicate replies keep their order.
             // A new scene or dimension invalidates requests made for the previous world.
             if (frame.entry().id() == 11 || frame.entry().id() == 61) requested.clear();
             output.accept(frame.entry().payload());
@@ -101,8 +104,12 @@ final class ScenePlayback {
             Set<Position> positions = new HashSet<>();
             for (int i = 0; i < count; i++) {
                 BlockPosition offset = BedrockTypes.SUB_CHUNK_OFFSET.read(body);
-                positions.add(new Position(dimension, Math.addExact(x, offset.x()), Math.addExact(y, offset.y()), Math.addExact(z, offset.z())));
-                body.readByte(); // request result
+                int result = body.readUnsignedByte();
+                // Native can request known empty sections above Java's advertised
+                // request limit. These replies have no chunk body to gate on.
+                if (result != SubChunkPacketPayload_SubChunkRequestResult.SuccessAllAir.getValue()) {
+                    positions.add(new Position(dimension, Math.addExact(x, offset.x()), Math.addExact(y, offset.y()), Math.addExact(z, offset.z())));
+                }
                 if (body.readBoolean()) BedrockTypes.BYTE_ARRAY.read(body);
                 body.readByte(); // heightmap type
                 if (body.readBoolean()) body.skipBytes(272);
