@@ -1003,6 +1003,39 @@ The friends-list slowdown still needs a reproducible request trace or correspond
 CDN manifest warnings recover through protocol downloads in this log, but their original archives remain unavailable.
 See [the timeout patch notes](../patches/viafabricplus-bedrock/upstreamable/0019-preserve-raknet-sessions-during-resource-pack-prompts.pr.md) for the retained RakNet comparisons.
 
+#### Release regression comparison
+
+The comparison reconstructs selected Java sources from each release's pinned upstream base and ordered patches.
+It covers 0.2.3, 0.3.0, 0.3.1, and 0.3.2.
+The add-on upstream base, ViaBedrock upstream base, and pinned VFP build remain identical across these releases.
+`BedrockFriendsService`, `BedrockSocialService`, `BedrockAccount`, and `BedrockFriendsScreen` are identical between 0.2.3 and 0.3.0.
+The social patch changes double-click activation during that interval, but does not change those requests or account refreshes.
+
+| Release | Licensed vanilla images during joining | Missing Store assets | Direct application timeout |
+| --- | --- | --- | --- |
+| 0.2.3 | No provider | Not part of resource loading | Present on RakNet and NetherNet |
+| 0.3.0 | Provider waits for acquisition | Acquisition errors reject resource loading | Present on both transports |
+| 0.3.1 | Provider waits for acquisition | Acquisition errors reject resource loading | Removed on RakNet only |
+| 0.3.2 | Provider waits for acquisition | Optional I/O failures return no images | Still present on NetherNet |
+| Current main | Provider waits for acquisition | Optional I/O failures return no images | Removed on both native transports |
+
+[898df4a](https://github.com/StackAnvil/patches/commit/898df4a3cb247a3782e5daaa2e1aa27c7f5c477d) adds licensed vanilla images to resource loading before 0.3.0.
+The resource tracker waits for both server packs and these images before completing the join.
+This adds a wait that 0.2.3 did not have, and exposes the existing application timeout during acquisition.
+The reported log repeatedly shows that timeout after server packs finish.
+This sequence and the transport comparison support the joining regression diagnosis.
+They do not prove the cause of the separate friends-list slowdown.
+
+[d7d3eb1](https://github.com/StackAnvil/patches/commit/d7d3eb1c2daca19df2064e8756861c8b8b0296e1) removes the RakNet timeout before 0.3.1.
+[e84bedd](https://github.com/StackAnvil/patches/commit/e84bedd8e09cd043688ad6f0d67076d97919b52f) makes Store assets optional before 0.3.2.
+[ee660e6](https://github.com/StackAnvil/patches/commit/ee660e6ef69720c52bbf34c7425745cec82d1804) extends the timeout fix to NetherNet after 0.3.2.
+Disabling interactive Store sign-in does not remove that older transport timeout or disable acquisition through existing credentials.
+The current source retains cached assets and headless acquisition in every consent mode.
+The current consent and optional-provider suites pass all nine tests, including declining login and missing Store credentials.
+
+Actual macOS joining still needs verification with a build that contains the NetherNet fix.
+The unchanged friends source narrows the investigation; it does not exclude shared runtime, authentication, or network effects.
+
 
 ### Custom actors: shared animation graph
 
