@@ -1592,3 +1592,15 @@ Animation and view bobbing now use core's native easing, angle functions, and re
 Bedrock 1.26.51.1 constant and runtime paths match across 9,367 angle cases. The probes cover directed endpoints, half-turn ties, extrapolation, large finite inputs, and overflow intermediates. Their prepared numeric contexts and host C remainder import do not establish visible animation parity.
 
 Validation: the full build passes 958 Java tests, including both native math fixtures. The bundle builds. Direct and ViaProxy particle graphs exercise all three shared functions and produce matching dimensions. Their downloaded archives retain the authored expressions. Visible parity and the existing actor and appearance gaps remain open.
+
+## Shared native actor inputs
+
+Replace the direct connection's player-state mixin with the negotiated core actor channel.
+The receiver applies immutable snapshots on the current Minecraft connection's client thread.
+Connection generation checks reject queued updates from a previous world or session.
+A local-player flag resolves the current Java profile identity.
+Charging and spell-color particle callbacks use actor lifetime tokens, so replacement actors cannot inherit stale callbacks.
+
+Four client tests cover flags, typed colors, local identity, and cleanup.
+The optional native fixtures pass when enabled, including 1,504 spell-color cases and the captured charging inputs.
+This change does not complete all particle queries, interpolation, actor events, or effect timing.

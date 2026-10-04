@@ -55,3 +55,22 @@ Apply the server controller's body visibility to persona surface drawing as well
 Persona surfaces remain visible when the original body is selected. This change affects third-person drawing. First-person hands, additional visibility combinations, and resource or world transitions still require native comparisons.
 
 Final direct and ViaProxy screenshots show the costume's uniform head without the persona face overlay. Both retain the green wings without duplicate chest armor. The chunk request correction also restores the recorded ground on both routes. Camera angle, lighting, complete animation timing, original-body restoration, and additional persona visibility combinations remain unverified.
+
+## Transported player properties
+
+Costume selection now reads immutable core snapshots on direct connections and ViaProxy.
+Named property queries, variants, charging, and spell color use the shared actor registry.
+The renderer no longer retains a direct Bedrock player object.
+World and disconnect cleanup release actor inputs.
+Complete animation timing, actor events, and account synchronization remain open.
+
+**Recorded-scene verification:** Matching native capture `2026-10-04T14-17-15.690Z-record-local` supplies the property changes and dimension round trip.
+Direct playback `2026-10-04T14-42-19.663Z-replay-scene` and ViaProxy playback `2026-10-04T14-38-50.359Z-replay-scene` preserve the complete scene payload hash.
+Both load the accepted pack without a frontend Store account.
+Each route receives 587 actor updates.
+All message fields match after connection-specific UUIDs, lifetime tokens, and timestamps are excluded.
+The local property sequence is orange, blue, orange, and blue.
+The bool, int, enum string, and float retain their values and types.
+Both routes remove and restore local inputs at each dimension change.
+Final screenshots show the grounded blue costume and green equipment on both routes, consistent with the native selection.
+Camera framing, lighting, full animation timing, and broader lifecycle behavior remain unverified.

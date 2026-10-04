@@ -1,4 +1,4 @@
-From c69e3177c400dabc8ff0cdbf114d774163135635 Mon Sep 17 00:00:00 2001
+From 37f87ef75f18e341978a20f61e8501664b7052d9 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 00:27:08 +0200
 Subject: [PATCH] feat(entities): translate Bedrock metadata and properties
@@ -92,6 +92,13 @@ the existing profile fallback. Restore visibility when NAME returns and
 retain per-connection RGB, styles, newlines and custom glyphs. Packet-level
 tests cover initial fallback, metadata precedence, subsequent profile and
 NAME changes, sparse updates, explicit clearing and restoration.
+
+Preserve the schema's shared property indices across integer and float
+wire arrays. The matching 1.26.51.1 native capture sends bool, int and enum
+values at indices 0..2 and a float at index 3; splitting the definition
+lists silently discarded that float. Reject a wire value whose type does
+not match its indexed definition. Interleaved-type and sparse-update
+tests cover both channels without renumbering the schema.
 ---
  .../viabedrock/api/model/entity/Entity.java   |  56 ++
  .../api/model/entity/LivingEntity.java        |   7 +-
@@ -99,21 +106,21 @@ NAME changes, sparse updates, explicit clearing and restoration.
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
  .../data/enums/bedrock/ActorFlags.java        |   6 +-
  .../protocol/model/entity/EntityProperty.java |  40 ++
- .../model/entity/EntityPropertyList.java      | 121 ++++
+ .../model/entity/EntityPropertyList.java      | 119 ++++
  .../protocol/packet/EntityPackets.java        |  33 +-
  .../protocol/packet/JoinPackets.java          |   2 +-
  .../protocol/packet/OtherPlayerPackets.java   |   5 +-
  .../rewriter/EntityMetadataRewriter.java      | 625 ++++++++++++++++--
  .../storage/EntityPropertyTracker.java        |  61 ++
  .../entity_flag_molang_query_mappings.json    |   6 +-
- .../entity/EntityPropertyRenderTest.java      |  74 +++
+ .../entity/EntityPropertyRenderTest.java      |  75 +++
  .../enums/bedrock/ActorFlagsMappingTest.java  |  27 +
- .../model/entity/EntityPropertyListTest.java  |  79 +++
+ .../model/entity/EntityPropertyListTest.java  |  92 +++
  .../ArmorStandMarkerMetadataTest.java         | 177 +++++
  .../rewriter/EntityBodyVisibilityTest.java    | 253 +++++++
  .../rewriter/EntityMetadataRewriterTest.java  | 151 +++++
  .../rewriter/EntityNameFormattingTest.java    | 256 +++++++
- 20 files changed, 1930 insertions(+), 70 deletions(-)
+ 20 files changed, 1942 insertions(+), 70 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityProperty.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyList.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/EntityPropertyTracker.java
@@ -126,10 +133,10 @@ NAME changes, sparse updates, explicit clearing and restoration.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityNameFormattingTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index 15d58193b..1c93cf2a6 100644
+index c51892322..19fed4779 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-@@ -32,6 +32,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
+@@ -36,6 +36,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.DataItemType;
  import net.raphimc.viabedrock.protocol.data.enums.java.generated.BossEventOperationType;
@@ -137,7 +144,7 @@ index 15d58193b..1c93cf2a6 100644
  import net.raphimc.viabedrock.protocol.model.Position3f;
  import net.raphimc.viabedrock.protocol.rewriter.EntityMetadataRewriter;
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
-@@ -67,10 +68,12 @@ public class Entity {
+@@ -73,10 +74,12 @@ public class Entity {
      protected String name;
      protected int age;
      protected boolean hasBossBar;
@@ -150,7 +157,7 @@ index 15d58193b..1c93cf2a6 100644
  
      public Entity(final UserConnection user, final long uniqueId, final long runtimeId, final String type, final int javaId, final UUID javaUuid, final EntityTypes26_3 javaType) {
          this.user = user;
-@@ -88,6 +91,24 @@ public class Entity {
+@@ -94,6 +97,24 @@ public class Entity {
          return scaleData == null ? 1F : ((Number) scaleData.value()).floatValue();
      }
  
@@ -175,7 +182,7 @@ index 15d58193b..1c93cf2a6 100644
      public final Map<String, Object> entityProperties() {
          return Map.copyOf(this.entityProperties);
      }
-@@ -125,6 +146,18 @@ public class Entity {
+@@ -135,6 +156,18 @@ public class Entity {
          setEntityData.send(BedrockProtocol.class);
      }
  
@@ -194,7 +201,7 @@ index 15d58193b..1c93cf2a6 100644
      public final void updateEntityData(final EntityData[] entityData, final List<EntityData> javaEntityData) {
          for (EntityData data : entityData) {
              final ActorDataIds dataId = ActorDataIds.getByValue(data.id());
-@@ -146,6 +179,10 @@ public class Entity {
+@@ -156,6 +189,10 @@ public class Entity {
          this.onEntityDataChanged();
      }
  
@@ -205,7 +212,7 @@ index 15d58193b..1c93cf2a6 100644
      public void playSound(final String soundEvent) {
          final PacketWrapper levelSoundEvent = PacketWrapper.create(ClientboundBedrockPackets.LEVEL_SOUND_EVENT, this.user);
          levelSoundEvent.write(BedrockTypes.STRING, soundEvent); // event
-@@ -197,6 +234,14 @@ public class Entity {
+@@ -207,6 +244,14 @@ public class Entity {
          return this.javaType;
      }
  
@@ -220,7 +227,7 @@ index 15d58193b..1c93cf2a6 100644
      public Position3f position() {
          return this.position;
      }
-@@ -299,6 +344,14 @@ public class Entity {
+@@ -309,6 +354,14 @@ public class Entity {
          return this.mountRuntimeId;
      }
  
@@ -235,8 +242,8 @@ index 15d58193b..1c93cf2a6 100644
      public final int getJavaEntityDataIndex(final String fieldName) {
          final int index = BedrockProtocol.MAPPINGS.getJavaEntityDataFields().get(this.javaType).indexOf(fieldName);
          if (index == -1) {
-@@ -314,4 +367,7 @@ public class Entity {
-     protected void onEntityDataChanged() {
+@@ -365,4 +418,7 @@ public class Entity {
+         payload.send(BedrockProtocol.class);
      }
  
 +    public record BoundingBoxDimensions(Optional<Float> width, Optional<Float> height) {
@@ -410,10 +417,10 @@ index 000000000..2b7c2dfdd
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyList.java b/src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyList.java
 new file mode 100644
-index 000000000..aafbb26c9
+index 000000000..c41178f5a
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyList.java
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,119 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -446,11 +453,10 @@ index 000000000..aafbb26c9
 +import java.util.HashMap;
 +import java.util.Map;
 +
-+public record EntityPropertyList(List<EntityProperty> intProperties, List<EntityProperty.FloatProperty> floatProperties) {
++public record EntityPropertyList(List<EntityProperty> properties) {
 +
 +    public EntityPropertyList {
-+        intProperties = List.copyOf(intProperties);
-+        floatProperties = List.copyOf(floatProperties);
++        properties = List.copyOf(properties);
 +    }
 +
 +    public static Optional<EntityPropertyList> fromTag(final CompoundTag tag) {
@@ -459,38 +465,37 @@ index 000000000..aafbb26c9
 +            return Optional.empty();
 +        }
 +
-+        final List<EntityProperty> integers = new ArrayList<>();
-+        final List<EntityProperty.FloatProperty> floats = new ArrayList<>();
++        final List<EntityProperty> properties = new ArrayList<>(definitions.size());
 +        for (CompoundTag definition : definitions) {
 +            final String name = definition.getString("name");
 +            if (name == null || name.isBlank() || !definition.contains("type")) {
 +                return Optional.empty();
 +            }
 +            switch (definition.getInt("type")) {
-+                case 0 -> integers.add(new EntityProperty.IntProperty(name, definition.getInt("min"), definition.getInt("max")));
-+                case 1 -> floats.add(new EntityProperty.FloatProperty(name, definition.getFloat("min"), definition.getFloat("max")));
-+                case 2 -> integers.add(new EntityProperty.BooleanProperty(name));
++                case 0 -> properties.add(new EntityProperty.IntProperty(name, definition.getInt("min"), definition.getInt("max")));
++                case 1 -> properties.add(new EntityProperty.FloatProperty(name, definition.getFloat("min"), definition.getFloat("max")));
++                case 2 -> properties.add(new EntityProperty.BooleanProperty(name));
 +                case 3 -> {
 +                    final ListTag<StringTag> values = definition.getListTag("enum", StringTag.class);
 +                    if (values == null || values.isEmpty()) {
 +                        return Optional.empty();
 +                    }
-+                    integers.add(new EntityProperty.EnumProperty(name, values.stream().map(StringTag::getValue).toList()));
++                    properties.add(new EntityProperty.EnumProperty(name, values.stream().map(StringTag::getValue).toList()));
 +                }
 +                default -> {
 +                    return Optional.empty();
 +                }
 +            }
 +        }
-+        return Optional.of(new EntityPropertyList(integers, floats));
++        return Optional.of(new EntityPropertyList(properties));
 +    }
 +
 +    public List<IntValue> resolveInts(final Int2IntMap values) {
 +        final List<IntValue> resolved = new ArrayList<>(values.size());
 +        for (Int2IntMap.Entry entry : values.int2IntEntrySet()) {
 +            final int index = entry.getIntKey();
-+            if (index >= 0 && index < this.intProperties.size()) {
-+                resolved.add(new IntValue(this.intProperties.get(index), entry.getIntValue()));
++            if (index >= 0 && index < this.properties.size() && !(this.properties.get(index) instanceof EntityProperty.FloatProperty)) {
++                resolved.add(new IntValue(this.properties.get(index), entry.getIntValue()));
 +            }
 +        }
 +        return resolved;
@@ -500,8 +505,8 @@ index 000000000..aafbb26c9
 +        final List<FloatValue> resolved = new ArrayList<>(values.size());
 +        for (Int2ObjectMap.Entry<Float> entry : values.int2ObjectEntrySet()) {
 +            final int index = entry.getIntKey();
-+            if (index >= 0 && index < this.floatProperties.size()) {
-+                resolved.add(new FloatValue(this.floatProperties.get(index), entry.getValue()));
++            if (index >= 0 && index < this.properties.size() && this.properties.get(index) instanceof EntityProperty.FloatProperty property) {
++                resolved.add(new FloatValue(property, entry.getValue()));
 +            }
 +        }
 +        return resolved;
@@ -648,7 +653,7 @@ index 10a904005..8b3bc0ad1 100644
  
      private static Entity writeEntityMotion(final PacketWrapper wrapper, final long runtimeId, final Position3f motion) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-index 330410add..5161bf74b 100644
+index ea4e20a9e..a287be94d 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 @@ -286,7 +286,7 @@ public final class JoinPackets {
@@ -1586,10 +1591,10 @@ index 7227df27f..20bcb0457 100644
    "TIMER_FLAG_1": "timer_flag_1",
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/EntityPropertyRenderTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/EntityPropertyRenderTest.java
 new file mode 100644
-index 000000000..aecab2358
+index 000000000..5dc1d8b96
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/entity/EntityPropertyRenderTest.java
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,75 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1619,13 +1624,14 @@ index 000000000..aecab2358
 +    private static final EntityPropertyList DEFINITIONS = new EntityPropertyList(List.of(
 +        new EntityProperty.BooleanProperty("example:show_hat"),
 +        new EntityProperty.IntProperty("example:hat", 0, 10),
-+        new EntityProperty.EnumProperty("example:color", List.of("red", "blue"))
-+    ), List.of(new EntityProperty.FloatProperty("example:size", 0, 2)));
++        new EntityProperty.EnumProperty("example:color", List.of("red", "blue")),
++        new EntityProperty.FloatProperty("example:size", 0, 2)
++    ));
 +
 +    @Test
 +    void retainsTypedSparseUpdatesAndImmutableSnapshots() {
 +        final Entity actor = new Entity(null, 1, 2, "example:actor", 3, UUID.randomUUID(), EntityTypes26_3.INTERACTION);
-+        actor.retainEntityProperties(DEFINITIONS.resolveValues(values(Map.of(0, 1, 1, 2, 2, 1), Map.of(0, 1.5F))));
++        actor.retainEntityProperties(DEFINITIONS.resolveValues(values(Map.of(0, 1, 1, 2, 2, 1), Map.of(3, 1.5F))));
 +        final Map<String, Object> snapshot = actor.entityProperties();
 +        assertEquals(Map.of("example:show_hat", true, "example:hat", 2, "example:color", "blue", "example:size", 1.5F), snapshot);
 +        assertThrows(UnsupportedOperationException.class, () -> snapshot.put("example:hat", 5));
@@ -1635,7 +1641,7 @@ index 000000000..aecab2358
 +        assertEquals(2, actor.entityProperties().get("example:hat"));
 +        assertEquals(true, snapshot.get("example:show_hat"));
 +
-+        actor.retainEntityProperties(DEFINITIONS.resolveValues(values(Map.of(2, 9, 99, 7), Map.of(0, Float.NaN, 99, 1F))));
++        actor.retainEntityProperties(DEFINITIONS.resolveValues(values(Map.of(2, 9, 99, 7), Map.of(3, Float.NaN, 99, 1F))));
 +        assertEquals("blue", actor.entityProperties().get("example:color"));
 +        assertEquals(1.5F, actor.entityProperties().get("example:size"));
 +        assertEquals(4, actor.entityProperties().size());
@@ -1699,10 +1705,10 @@ index 000000000..b1c872493
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyListTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyListTest.java
 new file mode 100644
-index 000000000..eacc385c9
+index 000000000..626a685cb
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyListTest.java
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,92 @@
 +package net.raphimc.viabedrock.protocol.model.entity;
 +
 +import com.viaversion.nbt.tag.CompoundTag;
@@ -1712,9 +1718,11 @@ index 000000000..eacc385c9
 +import com.viaversion.nbt.tag.StringTag;
 +import com.viaversion.viaversion.libs.fastutil.ints.Int2IntOpenHashMap;
 +import com.viaversion.viaversion.libs.fastutil.ints.Int2ObjectOpenHashMap;
++import net.raphimc.viabedrock.protocol.model.EntityProperties;
 +import org.junit.jupiter.api.Test;
 +
 +import java.util.List;
++import java.util.Map;
 +
 +import static org.junit.jupiter.api.Assertions.assertEquals;
 +import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -1727,14 +1735,15 @@ index 000000000..eacc385c9
 +        final EntityPropertyList definitions = new EntityPropertyList(List.of(
 +                new EntityProperty.BooleanProperty("minecraft:first"),
 +                new EntityProperty.IntProperty("minecraft:unused", 0, 10),
-+                new EntityProperty.EnumProperty("minecraft:variant", List.of("temperate", "warm"))
-+        ), List.of(new EntityProperty.FloatProperty("minecraft:float", 0, 1)));
++                new EntityProperty.EnumProperty("minecraft:variant", List.of("temperate", "warm")),
++                new EntityProperty.FloatProperty("minecraft:float", 0, 1)
++        ));
 +        final Int2IntOpenHashMap integers = new Int2IntOpenHashMap();
 +        integers.put(2, 1);
 +        integers.put(0, 0);
 +        integers.put(7, 99);
 +        final Int2ObjectOpenHashMap<Float> floats = new Int2ObjectOpenHashMap<>();
-+        floats.put(Integer.valueOf(0), Float.valueOf(0.5F));
++        floats.put(Integer.valueOf(3), Float.valueOf(0.5F));
 +
 +        final List<EntityPropertyList.IntValue> resolved = definitions.resolveInts(integers);
 +        assertEquals(2, resolved.size());
@@ -1744,7 +1753,7 @@ index 000000000..eacc385c9
 +    }
 +
 +    @Test
-+    void parsesSeparateIntegerAndFloatIndexSpaces() {
++    void preservesSharedWireIndicesAcrossInterleavedTypes() {
 +        final CompoundTag root = new CompoundTag();
 +        final ListTag<CompoundTag> properties = new ListTag<>(CompoundTag.class);
 +        final CompoundTag booleanProperty = new CompoundTag();
@@ -1765,13 +1774,23 @@ index 000000000..eacc385c9
 +        root.put("properties", properties);
 +
 +        final EntityPropertyList definitions = EntityPropertyList.fromTag(root).orElseThrow();
-+        assertEquals(2, definitions.intProperties().size());
-+        assertEquals(1, definitions.floatProperties().size());
-+        assertInstanceOf(EntityProperty.EnumProperty.class, definitions.intProperties().get(1));
++        assertEquals(3, definitions.properties().size());
++        assertInstanceOf(EntityProperty.FloatProperty.class, definitions.properties().get(1));
++        assertInstanceOf(EntityProperty.EnumProperty.class, definitions.properties().get(2));
++        final Int2IntOpenHashMap integers = new Int2IntOpenHashMap();
++        integers.put(0, 1);
++        integers.put(1, 99); // Wrong wire type must not resolve the float definition.
++        integers.put(2, 1);
++        final Int2ObjectOpenHashMap<Float> floats = new Int2ObjectOpenHashMap<>();
++        floats.put(Integer.valueOf(0), Float.valueOf(99F));
++        floats.put(Integer.valueOf(1), Float.valueOf(1.25F));
++        floats.put(Integer.valueOf(2), Float.valueOf(99F));
++        assertEquals(Map.of("minecraft:can_move", true, "minecraft:speed", 1.25F, "minecraft:climate_variant", "warm"),
++                definitions.resolveValues(new EntityProperties(integers, floats)));
 +    }
 +
 +    @Test
-+    void rejectsUnknownPropertyKindsBecauseTheirIndexSpaceIsUnknown() {
++    void rejectsUnknownPropertyKinds() {
 +        final CompoundTag root = new CompoundTag();
 +        final CompoundTag property = new CompoundTag();
 +        property.put("name", new StringTag("minecraft:unknown"));

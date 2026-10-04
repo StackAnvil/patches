@@ -33,3 +33,9 @@ The new selection test covers owner and property changes, equipment context, gen
 A supported native equipment surface now clears the corresponding vanilla armor field after selection. Previously only head-item drawing was cleared, so ordinary chest armor remained visible behind custom wings. Missing or unsupported native surfaces keep vanilla drawing. Inventory and gameplay equipment state remain unchanged.
 
 The final unchanged native capture passes direct and ViaProxy playback. Each accepted library contains 61 layers, one server pack, the owner-bound iron definition, and both authored geometries. Equipment selection changes from zero to one surface after the chest update; both wing bones reach full scale. Final screenshots show the orange costume and green wings without duplicate vanilla chest armor. Java falls below the recorded terrain and its head appearance differs. These checks establish supported visible equipment selection, not complete native scene parity, exact animation timing, or lifecycle behavior.
+
+## Transported owner queries
+
+Equipped model queries now read owner inputs from the shared actor registry on both connection routes.
+Named properties and variants retain their core values without a direct Bedrock connection.
+This change does not complete binding expressions, material families, or first-person equipment.

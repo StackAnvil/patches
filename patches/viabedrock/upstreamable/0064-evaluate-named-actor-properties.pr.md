@@ -74,3 +74,29 @@ Neither run reports unresolved model errors or rejected skins.
 These observations verify transport and supported rendering within this recorded scene.
 They do not establish complete native visual parity, actor event support, or broader lifecycle behavior.
 Raw packets, assets, account data, and screenshots remain private.
+
+## Native actor inputs through ViaProxy
+
+Core publishes immutable actor inputs through `viabedrock:actor_state` after capability registration and Java world initialization.
+Snapshots retain native flags, named properties, scale, variants, typed spell color, runtime identity, and an actor lifetime token.
+The local-player flag lets the frontend resolve its actual Java profile identity on either route.
+Removal checks the lifetime token before releasing state.
+Dimension changes publish retained inputs after the Java respawn packet.
+
+The codec preserves scalar types and rejects duplicate names, invalid kinds, unsupported versions, trailing bytes, and excessive counts.
+Limits are one MiB per payload, 4,096 properties, and 4,096 characters per string.
+Eight core tests cover immutable round trips, signed zero, malformed data, sparse updates, local identity, runtime ID reuse, and stale removal.
+
+This channel supplies controller queries and effect inputs.
+Complete actor events, interpolation, script variables, and native animation timing remain separate requirements.
+
+**Recorded-scene verification:** Matching native capture `2026-10-04T14-17-15.690Z-record-local` supplies the property changes and dimension round trip.
+Direct playback `2026-10-04T14-42-19.663Z-replay-scene` and ViaProxy playback `2026-10-04T14-38-50.359Z-replay-scene` preserve the complete scene payload hash.
+Both load the accepted pack without a frontend Store account.
+Each route receives 587 actor updates.
+All message fields match after connection-specific UUIDs, lifetime tokens, and timestamps are excluded.
+The local property sequence is orange, blue, orange, and blue.
+The bool, int, enum string, and float retain their values and types.
+Both routes remove and restore local inputs at each dimension change.
+Final screenshots show the grounded blue costume and green equipment on both routes, consistent with the native selection.
+Camera framing, lighting, full animation timing, and broader lifecycle behavior remain unverified.
