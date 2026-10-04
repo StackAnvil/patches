@@ -23,3 +23,23 @@ A separate resource-format revision participates in every cache fingerprint, inc
 Converted-pack format 3 invalidates cached output that predates the particle archive. Keep this output identity separate from protocol and converter versions. The cache patch still builds alone on the pinned upstream base, with nine passing tests and both Checkstyle tasks.
 
 Converted-resource format 4 invalidates outputs created before the actor archive existed. Otherwise a cache hit could omit the resources needed for player costumes and equipped attachables through ViaProxy. Existing archive formats are unchanged.
+
+## Conversion memory and damaged cache entries
+
+Fresh conversions retain their typed metadata instead of expanding the new ZIP to recover it.
+Disk writes retain the calculated descriptor; persisted cache hits still verify the ZIP hash and read metadata.
+A truncated ZIP or invalid metadata triggers conversion from source and atomic replacement.
+The regression test compares the repaired archive, advertised identity, and restored connection metadata with the original.
+
+A private synthetic benchmark contains 64 MiB across 64 entries.
+After two warm-up iterations, seven measured iterations compare the unchanged baseline with the optimized path.
+Both produce the same archive hash.
+Median allocated bytes fall from 445 MiB to 316 MiB.
+Median elapsed time falls from 1041 ms to 996 ms on the test host.
+These results cover ZIP packaging and descriptor creation, with synthetic content already prepared.
+They do not measure model conversion, licensed downloads, client reloads, or macOS runtime behavior.
+Transport liveness remains necessary while downloads or player prompts pause game packets.
+
+The complete stack builds for core, ViaProxy, and the add-on after folding this change into the cache patch.
+The suites report 980 passing tests, no failures or errors, and 113 optional skips.
+The cache patch also passes its tests and both Checkstyle tasks before the remaining patches apply.
