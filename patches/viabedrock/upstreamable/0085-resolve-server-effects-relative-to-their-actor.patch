@@ -1,8 +1,7 @@
-From 115f825dee4f29ccee19c96a62aeb6969b7d410e Mon Sep 17 00:00:00 2001
+From 142667a374cf92435b3097f3251ac6e29b73375a Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 07:12:13 +0200
-Subject: [PATCH] fix(particles): resolve server effects relative to their
- actor
+Subject: [PATCH] feat(particles): route server effects through native playback
 
 Decode packet 118 as one reusable model that retains its unsigned
 dimension, signed unique actor ID, float position, effect name, and
@@ -30,13 +29,33 @@ factory boundaries. Unit tests cover native field order, signed ID
 limits, optional-field boundaries, nested JSON retention, missing
 actors, and float-coordinate precision. Resource transport, native
 emitter integration, interpolation and visible parity remain pending.
+
+Transport complete particle requests to clients advertising native playback,
+including actor UID, matching Java ID/UUID, raw Molang JSON and the resolved
+initial position. Preserve the fully encoded Java particle body for client
+fallback. Clients without the channel retain the existing Java translation.
+
+Parse typed variables in core without flattening member arrays. Keep names,
+ordered duplicate members and the native JSON float conversions. Only root
+assignment sanitizes non-finite scalars. Native executable comparisons cover
+2,042 scalar conversion cases and 200 first-member/case-sensitive nested
+lookups. Keep malformed documents bounded. Client playback, actor lifetime,
+and visible particle comparisons must still establish their own behavior.
 ---
- build.gradle                                  |  6 ++
- .../protocol/model/SpawnParticleEffect.java   | 54 +++++++++++++
- .../protocol/packet/WorldEffectPackets.java   | 16 ++--
- .../model/SpawnParticleEffectTest.java        | 78 +++++++++++++++++++
- 4 files changed, 148 insertions(+), 6 deletions(-)
+ build.gradle                                  |   6 +
+ .../viabedrock/api/model/MolangVariables.java | 176 ++++++++++++++++++
+ .../model/NativeParticlePlaybackMessage.java  |  86 +++++++++
+ .../protocol/model/SpawnParticleEffect.java   |  54 ++++++
+ .../protocol/packet/WorldEffectPackets.java   |  64 +++++--
+ .../api/model/MolangVariablesTest.java        |  85 +++++++++
+ .../NativeParticlePlaybackMessageTest.java    |  63 +++++++
+ .../model/SpawnParticleEffectTest.java        |  78 ++++++++
+ 8 files changed, 595 insertions(+), 17 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/MolangVariables.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeParticlePlaybackMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/SpawnParticleEffect.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MolangVariablesTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeParticlePlaybackMessageTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/SpawnParticleEffectTest.java
 
 diff --git a/build.gradle b/build.gradle
@@ -56,6 +75,280 @@ index e987c56a8..a70238917 100644
  sourceSets {
      tool
  
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/MolangVariables.java b/src/main/java/net/raphimc/viabedrock/api/model/MolangVariables.java
+new file mode 100644
+index 000000000..71c29d661
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/MolangVariables.java
+@@ -0,0 +1,176 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.google.gson.JsonElement;
++import com.google.gson.JsonParser;
++import com.google.gson.Strictness;
++import com.google.gson.stream.JsonReader;
++import com.google.gson.stream.JsonToken;
++
++import java.io.IOException;
++import java.io.StringReader;
++import java.math.BigInteger;
++import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
++import java.util.List;
++
++/** Typed packet variables retain native names, member order and float conversions. */
++public record MolangVariables(List<Member> entries) {
++
++    public static final MolangVariables EMPTY = new MolangVariables(List.of());
++
++    public MolangVariables {
++        entries = List.copyOf(entries);
++    }
++
++    /** The native UTF-8 hash stops at a C-string boundary and does not fold case. */
++    public static long hash(final String name) {
++        long hash = 0xCBF29CE484222325L;
++        for (final byte value : name.getBytes(StandardCharsets.UTF_8)) {
++            if (value == 0) {
++                break;
++            }
++            hash = (hash ^ Byte.toUnsignedInt(value)) * 0x100000001B3L;
++        }
++        return hash;
++    }
++
++    public static MolangVariables parse(final String json) throws IOException {
++        if (json == null) {
++            return EMPTY;
++        }
++        bound(json);
++        try (JsonReader reader = new JsonReader(new StringReader(json))) {
++            reader.setStrictness(Strictness.STRICT);
++            final JsonElement root = JsonParser.parseReader(reader);
++            if (reader.peek() != JsonToken.END_DOCUMENT || !root.isJsonArray()) {
++                throw new IOException("Particle variables must contain one JSON array");
++            }
++            final List<Member> entries = members(root);
++            // Root assignment sanitizes bad scalars; nested values retain their original bits.
++            for (int index = 0; index < entries.size(); index++) {
++                final Member entry = entries.get(index);
++                if (entry.value instanceof Scalar scalar && !Float.isFinite(scalar.value)) {
++                    entries.set(index, new Member(entry.name, new Scalar(0F)));
++                }
++            }
++            return new MolangVariables(entries);
++        } catch (final RuntimeException invalid) {
++            throw new IOException("Invalid typed particle variables", invalid);
++        }
++    }
++
++    private static List<Member> members(final JsonElement array) {
++        final List<Member> result = new ArrayList<>();
++        for (final JsonElement element : array.getAsJsonArray()) {
++            if (!element.isJsonObject()) {
++                continue;
++            }
++            final var object = element.getAsJsonObject();
++            final var name = object.get("name");
++            final var value = object.get("value");
++            if (name == null || !name.isJsonPrimitive() || !name.getAsJsonPrimitive().isString()
++                    || value == null || value.isJsonNull()) {
++                continue;
++            }
++            final Value parsed = value(value);
++            if (parsed != null) {
++                result.add(new Member(name.getAsString(), parsed));
++            }
++        }
++        return result;
++    }
++
++    private static Value value(final JsonElement element) {
++        if (!element.isJsonObject()) {
++            return null;
++        }
++        final var object = element.getAsJsonObject();
++        final var type = object.get("type");
++        final var value = object.get("value");
++        if (type == null || !type.isJsonPrimitive() || !type.getAsJsonPrimitive().isString()
++                || value == null || value.isJsonNull()) {
++            return null;
++        }
++        return switch (type.getAsString()) {
++            case "float" -> new Scalar(scalar(value));
++            case "member_array" -> value.isJsonArray() ? new Members(members(value)) : null;
++            default -> null;
++        };
++    }
++
++    private static float scalar(final JsonElement value) {
++        if (!value.isJsonPrimitive()) {
++            return 0F;
++        }
++        final var primitive = value.getAsJsonPrimitive();
++        if (primitive.isBoolean()) {
++            return primitive.getAsBoolean() ? 1F : 0F;
++        }
++        if (!primitive.isNumber()) {
++            return 0F;
++        }
++        final String number = primitive.getAsString();
++        if (number.indexOf('.') < 0 && number.indexOf('e') < 0 && number.indexOf('E') < 0) {
++            final BigInteger integer = new BigInteger(number);
++            if (integer.bitLength() <= 63) {
++                return (float) integer.longValue();
++            }
++            if (integer.signum() >= 0 && integer.bitLength() <= 64) {
++                return integer.floatValue();
++            }
++        }
++        return (float) primitive.getAsDouble();
++    }
++
++    /** Bound nesting before building a JSON tree. Quoted braces do not count. */
++    private static void bound(final String json) throws IOException {
++        if (json.length() > 262144) {
++            throw new IOException("Particle variables exceed the size limit");
++        }
++        int depth = 0;
++        int nodes = 0;
++        boolean quoted = false;
++        boolean escaped = false;
++        for (int index = 0; index < json.length(); index++) {
++            final char value = json.charAt(index);
++            if (quoted) {
++                if (escaped) {
++                    escaped = false;
++                } else if (value == '\\') {
++                    escaped = true;
++                } else if (value == '"') {
++                    quoted = false;
++                }
++            } else if (value == '"') {
++                quoted = true;
++            } else if (value == '[' || value == '{') {
++                if (++depth > 32 || ++nodes > 16384) {
++                    throw new IOException("Particle variables exceed the nesting limit");
++                }
++            } else if (value == ']' || value == '}') {
++                depth--;
++            }
++        }
++    }
++
++    public sealed interface Value permits Scalar, Members {
++    }
++
++    public record Scalar(float value) implements Value {
++    }
++
++    public record Member(String name, Value value) {
++    }
++
++    public record Members(List<Member> entries) implements Value {
++        public Members {
++            entries = List.copyOf(entries);
++        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeParticlePlaybackMessage.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeParticlePlaybackMessage.java
+new file mode 100644
+index 000000000..cbca5b168
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeParticlePlaybackMessage.java
+@@ -0,0 +1,86 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.model.SpawnParticleEffect;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
++import com.viaversion.viaversion.api.connection.UserConnection;
++
++import java.io.IOException;
++import java.util.UUID;
++
++/** Native effects retain their source actor and a complete standard Java fallback. */
++public record NativeParticlePlaybackMessage(SpawnParticleEffect effect, Position3f origin, Actor actor, byte[] fallback) {
++
++    public static final String CHANNEL = "viabedrock:particle_playback";
++    public static final Type<NativeParticlePlaybackMessage> TYPE = new Type<>(NativeParticlePlaybackMessage.class) {
++        @Override
++        public NativeParticlePlaybackMessage read(final ByteBuf buffer) {
++            if (Types.VAR_INT.readPrimitive(buffer) != 1
++                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IllegalArgumentException("Unsupported native particle message");
++            }
++            final SpawnParticleEffect effect = SpawnParticleEffect.TYPE.read(buffer);
++            final Position3f origin = BedrockTypes.POSITION_3F.read(buffer);
++            final Actor actor = buffer.readBoolean() ? new Actor(Types.VAR_INT.readPrimitive(buffer), Types.UUID.read(buffer)) : null;
++            final int size = Types.VAR_INT.readPrimitive(buffer);
++            if (size < 0 || size > 65536 || size > buffer.readableBytes()) {
++                throw new IllegalArgumentException("Invalid Java particle fallback size");
++            }
++            final byte[] fallback = new byte[size];
++            buffer.readBytes(fallback);
++            return new NativeParticlePlaybackMessage(effect, origin, actor, fallback);
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final NativeParticlePlaybackMessage value) {
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            SpawnParticleEffect.TYPE.write(buffer, value.effect);
++            BedrockTypes.POSITION_3F.write(buffer, value.origin);
++            buffer.writeBoolean(value.actor != null);
++            if (value.actor != null) {
++                Types.VAR_INT.writePrimitive(buffer, value.actor.javaId);
++                Types.UUID.write(buffer, value.actor.javaUuid);
++            }
++            Types.VAR_INT.writePrimitive(buffer, value.fallback.length);
++            buffer.writeBytes(value.fallback);
++        }
++    };
++
++    public NativeParticlePlaybackMessage {
++        if ((effect.actorUniqueId() == SpawnParticleEffect.WORLD) != (actor == null)) {
++            throw new IllegalArgumentException("Particle actor identity does not match its source");
++        }
++        if (fallback.length > 65536) {
++            throw new IllegalArgumentException("Java particle fallback exceeds its size limit");
++        }
++        fallback = fallback.clone();
++    }
++
++    @Override
++    public byte[] fallback() {
++        return this.fallback.clone();
++    }
++
++    public MolangVariables variables() throws IOException {
++        return MolangVariables.parse(this.effect.molangVariables());
++    }
++
++    public static boolean supports(final UserConnection user) {
++        return user.get(ChannelStorage.class).hasChannel(CHANNEL);
++    }
++
++    public record Actor(int javaId, UUID javaUuid) {
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/SpawnParticleEffect.java b/src/main/java/net/raphimc/viabedrock/protocol/model/SpawnParticleEffect.java
 new file mode 100644
 index 000000000..a4a3dde3f
@@ -117,18 +410,21 @@ index 000000000..a4a3dde3f
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
-index aac781904..6f9c8cb60 100644
+index aac781904..3aaa99fcb 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
-@@ -36,6 +36,7 @@ import net.raphimc.viabedrock.api.model.entity.Entity;
+@@ -36,7 +36,10 @@ import net.raphimc.viabedrock.api.model.entity.Entity;
  import net.raphimc.viabedrock.api.resourcepack.definition.SoundDefinitions;
  import net.raphimc.viabedrock.api.resourcepack.definition.TextDefinitions;
  import net.raphimc.viabedrock.api.util.MathUtil;
 +import net.raphimc.viabedrock.protocol.model.SpawnParticleEffect;
  import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.api.model.NativeParticlePlaybackMessage;
++import io.netty.buffer.Unpooled;
  import net.raphimc.viabedrock.api.util.TextUtil;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
-@@ -123,17 +124,20 @@ public final class WorldEffectPackets {
+ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+@@ -123,34 +126,61 @@ public final class WorldEffectPackets {
              }
          });
          protocol.registerClientbound(ClientboundBedrockPackets.SPAWN_PARTICLE_EFFECT, ClientboundPackets26_3.LEVEL_PARTICLES, wrapper -> {
@@ -154,7 +450,219 @@ index aac781904..6f9c8cb60 100644
 +            final String effectIdentifier = effect.identifier();
  
              final BedrockMappingData.JavaParticle javaParticle = BedrockProtocol.MAPPINGS.getBedrockToJavaParticles().get(effectIdentifier);
-             if (javaParticle == null) {
+-            if (javaParticle == null) {
++            final boolean nativePlayback = NativeParticlePlaybackMessage.supports(wrapper.user());
++            if (javaParticle == null && !nativePlayback) {
+                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown bedrock particle: " + effectIdentifier);
+                 wrapper.cancel();
+                 return;
+             }
+-            PacketFactory.writeJavaLevelParticles(wrapper, position, switch (effectIdentifier) {
+-                case "minecraft:eyeblossom_close", "minecraft:eyeblossom_open" -> {
+-                    final Particle particle = javaParticle.particle().copy();
+-                    particle.set(0, Types.DOUBLE, (double) position.x() + ThreadLocalRandom.current().nextFloat() - 0.5F); // target x
+-                    particle.set(1, Types.DOUBLE, (double) position.y() + ThreadLocalRandom.current().nextFloat() + 1.5F); // target y
+-                    particle.set(2, Types.DOUBLE, (double) position.z() + ThreadLocalRandom.current().nextFloat() - 0.5F); // target z
+-                    yield javaParticle.withParticle(particle);
+-                }
+-                default -> javaParticle;
+-            });
++            if (javaParticle != null) {
++                PacketFactory.writeJavaLevelParticles(wrapper, position, switch (effectIdentifier) {
++                    case "minecraft:eyeblossom_close", "minecraft:eyeblossom_open" -> {
++                        final Particle particle = javaParticle.particle().copy();
++                        particle.set(0, Types.DOUBLE, (double) position.x() + ThreadLocalRandom.current().nextFloat() - 0.5F); // target x
++                        particle.set(1, Types.DOUBLE, (double) position.y() + ThreadLocalRandom.current().nextFloat() + 1.5F); // target y
++                        particle.set(2, Types.DOUBLE, (double) position.z() + ThreadLocalRandom.current().nextFloat() - 0.5F); // target z
++                        yield javaParticle.withParticle(particle);
++                    }
++                    default -> javaParticle;
++                });
++            }
++            if (nativePlayback) {
++                final byte[] fallback;
++                final var buffer = Unpooled.buffer();
++                try {
++                    if (javaParticle == null) {
++                        fallback = new byte[0];
++                    } else {
++                        wrapper.writeToBuffer(buffer);
++                        Types.VAR_INT.readPrimitive(buffer); // The consumer decodes the packet body with Java's codec.
++                        fallback = new byte[buffer.readableBytes()];
++                        buffer.readBytes(fallback);
++                    }
++                } finally {
++                    buffer.release();
++                }
++                final var binding = actor == null ? null : new NativeParticlePlaybackMessage.Actor(actor.javaId(), actor.javaUuid());
++                wrapper.clearPacket();
++                wrapper.setPacketType(ClientboundPackets26_3.CUSTOM_PAYLOAD);
++                wrapper.write(Types.STRING, NativeParticlePlaybackMessage.CHANNEL);
++                wrapper.write(NativeParticlePlaybackMessage.TYPE, new NativeParticlePlaybackMessage(effect, position, binding, fallback));
++            }
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.LEVEL_SOUND_EVENT, ClientboundPackets26_3.SOUND, wrapper -> {
+ 
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MolangVariablesTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MolangVariablesTest.java
+new file mode 100644
+index 000000000..ce4378ec1
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/MolangVariablesTest.java
+@@ -0,0 +1,85 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonElement;
++import com.google.gson.JsonObject;
++import com.google.gson.JsonPrimitive;
++import org.junit.jupiter.api.Test;
++
++import java.io.IOException;
++import java.math.BigDecimal;
++import java.math.BigInteger;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class MolangVariablesTest {
++
++    private static JsonObject named(final String name, final String type, final JsonElement value) {
++        final JsonObject typed = new JsonObject();
++        typed.addProperty("type", type);
++        typed.add("value", value);
++        final JsonObject result = new JsonObject();
++        result.addProperty("name", name);
++        result.add("value", typed);
++        return result;
++    }
++
++    @Test
++    void preservesStructuredNamesOrderDuplicatesAndUnsupportedEntries() throws IOException {
++        final JsonArray values = new JsonArray();
++        values.add(named("R", "float", new JsonPrimitive(9F)));
++        values.add(named("r", "float", new JsonPrimitive(.25F)));
++        values.add(named("r", "float", new JsonPrimitive(.75F)));
++        values.add(named("ignored", "unknown", new JsonPrimitive(1)));
++        final JsonArray roots = new JsonArray();
++        roots.add(named("variable.color", "member_array", values));
++        roots.add(named("variable.scale", "float", new JsonPrimitive(1)));
++        roots.add(named("variable.scale", "float", new JsonPrimitive(2)));
++        roots.add(named("variable.scale", "member_array", new JsonPrimitive(3)));
++        final MolangVariables parsed = MolangVariables.parse(roots.toString());
++        final var members = (MolangVariables.Members) parsed.entries().get(0).value();
++        assertEquals(3, parsed.entries().size());
++        assertEquals(3, members.entries().size());
++        assertNotEquals(MolangVariables.hash(members.entries().get(0).name()), MolangVariables.hash(members.entries().get(1).name()));
++        assertEquals(members.entries().get(1).name(), members.entries().get(2).name());
++        assertEquals(new MolangVariables.Scalar(.25F), members.entries().get(1).value());
++        assertThrows(UnsupportedOperationException.class, () -> parsed.entries().clear());
++        assertThrows(UnsupportedOperationException.class, () -> members.entries().clear());
++        assertEquals(MolangVariables.hash("r"), MolangVariables.hash("r\0ignored"));
++    }
++
++    @Test
++    void matchesNativeJsonFloatConversionsAndRootSanitization() throws IOException {
++        final List<JsonPrimitive> inputs = List.of(new JsonPrimitive(true), new JsonPrimitive(false), new JsonPrimitive("2.5"),
++                new JsonPrimitive(9007199254740993L), new JsonPrimitive(new BigInteger("18446744073709551615")),
++                new JsonPrimitive(1E100), new JsonPrimitive(new BigDecimal("1.0000000596046447753906250001")));
++        final float[] expected = {1, 0, 0, (float) 9007199254740993L, 0x1P64F, 0, 1};
++        for (int index = 0; index < inputs.size(); index++) {
++            final JsonArray roots = new JsonArray();
++            roots.add(named("variable.test", "float", inputs.get(index)));
++            final var value = (MolangVariables.Scalar) MolangVariables.parse(roots.toString()).entries().get(0).value();
++            assertEquals(expected[index], value.value());
++        }
++        final JsonArray nested = new JsonArray();
++        nested.add(named("x", "float", new JsonPrimitive(1E100)));
++        final JsonArray roots = new JsonArray();
++        roots.add(named("variable.vector", "member_array", nested));
++        final var value = (MolangVariables.Members) MolangVariables.parse(roots.toString()).entries().get(0).value();
++        assertEquals(Float.POSITIVE_INFINITY, ((MolangVariables.Scalar) value.entries().get(0).value()).value());
++    }
++
++    @Test
++    void boundsTreesAndRejectsInvalidDocumentsWithoutChangingAbsentValues() throws IOException {
++        assertEquals(MolangVariables.EMPTY, MolangVariables.parse(null));
++        for (final String invalid : List.of("", "null", "{}", "[", "[] []", "[NaN]", "[".repeat(33) + "]".repeat(33), " ".repeat(262145))) {
++            assertThrows(IOException.class, () -> MolangVariables.parse(invalid));
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeParticlePlaybackMessageTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeParticlePlaybackMessageTest.java
+new file mode 100644
+index 000000000..273e4519a
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeParticlePlaybackMessageTest.java
+@@ -0,0 +1,63 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.model.SpawnParticleEffect;
++import org.junit.jupiter.api.Test;
++
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeParticlePlaybackMessageTest {
++
++    @Test
++    void retainsActorSourceVariablesAndFallbackWithoutAliasing() {
++        for (final long id : new long[]{SpawnParticleEffect.WORLD, Long.MIN_VALUE, Long.MAX_VALUE}) {
++            final byte[] fallback = {1, 2, 3};
++            final var origin = new Position3f(-3.25F, 7.5F, 13.125F);
++            final var effect = new SpawnParticleEffect(2, id, origin, "test:effect", "[]");
++            final var actor = id == SpawnParticleEffect.WORLD ? null : new NativeParticlePlaybackMessage.Actor(-7, UUID.randomUUID());
++            final var message = new NativeParticlePlaybackMessage(effect, origin, actor, fallback);
++            fallback[0] = 9;
++            message.fallback()[0] = 8;
++            final var buffer = Unpooled.buffer();
++            try {
++                NativeParticlePlaybackMessage.TYPE.write(buffer, message);
++                buffer.writeInt(0x12345678);
++                final var decoded = NativeParticlePlaybackMessage.TYPE.read(buffer);
++                assertEquals(effect, decoded.effect());
++                assertEquals(origin, decoded.origin());
++                assertEquals(actor, decoded.actor());
++                assertArrayEquals(new byte[]{1, 2, 3}, decoded.fallback());
++                assertEquals(0x12345678, buffer.readInt());
++                assertEquals(0, buffer.readableBytes());
++            } finally {
++                buffer.release();
++            }
++        }
++    }
++
++    @Test
++    void rejectsWrongProtocolActorBindingAndOversizedBodies() {
++        final var effect = new SpawnParticleEffect(0, SpawnParticleEffect.WORLD, new Position3f(0, 0, 0), "", null);
++        final var buffer = Unpooled.buffer();
++        try {
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION + 1);
++            assertThrows(IllegalArgumentException.class, () -> NativeParticlePlaybackMessage.TYPE.read(buffer));
++            assertThrows(IllegalArgumentException.class, () -> new NativeParticlePlaybackMessage(effect, effect.position(), null, new byte[65537]));
++            assertThrows(IllegalArgumentException.class, () -> new NativeParticlePlaybackMessage(effect, effect.position(), new NativeParticlePlaybackMessage.Actor(0, UUID.randomUUID()), new byte[0]));
++        } finally {
++            buffer.release();
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/SpawnParticleEffectTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/SpawnParticleEffectTest.java
 new file mode 100644
 index 000000000..02ceaf63f

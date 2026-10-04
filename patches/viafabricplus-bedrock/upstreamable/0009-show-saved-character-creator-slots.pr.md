@@ -1548,3 +1548,31 @@ Direct server actors share core selection APIs with converted resource packs. Te
 Receive the core's authoritative block identity channel and bind its mirror to the current client world. Preserve the mirror during resource reloads and clear it on disconnect. Native particles use this shared mirror instead of reading a direct-only ChunkTracker. Filtered effects require initialized world data. Unfiltered effects can start through ViaProxy.
 
 The full build passes 940 Java tests with 110 optional asset skips. A targeted filter test verifies the core mirror after an update at negative coordinates. Live direct and ViaProxy sessions each receive 2,712 initial section snapshots. Every client lookup matches the transported state and dictionary. Direct producer hashes also match the decoded snapshots. Updates match on both routes. These checks do not establish incoming particle dispatch, visible effect parity, or live dimension/unload/disconnect behavior.
+
+
+## Native server particle receiver
+
+Register the native particle channel and receive complete requests through direct connections and ViaProxy.
+Use shared server resources and already loaded licensed assets without starting Store sign-in.
+Apply core's typed Molang values with native member hashing and duplicate rules.
+Copy structs across emitters, assignments, and query-value assignment.
+Normal script assignment names remain case insensitive.
+
+Bind actor requests to Java entity ID, UUID, object identity, and world lifetime.
+Sample position, yaw, bounds, and supported physical queries from that entity.
+Return start success from the particle runtime and decode the complete Java fallback when an effect cannot start.
+Discard fallback work for replaced worlds or removed actors.
+
+The full stack passes 947 Java tests with 110 optional asset skips.
+Two client tests cover struct isolation, nested assignment, query copies, script casing, and Minecraft decoding of core's fallback body.
+The standalone core particle patch passes eight tests and both Checkstyle tasks.
+
+An authored fixture verifies production packet dispatch on direct and ViaProxy connections.
+Both routes admit four requests, start two emitters, and decode one fallback on the main thread.
+Their typed size, tint, position, and fallback records match exactly.
+Missing actors and other dimensions do not reach the receiver.
+These profiles have no Store session.
+
+Visible native parity, complete actor queries, remote actor transport, interpolation, removal, ID reuse, world transitions, and reload timing remain unverified.
+The fixture has a sparse world and an unstable camera; runtime records do not prove visible parity.
+Malformed JSON compatibility and further native variable forms remain open.

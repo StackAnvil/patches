@@ -226,7 +226,7 @@ Core still needs to derive equipment attributes from target item definitions, in
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
 | R1 | General actor controllers and scripts | Incomplete | Complete transitions, weighted entries, variables, events, queries, and render-controller selection. |
-| R2 | Server particle dispatch | Incomplete | Core now retains every packet field, resolves actor offsets for the standard Java fallback, and drops unresolved actors. Core exports ordered particle definitions, controllers, and textures for both routes. Core now transports primary block identities to the native client on both routes. Native packet dispatch, typed Molang evaluation, actor binding, and visible native comparisons remain incomplete. |
+| R2 | Server particle dispatch | Incomplete | Core transports complete requests, typed variables, actor identity, and Java fallback bodies to native clients. Direct and ViaProxy authored fixtures verify dispatch, typed size/tint records, and fallback decoding. Complete actor queries, remote actor transport, interpolation, lifecycle comparisons, and visible native parity remain open. |
 | R3 | Particle runtime | Incomplete | Complete components, actor contexts, child effects, concurrency, and visible lifecycle comparisons. |
 | R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core transports signed loops, optional playback fields, handle controls, and ordered sound resources through direct connections and ViaProxy. Add-on playback controls pass captured-session OpenAL checks on both routes. Native request admission now matches the tested float range gate on both add-on routes. Server captions now have core state, transported translations, client controls, and a HUD on both add-on routes. Complete actor/local captions, localization/layout comparisons, stream policies, range behavior for other sources, audible comparisons, and broader lifecycle verification. |
 | R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties through ViaProxy. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, and directional light occlusion. |
@@ -676,3 +676,48 @@ Core also owns the bounded codec and client mirror. The add-on binds that mirror
 ViaProxy receives 2,712 initial snapshots and six updates without a client mirror mismatch. Two updates follow explicit server block changes. These checks cover the initial Overworld mirror and update delivery. They do not establish incoming particle dispatch or visible filter behavior. Optional licensed assets remain unavailable in the isolated profiles.
 
 **Remaining:** Native particle packet dispatch, typed Molang values, actor interpolation and lifetime binding, and visible native comparisons remain incomplete. Live dimension transitions, unloads, and disconnect cleanup still need their own observations.
+
+
+### Native server particle playback
+
+**Implemented:** Core transports packet 118 to clients that advertise the native particle channel.
+The message retains the original request, resolved float origin, actor ID and UUID, and complete Java fallback body.
+Ordinary clients keep their standard translation.
+Core still rejects other dimensions and unresolved actors.
+
+Core also parses typed scalar values and ordered member arrays.
+The client applies packet names with native hashing and copies structs between assignments and emitters.
+Normal script assignments retain case-insensitive names.
+Repeated valid roots replace earlier values; nested lookup selects the first matching member.
+
+The add-on starts effects from accepted server archives and already loaded licensed assets.
+Loading the shared snapshot does not initiate Store sign-in.
+Actor requests bind the current Java entity and sample its position, rotation, and bounds.
+The binding rejects removal, entity replacement, and world changes.
+An unsuccessful start uses Minecraft's codec and handler for the transported Java fallback.
+Unknown effects without either representation retain the existing unsupported-effect limitation.
+
+**Native evidence within scope:** Java matches 2,040 scalar conversion cases from target executable function `14e01de00`.
+The parser skips two null inputs, as the inspected native deserializer does.
+Two hundred native accessor cases verify first-match, case-sensitive member lookup with a supplied root lookup.
+These probes do not verify the complete JSON parser or visible particles.
+The [Creator API](https://learn.microsoft.com/en-us/minecraft/creator/scriptapi/minecraft/server/molangvariablemap?view=minecraft-bedrock-stable) confirms the public scalar and structured variable shapes.
+The pinned executable establishes the wire format and conversion rules.
+
+**Automated checks:** The complete build passes 947 Java tests with 110 optional asset tests skipped.
+The particle patch builds alone on upstream with eight tests and both Checkstyle tasks passing.
+Client tests cover struct isolation, nested assignments, script casing, immutable query values, and decoding core's fallback with Minecraft's codec.
+The bundle builds successfully.
+
+**Integration within scope:** An authored fixture adds six particle requests to a captured local session.
+Both direct and ViaProxy sessions reach spawn and transport the complete fixture.
+Each receiver observes four admitted requests on the main thread.
+Two requests start native emitters, one missing built-in graph uses the Java fallback, and one unknown effect has no representation.
+The missing-actor and other-dimension requests do not reach the client.
+Both routes produce identical size, tint, position, and fallback records without Store sign-in.
+
+**Remaining:** The sparse fixture lacks a stable camera and does not establish visible native parity.
+Complete actor queries, remote actor state through ViaProxy, interpolation, entity removal, ID reuse, world transitions, and resource reload timing need comparisons.
+Malformed JSON compatibility and additional native variable forms remain unverified.
+A private server script fixture crashed during script initialization before a player joined; it produced no native particle capture.
+Existing skin and actor rendering gaps remain open.
