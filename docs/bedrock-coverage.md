@@ -701,11 +701,17 @@ Unknown effects without either representation retain the existing unsupported-ef
 The parser skips two null inputs, as the inspected native deserializer does.
 Two hundred native accessor cases verify first-match, case-sensitive member lookup with a supplied root lookup.
 These probes do not verify the complete JSON parser or visible particles.
+
+A later comparison matches 54 native JSON reader and array-admission cases.
+Core accepts comments, leading integer zeros, raw string controls, and data after the first parsed array.
+Private allocation and byte-copy operations support the probe; native parsing instructions execute unchanged.
+An additional 1,008 constructor cases verify case-sensitive FNV-1 hashing, null termination, empty names, Unicode, and native surrogate bytes.
+Four decoded native strings verify surrogate continuation and low-surrogate output.
 The [Creator API](https://learn.microsoft.com/en-us/minecraft/creator/scriptapi/minecraft/server/molangvariablemap?view=minecraft-bedrock-stable) confirms the public scalar and structured variable shapes.
 The pinned executable establishes the wire format and conversion rules.
 
-**Automated checks:** The complete build passes 947 Java tests with 110 optional asset tests skipped.
-The particle patch builds alone on upstream with eight tests and both Checkstyle tasks passing.
+**Automated checks:** The complete build passes 949 Java tests with 110 optional asset tests skipped.
+The particle patch builds alone on upstream with ten tests and both Checkstyle tasks passing.
 Client tests cover struct isolation, nested assignments, script casing, immutable query values, and decoding core's fallback with Minecraft's codec.
 The bundle builds successfully.
 
@@ -718,6 +724,6 @@ Both routes produce identical size, tint, position, and fallback records without
 
 **Remaining:** The sparse fixture lacks a stable camera and does not establish visible native parity.
 Complete actor queries, remote actor state through ViaProxy, interpolation, entity removal, ID reuse, world transitions, and resource reload timing need comparisons.
-Malformed JSON compatibility and additional native variable forms remain unverified.
+Additional numeric grammar, wire UTF-8 decoding, packet-error propagation, and additional native variable forms remain unverified.
 A private server script fixture crashed during script initialization before a player joined; it produced no native particle capture.
 Existing skin and actor rendering gaps remain open.

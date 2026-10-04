@@ -1,4 +1,4 @@
-From 142667a374cf92435b3097f3251ac6e29b73375a Mon Sep 17 00:00:00 2001
+From 84a8956c9dc0c896ffb53f29a601e39cc59f67b2 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 4 Oct 2026 07:12:13 +0200
 Subject: [PATCH] feat(particles): route server effects through native playback
@@ -41,16 +41,34 @@ assignment sanitizes non-finite scalars. Native executable comparisons cover
 2,042 scalar conversion cases and 200 first-member/case-sensitive nested
 lookups. Keep malformed documents bounded. Client playback, actor lifetime,
 and visible particle comparisons must still establish their own behavior.
+
+Native JSON reader 14e0334a0/14e0369a0 accepts comments, raw string controls,
+leading integer zeros and trailing data after its first document. Normalize
+these observed forms before strict decoding so valid packet variables do
+not silently select Java fallback. Keep string/comment boundaries in the
+size and nesting guards. Match the native high-surrogate continuation rule
+without enabling unrelated lenient syntax. Fifty-four executable probes
+verify reader acceptance and array admission with private allocation and
+byte-copy boundaries. Additional numeric grammar, wire UTF-8 decoding,
+packet-error propagation and visible playback remain unverified.
+
+Execute HashedString constructor 1406acb20 for 1,008 supplied UTF-8 names.
+It uses FNV-1, multiplying before XOR, and assigns zero to empty names.
+Encode native JsonCpp surrogate bytes explicitly instead of replacing them
+with Java's UTF-8 replacement character. Four native decoded strings verify
+high-surrogate continuation and lone low-surrogate bytes. Keep C-string
+termination and case-sensitive names, with valid script casing handled by
+client bindings. Direct and ViaProxy share the same core hash implementation.
 ---
  build.gradle                                  |   6 +
- .../viabedrock/api/model/MolangVariables.java | 176 ++++++++++++++++++
- .../model/NativeParticlePlaybackMessage.java  |  86 +++++++++
- .../protocol/model/SpawnParticleEffect.java   |  54 ++++++
- .../protocol/packet/WorldEffectPackets.java   |  64 +++++--
- .../api/model/MolangVariablesTest.java        |  85 +++++++++
- .../NativeParticlePlaybackMessageTest.java    |  63 +++++++
- .../model/SpawnParticleEffectTest.java        |  78 ++++++++
- 8 files changed, 595 insertions(+), 17 deletions(-)
+ .../viabedrock/api/model/MolangVariables.java | 279 ++++++++++++++++++
+ .../model/NativeParticlePlaybackMessage.java  |  86 ++++++
+ .../protocol/model/SpawnParticleEffect.java   |  54 ++++
+ .../protocol/packet/WorldEffectPackets.java   |  64 ++--
+ .../api/model/MolangVariablesTest.java        | 123 ++++++++
+ .../NativeParticlePlaybackMessageTest.java    |  63 ++++
+ .../model/SpawnParticleEffectTest.java        |  78 +++++
+ 8 files changed, 736 insertions(+), 17 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/MolangVariables.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeParticlePlaybackMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/SpawnParticleEffect.java
@@ -77,10 +95,10 @@ index e987c56a8..a70238917 100644
  
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/MolangVariables.java b/src/main/java/net/raphimc/viabedrock/api/model/MolangVariables.java
 new file mode 100644
-index 000000000..71c29d661
+index 000000000..22946dc96
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/MolangVariables.java
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,279 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -97,7 +115,6 @@ index 000000000..71c29d661
 +import java.io.IOException;
 +import java.io.StringReader;
 +import java.math.BigInteger;
-+import java.nio.charset.StandardCharsets;
 +import java.util.ArrayList;
 +import java.util.List;
 +
@@ -110,24 +127,47 @@ index 000000000..71c29d661
 +        entries = List.copyOf(entries);
 +    }
 +
-+    /** The native UTF-8 hash stops at a C-string boundary and does not fold case. */
++    /** Native FNV-1 retains JsonCpp surrogate bytes and stops at a C-string boundary. */
 +    public static long hash(final String name) {
++        if (name.isEmpty() || name.charAt(0) == 0) {
++            return 0;
++        }
 +        long hash = 0xCBF29CE484222325L;
-+        for (final byte value : name.getBytes(StandardCharsets.UTF_8)) {
-+            if (value == 0) {
++        int index = 0;
++        while (index < name.length()) {
++            final int point = name.codePointAt(index);
++            if (point == 0) {
 +                break;
 +            }
-+            hash = (hash ^ Byte.toUnsignedInt(value)) * 0x100000001B3L;
++            index += Character.charCount(point);
++            if (point <= 0x7F) {
++                hash = hashByte(hash, point);
++            } else if (point <= 0x7FF) {
++                hash = hashByte(hash, 0xC0 | point >>> 6);
++                hash = hashByte(hash, 0x80 | point & 0x3F);
++            } else if (point <= 0xFFFF) {
++                hash = hashByte(hash, 0xE0 | point >>> 12);
++                hash = hashByte(hash, 0x80 | point >>> 6 & 0x3F);
++                hash = hashByte(hash, 0x80 | point & 0x3F);
++            } else {
++                hash = hashByte(hash, 0xF0 | point >>> 18);
++                hash = hashByte(hash, 0x80 | point >>> 12 & 0x3F);
++                hash = hashByte(hash, 0x80 | point >>> 6 & 0x3F);
++                hash = hashByte(hash, 0x80 | point & 0x3F);
++            }
 +        }
 +        return hash;
++    }
++
++    private static long hashByte(final long hash, final int value) {
++        return hash * 0x100000001B3L ^ value;
 +    }
 +
 +    public static MolangVariables parse(final String json) throws IOException {
 +        if (json == null) {
 +            return EMPTY;
 +        }
-+        bound(json);
-+        try (JsonReader reader = new JsonReader(new StringReader(json))) {
++        try (JsonReader reader = new JsonReader(new StringReader(document(json)))) {
 +            reader.setStrictness(Strictness.STRICT);
 +            final JsonElement root = JsonParser.parseReader(reader);
 +            if (reader.peek() != JsonToken.END_DOCUMENT || !root.isJsonArray()) {
@@ -210,35 +250,116 @@ index 000000000..71c29d661
 +        return (float) primitive.getAsDouble();
 +    }
 +
-+    /** Bound nesting before building a JSON tree. Quoted braces do not count. */
-+    private static void bound(final String json) throws IOException {
++    /** Match the native reader's comments and first-document behavior before strict JSON decoding. */
++    private static String document(final String json) throws IOException {
 +        if (json.length() > 262144) {
 +            throw new IOException("Particle variables exceed the size limit");
 +        }
++        final StringBuilder result = new StringBuilder(json.length());
 +        int depth = 0;
 +        int nodes = 0;
 +        boolean quoted = false;
 +        boolean escaped = false;
-+        for (int index = 0; index < json.length(); index++) {
++        int index = 0;
++        while (index < json.length()) {
 +            final char value = json.charAt(index);
 +            if (quoted) {
 +                if (escaped) {
++                    result.append(value);
++                    if (value == 'u' && index + 4 < json.length()) {
++                        final int unit = hexUnit(json, index + 1);
++                        if (unit >= 0xD800 && unit <= 0xDBFF) {
++                            if (index + 10 >= json.length() || json.charAt(index + 5) != '\\' || json.charAt(index + 6) != 'u') {
++                                throw new IOException("Missing particle variable Unicode continuation");
++                            }
++                            final int continuation = hexUnit(json, index + 7);
++                            result.append(json, index + 1, index + 5).append("\\u")
++                                    .append(Integer.toHexString(0xDC00 | continuation & 0x3FF));
++                            index += 10;
++                        }
++                    }
 +                    escaped = false;
 +                } else if (value == '\\') {
++                    result.append(value);
 +                    escaped = true;
-+                } else if (value == '"') {
-+                    quoted = false;
++                } else if (value < 0x20) {
++                    result.append("\\u00").append(Character.forDigit(value >>> 4, 16)).append(Character.forDigit(value & 15, 16));
++                } else {
++                    result.append(value);
++                    if (value == '"') {
++                        quoted = false;
++                    }
 +                }
++            } else if (value == '/' && index + 1 < json.length() && json.charAt(index + 1) == '/') {
++                index += 2;
++                while (index < json.length() && json.charAt(index) != '\r' && json.charAt(index) != '\n') {
++                    index++;
++                }
++                result.append(' ');
++            } else if (value == '/' && index + 1 < json.length() && json.charAt(index + 1) == '*') {
++                final int end = json.indexOf("*/", index + 2);
++                if (end < 0) {
++                    throw new IOException("Unterminated particle variable comment");
++                }
++                index = end + 1;
++                result.append(' ');
 +            } else if (value == '"') {
++                result.append(value);
 +                quoted = true;
 +            } else if (value == '[' || value == '{') {
 +                if (++depth > 32 || ++nodes > 16384) {
 +                    throw new IOException("Particle variables exceed the nesting limit");
 +                }
++                result.append(value);
 +            } else if (value == ']' || value == '}') {
-+                depth--;
++                result.append(value);
++                if (--depth == 0) {
++                    return result.toString();
++                }
++            } else if (value == '-' || value >= '0' && value <= '9') {
++                final int start = index;
++                if (value == '-') {
++                    index++;
++                }
++                while (index < json.length() && json.charAt(index) >= '0' && json.charAt(index) <= '9') {
++                    index++;
++                }
++                final int end = index;
++                while (index < json.length() && (json.charAt(index) >= '0' && json.charAt(index) <= '9'
++                        || json.charAt(index) == '.' || json.charAt(index) == 'e' || json.charAt(index) == 'E'
++                        || json.charAt(index) == '-' || json.charAt(index) == '+')) {
++                    index++;
++                }
++                int digits = start + (value == '-' ? 1 : 0);
++                if (value == '-') {
++                    result.append('-');
++                }
++                while (digits + 1 < end && json.charAt(digits) == '0') {
++                    digits++;
++                }
++                result.append(json, digits, index);
++                index--;
++            } else {
++                result.append(value);
 +            }
++            index++;
 +        }
++        return result.toString();
++    }
++
++    private static int hexUnit(final String json, final int start) throws IOException {
++        int result = 0;
++        for (int index = start; index < start + 4; index++) {
++            final char value = json.charAt(index);
++            final int digit = value >= '0' && value <= '9' ? value - '0'
++                    : value >= 'a' && value <= 'f' ? value - 'a' + 10
++                    : value >= 'A' && value <= 'F' ? value - 'A' + 10 : -1;
++            if (digit < 0) {
++                throw new IOException("Invalid particle variable Unicode escape");
++            }
++            result = result << 4 | digit;
++        }
++        return result;
 +    }
 +
 +    public sealed interface Value permits Scalar, Members {
@@ -505,10 +626,10 @@ index aac781904..3aaa99fcb 100644
  
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MolangVariablesTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MolangVariablesTest.java
 new file mode 100644
-index 000000000..ce4378ec1
+index 000000000..e24d511c1
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/MolangVariablesTest.java
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,123 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -586,9 +707,47 @@ index 000000000..ce4378ec1
 +    }
 +
 +    @Test
++    void matchesNativeHashOrderEmptyNamesUtf8AndSurrogateBytes() {
++        assertEquals(0, MolangVariables.hash(""));
++        assertEquals(0, MolangVariables.hash("\0ignored"));
++        assertEquals(0xAF63BD4C8601B7ADL, MolangVariables.hash("r"));
++        assertEquals(0xAF63BD4C8601B78DL, MolangVariables.hash("R"));
++        assertEquals(0x260314731B2C75D2L, MolangVariables.hash("variable.color"));
++        assertEquals(0xAF63BD4C8601B7ADL, MolangVariables.hash("r\0ignored"));
++        assertEquals(0xD70074186A1A8172L, MolangVariables.hash(String.valueOf((char) 0xDC00)));
++        assertEquals(0x56B7057C3CAE5C83L, MolangVariables.hash(new String(Character.toChars(0x10061))));
++        assertEquals(0x56B7067C3CAE5D55L, MolangVariables.hash(new String(Character.toChars(0x10000))));
++    }
++
++    @Test
++    void matchesNativeCommentsTrailingDataLeadingZerosAndRawStringControls() throws IOException {
++        final JsonArray roots = new JsonArray();
++        roots.add(named("variable.test", "float", new JsonPrimitive(1)));
++        final MolangVariables expected = MolangVariables.parse(roots.toString());
++        assertEquals(expected, MolangVariables.parse("/* {[[ */" + roots + " [] trailing"));
++        assertEquals(expected, MolangVariables.parse("// comment\r\n" + roots + " /* unterminated"));
++        assertEquals(expected, MolangVariables.parse(roots.toString().replace("[", "[/* comment */").replace(":1", ":0001")));
++        for (int control = 0; control < 32; control++) {
++            roots.add(named("variable." + (char) control + "name", "float", new JsonPrimitive(control)));
++        }
++        assertEquals(MolangVariables.parse(roots.toString()), MolangVariables.parse(roots.toString().replace("\\n", "\n")));
++        final String escapedName = "variable." + "\\uD800\\u0061";
++        final JsonArray unicode = new JsonArray();
++        unicode.add(named("variable." + new String(Character.toChars(0x10061)), "float", new JsonPrimitive(3)));
++        assertEquals(MolangVariables.parse(unicode.toString()), MolangVariables.parse(unicode.toString()
++                .replace("variable." + new String(Character.toChars(0x10061)), escapedName)));
++        assertThrows(IOException.class, () -> MolangVariables.parse("[\"" + "\\uD800" + "\"]"));
++        assertEquals(MolangVariables.EMPTY, MolangVariables.parse("[] []"));
++        assertEquals(MolangVariables.EMPTY, MolangVariables.parse("[01]"));
++        for (final String invalid : List.of("[1,]", "[+1]", "[.1]", "[0x1]", "['a']", "[{a:1}]", "[/* unfinished")) {
++            assertThrows(IOException.class, () -> MolangVariables.parse(invalid));
++        }
++    }
++
++    @Test
 +    void boundsTreesAndRejectsInvalidDocumentsWithoutChangingAbsentValues() throws IOException {
 +        assertEquals(MolangVariables.EMPTY, MolangVariables.parse(null));
-+        for (final String invalid : List.of("", "null", "{}", "[", "[] []", "[NaN]", "[".repeat(33) + "]".repeat(33), " ".repeat(262145))) {
++        for (final String invalid : List.of("", "null", "{}", "[", "[NaN]", "[".repeat(33) + "]".repeat(33), " ".repeat(262145))) {
 +            assertThrows(IOException.class, () -> MolangVariables.parse(invalid));
 +        }
 +    }

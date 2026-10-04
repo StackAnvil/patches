@@ -42,6 +42,17 @@ Inspection of root setter `1421fcd60` shows non-finite scalar sanitization; nest
 Native member accessor `140af2690` selects the first matching member hash, with case-sensitive names.
 Root map assignments replace earlier valid entries with the same hash.
 
+Native name constructor `1406acb20` uses FNV-1 and assigns zero to empty names.
+Hashing multiplies before XOR, preserves case, and stops at the first null byte.
+The UTF-8 encoder retains the native JsonCpp bytes for lone low surrogates.
+Native string decoding also confirms the high-surrogate continuation mask.
+
+Native JSON reader `14e0334a0` enables comments without enabling unrelated lenient syntax.
+Reader `14e0369a0` accepts raw string controls and leading integer zeros.
+It ignores data after its first parsed document.
+Core normalizes these observed forms before strict decoding and retains the first array.
+Size and nesting limits still apply; comment braces do not increase depth.
+
 ## Native client channel
 
 Clients advertise `viabedrock:particle_playback` to receive the original effect request, resolved origin, Java actor ID and UUID, and Java fallback body.
@@ -56,11 +67,14 @@ Resource and graph processing uses the separate shared resource transport.
 - **100 native serializer cases:** dimension IDs, signed actor ID limits, float coordinates, and absent or present variables. The harness supplies established primitive stream writes and an authored JSON string. It verifies native field order and optional-flag dispatch, not the native stream implementation or JSON value serialization.
 - **1,600 native handler cases:** current and missing dimensions, world and attached IDs, missing actors, variable presence, and client availability. The harness supplies lookups, context copying, name copying, and factory sinks. It captures unchanged coordinates and actor selection before emitter creation.
 - **Three targeted unit tests:** native wire order, nested JSON retention, optional-field boundaries, signed IDs, missing actors, world-space coordinates, actor offsets, and float rounding.
-- **Full core suite:** 487 passing tests and one optional skip. Main and test Checkstyle pass after the complete stack replay.
+- **Full core suite:** 489 passing tests and one optional skip. Main and test Checkstyle pass after the complete stack replay.
 - **Native scalar comparison:** Java matches 2,040 supplied JsonValue conversion cases from the target executable. Two null inputs are correctly skipped by the parser. This comparison covers scalar conversion, not the full native JSON parser.
 - **Native member comparison:** 200 accessor cases select the first case-sensitive hash match in supplied nested structures. The harness supplies the root lookup.
 - **Five additional core tests:** typed values, duplicate ordering, non-finite handling, precision, immutable structures, limits, actor binding, and fallback transport boundaries.
-- **Standalone patch:** applies and builds on the pinned upstream base without setup. All eight tests and both Checkstyle tasks pass.
+- **Standalone patch:** applies and builds on the pinned upstream base without setup. All ten tests and both Checkstyle tasks pass.
+- **Native JSON comparison:** 54 reader and array-admission cases match the executable. Allocation, byte-copy, and free operations use private harness boundaries. Comments, trailing data, all 32 raw string controls, leading zeros, and malformed syntax execute native parsing instructions.
+- **Native hash comparison:** Java matches 1,008 constructor cases, including case, null termination, empty names, Unicode, and lone low surrogates. The harness supplies allocation, byte copying, and string length. Four decoded native strings verify surrogate bytes separately.
+- **Two parser tests:** native syntax normalization, first-document behavior, limits, Unicode continuation, and hash results.
 - **Client codec check:** Minecraft decodes core's complete particle body after native transport. The test checks coordinates, offsets, speeds, count, flags, and trailing data rejection.
 - **Direct and ViaProxy integration:** an authored six-case fixture passes both transport replays. Each route receives four admitted requests, starts two emitters, and decodes one Java fallback. Missing actors and other dimensions do not reach the receiver. Both routes produce identical typed size, tint, and position records without Store sign-in.
 
@@ -68,7 +82,7 @@ Resource and graph processing uses the separate shared resource transport.
 
 Visible native comparisons, complete actor queries, remote actor transport, and interpolation still need verification.
 Actor removal, world replacement, resource reloads, and ID reuse need live lifecycle comparisons.
-Malformed JSON compatibility and every native variable type remain outside the verified parser scope.
+Additional numeric grammar, wire UTF-8 decoding, packet-error propagation, and every native variable type remain outside the verified parser scope.
 The ordinary Java fallback cannot evaluate Molang values or maintain actor attachment.
 The authored fixture verifies production dispatch and runtime records, not native visible parity.
 Its sparse world does not provide a stable camera for a rendering comparison.
