@@ -1,4 +1,4 @@
-From 032100c0a92093155ebb6fc590c502014154264b Mon Sep 17 00:00:00 2001
+From f63f0315259baa4204e64b2050555cca3580c660 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 18:26:58 +0200
 Subject: [PATCH] feat(attachables): render equipped native pack models
@@ -27,26 +27,53 @@ Targeted tests cover identity collisions, equipment lifetime, held spawn
 playback, owner context, ordered visibility and animated body binding, including rotated native ancestor rest poses.
 
 Preserve full same-name owner deformation matrices for equipped models. Rotated bones under nonuniform or reflected scale require shear, and independently bound children can have a singular parent. Avoid parent inversion and TRS decomposition. Keep local animation poses intact, inherit full matrices for unmatched descendants, and clear bindings on each pose or replacement binding pass. Existing full-matrix drawing and bounds scopes also apply to bound models. Targeted tests fail against the previous binding and pass for shear, reflections, singular parents, entity-relative descendants, locators, drawing normals, and repeated binding. This preserves the supported binding rule; explicit native binding expressions and complete first-person equipment parity remain separate gaps.
+
+Resolve equipped definitions, materials, animation graphs, and textures
+from core's accepted native archive on direct and ViaProxy connections.
+Use the same parsed storage and pack priority on both routes; Java equipment
+identities remain the input to the existing per-slot playback cache. Missing
+assets retain fallback without forcing a Store session. Existing limits on
+explicit bindings, material families, and variants still need implementation.
+
+Select explicit item bindings from the native item identity and the current
+wearer, properties, and equipment context. This supports definitions such
+as iron_chestplate.player without confusing their attachable identifier
+with the inventory item identifier. Preserve each slot's playback until
+the selected definition changes. Bounded expression caches and per-avatar
+query state prevent cross-owner state leakage. Pack and world lifetimes
+release selector state with models and textures. Conditions and resource
+metadata round trips have targeted regressions; native comparisons retain
+separate gaps for bindings, material families, and first-person equipment.
+
+Replace the corresponding vanilla armor surface only after supported native
+geometry, texture, and material selection succeeds. The target native
+iron_chestplate.player override renders wings without vanilla iron armor.
+Clearing only the vanilla head item left duplicate chest, leg, and foot
+armor visible in Java. Unsupported native surfaces retain vanilla fallback.
 ---
- .../appearance/BedrockActorAnimation.java     |  33 ++-
+ .../appearance/BedrockActorAnimation.java     |  33 +-
+ .../BedrockAttachableSelection.java           |  51 +++
  .../appearance/BedrockPlayerControllers.java  |  36 ++-
  .../render/MixinAvatarAnimationRenderer.java  |  18 +-
  .../render/MixinAvatarAnimationState.java     |  11 +-
- .../bedrock/render/BedrockAnimatedModel.java  |  66 ++++-
+ .../bedrock/render/BedrockAnimatedModel.java  |  66 +++-
  .../bedrock/render/BedrockEquipmentCache.java |  41 +++
- .../BedrockEquippedAttachableLayer.java       |  33 +++
- .../render/BedrockPlayerAttachables.java      | 270 ++++++++++++++++++
+ .../BedrockEquippedAttachableLayer.java       |  33 ++
+ .../render/BedrockPlayerAttachables.java      | 306 ++++++++++++++++++
  .../bedrock/render/BedrockPlayerModel.java    |   6 +
  .../bedrock/render/BedrockPlayerSkins.java    |  20 +-
+ .../BedrockAttachableSelectionTest.java       |  46 +++
  .../BedrockEquippedAnimationTest.java         |  46 +++
  .../BedrockPlayerControllersTest.java         |  22 ++
- .../render/BedrockAttachableMatricesTest.java | 150 ++++++++++
- .../render/BedrockEquippedAttachableTest.java |  98 +++++++
+ .../render/BedrockAttachableMatricesTest.java | 150 +++++++++
+ .../render/BedrockEquippedAttachableTest.java |  98 ++++++
  .../render/BedrockPlayerModelTest.java        |  58 ++++
- 15 files changed, 890 insertions(+), 18 deletions(-)
+ 17 files changed, 1023 insertions(+), 18 deletions(-)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableSelection.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquipmentCache.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableLayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableSelectionTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquippedAnimationTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAttachableMatricesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java
@@ -120,6 +147,63 @@ index 7bedd3f..66750c2 100644
          private void sound(final BedrockAnimationSound sound) {
              if (this.soundOutput == null) return;
              final SoundCue cue = this.soundCue(sound);
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableSelection.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableSelection.java
+new file mode 100644
+index 0000000..a66cd4c
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableSelection.java
+@@ -0,0 +1,51 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import java.io.IOException;
++import java.io.UncheckedIOException;
++import java.util.List;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.Map;
++import net.raphimc.viabedrock.api.resourcepack.definition.AttachableDefinitions;
++
++/** Evaluate item-to-attachable bindings with the wearer's current query and equipment context. */
++public final class BedrockAttachableSelection {
++    private final BedrockMolang molang = new BedrockMolang();
++    private final Map<String, BedrockMolang.Program> conditions = new LinkedHashMap<>(16, 0.75F, true) {
++        @Override
++        protected boolean removeEldestEntry(final Map.Entry<String, BedrockMolang.Program> eldest) { return this.size() > 256; }
++    };
++
++    public AttachableDefinitions.AttachableDefinition select(final AttachableDefinitions definitions, final String item,
++                                                            final Map<String, Object> properties, final BedrockActorAnimation.Frame frame) throws IOException {
++        final Map<String, Object> queries = new HashMap<>(frame.queries());
++        queries.put("has_property", (BedrockActorAnimation.Query) names -> !names.isEmpty() && properties.containsKey(names.getFirst().toString()));
++        queries.put("property", (BedrockActorAnimation.Query) names -> names.isEmpty() ? 0F : properties.getOrDefault(names.getFirst().toString(), 0F));
++        this.molang.queries(queries);
++        this.molang.variables(frame.variables());
++        this.molang.context(frame.context());
++        try {
++            return definitions.selectItem(item, this::matches);
++        } catch (UncheckedIOException invalid) {
++            throw invalid.getCause();
++        }
++    }
++
++    private boolean matches(final String expression) {
++        try {
++            var program = this.conditions.get(expression);
++            if (program == null) {
++                program = BedrockMolang.Program.script(List.of(expression));
++                this.conditions.put(expression, program);
++            }
++            return this.molang.value(program).getAsBoolean();
++        } catch (IOException invalid) {
++            throw new UncheckedIOException(invalid);
++        }
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
 index a70dacc..672bfe4 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
@@ -485,10 +569,10 @@ index 0000000..47771a6
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
 new file mode 100644
-index 0000000..eec1f29
+index 0000000..0363a13
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerAttachables.java
-@@ -0,0 +1,270 @@
+@@ -0,0 +1,306 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -500,6 +584,8 @@ index 0000000..eec1f29
 +import com.viaversion.viafabricplus.ViaFabricPlus;
 +import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockActorAnimation;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockAttachableSelection;
++import net.raphimc.viabedrock.protocol.rewriter.ItemDataRewriter;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockBoneAnimation;
 +import com.viaversion.viafabricplus.bedrock.appearance.BedrockPlayerControllers;
 +
@@ -533,8 +619,10 @@ index 0000000..eec1f29
 +public final class BedrockPlayerAttachables {
 +    private static final List<EquipmentSlot> SLOTS = List.of(EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET);
 +    private static final Map<Avatar, BedrockEquipmentCache<Equipped>> EQUIPPED = new WeakHashMap<>();
++    private static final Map<Avatar, BedrockAttachableSelection> SELECTORS = new WeakHashMap<>();
 +    private static final Map<String, Optional<Resource>> RESOURCES = new HashMap<>();
 +    private static final Map<String, Identifier> TEXTURES = new HashMap<>();
++    private static final Set<String> FAILED_SELECTIONS = new HashSet<>();
 +    private static final Set<String> EXPLICIT_BINDINGS = new HashSet<>();
 +    private static final Map<MaterialKey, RenderType> RENDER_TYPES = new LinkedHashMap<>(16, 0.75F, true) {
 +        @Override
@@ -549,7 +637,7 @@ index 0000000..eec1f29
 +
 +    public static List<Surface> extract(final Avatar entity, final AvatarRenderState state, final float partialTick) {
 +        final var connection = ViaFabricPlus.api().userConnection();
-+        final ResourcePackStorage packs = connection == null ? null : connection.get(ResourcePackStorage.class);
++        final ResourcePackStorage packs = BedrockActorResources.get();
 +        if (packs == null || !packs.isLoadedOnJavaClient() || packs.getAttachables() == null) {
 +            if (currentPacks != null) clear();
 +            return List.of();
@@ -565,20 +653,32 @@ index 0000000..eec1f29
 +        final List<Surface> result = new ArrayList<>();
 +        final Map<String, Object> queries = new HashMap<>(BedrockPlayerSkins.actorQueries(entity, state, partialTick));
 +        queries.put("is_invisible", state.isInvisible);
++        queries.put("owner_identifier", "minecraft:player");
 +        queries.put("is_owner_identifier_any", (BedrockActorAnimation.Query) names -> names.contains("minecraft:player"));
 +        final var actor = BedrockPlayerActorState.state(connection, entity.getUUID());
 +        final Map<String, Object> properties = actor == null ? Map.of() : actor.properties();
 +        for (final EquipmentSlot slot : SLOTS) {
-+            final ItemIdentity identity = identify(entity.getItemBySlot(slot), packs);
++            final ItemStack stack = entity.getItemBySlot(slot);
++            ItemIdentity identity;
++            try {
++                identity = identify(stack, packs, SELECTORS.computeIfAbsent(entity, _ -> new BedrockAttachableSelection()), properties,
++                        new BedrockActorAnimation.Frame(queries, Map.of("is_first_person", 0F),
++                                Map.of("is_first_person", 0F, "item_slot", slot.getName())));
++            } catch (IOException | RuntimeException invalid) {
++                if (FAILED_SELECTIONS.add(stack.getItem().toString()))
++                    ViaFabricPlusBedrock.impl().logger().warn("Could not select equipped attachable for {}", stack.getItem(), invalid);
++                identity = null;
++            }
++            final ItemIdentity selectedIdentity = identity;
 +            final var entry = equipment.update(slot, identity != null && identity.variant().equals("default") ? identity : null, state.ageInTicks, () -> {
-+                final Resource resource = RESOURCES.computeIfAbsent(identity.identifier(), _ -> load(identity.identifier(), packs)).orElse(null);
++                final Resource resource = RESOURCES.computeIfAbsent(selectedIdentity.identifier(), _ -> load(selectedIdentity.identifier(), packs)).orElse(null);
 +                return resource == null ? null : new Equipped(resource,
 +                        new BedrockPlayerControllers(resource.definition, packs.getRenderControllers().renderControllers()),
 +                        resource.animation == null ? null : resource.animation.playback());
 +            });
 +            if (entry == null) continue;
 +            final Equipped equipped = entry.value();
-+            final Map<String, Object> context = Map.of("is_first_person", 0F);
++            final Map<String, Object> context = Map.of("is_first_person", 0F, "item_slot", slot.getName());
 +            try {
 +                equipped.ownerScope = BedrockPlayerSkins.parentSetup(entity.getUUID(),
 +                        equipped.resource.definition.getScripts().parentSetup(), context, equipped.ownerScope);
@@ -602,7 +702,18 @@ index 0000000..eec1f29
 +                equipped.failed = true;
 +            }
 +        }
-+        if (result.stream().anyMatch(surface -> surface.slot() == EquipmentSlot.HEAD)) state.headItem.clear();
++        for (final Surface surface : result) {
++            switch (surface.slot()) {
++                case HEAD -> {
++                    state.headItem.clear();
++                    state.headEquipment = ItemStack.EMPTY;
++                }
++                case CHEST -> state.chestEquipment = ItemStack.EMPTY;
++                case LEGS -> state.legsEquipment = ItemStack.EMPTY;
++                case FEET -> state.feetEquipment = ItemStack.EMPTY;
++                default -> throw new IllegalStateException("Unsupported equipped attachable slot: " + surface.slot());
++            }
++        }
 +        return List.copyOf(result);
 +    }
 +
@@ -636,8 +747,15 @@ index 0000000..eec1f29
 +        }
 +    }
 +
-+    static ItemIdentity identify(final ItemStack stack, final ResourcePackStorage packs) {
++    private static ItemIdentity identify(final ItemStack stack, final ResourcePackStorage packs, final BedrockAttachableSelection selector,
++                                         final Map<String, Object> properties, final BedrockActorAnimation.Frame frame) throws IOException {
 +        if (stack == null || stack.isEmpty()) return null;
++        final var nativeData = stack.get(DataComponents.CUSTOM_DATA);
++        final String nativeIdentifier = nativeData == null ? null : nativeData.copyTag().getString(ItemDataRewriter.BEDROCK_IDENTIFIER_TAG).orElse(null);
++        if (nativeIdentifier != null) {
++            final var definition = selector.select(packs.getAttachables(), nativeIdentifier, properties, frame);
++            return definition == null ? null : new ItemIdentity(definition.identifier(), "default");
++        }
 +        final Identifier model = stack.get(DataComponents.ITEM_MODEL);
 +        final var data = stack.get(DataComponents.CUSTOM_MODEL_DATA);
 +        return identify(model, data == null ? List.of() : data.strings(), packs.getAttachables().attachables().keySet());
@@ -711,10 +829,12 @@ index 0000000..eec1f29
 +
 +    public static void clear() {
 +        EQUIPPED.clear();
++        SELECTORS.clear();
 +        RESOURCES.clear();
 +        if (!TEXTURES.isEmpty()) TEXTURES.values().forEach(Minecraft.getInstance().getTextureManager()::release);
 +        RENDER_TYPES.clear();
 +        EXPLICIT_BINDINGS.clear();
++        FAILED_SELECTIONS.clear();
 +        TEXTURES.clear();
 +        currentPacks = null;
 +        currentLevel = null;
@@ -782,10 +902,10 @@ index 2224643..4cf95ab 100644
 +
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 0b06968..456a267 100644
+index 43cfbe6..d4f6758 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-@@ -624,7 +624,7 @@ public final class BedrockPlayerSkins {
+@@ -622,7 +622,7 @@ public final class BedrockPlayerSkins {
      private record FirstPersonFrame(Identifier texture, BedrockActorAnimation.Visibility visibility,
                                      BedrockFirstPersonCamera.Rotation camera) {}
  
@@ -794,8 +914,8 @@ index 0b06968..456a267 100644
          final Map<String, Object> queries = new HashMap<>();
          queries.put("life_time", state.ageInTicks / 20F);
          queries.put("frame_alpha", partialTick);
-@@ -878,9 +878,27 @@ public final class BedrockPlayerSkins {
-     public static void rendererContext(final EntityRendererProvider.Context context) {
+@@ -877,10 +877,28 @@ public final class BedrockPlayerSkins {
+         BedrockActorResources.clear();
          rendererContext = context;
          rendererEpoch++;
 +        BedrockPlayerAttachables.clear();
@@ -818,10 +938,63 @@ index 0b06968..456a267 100644
 +    private record ParentScope(BedrockActorAnimation.Playback actor, BedrockPlayerControllers controllers) {}
 +
      public static void clear() {
+         BedrockActorResources.clear();
 +        BedrockPlayerAttachables.clear();
          APPEARANCES.values().forEach(BedrockPlayerSkins::release);
          APPEARANCES.clear();
          PLAYER_BY_TEXTURE.clear();
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableSelectionTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableSelectionTest.java
+new file mode 100644
+index 0000000..6bdd22d
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableSelectionTest.java
+@@ -0,0 +1,46 @@
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import static org.junit.jupiter.api.Assertions.*;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++import org.junit.jupiter.api.Test;
++import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++
++class BedrockAttachableSelectionTest {
++    @Test
++    void selectsOwnerBindingsBeforeGenericItemsAndReevaluatesFrameConditions() throws Exception {
++        final String item = "minecraft:iron_chestplate";
++        final String player = item + ".player";
++        final var resources = Map.of(
++                "manifest.json", ("{\"format_version\":3,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":\"1.0.0\",\"name\":\"fixture\"}}").getBytes(java.nio.charset.StandardCharsets.UTF_8),
++                "attachables/generic.json", definition(item, null),
++                "attachables/player.json", definition(player, "query.owner_identifier == 'minecraft:player' && query.property('test:enabled') && context.item_slot == 'chest'"));
++        final var packs = ResourcePackStorage.nativeActors(List.of(new NativeActorLibrary.Layer(true, resources)));
++        final var selector = new BedrockAttachableSelection();
++        final var wearer = new BedrockActorAnimation.Frame(Map.of("owner_identifier", "minecraft:player"), Map.of(), Map.of("item_slot", "chest"));
++        assertEquals(player, selector.select(packs.getAttachables(), item, Map.of("test:enabled", true), wearer).identifier());
++        assertEquals(item, selector.select(packs.getAttachables(), item, Map.of("test:enabled", false), wearer).identifier());
++        final var mob = new BedrockActorAnimation.Frame(Map.of("owner_identifier", "minecraft:zombie"), Map.of(), Map.of("item_slot", "chest"));
++        assertEquals(item, selector.select(packs.getAttachables(), item, Map.of("test:enabled", true), mob).identifier());
++        assertNull(selector.select(packs.getAttachables(), "minecraft:apple", Map.of(), wearer));
++        assertEquals(player, selector.select(packs.getAttachables(), item, Map.of("test:enabled", true), wearer).identifier());
++    }
++
++    private static byte[] definition(final String identifier, final String condition) {
++        final var description = new com.google.gson.JsonObject();
++        description.addProperty("identifier", identifier);
++        if (condition != null) {
++            final var bindings = new com.google.gson.JsonObject();
++            bindings.addProperty("minecraft:iron_chestplate", condition);
++            description.add("item", bindings);
++        }
++        final var attachable = new com.google.gson.JsonObject();
++        attachable.add("description", description);
++        final var root = new com.google.gson.JsonObject();
++        root.addProperty("format_version", "1.10.0");
++        root.add("minecraft:attachable", attachable);
++        return root.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquippedAnimationTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquippedAnimationTest.java
 new file mode 100644
 index 0000000..226d011

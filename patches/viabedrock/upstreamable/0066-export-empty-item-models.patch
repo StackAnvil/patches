@@ -1,4 +1,4 @@
-From cfdd67c9d1fb078ceee46fae438d2c7808b16dc3 Mon Sep 17 00:00:00 2001
+From f0d5ab3ecbae3d6724f52caff2fd117fd70ecedc Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:22:35 +0200
 Subject: [PATCH] fix(models): export complete asset pairs and empty item
@@ -25,14 +25,32 @@ lookup used for equipped items. A recorded Bedrock 1.26.51.1 Hive player
 wears angel wings in the chest slot, exposing this mismatch. Semantic
 conversion tests resolve both default and folded equipment selectors to
 real geometry and matching converter readiness.
+
+Apply resolved attachable models after vanilla and custom item mapping.
+A server can override existing armor with an attachable without defining a
+new item. Preserve the Java item's type, gameplay components, and native
+identity while assigning the converted model selector only after pack
+acceptance and successful default geometry/texture conversion. Targeted
+tests cover both item families, rejected and missing assets, and preserved
+gameplay data. Direct and ViaProxy equipment playback verify the full path.
+
+Retain item-to-attachable binding expressions separately from geometry
+conversion. Explicit bindings select a wearer-specific definition before
+legacy item-identifier lookup. The pinned 1.26.51.1 definitions distinguish
+iron_chestplate from iron_chestplate.player using query.owner_identifier.
+The complete actor archive retains these associations for the frontend.
+Owner queries remain the renderer's responsibility; additional competing
+bindings and default native assets still need broader comparisons.
 ---
- .../api/model/entity/CustomEntity.java        |   9 ++
- .../CustomAttachableResourceRewriter.java     |  25 ++--
- .../CustomEntityResourceRewriter.java         |  27 ++--
- .../ItemModelResourceRewriter.java            |  62 ++++++++-
- .../ItemModelResourceRewriterTest.java        |  68 ++++++++++
- .../resourcepack/ModelResourceAssetsTest.java | 123 ++++++++++++++++++
- 6 files changed, 278 insertions(+), 36 deletions(-)
+ .../api/model/entity/CustomEntity.java        |   9 +
+ .../definition/AttachableDefinitions.java     |  41 +++-
+ .../protocol/rewriter/ItemRewriter.java       |   6 +-
+ .../CustomAttachableResourceRewriter.java     |  37 ++--
+ .../CustomEntityResourceRewriter.java         |  27 +--
+ .../ItemModelResourceRewriter.java            |  62 +++++-
+ .../ItemModelResourceRewriterTest.java        |  68 ++++++
+ .../resourcepack/ModelResourceAssetsTest.java | 195 ++++++++++++++++++
+ 8 files changed, 401 insertions(+), 44 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ItemModelResourceRewriterTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
 
@@ -63,11 +81,113 @@ index 2a77ab4d1..e831d9ae1 100644
          return replaceModels(this.models, newModels) || scaleChanged;
      }
  
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/AttachableDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/AttachableDefinitions.java
+index 2989d7b33..9f4d7b708 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/AttachableDefinitions.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/AttachableDefinitions.java
+@@ -25,14 +25,15 @@ import org.cube.converter.data.bedrock.BedrockAttachableData;
+ import org.cube.converter.parser.bedrock.data.impl.BedrockAttachableParser;
+ 
+ import java.util.Collections;
+-import java.util.HashMap;
++import java.util.LinkedHashMap;
+ import java.util.Map;
+ import java.util.logging.Level;
++import java.util.function.Predicate;
+ 
+ // https://wiki.bedrock.dev/items/attachables.html
+ public class AttachableDefinitions {
+ 
+-    private final Map<String, AttachableDefinition> attachables = new HashMap<>();
++    private final Map<String, AttachableDefinition> attachables = new LinkedHashMap<>();
+ 
+     public AttachableDefinitions(final ResourcePackStorage resourcePackStorage) {
+         for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
+@@ -40,7 +41,15 @@ public class AttachableDefinitions {
+                 try {
+                     final BedrockAttachableData attachableData = BedrockAttachableParser.parse(pack.content().getString(attachablePath));
+                     final String identifier = Key.namespaced(attachableData.getIdentifier());
+-                    this.attachables.put(identifier, new AttachableDefinition(identifier, attachableData));
++                    final Map<String, String> items = new LinkedHashMap<>();
++                    final var description = pack.content().getJson(attachablePath).getAsJsonObject("minecraft:attachable").getAsJsonObject("description");
++                    if (description.has("item")) {
++                        for (final var entry : description.getAsJsonObject("item").entrySet()) {
++                            items.put(Key.namespaced(entry.getKey()), entry.getValue().getAsString());
++                        }
++                    }
++                    this.attachables.remove(identifier);
++                    this.attachables.put(identifier, new AttachableDefinition(identifier, attachableData, items));
+                 } catch (final Throwable e) {
+                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse attachable definition " + attachablePath + " in pack " + pack.key(), e);
+                 }
+@@ -52,7 +61,31 @@ public class AttachableDefinitions {
+         return Collections.unmodifiableMap(this.attachables);
+     }
+ 
+-    public record AttachableDefinition(String identifier, BedrockAttachableData attachableData) {
++    /** Explicit item bindings take precedence over the legacy item-identifier definition. */
++    public AttachableDefinition selectItem(final String item, final Predicate<String> condition) {
++        final String identifier = Key.namespaced(item);
++        AttachableDefinition selected = null;
++        for (final AttachableDefinition definition : this.attachables.values()) {
++            final String expression = definition.itemCondition(identifier);
++            if (expression != null && condition.test(expression)) {
++                selected = definition;
++            }
++        }
++        if (selected != null) {
++            return selected;
++        }
++        final AttachableDefinition generic = this.attachables.get(identifier);
++        return generic != null && generic.itemBindings().isEmpty() ? generic : null;
++    }
++
++    public record AttachableDefinition(String identifier, BedrockAttachableData attachableData, Map<String, String> itemBindings) {
++        public AttachableDefinition {
++            itemBindings = Map.copyOf(itemBindings);
++        }
++
++        public String itemCondition(final String item) {
++            return this.itemBindings.get(Key.namespaced(item));
++        }
+     }
+ 
+ }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
+index 4ff94df84..48f1379ab 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
+@@ -196,10 +196,7 @@ public class ItemRewriter extends StoredObject {
+                     data.set(StructuredDataKey.ITEM_NAME, TextUtil.stringToNbt(resourcePackStorage.getTexts().get("item." + Key.stripMinecraftNamespace(identifier) + ".name")));
+                 }
+ 
+-                if (resourcePackStorage.getAttachables().attachables().containsKey(identifier) && resourcePackStorage.isLoadedOnJavaClient() && resourcePackStorage.getConverterData().containsKey("ca_" + identifier + "_default")) {
+-                    data.set(StructuredDataKey.ITEM_MODEL, CustomAttachableResourceRewriter.getItemModel(identifier));
+-                    data.set(StructuredDataKey.CUSTOM_MODEL_DATA1_21_4, CustomAttachableResourceRewriter.getCustomModelData("default"));
+-                } else if (itemDefinition.iconComponent() != null && resourcePackStorage.isLoadedOnJavaClient()) {
++                if (itemDefinition.iconComponent() != null && resourcePackStorage.isLoadedOnJavaClient()) {
+                     data.set(StructuredDataKey.ITEM_MODEL, CustomItemTextureResourceRewriter.getItemModel(itemDefinition.iconComponent()));
+                     data.set(StructuredDataKey.CUSTOM_MODEL_DATA1_21_4, CustomItemTextureResourceRewriter.getCustomModelData("0"));
+                 } else {
+@@ -231,6 +228,7 @@ public class ItemRewriter extends StoredObject {
+             ITEM_NBT_REWRITERS.get(tag).toJava(this.user(), bedrockItem, javaItem);
+         }
+ 
++        CustomAttachableResourceRewriter.applyItemModel(this.user().get(ResourcePackStorage.class), identifier, javaItem);
+         return javaItem;
+     }
+ 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
-index 400839521..218e99bb5 100644
+index 400839521..2ae95bb0e 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomAttachableResourceRewriter.java
-@@ -21,7 +21,6 @@ import com.viaversion.viaversion.api.minecraft.item.data.ItemModel;
+@@ -17,11 +17,12 @@
+  */
+ package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
+ 
++import com.viaversion.viaversion.api.minecraft.item.Item;
+ import com.viaversion.viaversion.api.minecraft.item.data.ItemModel;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
  import com.viaversion.viaversion.libs.gson.JsonArray;
  import com.viaversion.viaversion.libs.gson.JsonObject;
  import com.viaversion.viaversion.util.Key;
@@ -75,7 +195,7 @@ index 400839521..218e99bb5 100644
  import net.raphimc.viabedrock.api.resourcepack.content.Content;
  import net.raphimc.viabedrock.api.resourcepack.definition.AttachableDefinitions;
  import net.raphimc.viabedrock.api.util.StringUtil;
-@@ -31,6 +30,7 @@ import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
+@@ -31,6 +32,7 @@ import org.cube.converter.model.impl.bedrock.BedrockGeometryModel;
  import org.cube.converter.model.impl.java.JavaItemModel;
  
  import java.util.Map;
@@ -83,7 +203,24 @@ index 400839521..218e99bb5 100644
  import java.util.function.Consumer;
  import java.util.function.Supplier;
  
-@@ -55,25 +55,17 @@ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter
+@@ -42,6 +44,16 @@ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter
+         return new ItemModel(Key.of("viabedrock", SUB_FOLDER + '/' + StringUtil.makeIdentifierValueSafe(attachableIdentifier)));
+     }
+ 
++    /** Resolved pack models override both mapped vanilla items and custom items after their gameplay data is translated. */
++    public static void applyItemModel(final ResourcePackStorage packs, final String identifier, final Item item) {
++        if (!packs.isLoadedOnJavaClient() || !packs.getAttachables().attachables().containsKey(identifier)
++                || !Boolean.TRUE.equals(packs.getConverterData().get("ca_" + identifier + "_default"))) {
++            return;
++        }
++        item.dataContainer().set(StructuredDataKey.ITEM_MODEL, getItemModel(identifier));
++        item.dataContainer().set(StructuredDataKey.CUSTOM_MODEL_DATA1_21_4, getCustomModelData("default"));
++    }
++
+     public CustomAttachableResourceRewriter() {
+         super(SUB_FOLDER);
+     }
+@@ -55,25 +67,17 @@ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter
  
      private Content handleAttachableDefinition(final ResourcePackStorage resourcePackStorage, final AttachableDefinitions.AttachableDefinition attachableDefinition) {
          final ItemModelContent javaContent = new ItemModelContent(attachableDefinition.identifier());
@@ -100,6 +237,9 @@ index 400839521..218e99bb5 100644
          for (Map.Entry<String, String> modelEntry : attachableDefinition.attachableData().getGeometries().entrySet()) {
              final BedrockGeometryModel bedrockGeometry = resourcePackStorage.getModels().entityModels().get(modelEntry.getValue());
 -            if (bedrockGeometry == null) {
+-                continue;
+-            }
+-            if (!attachableDefinition.attachableData().getTextures().containsKey(modelEntry.getKey())) {
 +            final String bedrockTexturePath = attachableDefinition.attachableData().getTextures().get(modelEntry.getKey());
 +            final String modelKey = modelEntry.getKey();
 +            final boolean hasTexture = textures.contains(bedrockTexturePath);
@@ -107,16 +247,13 @@ index 400839521..218e99bb5 100644
 +            if (bedrockGeometry == null || !hasTexture) {
                  continue;
              }
--            if (!attachableDefinition.attachableData().getTextures().containsKey(modelEntry.getKey())) {
--                continue;
--            }
 -
 -            final String javaTexturePath = this.getJavaTexturePath(attachableDefinition.attachableData().getTextures().get(modelEntry.getKey()));
 +            final String javaTexturePath = this.getJavaTexturePath(bedrockTexturePath);
              final JavaItemModel itemModelData = bedrockGeometry.toJavaItemModel("viabedrock:" + javaTexturePath, RotationType.POST_1_21_11);
              final JsonObject itemModel = itemModelData.compile();
  
-@@ -97,7 +89,6 @@ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter
+@@ -97,7 +101,6 @@ public class CustomAttachableResourceRewriter extends ItemModelResourceRewriter
  
              itemModel.add("display", display);
  
@@ -353,10 +490,10 @@ index 000000000..6c8d9a773
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
 new file mode 100644
-index 000000000..b9655afe6
+index 000000000..0234b36a6
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ModelResourceAssetsTest.java
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,195 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -370,11 +507,16 @@ index 000000000..b9655afe6
 +import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
 +import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
 +import org.junit.jupiter.api.Test;
 +
 +import java.awt.image.BufferedImage;
 +import java.util.List;
 +import java.util.UUID;
++import java.io.IOException;
++import java.io.ByteArrayInputStream;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
@@ -424,6 +566,62 @@ index 000000000..b9655afe6
 +    }
 +
 +    @Test
++    void appliesResolvedPackModelsAfterVanillaOrCustomItemMappingWithoutReplacingGameplayComponents() throws ReflectiveOperationException {
++        for (String identifier : List.of("minecraft:iron_chestplate", "example:wings")) {
++            final ResourcePack pack = pack(identifier, true);
++            pack.content().put("textures/omitted.png", pack.content().get("textures/present.png"));
++            final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack));
++            convert(storage, new CustomAttachableResourceRewriter());
++            final var components = components();
++            components.set(StructuredDataKey.DAMAGE, 17);
++            final var item = new StructuredItem(312, 1, components);
++            CustomAttachableResourceRewriter.applyItemModel(storage, identifier, item);
++            assertNull(components.get(StructuredDataKey.ITEM_MODEL));
++            storage.setLoadedOnJavaClient();
++            CustomAttachableResourceRewriter.applyItemModel(storage, "example:other", item);
++            assertNull(components.get(StructuredDataKey.ITEM_MODEL));
++            CustomAttachableResourceRewriter.applyItemModel(storage, identifier, item);
++            assertEquals(CustomAttachableResourceRewriter.getItemModel(identifier), components.get(StructuredDataKey.ITEM_MODEL));
++            assertArrayEquals(CustomAttachableResourceRewriter.getCustomModelData("default").strings(),
++                    components.get(StructuredDataKey.CUSTOM_MODEL_DATA1_21_4).strings());
++            assertEquals(312, item.identifier());
++            assertEquals(17, components.get(StructuredDataKey.DAMAGE));
++        }
++        final String identifier = "minecraft:iron_chestplate";
++        final ResourcePackStorage missing = new ResourcePackStorage(List.of(pack(identifier, true)));
++        missing.setLoadedOnJavaClient();
++        final var item = new StructuredItem(312, 1, components());
++        CustomAttachableResourceRewriter.applyItemModel(missing, identifier, item);
++        assertNull(item.dataContainer().get(StructuredDataKey.ITEM_MODEL));
++    }
++
++    @Test
++    void retainsOwnerSpecificItemBindingsAcrossResolvedPackLayers() throws IOException {
++        final String item = "minecraft:iron_chestplate";
++        final String alias = item + ".player";
++        final ResourcePack generic = pack(item, true);
++        final ResourcePack player = pack(alias, true);
++        final var document = player.content().getJson("attachables/test.json");
++        final JsonObject bindings = new JsonObject();
++        bindings.addProperty(item, "query.owner_identifier == 'minecraft:player'");
++        document.getAsJsonObject("minecraft:attachable").getAsJsonObject("description").add("item", bindings);
++        player.content().putJson("attachables/test.json", document);
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(player, generic));
++        final var definitions = storage.getAttachables().attachables();
++        assertTrue(definitions.get(item).itemBindings().isEmpty());
++        assertSame(definitions.get(alias), storage.getAttachables().selectItem(item, expression -> true));
++        assertSame(definitions.get(item), storage.getAttachables().selectItem(item, expression -> false));
++        assertNull(storage.getAttachables().selectItem("minecraft:apple", expression -> true));
++        assertEquals(bindings.get(item).getAsString(), definitions.get(alias).itemCondition(item));
++        assertNull(definitions.get(alias).itemCondition("minecraft:apple"));
++        assertThrows(UnsupportedOperationException.class, () -> definitions.get(alias).itemBindings().clear());
++        final var restored = ResourcePackStorage.nativeActors(net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.decode(
++                new ByteArrayInputStream(net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary.encode(
++                        storage.getPackStackBottomToTop(), storage::isServerPack))));
++        assertEquals(definitions.get(alias).itemBindings(), restored.getAttachables().attachables().get(alias).itemBindings());
++    }
++
++    @Test
 +    void exportsAnEmptyVanillaAttachableWhenItsTextureIsOmitted() {
 +        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack("minecraft:armor", true)));
 +        final Content result = convert(storage, new CustomAttachableResourceRewriter());
@@ -446,6 +644,17 @@ index 000000000..b9655afe6
 +                assertDoesNotThrow(() -> ItemModelResourceRewriter.requireModelAssets(storage, folder, "example:actor", "default_resolved"));
 +            }
 +        }
++    }
++
++    private static StructuredDataContainer components() throws ReflectiveOperationException {
++        final StructuredDataContainer data = new StructuredDataContainer();
++        final var lookup = StructuredDataContainer.class.getDeclaredField("lookup");
++        lookup.setAccessible(true);
++        final var mappings = java.lang.reflect.Proxy.newProxyInstance(
++                com.viaversion.viaversion.api.data.FullMappings.class.getClassLoader(),
++                new Class<?>[]{com.viaversion.viaversion.api.data.FullMappings.class}, (proxy, method, arguments) -> 0);
++        lookup.set(data, mappings);
++        return data;
 +    }
 +
 +    private static Content convert(final ResourcePackStorage storage, final ResourcePackRewriter.Rewriter rewriter) {

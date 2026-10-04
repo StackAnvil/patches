@@ -1,4 +1,4 @@
-From 307202b9dd821ab3ae1172af1328b67a01d89655 Mon Sep 17 00:00:00 2001
+From 3a40f00c0a59883fb8ae3244f90199d1480448f7 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:07 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -289,6 +289,13 @@ transfers with the existing appearance lifecycle.
 Use core's local-player ownership flag to install the received appearance
 on the actual Minecraft avatar. The Java frontend UUID can differ from
 the Bedrock actor UUID on a proxy connection. Keep remote identities intact.
+
+Read native actor resources from accepted server packs on both connection
+routes. Reuse core's bounded decoder and reconstructed resource storage,
+including resolved stack order and original server provenance. Resource
+reload and world cleanup release the cached graph snapshot. A missing or
+invalid archive retains ordinary rendering without requesting Store login.
+Custom actor state still requires its separate core transport through proxies.
 ---
  build.gradle.kts                              |   6 +
  .../bedrock/ViaFabricPlusBedrock.java         |  10 +
@@ -302,19 +309,20 @@ the Bedrock actor UUID on a proxy connection. Keep remote identities intact.
  .../render/MixinBedrockRidingMetadata.java    |  38 +++
  .../render/MixinBedrockRidingPosition.java    |  27 ++
  .../features/render/MixinCustomEntity.java    |  59 ++++
- .../render/MixinEntityRenderDispatcher.java   |  93 +++++++
+ .../render/MixinEntityRenderDispatcher.java   |  93 ++++++
  .../render/MixinMinecraftSkinLifecycle.java   |  41 +++
  .../render/MixinPlayerSkinWidget.java         |  28 ++
  .../BedrockActorMaterialDefinitions.java      | 136 +++++++++
  .../bedrock/render/BedrockActorMaterials.java |  56 ++++
  .../render/BedrockActorRenderTypes.java       |  78 ++++++
+ .../bedrock/render/BedrockActorResources.java |  50 ++++
  .../render/BedrockActorUvTransform.java       |  18 ++
- .../bedrock/render/BedrockEntityRenderer.java | 188 +++++++++++++
+ .../bedrock/render/BedrockEntityRenderer.java | 185 ++++++++++++
  .../bedrock/render/BedrockGeometry.java       | 215 ++++++++++++++
  .../bedrock/render/BedrockNameTagAnchors.java |  75 +++++
  .../bedrock/render/BedrockNameTags.java       |  56 ++++
  .../bedrock/render/BedrockPlayerRenderer.java |  53 ++++
- .../bedrock/render/BedrockPlayerSkins.java    | 262 ++++++++++++++++++
+ .../bedrock/render/BedrockPlayerSkins.java    | 264 ++++++++++++++++++
  .../bedrock/render/BedrockRidingAnchors.java  |  71 +++++
  .../render/CustomEntityRenderStore.java       |  54 ++++
  .../bedrock/render/NativeSkinPayload.java     |  22 ++
@@ -333,7 +341,7 @@ the Bedrock actor UUID on a proxy connection. Keep remote identities intact.
  .../render/BedrockPlayerMaterialsTest.java    |  42 +++
  .../render/BedrockRidingAnchorsTest.java      | 130 +++++++++
  .../render/CustomEntityRenderStoreTest.java   |  36 +++
- 43 files changed, 2851 insertions(+), 1 deletion(-)
+ 44 files changed, 2900 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractClientPlayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorPipelines.java
@@ -350,6 +358,7 @@ the Bedrock actor UUID on a proxy connection. Keep remote identities intact.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterials.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvTransform.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockGeometry.java
@@ -1348,6 +1357,62 @@ index 0000000..243a5bc
 +        return PIPELINES.get(lightingFamily + (cull ? 1 : 0));
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java
+new file mode 100644
+index 0000000..a2fa3db
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java
+@@ -0,0 +1,50 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import net.minecraft.client.Minecraft;
++import net.minecraft.resources.Identifier;
++import net.minecraft.server.packs.repository.PackSource;
++import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++
++import java.io.IOException;
++
++/** Accepted native actor assets use the same resource-manager lifetime on direct and proxy connections. */
++public final class BedrockActorResources {
++
++    private static boolean loaded;
++    private static ResourcePackStorage packs;
++
++    private BedrockActorResources() {
++    }
++
++    /** Called on the Minecraft thread. Reading accepted assets never initiates account sign-in. */
++    public static ResourcePackStorage get() {
++        if (loaded) return packs;
++        loaded = true;
++        final var resources = Minecraft.getInstance().getResourceManager();
++        final var stack = resources.getResourceStack(Identifier.fromNamespaceAndPath("viabedrock", "actor_library.bin"));
++        for (int index = stack.size() - 1; index >= 0; index--) {
++            final var resource = stack.get(index);
++            if (resource.source().location().source() != PackSource.SERVER) continue;
++            try (var input = resource.open()) {
++                packs = ResourcePackStorage.nativeActors(NativeActorLibrary.decode(input));
++            } catch (IOException | RuntimeException invalid) {
++                ViaFabricPlusBedrock.impl().logger().warn("Could not read accepted native actor resources", invalid);
++            }
++            break;
++        }
++        return packs;
++    }
++
++    public static void clear() {
++        loaded = false;
++        packs = null;
++    }
++
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvTransform.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvTransform.java
 new file mode 100644
 index 0000000..695cb91
@@ -1374,10 +1439,10 @@ index 0000000..695cb91
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
 new file mode 100644
-index 0000000..0311c92
+index 0000000..66bd0e5
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEntityRenderer.java
-@@ -0,0 +1,188 @@
+@@ -0,0 +1,185 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1400,10 +1465,8 @@ index 0000000..0311c92
 +
 +import com.mojang.blaze3d.vertex.PoseStack;
 +import com.mojang.math.Axis;
-+import com.viaversion.viafabricplus.ViaFabricPlus;
 +import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
 +import com.viaversion.viafabricplus.bedrock.render.CustomEntityRenderStore.RenderData;
-+import com.viaversion.viaversion.api.connection.UserConnection;
 +import java.util.ArrayList;
 +import java.util.HashMap;
 +import java.util.List;
@@ -1468,8 +1531,8 @@ index 0000000..0311c92
 +        }
 +        state.models = List.of();
 +        state.scale = 1F;
-+        final UserConnection connection = ViaFabricPlus.api().userConnection();
-+        if (connection == null || !connection.has(ResourcePackStorage.class)) {
++        final ResourcePackStorage packs = BedrockActorResources.get();
++        if (packs == null) {
 +            this.currentPacks = null;
 +            this.materialDefinitions = null;
 +            this.models.clear();
@@ -1480,7 +1543,6 @@ index 0000000..0311c92
 +        if (renderData == null) {
 +            return;
 +        }
-+        final ResourcePackStorage packs = connection.get(ResourcePackStorage.class);
 +        if (this.currentPacks != packs) {
 +            this.currentPacks = packs;
 +            this.materialDefinitions = BedrockActorMaterialDefinitions.load(packs);
@@ -1991,10 +2053,10 @@ index 0000000..471807a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 new file mode 100644
-index 0000000..ccf50d1
+index 0000000..48c1207
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-@@ -0,0 +1,262 @@
+@@ -0,0 +1,264 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2170,11 +2232,13 @@ index 0000000..ccf50d1
 +    }
 +
 +    public static void rendererContext(final EntityRendererProvider.Context context) {
++        BedrockActorResources.clear();
 +        rendererContext = context;
 +        rendererEpoch++;
 +    }
 +
 +    public static void clear() {
++        BedrockActorResources.clear();
 +        APPEARANCES.values().forEach(BedrockPlayerSkins::release);
 +        APPEARANCES.clear();
 +        PLAYER_BY_TEXTURE.clear();

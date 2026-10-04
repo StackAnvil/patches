@@ -43,3 +43,7 @@ Retain pack language files with server effect catalogs, so local particle sound 
 ## Shared effect selection
 
 Direct server actors now select audio, captions, particle definitions, controllers, and images through the core resource APIs. Preserve empty source indexes and texture-only overrides. Resolve a definition's texture when that definition is used; an unused invalid reference does not prevent unrelated effects from loading. Targeted tests verify ordinary overlays, missing textures, and rejected escaping references. This does not complete native actor state transport through ViaProxy.
+
+## Costume resources through ViaProxy
+
+Player costume selection now reads the accepted actor resource snapshot on both routes. Preserve the source pack's server provenance, so transported built-in definitions do not become server overrides. The same animation, geometry, material, and controller loaders serve direct and proxy connections. This resource path does not provide missing actor state or account synchronization.

@@ -1,4 +1,4 @@
-From aa809255cfe05de7d3bca844074414f8a1201ff0 Mon Sep 17 00:00:00 2001
+From 02b7147fe6d05280ec8e524c7b1aaabc9ee7f33f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 19:48:51 +0200
 Subject: [PATCH] feat(effects): transport native resources and sound commands
@@ -89,6 +89,20 @@ Uniform air sections carry no cell array. Targeted tests retain every
 coordinate through all bit widths, full palettes, updates, negative
 coordinates, empty sections and resets. Live route and particle packet
 comparisons remain required.
+
+Export resolved native actor packs with versioned provenance and bounded
+resources. Retain geometry, material, render and animation graphs, images,
+and actor effect dependencies in the converted pack. Reconstruct core's
+ResourcePackStorage on the frontend without adding a second set of vanilla
+definitions or reordering the already resolved stack. Distinguish built-in
+packs from server overrides, including texture-only layers. The archive
+uses the target protocol and shared path, count, and decompression bounds.
+No frontend Store sign-in or direct protocol connection is needed to read
+these already accepted resources. Existing effect archives stay compatible.
+
+Tests verify complete dependency bytes, deterministic output, overlay
+order, provenance, defensive reconstruction, and malformed archive headers,
+roles, indexes, and paths. Native visible behavior still needs comparison.
 ---
  build.gradle                                  |   6 +
  .../api/model/NativeBlockIdentifiers.java     | 144 +++++++++++
@@ -97,6 +111,7 @@ comparisons remain required.
  .../viabedrock/api/model/SoundCaptions.java   |  94 ++++++++
  .../api/model/SoundListenerRange.java         |  24 ++
  .../api/model/SoundPlaybackMessage.java       |  76 ++++++
+ .../api/resourcepack/NativeActorLibrary.java  | 102 ++++++++
  .../resourcepack/NativeParticleLibrary.java   |  40 +++
  .../resourcepack/NativeResourceArchive.java   | 157 ++++++++++++
  .../api/resourcepack/NativeSoundLibrary.java  |  56 +++++
@@ -109,11 +124,13 @@ comparisons remain required.
  .../protocol/packet/MultiStatePackets.java    |   6 +
  .../protocol/packet/WorldEffectPackets.java   | 110 ++++-----
  .../rewriter/ResourcePackRewriter.java        |   2 +
- .../NativeEffectsResourceRewriter.java        |  39 +++
+ .../NativeEffectsResourceRewriter.java        |  41 ++++
  .../protocol/storage/ChunkTracker.java        |  83 +++++++
+ .../protocol/storage/ResourcePackStorage.java |  43 +++-
  .../api/model/NativeBlockViewTest.java        | 141 +++++++++++
  .../api/model/SoundCaptionsTest.java          |  80 ++++++
  .../api/model/SoundListenerRangeTest.java     |  27 +++
+ .../resourcepack/NativeActorLibraryTest.java  | 130 ++++++++++
  .../resourcepack/SoundTranslationsTest.java   |  46 ++++
  .../api/resourcepack/WaveSoundTest.java       | 182 ++++++++++++++
  .../protocol/model/PlaySoundTest.java         |  66 +++++
@@ -122,13 +139,14 @@ comparisons remain required.
  .../protocol/packet/PlaySoundPacketsTest.java |  88 +++++++
  .../protocol/packet/SoundUpdateTest.java      |  79 ++++++
  .../storage/NativeBlockSectionTest.java       |  54 +++++
- 32 files changed, 2354 insertions(+), 68 deletions(-)
+ 35 files changed, 2628 insertions(+), 71 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockIdentifiers.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockSection.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockView.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SoundCaptions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SoundListenerRange.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SoundPlaybackMessage.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibrary.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeParticleLibrary.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeResourceArchive.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java
@@ -140,6 +158,7 @@ comparisons remain required.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeBlockViewTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/SoundCaptionsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/SoundListenerRangeTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibraryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslationsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/WaveSoundTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/PlaySoundTest.java
@@ -762,6 +781,114 @@ index 000000000..e20d2267d
 +        @Override
 +        public int kind() {
 +            return 2;
++        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibrary.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibrary.java
+new file mode 100644
+index 000000000..4f0f72730
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibrary.java
+@@ -0,0 +1,102 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack;
++
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++
++import java.io.ByteArrayOutputStream;
++import java.io.DataInputStream;
++import java.io.DataOutputStream;
++import java.io.IOException;
++import java.io.InputStream;
++import java.util.ArrayList;
++import java.util.Collection;
++import java.util.List;
++import java.util.Map;
++import java.util.function.Predicate;
++
++/** Native actor resources in resolved pack order, including their server or built-in provenance. */
++public final class NativeActorLibrary {
++
++    public static final String PATH = "assets/viabedrock/actor_library.bin";
++    private static final int MAX_PACKS = 4096;
++
++    public static byte[] encode(final Collection<ResourcePack> bottomToTop, final Predicate<ResourcePack> server) throws IOException {
++        final List<ResourcePack> packs = List.copyOf(bottomToTop);
++        if (packs.size() > MAX_PACKS) {
++            throw new IOException("Too many native actor packs");
++        }
++        final byte[] archive = NativeResourceArchive.encode(packs.stream().map(ResourcePack::content).toList(),
++                NativeActorLibrary::resource, List.of("manifest.json", "pack_manifest.json", "sounds.json"),
++                List.of(".json", ".material", ".png", ".tga", ".jpg", ".ogg", ".fsb", ".wav", ".lang"));
++        final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
++        try (DataOutputStream fields = new DataOutputStream(bytes)) {
++            fields.writeInt(1);
++            fields.writeInt(ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            fields.writeInt(packs.size());
++            for (final ResourcePack pack : packs) {
++                fields.writeByte(server.test(pack) ? 1 : 0);
++            }
++            fields.write(archive);
++        }
++        return bytes.toByteArray();
++    }
++
++    public static List<Layer> decode(final InputStream input) throws IOException {
++        final DataInputStream fields = new DataInputStream(input);
++        if (fields.readInt() != 1 || fields.readInt() != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++            throw new IOException("Unsupported native actor library");
++        }
++        final int count = fields.readInt();
++        if (count < 0 || count > MAX_PACKS) {
++            throw new IOException("Invalid native actor pack count");
++        }
++        final List<Boolean> servers = new ArrayList<>(count);
++        for (int index = 0; index < count; index++) {
++            final int role = fields.readUnsignedByte();
++            if (role > 1) {
++                throw new IOException("Invalid native actor pack provenance");
++            }
++            servers.add(role == 1);
++        }
++        final List<Map<String, byte[]>> packs = NativeResourceArchive.decode(fields, NativeActorLibrary::resource);
++        if (packs.size() != count) {
++            throw new IOException("Mismatched native actor pack indexes");
++        }
++        final List<Layer> layers = new ArrayList<>(count);
++        for (int index = 0; index < count; index++) {
++            layers.add(new Layer(servers.get(index), packs.get(index)));
++        }
++        return List.copyOf(layers);
++    }
++
++    private static boolean resource(final String path) {
++        if (path.equals("manifest.json") || path.equals("pack_manifest.json") || path.equals("sounds.json")) {
++            return true;
++        }
++        if (path.endsWith(".png") || path.endsWith(".tga") || path.endsWith(".jpg")) {
++            return true;
++        }
++        if (path.startsWith("sounds/") && (path.endsWith(".ogg") || path.endsWith(".fsb") || path.endsWith(".wav"))) {
++            return true;
++        }
++        if (path.startsWith("texts/") && path.endsWith(".lang") || path.startsWith("materials/") && path.endsWith(".material")) {
++            return true;
++        }
++        return path.endsWith(".json") && List.of("entity/", "attachables/", "models/", "animations/", "animation_controllers/",
++                "render_controllers/", "particles/", "sounds/", "textures/", "items/").stream().anyMatch(path::startsWith);
++    }
++
++    private NativeActorLibrary() {
++    }
++
++    public record Layer(boolean server, Map<String, byte[]> resources) {
++        public Layer {
++            resources = Map.copyOf(resources);
 +        }
 +    }
 +
@@ -1750,10 +1877,10 @@ index 07a19fa95..73867a4e9 100644
      public static Content bedrockToJava(final ResourcePackStorage resourcePackStorage) throws InterruptedException {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java
 new file mode 100644
-index 000000000..e7b7b5b5f
+index 000000000..98b8847e3
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeEffectsResourceRewriter.java
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,41 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1762,6 +1889,7 @@ index 000000000..e7b7b5b5f
 +package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
 +
 +import net.raphimc.viabedrock.api.resourcepack.NativeSoundLibrary;
++import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
 +import net.raphimc.viabedrock.api.resourcepack.NativeParticleLibrary;
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 +import net.raphimc.viabedrock.api.resourcepack.content.Content;
@@ -1785,6 +1913,7 @@ index 000000000..e7b7b5b5f
 +                result.put(NativeSoundLibrary.PATH, NativeSoundLibrary.encode(packs));
 +                result.put(NativeSoundLibrary.TRANSLATIONS_PATH, NativeSoundLibrary.encodeTranslations(packs));
 +                result.put(NativeParticleLibrary.PATH, NativeParticleLibrary.encode(packs));
++                result.put(NativeActorLibrary.PATH, NativeActorLibrary.encode(storage.getPackStackBottomToTop(), storage::isServerPack));
 +            } catch (final IOException invalid) {
 +                throw new UncheckedIOException(invalid);
 +            }
@@ -1929,6 +2058,87 @@ index 0680a9fdd..0bfc8aab4 100644
          final long chunkKey = ChunkPosition.chunkKey(chunkX, chunkZ);
          this.chunkLight.put(chunkKey, light);
          this.lightVersions.merge(chunkKey, 1L, Long::sum);
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
+index d3dc43159..ea436f259 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ResourcePackStorage.java
+@@ -19,6 +19,9 @@ package net.raphimc.viabedrock.protocol.storage;
+ 
+ import com.viaversion.viaversion.api.connection.StorableObject;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import java.io.IOException;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePackStack;
+ import net.raphimc.viabedrock.api.resourcepack.definition.*;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+@@ -31,6 +34,8 @@ public class ResourcePackStorage implements StorableObject {
+     private final Set<ResourcePack> packStackBottomToTop = Collections.newSetFromMap(new LinkedHashMap<>(128, 0.75F, true));
+     private final Set<ResourcePack> packStackTopToBottom = Collections.newSetFromMap(new LinkedHashMap<>(128, 0.75F, false));
+ 
++    private final Set<ResourcePack> serverPacks = new HashSet<>();
++
+     private boolean loadedOnJavaClient;
+     private final Map<String, Object> converterData = new ConcurrentHashMap<>();
+ 
+@@ -48,15 +53,20 @@ public class ResourcePackStorage implements StorableObject {
+     private final RenderControllerDefinitions renderControllers;
+ 
+     public ResourcePackStorage(final List<ResourcePack> resourcePacksTopToBottom) {
+-        final List<ResourcePack> orderedPacks = ResourcePackStack.orderTopToBottom(resourcePacksTopToBottom);
+-        if (BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks() != null) { // null if ran from ResourcePackConverterTest
++        this(resourcePacksTopToBottom, (Set<ResourcePack>) null);
++    }
++
++    private ResourcePackStorage(final List<ResourcePack> resourcePacksTopToBottom, final Set<ResourcePack> sourceServers) {
++        final List<ResourcePack> orderedPacks = sourceServers == null ? ResourcePackStack.orderTopToBottom(resourcePacksTopToBottom) : resourcePacksTopToBottom;
++        this.serverPacks.addAll(sourceServers == null ? orderedPacks : sourceServers);
++        if (sourceServers == null && BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks() != null) { // null if ran from ResourcePackConverterTest
+             this.packStackBottomToTop.addAll(BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks());
+         }
+         for (int i = orderedPacks.size() - 1; i >= 0; i--) {
+             this.packStackBottomToTop.add(orderedPacks.get(i));
+         }
+         this.packStackTopToBottom.addAll(orderedPacks);
+-        if (BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks() != null) { // null if ran from ResourcePackConverterTest
++        if (sourceServers == null && BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks() != null) { // null if ran from ResourcePackConverterTest
+             for (int i = BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks().size() - 1; i >= 0; i--) {
+                 this.packStackTopToBottom.add(BedrockProtocol.MAPPINGS.getBedrockVanillaResourcePacks().get(i));
+             }
+@@ -76,6 +86,33 @@ public class ResourcePackStorage implements StorableObject {
+         this.renderControllers = new RenderControllerDefinitions(this);
+     }
+ 
++    /** Uses the converter's resolved order and provenance without adding local vanilla definitions again. */
++    public static ResourcePackStorage nativeActors(final List<NativeActorLibrary.Layer> layers) throws IOException {
++        final List<ResourcePack> topToBottom = new ArrayList<>();
++        final Set<ResourcePack> servers = new HashSet<>();
++        try {
++            for (int index = layers.size() - 1; index >= 0; index--) {
++                final NativeActorLibrary.Layer layer = layers.get(index);
++                final InMemoryContent content = new InMemoryContent();
++                layer.resources().forEach((path, bytes) -> content.put(path, bytes.clone()));
++                final ResourcePack pack = new ResourcePack(content);
++                topToBottom.add(pack);
++                if (layer.server()) {
++                    servers.add(pack);
++                }
++            }
++            final ResourcePackStorage storage = new ResourcePackStorage(topToBottom, servers);
++            storage.setLoadedOnJavaClient();
++            return storage;
++        } catch (final RuntimeException invalid) {
++            throw new IOException("Invalid native actor resource pack", invalid);
++        }
++    }
++
++    public boolean isServerPack(final ResourcePack pack) {
++        return this.serverPacks.contains(pack);
++    }
++
+     public Collection<ResourcePack> getPackStackBottomToTop() {
+         return this.packStackBottomToTop;
+     }
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockViewTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeBlockViewTest.java
 new file mode 100644
 index 000000000..209be0506
@@ -2192,6 +2402,142 @@ index 000000000..65b8a9ea4
 +        assertFalse(SoundListenerRange.passes(new Position3f(Math.nextUp(boundary), 2, -3), listener, 1));
 +        assertTrue(SoundListenerRange.passes(new Position3f(boundary, 2, -3), listener, 2));
 +        assertFalse(SoundListenerRange.passes(new Position3f(Float.NaN, 2, -3), listener, Float.POSITIVE_INFINITY));
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibraryTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibraryTest.java
+new file mode 100644
+index 000000000..0f2e78008
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibraryTest.java
+@@ -0,0 +1,130 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack;
++
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++
++import java.io.ByteArrayInputStream;
++import java.io.ByteArrayOutputStream;
++import java.io.DataOutputStream;
++import java.io.IOException;
++import java.nio.ByteBuffer;
++import java.util.Arrays;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipOutputStream;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeActorLibraryTest {
++
++    @Test
++    void preservesResolvedOrderProvenanceTexturesAndCompleteActorDependencies() throws Exception {
++        final InMemoryContent builtin = content(1);
++        final InMemoryContent definition = content(2);
++        final InMemoryContent overlay = content(3);
++        for (final String directory : List.of("entity", "attachables", "models/entity", "animations", "animation_controllers", "render_controllers", "particles", "sounds", "items")) {
++            definition.put(directory + "/actor.json", new byte[]{1, 2, 3});
++        }
++        definition.put("materials/actor.material", new byte[]{4});
++        definition.put("sounds/actor.fsb", new byte[]{5});
++        definition.put("texts/en_US.lang", new byte[]{6});
++        definition.put("textures/actor.png", new byte[]{7});
++        overlay.put("textures/actor.png", new byte[]{8});
++        overlay.put("textures/builtin.jpg", new byte[]{9});
++        definition.put("scripts/private.js", new byte[]{10});
++        final ResourcePack lower = new ResourcePack(builtin);
++        final ResourcePack actor = new ResourcePack(definition);
++        final ResourcePack upper = new ResourcePack(overlay);
++        final byte[] encoded = NativeActorLibrary.encode(List.of(lower, actor, upper), pack -> pack != lower);
++        final var layers = NativeActorLibrary.decode(new ByteArrayInputStream(encoded));
++        assertEquals(List.of(false, true, true), layers.stream().map(NativeActorLibrary.Layer::server).toList());
++        assertEquals(1, layers.get(0).resources().size());
++        assertEquals(14, layers.get(1).resources().size());
++        assertArrayEquals(new byte[]{7}, layers.get(1).resources().get("textures/actor.png"));
++        assertArrayEquals(new byte[]{8}, layers.get(2).resources().get("textures/actor.png"));
++        assertArrayEquals(new byte[]{9}, layers.get(2).resources().get("textures/builtin.jpg"));
++        assertFalse(layers.get(1).resources().containsKey("scripts/private.js"));
++        assertArrayEquals(encoded, NativeActorLibrary.encode(List.of(lower, actor, upper), pack -> pack != lower));
++        assertThrows(UnsupportedOperationException.class, () -> layers.get(1).resources().clear());
++    }
++
++    @Test
++    void reconstructsIndependentPackStateWithoutReorderingOrLosingServerOwnership() throws Exception {
++        final InMemoryContent builtin = content(1);
++        final InMemoryContent overlay = content(2);
++        builtin.putString("entity/player.json", "{\"format_version\":\"1.10.0\",\"minecraft:client_entity\":{\"description\":{\"identifier\":\"minecraft:player\",\"textures\":{\"default\":\"textures/base\"}}}}");
++        overlay.putString("entity/player.json", "{\"format_version\":\"1.10.0\",\"minecraft:client_entity\":{\"description\":{\"identifier\":\"minecraft:player\",\"textures\":{\"default\":\"textures/upper\"}}}}");
++        final ResourcePack lower = new ResourcePack(builtin);
++        final ResourcePack upper = new ResourcePack(overlay);
++        final var layers = NativeActorLibrary.decode(new ByteArrayInputStream(NativeActorLibrary.encode(List.of(lower, upper), pack -> pack == upper)));
++        final var storage = ResourcePackStorage.nativeActors(layers);
++        final var packs = List.copyOf(storage.getPackStackTopToBottom());
++        assertEquals(List.of(upper.key(), lower.key()), packs.stream().map(ResourcePack::key).toList());
++        assertTrue(storage.isServerPack(packs.get(0)));
++        assertFalse(storage.isServerPack(packs.get(packs.size() - 1)));
++        assertTrue(storage.isLoadedOnJavaClient());
++        assertEquals(2, storage.getPackStackBottomToTop().size());
++        assertEquals(upper.content().getString("entity/player.json"), packs.get(0).content().getString("entity/player.json"));
++        assertEquals("textures/upper", storage.getEntities().get("minecraft:player").entityData().getTextures().get("default"));
++        final byte first = packs.get(0).content().get("entity/player.json")[0];
++        layers.get(layers.size() - 1).resources().get("entity/player.json")[0] = 0;
++        assertEquals(first, packs.get(0).content().get("entity/player.json")[0]);
++        assertThrows(IOException.class, () -> ResourcePackStorage.nativeActors(List.of(new NativeActorLibrary.Layer(true, Map.of()))));
++    }
++
++    @Test
++    void rejectsMalformedHeadersRolesArchiveIndexesAndResourcePaths() throws Exception {
++        final ResourcePack pack = new ResourcePack(content(1));
++        final byte[] valid = NativeActorLibrary.encode(List.of(pack), ignored -> true);
++        for (final int offset : List.of(0, 4, 8, 12)) {
++            final byte[] invalid = valid.clone();
++            invalid[offset] = 127;
++            assertThrows(IOException.class, () -> NativeActorLibrary.decode(new ByteArrayInputStream(invalid)));
++        }
++        for (int size = 0; size < 13; size++) {
++            final byte[] truncated = Arrays.copyOf(valid, size);
++            assertThrows(IOException.class, () -> NativeActorLibrary.decode(new ByteArrayInputStream(truncated)));
++        }
++        for (final String path : List.of("1/entity/actor.json", "0/textures/../actor.png", "0/textures//actor.png", "0/scripts/private.js")) {
++            assertThrows(IOException.class, () -> decode(1, path));
++        }
++        assertThrows(IOException.class, () -> decode(0, "0/entity/actor.json"));
++        final InMemoryContent escaping = content(2);
++        escaping.put("textures/../actor.png", new byte[]{1});
++        assertThrows(IOException.class, () -> NativeActorLibrary.encode(List.of(new ResourcePack(escaping)), ignored -> true));
++    }
++
++    private static InMemoryContent content(final long id) {
++        final InMemoryContent content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"name\":\"Actor test\",\"uuid\":\"" + new UUID(0, id) + "\",\"version\":[1,0,0]}}");
++        return content;
++    }
++
++    private static void decode(final int innerCount, final String path) throws IOException {
++        final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
++        final DataOutputStream fields = new DataOutputStream(bytes);
++        fields.writeInt(1);
++        fields.writeInt(ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++        fields.writeInt(1);
++        fields.writeByte(1);
++        try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
++            zip.putNextEntry(new ZipEntry("header"));
++            zip.write(ByteBuffer.allocate(12).putInt(1).putInt(ProtocolConstants.BEDROCK_PROTOCOL_VERSION).putInt(innerCount).array());
++            zip.closeEntry();
++            zip.putNextEntry(new ZipEntry(path));
++            zip.write(1);
++            zip.closeEntry();
++        }
++        NativeActorLibrary.decode(new ByteArrayInputStream(bytes.toByteArray()));
 +    }
 +
 +}

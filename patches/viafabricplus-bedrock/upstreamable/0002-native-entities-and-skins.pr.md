@@ -128,3 +128,9 @@ The audit observes three local native avatar submissions directly and one throug
 The fixture includes classic and persona records larger than five MiB, with cape and animation images and complete metadata.
 These observations verify incoming delivery and local-avatar ownership within the fixture.
 They do not establish visible native parity, remote-player lifecycle behavior, or the remaining actor and appearance resource paths.
+
+## Accepted actor resource snapshots
+
+Native renderers now read the core actor archive from an accepted server resource pack. They reconstruct ordered core definitions with server provenance and cache the result for the current resource lifetime. Resource reload and disconnect clear the snapshot. No synthetic connection or frontend Store login is required.
+
+Player costumes and equipment can use this snapshot through ViaProxy. Custom entity rendering can read its resources, but its actor state still requires a direct connection. Missing proxy actor properties, events, emote state, and account synchronization remain separate gaps.

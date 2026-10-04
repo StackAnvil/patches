@@ -129,3 +129,15 @@ The codec, section packing, and client mirror live in core. This allows direct a
 Validation: the patch applies alone to clean upstream and passes 32 tests and both Checkstyle tasks. The full stack passes 940 Java tests with 110 optional asset skips. The bundle builds. Tests cover packing widths, every coordinate, palette expansion and compaction, negative coordinates, updates, empty sections, malformed data, unknown IDs, and resets.
 
 An isolated target-build server supplies 2,712 section snapshots on each connection route. The direct producer matches all 11,108,352 cells against its source tracker. Every decoded section hash matches the producer. Both clients resolve every cell from the transported dictionary without a mismatch. Direct updates and six ViaProxy updates also match. Incoming particle dispatch, visible filter behavior, and live dimension/unload/disconnect observations remain unverified.
+
+## Native actor resources on both connection routes
+
+The converted pack now includes a separate actor archive. It retains manifests, actor and attachable definitions, geometry, animation graphs, controllers, materials, images, samples, translations, and item bindings. Existing sound, caption, and particle archive formats remain compatible.
+
+Archive layers preserve resolved pack order and server or built-in provenance. The frontend reconstructs the same core definition loaders without adding local vanilla layers again. It reads only an accepted server resource pack. This path needs no frontend Store session or local Bedrock installation.
+
+The shared codec rejects escaping paths, invalid indexes, duplicate files, malformed provenance, and incompatible protocols. It limits files to 32 MiB, total decompressed content to 256 MiB, and layers to 4,096. These are transport bounds, not Bedrock format limits. Larger real packs require further testing.
+
+Three actor archive tests cover ordering, provenance, excluded files, malformed metadata, byte preservation, and defensive reconstruction. The complete build passes 969 Java tests with 113 optional fixture tests skipped. A standalone checkout, adapted for predecessor context without setup, passes 35 tests and both Checkstyle tasks. Automatic isolated application still requires that predecessor context; the north-star cache patch applies cleanly.
+
+This supplies resources for client rendering. It does not supply missing custom actor state, properties, events, emote requests, or account synchronization through ViaProxy.
