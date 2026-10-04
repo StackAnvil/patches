@@ -19,3 +19,49 @@ The pinned Bedrock 1.26.51.1 definitions distinguish `minecraft:iron_chestplate`
 Tests cover vanilla and custom selectors, retained gameplay data, accepted and rejected resources, explicit bindings, generic fallback, false conditions, and archive reconstruction. Native appearance comparisons remain scoped to this authored pack. Built-in definitions unavailable without licensed assets and additional item binding forms remain open requirements.
 
 Final direct and ViaProxy playback preserve the unchanged native scene payloads, load the pack, and select the player-specific iron attachable after the recorded chest update. Both screenshots show the green wings without duplicate vanilla chest armor. These checks verify supported visible item selection, not full scene parity. Missing replay terrain, head appearance, other wearers, equipment removal, and additional lifecycle behavior remain unverified.
+
+
+## Reuse compiled geometry across model variants
+
+Each conversion compiles a resolved geometry once for entities and once for attachables.
+Concurrent tasks share the compiled coordinates, faces, and groups.
+Each variant owns its texture bindings and model root.
+Attachables also retain separate display transforms.
+The conversion releases its geometry cache after the tasks finish.
+It does not retain proprietary models across connections.
+
+The comparison uses the same five captured CubeCraft packs and 42 licensed image layers as the earlier conversion profile.
+The target is Bedrock 1.26.51.1, build 51061372, protocol 2193.
+Java 25 uses four available processors and a 2 GiB heap on Linux.
+Each process completes eight fresh conversions, with the first two excluded from the medians.
+JFR measures CPU time and allocations inside each model task.
+
+| Measured work | Baseline | Shared geometry |
+| --- | --- | --- |
+| Entity model CPU per conversion | 856 ms | 664 ms |
+| Entity model allocations per conversion | 2201 MiB | 1136 MiB |
+| Complete rewrite elapsed time | 993 ms | 997 ms |
+| Rewrite plus ZIP elapsed time | 2603 ms | 2557 ms |
+
+Entity model CPU decreases by about 22 percent, and allocations decrease by about 48 percent.
+The complete rewrite shows no elapsed-time improvement in this fixture.
+Native archive encoding and ZIP output remain separate costs.
+These measurements establish lower CPU and allocation costs, without establishing faster joins or immunity to timeouts.
+
+All 15,823 output entries remain semantically equivalent.
+The comparison normalizes existing object-hash element names, JSON property order, and particle aliases that resolve to the same sprite.
+All other resource bytes match.
+
+Tests cover concurrent texture bindings, immutable shared templates, model coordinates and groups, scale metadata, repeated conversion, and unchanged source geometry.
+Existing missing-asset and attachable tests also pass.
+
+
+The complete stack build passes 1004 Java tests with no failures or errors and 115 optional skips.
+A fresh-cache ViaProxy replay preserves the complete recorded scene hash and all 216 skin updates.
+Both converted packs load, and the renderer reports no unresolved model or block errors.
+The shorter first replay reached spawn but ended before the full scene, so it does not count as complete verification.
+
+
+The fresh-cache direct add-on replay also preserves the complete scene hash and all 216 skin updates.
+Both converted packs load, and the same rendering checks pass without unresolved model or block errors.
+These checks establish conversion, loading, and rendering regressions on both routes, without establishing full visual parity or joining-time gains.

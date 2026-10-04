@@ -1342,3 +1342,32 @@ Native render-offset changes across poses, scaling, and dimensions remain unveri
 Java eye height differs from the captured standing value by about `0.00001` blocks.
 Held items, equipment, persona overlap, and native timing remain open.
 This section supersedes the earlier half-height assumption for the standing hand root.
+
+
+### Resource conversion: shared model geometry
+
+**Implemented:** Core reuses compiled geometry across entity texture variants and attachable aliases within each conversion.
+Each variant retains independent texture bindings, display transforms, and output paths.
+Concurrent tasks share read-only geometry, and the cache ends with the conversion.
+Both direct connections and ViaProxy use this path.
+
+**Measured:** The private CubeCraft fixture contains five packs and 42 licensed image layers for Bedrock 1.26.51.1, protocol 2193.
+Java 25 uses four available processors and a 2 GiB heap on Linux.
+Six measured conversions follow two warm-ups.
+Entity model CPU decreases from 856 to 664 ms, about 22 percent.
+Entity model allocations decrease from 2201 to 1136 MiB, about 48 percent.
+Complete rewrite time remains roughly one second, and rewrite plus ZIP time remains roughly 2.6 seconds.
+The result reduces CPU and allocation pressure without establishing faster joins.
+
+All 15,823 output entries remain semantically equivalent after normalization of existing generated names, property order, and equivalent particle aliases.
+Targeted tests cover concurrent variants, preserved geometry, scale metadata, and unchanged source models.
+See the [model export notes](../patches/viabedrock/upstreamable/0066-export-empty-item-models.pr.md) for the comparison.
+
+**Unverified:** macOS, Windows, simultaneous connections, end-to-end joining gains, licensed acquisition, and larger pack stacks still need measurements.
+
+
+**Runtime verification:** Fresh-cache direct and ViaProxy replays preserve the complete scene hash and all 216 skin updates.
+Both converted packs load, and rendering checks pass without unresolved model or block errors.
+The full stack build passes 1004 Java tests with no failures or errors and 115 optional skips.
+The shorter first ViaProxy run ended before the full scene and does not count as complete verification.
+These runs establish regressions on both routes, without establishing full visual parity or faster joins.
