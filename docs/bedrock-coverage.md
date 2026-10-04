@@ -267,6 +267,40 @@ The sample uses a mapped Java fallback without Store sign-in.
 Live custom samples, listener-range eligibility, captions, stream interruption policies, replacement races, finite-loop controls, and broader lifecycle comparisons remain required.
 The direct replay still fails its separate skin rendering gate; the audio checks use transport-only verification.
 
+### Native caption behavior
+
+The inspected 1.26.51.1 executable has SHA-256 `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+Private executable probes establish caption dispatch and storage behavior; production caption rendering remains missing.
+
+The dispatch probe executes 587 cases in native function `144f040c0`.
+It supplies settings, player pose, string copying, and the caption sink at explicit boundaries.
+The native function rejects disabled captions, nonpositive supplied volume, absent caption metadata, and empty sound names.
+The ambient filter suppresses caption keys beginning with `subtitles.ambient.` or `subtitles.weather.`.
+It does not suppress an entity key merely because that key ends in `ambient`.
+
+Directional cues use the supplied forward and up vectors and the player position.
+The native function normalizes the source direction and uses a forward-dot threshold of 0.5.
+An additional marker bypasses direction calculation and reaches caption storage unchanged.
+The caller's interpretation of that marker still needs tracing.
+Missing player context uses a zero position in this function.
+Coincident and vertical positions retain the native function's direction result; do not replace it with a guessed Java rule.
+
+The storage probe executes 96 cases in native function `141559870`.
+It supplies settings, translation, record construction, allocation, movement, and destruction at explicit boundaries.
+The native function removes expired entries before insertion.
+It compares localized caption text, then refreshes an existing entry's duration, direction, marker, and pending display state.
+Caption duration is stored in milliseconds and divided by 1,000 for the entry's lifetime in seconds.
+These checks cover insertion, expiry, and duplicate refresh with durations from zero through 10,000 milliseconds.
+
+Executable inspection also finds top-right and bottom-right HUD anchors, each with a 50-unit vertical offset toward the screen interior.
+The settings expose caption enablement, own-sound filtering, ambient filtering, position, and duration.
+[Mojang's caption description](https://www.minecraft.net/en-us/article/closed-captions-for-bedrock-edition) confirms directional cues and configurable display duration, placement, and sound filtering.
+The production implementation must transport caption translations and reproduce these controls on both connection routes.
+The marker's source, default settings, update clock, range eligibility, and visible layout still need native comparisons.
+These executable checks do not establish audible or visible parity.
+
+The sound-control change also passes the [complete main-branch CI build](https://github.com/StackAnvil/patches/actions/runs/37169088563).
+
 ## Skins, persona, and Dressing Room
 
 | ID | Requirement | Status | Remaining evidence or work |

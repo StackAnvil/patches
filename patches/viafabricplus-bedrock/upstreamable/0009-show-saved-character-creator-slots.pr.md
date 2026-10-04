@@ -1470,3 +1470,15 @@ The fixture uses the mapped Java sample without a Store account.
 
 The lab remains at zero volume. Audible parity, listener-range eligibility, captions, stream interruption policies, custom sample playback, handle replacement, finite-loop seeking, and broader pause/reset comparisons remain unverified or incomplete.
 These additions follow 0.3.2 and are not included in that release.
+
+
+### Caption research for the pinned client
+
+Private probes execute 587 caption dispatch cases and 96 caption storage cases in the 1.26.51.1 executable.
+Dispatch uses caption enablement, supplied volume, caption metadata, sound name, ambient/weather key prefixes, and native direction math.
+Storage removes expired entries and refreshes duplicate localized text with the latest duration, direction, and marker.
+The duration setting supplies milliseconds; stored lifetimes use seconds.
+The marker's originating caller remains unverified.
+
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-caption-behavior) records the supplied boundaries and remaining work.
+These findings guide caption transport and playback integration; they do not add a production caption HUD or establish visible parity.
