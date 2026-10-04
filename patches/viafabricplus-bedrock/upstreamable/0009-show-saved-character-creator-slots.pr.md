@@ -1628,8 +1628,8 @@ Portable tests cover camera-space positions, axis conversion, collapsed scale, a
 The complete stack build passes 996 tests, skips 114 optional cases, and has no failures or errors.
 The focused native root and hierarchy tests also pass with the private fixture enabled.
 
-This path uses the ordinary player scale.
-Script scale, global actor animations, server costume selection, and native held-item transforms remain incomplete.
+This path combines ordinary player scale with authored script scale, described below.
+Global actor animations, server costume selection, and native held-item transforms remain incomplete.
 The server costume patch retains its existing hand path until its selected first-person surfaces can resolve.
 Native visible motion, persona overlap, and timing still require comparison.
 Native assets, executable exports, and capture fixtures remain private.
@@ -1652,3 +1652,35 @@ Persona overlap, equipped items, script scaling, and visible motion remain unver
 An earlier attempt used an older server and correctly failed before gameplay.
 The first matching runs passed entry checks but showed no arm.
 Those screenshots exposed the pivot fault and demonstrate why submission checks alone cannot establish visible behavior.
+
+### Authored scale in first-person drawing
+
+The shared actor graph now parses `scripts.scale`, `scaleX`, `scaleY`, and `scaleZ`.
+The [Creator reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/entityreference/examples/cliententitydocumentation/cliententitydocumentationintroduction?view=minecraft-bedrock-stable) describes geometry scale as an actor script.
+The matching 1.26.51.1 player definition supplies the uniform value `0.9375`.
+
+The native root at `0x14558d230` requests uniform scale first.
+Its presence excludes all axis expressions, including when its result is zero.
+Without uniform scale, the root requests Z, Y, and X in that order, with missing axes set to one.
+The accessor at `0x141c40240` evaluates expressions in the existing actor context.
+Root scaling precedes the render-controller work in `0x141c362e0`.
+
+First-person drawing follows that order after graph sampling.
+It does not rerun initialization or animation scripts to obtain scale.
+Expressions retain their changes to actor variables, and independent perspectives retain separate scopes.
+The renderer applies signed and zero values before the ordinary model offset and model scale.
+Other actor drawing paths still require scale integration and native comparison.
+
+The expanded private executable fixture covers 354 matrices.
+Its additional cases exercise every combination of missing, zero, and negative axes, plus uniform precedence over conflicting axis values.
+The native call trace verifies both request order and skipped axis access.
+Three portable tests cover shared-variable side effects, defaults, signed and zero results, perspective isolation, and time rewinds.
+The complete build passes 999 tests with 114 optional skips and no failures or errors.
+The focused suite also passes with the licensed controller and native matrix fixtures enabled.
+
+Final direct and ViaProxy clients pass the actual Minecraft entry check with the licensed `0.9375` scale.
+A private adaptation resets a variable during pre-animation and sets it in the scale expression.
+Controller visibility requires that variable, so the visible arm checks scale-before-visibility ordering through the production renderer.
+Both routes retain the complete hierarchy, suppress duplicate Java hands, and restore their pose and appearance scopes.
+Both final screenshots show the scaled arm.
+These supplied resources do not verify account acquisition, persona overlap, or native pixel and motion parity.

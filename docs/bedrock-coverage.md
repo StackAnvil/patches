@@ -345,7 +345,7 @@ The sound-control change also passes the [complete main-branch CI build](https:/
 | S2 | Complete local persona assembly | Incomplete | Resolve unavailable free assets and remaining geometry, layering, and animation sources. |
 | S3 | Classic geometry and animation formats | Incomplete | Complete inherited legacy sources, aliases, metadata, and inheritance comparisons. |
 | S4 | Emotes and animation fidelity | Incomplete | Complete unavailable remote assets, events, effects, platform filters, timing, rotations, and scale comparisons. |
-| S5 | Native first-person and held-item drawing | Incomplete | Classic and persona graphs submit their sampled hierarchy in camera space. Verify visible motion and persona overlap, then complete server costume selection, script/global transforms, held items, charging, equipment, and input timing. |
+| S5 | Native first-person and held-item drawing | Incomplete | Classic and persona graphs submit their sampled hierarchy with authored actor scale in camera space. Verify visible motion and persona overlap, then complete server costume selection, global transforms, held items, charging, equipment, and input timing. |
 | S6 | Complete incoming skin records through ViaProxy | Implemented | Complete records and local-avatar ownership pass isolated direct and proxy playback. Broader remote-player, lifecycle, and native visual comparisons remain required. |
 | D1 | Palettes, color channels, and limb editing | Unverified | Compare remaining palette options, asynchronous saves, and fresh native limb edits. |
 | D2 | Classic packs and imported-skin synchronization | Incomplete | Complete imported images without downloadable pack references and remaining account/platform flows. |
@@ -1237,5 +1237,28 @@ Both actual Minecraft entry checks pass, and both final screenshots show the pos
 The initial matching runs passed submission checks while the arm remained offscreen because camel-case bone pivots did not resolve.
 The query snapshot now follows the native parser's ASCII name folding while query names remain literal.
 These results verify client drawing on both routes, not account acquisition or native pixel parity.
-Server costume selection, script scale, global actor transforms, native held-item placement, and visible native timing remain incomplete.
+Server costume selection, global actor transforms, native held-item placement, and visible native timing remain incomplete.
 See the [first-person implementation notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md#native-first-person-actor-drawing).
+
+## First-person authored actor scale
+
+**Implemented:** The shared graph reads uniform and axis scale scripts.
+First-person drawing evaluates them in the sampled actor scope before render-controller visibility.
+Uniform scale takes precedence, including zero.
+Separate axes evaluate in native Z, Y, X order and default to one when absent.
+Signed results and expression side effects remain intact.
+Body and hand perspectives retain independent scopes.
+
+**Automated evidence:** All 354 native root matrices agree with the renderer's root calculation.
+The added native cases verify absent axes, zero and negative values, uniform precedence, and request order.
+Three portable graph tests cover scope changes, repeated access, independent perspectives, defaults, and time rewinds.
+The full build passes 999 tests with 114 optional skips and no failures or errors.
+
+**Runtime evidence:** Final direct and ViaProxy clients submit the licensed `0.9375` scale through the actual Minecraft entry.
+A private controller fixture makes visibility depend on a variable set by the scale expression after pre-animation resets it.
+Both routes show the scaled arm and restore their pose and appearance scopes.
+This verifies draw-time ordering and classic drawing with supplied resources, not account acquisition or native pixel parity.
+
+**Incomplete:** Other actor drawing paths still require script-scale integration.
+Global actor transforms, selected costume hands, native held-item placement, persona overlap, and native visible timing remain open.
+This section supersedes the missing first-person script-scale integration described above.
