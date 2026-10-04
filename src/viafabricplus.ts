@@ -12,6 +12,7 @@ export interface ViaFabricPlusPin {
   build: number;
   commit: string;
   version: string;
+  mavenVersion: string;
   sha256: string;
   pomSha256: string;
   apiSha256: string;
@@ -77,9 +78,9 @@ export async function prepareViaFabricPlus(): Promise<{ output: string; pin: Via
 
   const [jar, pom, apiJar, apiPom] = await Promise.all([
     download(`${jenkins}/${pin.build}/artifact/${artifactPath}`, pin.sha256),
-    download(`${maven}/${pin.version}/viafabricplus-${pin.version}.pom`, pin.pomSha256),
-    download(`${apiMaven}/${pin.version}/viafabricplus-api-${pin.version}.jar`, pin.apiSha256),
-    download(`${apiMaven}/${pin.version}/viafabricplus-api-${pin.version}.pom`, pin.apiPomSha256),
+    download(`${maven}/${pin.version}/viafabricplus-${pin.mavenVersion}.pom`, pin.pomSha256),
+    download(`${apiMaven}/${pin.version}/viafabricplus-api-${pin.mavenVersion}.jar`, pin.apiSha256),
+    download(`${apiMaven}/${pin.version}/viafabricplus-api-${pin.mavenVersion}.pom`, pin.apiPomSha256),
   ]);
   const pomText = pom.toString("utf8");
   for (const [tag, value] of [["groupId", "com.viaversion"], ["artifactId", "viafabricplus"], ["version", pin.version]]) {

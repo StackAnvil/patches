@@ -2,6 +2,10 @@
 
 Decode native server sound playback and controls in core. Transport the complete commands and ordered sound resources through direct connections and ViaProxy. Preserve standard Java playback when the client does not advertise native sound support.
 
+## Upstream base
+
+[ViaBedrock PR #435](https://github.com/ViaVersionAddons/ViaBedrock/pull/435) merged the earlier coordinate-only fix. This patch retains the later native decoding correction, sound controls, resource transport, and captions. Its diff now starts from the merged upstream implementation. The native evidence in the next section establishes the fixed-point units.
+
 ## Evidence
 
 A controlled native capture uses Bedrock 1.26.51.1, build 51061372, and protocol 2193. Its beta script API plays `note.harp` at `(-4.125, 70.875, -2.25)` with volume 0.5, pitch 1, and loop count -1. The packet carries signed coordinate integers `(-33, 567, -18)`. Each integer represents eighths of a block.

@@ -11,3 +11,7 @@ The earlier integration was proposed in [viafabricplus-bedrock PR #7](https://gi
 ### Minecraft 26.3 list input
 
 The mapped Minecraft 26.3 client defines the left mouse button as 1. Its mouse handler passes that value to screen input. Shared action lists now compare double clicks with `InputConstants.MOUSE_BUTTON_LEFT`. The previous zero check prevented activation after a successful row click. This correction also applies to the downstream Realm and featured-server lists. The full fixture suite passes 403 tests across 81 suites; direct list double-click navigation has not been separately captured.
+
+### Upstream Gradle migration
+
+The refreshed upstream base uses convention plugins, version catalogs, and the `jarInJar` configuration. This patch uses those conventions for its existing dependencies. The MinecraftAuth version remains 5.0.3-SNAPSHOT. Account, party, and Realm behavior is unchanged.

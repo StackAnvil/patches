@@ -44,9 +44,9 @@ Before opening a PR, add a non-empty `.pr.md` file beside its `.patch` file. Use
 To open another upstreamable patch as a separate PR, select its filename with `--patch`. The selected patch must apply alone to the pinned upstream base. The tool uses a separate checkout and fork branch for each patch. It checks for one PR commit before it pushes. The default command still selects the first patch.
 
 ```bash
-bun run pr check viabedrock --patch 0006-encode-26-3-game-modes-correctly.patch
-bun run pr body viabedrock --patch 0006-encode-26-3-game-modes-correctly.patch
-bun run pr sync viabedrock --patch 0006-encode-26-3-game-modes-correctly.patch
+bun run pr check viabedrock --patch 0085-resolve-server-effects-relative-to-their-actor.patch
+bun run pr body viabedrock --patch 0085-resolve-server-effects-relative-to-their-actor.patch
+bun run pr sync viabedrock --patch 0085-resolve-server-effects-relative-to-their-actor.patch
 ```
 
 Use the same `--patch` option with `pr build` and `pr assign`. If a selected patch conflicts with upstream, use `bun run stack continue <project> --pr --patch <file>` after you resolve and stage the conflict. Use `stack abort` with the same options to discard that apply.
