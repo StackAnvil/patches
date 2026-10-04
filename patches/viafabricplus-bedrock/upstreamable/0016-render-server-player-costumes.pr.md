@@ -47,3 +47,11 @@ Direct server actors now select audio, captions, particle definitions, controlle
 ## Costume resources through ViaProxy
 
 Player costume selection now reads the accepted actor resource snapshot on both routes. Preserve the source pack's server provenance, so transported built-in definitions do not become server overrides. The same animation, geometry, material, and controller loaders serve direct and proxy connections. This resource path does not provide missing actor state or account synchronization.
+
+## Animated persona visibility under costumes
+
+Apply the server controller's body visibility to persona surface drawing as well as the base skin. The recorded target persona has a separate animated face image and model. The native client hides that original face when the server costume replaces the body. Java previously continued drawing it over the costume's head.
+
+Persona surfaces remain visible when the original body is selected. This change affects third-person drawing. First-person hands, additional visibility combinations, and resource or world transitions still require native comparisons.
+
+Final direct and ViaProxy screenshots show the costume's uniform head without the persona face overlay. Both retain the green wings without duplicate chest armor. The chunk request correction also restores the recorded ground on both routes. Camera angle, lighting, complete animation timing, original-body restoration, and additional persona visibility combinations remain unverified.

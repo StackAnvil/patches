@@ -1,4 +1,4 @@
-From 8f54b7b85ec5a06989b3cfaf7bc7ae237b105a88 Mon Sep 17 00:00:00 2001
+From 0137f93c1bb46a04e1e1742956487086d6981caf Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 23:59:03 +0200
 Subject: [PATCH] fix(chunks): ignore overlapping subchunk responses
@@ -11,15 +11,25 @@ receives one request.
 Ignore repeated subchunk replies once the section is complete, clear
 request state on unload, and discard delayed data for replaced chunks.
 This prevents a second merge from disconnecting the Java client.
+
+Treat protocol 2193's optional client request limit as a section count,
+not the inclusive highest section index used by the older terrain format.
+Official 1.26.51.1 client/server captures with limits 1, 2, 5, and 9 request
+exactly those counts. Asking for one extra section leaves native-capture
+playback waiting forever and withholds all Java terrain. Preserve known-air
+sections when replacing a column; its new header owns the request limit.
+Bound the count to the dimension and retain unlimited request mode.
+A targeted regression covers the captured counts, known air, and dimensions.
 ---
- .../protocol/packet/WorldPackets.java         | 14 +++---
+ .../protocol/packet/WorldPackets.java         | 23 ++++++----
  .../protocol/storage/ChunkTracker.java        | 44 +++++++++++++++++--
+ .../protocol/packet/WorldPacketsTest.java     | 13 ++++++
  .../protocol/storage/ChunkTrackerTest.java    | 43 ++++++++++++++++++
- 3 files changed, 93 insertions(+), 8 deletions(-)
+ 4 files changed, 111 insertions(+), 12 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
-index 1381fa520..1c809121f 100644
+index 1381fa520..943565702 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
 @@ -33,7 +33,6 @@ import com.viaversion.viaversion.util.Key;
@@ -30,8 +40,20 @@ index 1381fa520..1c809121f 100644
  import io.netty.buffer.ByteBuf;
  import io.netty.buffer.Unpooled;
  import net.raphimc.viabedrock.ViaBedrock;
-@@ -236,7 +235,8 @@ public final class WorldPackets {
-                 }
+@@ -225,18 +224,16 @@ public final class WorldPackets {
+             int requestSectionCount = 0;
+             if (requestSubChunks) {
+                 final int subChunkLimit = wrapper.read(BedrockTypes.VAR_INT); // client request limit
+-                requestSectionCount = subChunkLimit < 0 ? endY - startY : subChunkLimit + 1;
++                requestSectionCount = requestSectionCount(subChunkLimit, endY - startY);
+             }
+ 
+             final BedrockChunk previousChunk = chunkTracker.getChunk(chunkX, chunkZ);
+             if (previousChunk != null) {
+                 chunkTracker.unloadChunk(new ChunkPosition(chunkX, chunkZ));
+-                if (previousChunk.isRequestSubChunks()) {
+-                    requestSectionCount = endY - startY;
+-                }
              }
  
 -            final BedrockChunk chunk = chunkTracker.createChunk(chunkX, chunkZ, requestSubChunks ? requestSectionCount : sectionCount);
@@ -40,7 +62,7 @@ index 1381fa520..1c809121f 100644
              if (chunk == null) {
                  return;
              }
-@@ -245,8 +245,12 @@ public final class WorldPackets {
+@@ -245,8 +242,12 @@ public final class WorldPackets {
              final int fRequestSectionCount = requestSectionCount;
              final Consumer<byte[]> dataConsumer = combinedData -> {
                  try {
@@ -55,7 +77,7 @@ index 1381fa520..1c809121f 100644
                      }
                      final ByteBuf dataBuf = Unpooled.wrappedBuffer(combinedData);
  
-@@ -377,7 +381,7 @@ public final class WorldPackets {
+@@ -377,7 +378,7 @@ public final class WorldPackets {
                              }
                          } else {
                              ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received sub chunk with result " + result);
@@ -64,6 +86,17 @@ index 1381fa520..1c809121f 100644
                          }
                      } catch (final Throwable e) {
                          throw new RuntimeException("Error handling sub chunk data", e);
+@@ -690,6 +691,10 @@ public final class WorldPackets {
+         return (section.x() & 0x3FFFFFL) << 42 | (section.z() & 0x3FFFFFL) << 20 | (section.y() & 0xFFFFFL);
+     }
+ 
++    static int requestSectionCount(final int limit, final int dimensionSections) {
++        return limit < 0 ? dimensionSections : Math.min(limit, dimensionSections);
++    }
++
+     private WorldPackets() {
+     }
+ 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
 index 0bfc8aab4..12898b47f 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkTracker.java
@@ -144,6 +177,30 @@ index 0bfc8aab4..12898b47f 100644
      public IntObjectPair<BlockEntity> handleBlockChange(final BlockPosition blockPosition, final int layer, final int blockState) {
          final BedrockChunkSection section = this.getChunkSection(blockPosition);
          if (section == null) {
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/WorldPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/WorldPacketsTest.java
+index acb10056f..1926784fa 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/packet/WorldPacketsTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/WorldPacketsTest.java
+@@ -27,6 +27,19 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
+ 
+ class WorldPacketsTest {
+ 
++    @Test
++    void treatsNativeSubChunkLimitsAsCountsAndPreservesUnlimitedDimensions() {
++        // Target 1.26.51.1 columns at four heights advertise these counts and
++        // the native client requests exactly this many sections, not count + 1.
++        for (final int limit : new int[]{1, 2, 5, 9}) {
++            assertEquals(limit, WorldPackets.requestSectionCount(limit, 24));
++        }
++        assertEquals(0, WorldPackets.requestSectionCount(0, 24));
++        assertEquals(24, WorldPackets.requestSectionCount(-1, 24));
++        assertEquals(24, WorldPackets.requestSectionCount(64, 24));
++        assertEquals(16, WorldPackets.requestSectionCount(-1, 16));
++    }
++
+     @Test
+     void writesCompleteLegacyTimeWithTheDaylightRuleRate() throws Exception {
+         final WorldClockTracker tracker = new WorldClockTracker();
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
 new file mode 100644
 index 000000000..130e48f58
