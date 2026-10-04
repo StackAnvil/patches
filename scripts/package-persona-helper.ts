@@ -11,12 +11,8 @@ const extension = platform.startsWith("windows-") ? ".exe" : "";
 const nativeTarget = join(root, ".worktrees", "viafabricplus-bedrock", "native", "persona-assets", "target");
 const directory = join(process.env.STACKANVIL_NATIVE_ASSETS ?? join(root, "native-assets"), platform);
 await mkdir(directory, { recursive: true });
-for (const [name, release] of [
-  [`persona-assets${extension}`, join(nativeTarget, "release")],
-  [`persona-assets-headless${extension}`, join(nativeTarget, "headless", "release")],
-] as const) {
-  const target = join(directory, name);
-  await copyFile(join(release, `persona-assets${extension}`), target);
-  const checksum = createHash("sha256").update(await readFile(target)).digest("hex");
-  await writeFile(`${target}.sha256`, `${checksum}\n`);
-}
+const name = `persona-assets${extension}`;
+const target = join(directory, name);
+await copyFile(join(nativeTarget, "release", name), target);
+const checksum = createHash("sha256").update(await readFile(target)).digest("hex");
+await writeFile(`${target}.sha256`, `${checksum}\n`);

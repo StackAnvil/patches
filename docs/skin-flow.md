@@ -232,9 +232,11 @@ Sources: [Persona render controllers](https://github.com/Mojang/bedrock-samples/
 
 ## Built-in persona assets
 
-The add-on bundles an Xodus-based package helper. Available caches and Store credentials load first. Missing credentials show an in-game prompt with **Sign in** and **Continue without it**. The Store setting defaults to **Ask** and remembers the decision for this game session. The helper checks the Xbox user ID before requesting the package license. Unavailable optional images do not reject server resource-pack loading.
+The add-on bundles an Xodus-based package helper. Available caches and Store credentials load first, followed by licensing through the selected Bedrock account. If these fail, an in-game prompt offers **Sign in** and **Continue without it**. The Store setting defaults to **Ask** and remembers the decision for this game session. The helper checks the Xbox user ID before requesting the package license. Unavailable optional images do not reject server resource-pack loading.
 
-Flatpak launches the bundled helper through `flatpak-spawn --host`. The launcher must permit access to `org.freedesktop.Flatpak`, and the host must provide WebKitGTK. The helper keeps the client display and exits with its launcher. A private Prism comparison exposed missing WebKitGTK inside the sandbox. Denied host access now produces a startup error instead of a broken pipe. This path uses the bundled helper and its own Store session. It does not read an installed Bedrock game.
+After consent, the add-on opens the system browser with a Microsoft device code. The in-game screen shows the code and offers **Open browser**, **Copy link**, and **Cancel**. Authentication uses the selected Bedrock application identity and waits up to 15 minutes. Cancellation stops its polling worker and preserves pack preparation. The fresh account session replaces the previous session only after the helper verifies the selected Xbox identity and obtains its license.
+
+One bundled helper per platform performs licensing and extraction inside the launcher environment, including Flatpak. This path requires neither host execution permission nor WebKitGTK. It does not read an installed Bedrock game. Existing licensed Store sessions remain usable.
 
 The current pin selects Bedrock 1.26.51.1, package version 1.26.5101.0, for ViaBedrock protocol 2193. The package URL identifies the matching official Xbox CDN build. Its pinned header checksum anchors the package hash tree. The helper verifies metadata and encrypted file pages before decryption because this CDN serves the package over HTTP.
 
@@ -264,7 +266,7 @@ Sound files resolve within each pack before falling back to lower packs. This le
 
 Particle decoding supports MCB formats 1.26.10 and 1.26.30 and text JSON. Java declarations describe their 70 reachable binary layouts. The reader preserves optional fields, tagged values, component identities, and source order. It rejects unsupported versions, malformed data, and excessive complexity. Private comparisons match 115 base definitions and 108 overlay definitions against the [reference decoder](https://github.com/LPaicen/brarchive-extractor/blob/503a8ce7ad94030241a3590c926ac36f72169c71/src/mcb-decoder.ts). Production decoding needs neither exported schemas nor an external decoder. The package helper now acquires the overlays. Particle playback has partial component coverage.
 
-Local add-on builds require Rust 1.98.1, Protobuf, and the platform's WebView build libraries. Linux sign-in requires WebKitGTK 4.1. Fresh device enrollment no longer invokes `pkexec` for unavailable hardware. Release and full-stack CI assemble helper resources for Linux x64, Windows x64, and both macOS architectures. Native installations serve only as private research fixtures.
+Local add-on builds require Rust 1.98.1 and Protobuf. Linux builds also require OpenSSL development libraries. Browser sign-in removes the platform WebView dependency. Fresh device enrollment no longer invokes `pkexec` for unavailable hardware. Release and full-stack CI assemble helper resources for Linux x64, Windows x64, and both macOS architectures. Native installations serve only as private research fixtures.
 
 Sources: [Xodus package extraction](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/commands/streaming.rs), [Xodus licensing](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/license.rs), and [BR archive format](https://github.com/bedrock-crustaceans/brarchive/blob/main/FORMAT.md).
 
@@ -525,7 +527,7 @@ A fresh in-game test with default Prism permissions loads the account persona an
 CI-built Linux and Windows helpers produce identical paths and bytes for all 6,146 files under Flatpak and Wine 11.
 The [0.3.2 release](https://github.com/StackAnvil/patches/releases/tag/stack-v0.3.2) passes all four platform builds and tests and includes eight helpers with verified checksums.
 Ask remains the default for interactive fallback.
-Windows 11, macOS, official-launcher runtime behavior, and a default-browser fallback still need verification.
+The default-browser fallback is implemented after 0.3.2. A private Linux game test verifies the screen, cancellation, worker termination, and preserved pack-thread state. Microsoft issues a fresh device code and reaches its Minecraft sign-in page. Completed browser authentication, Windows 11, macOS, and official-launcher runtime behavior still need verification.
 
 ### Verification still needed
 

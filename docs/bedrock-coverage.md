@@ -309,7 +309,21 @@ The [0.3.2 release workflow](https://github.com/StackAnvil/patches/actions/runs/
 Its published add-on contains eight helpers with matching embedded checksums.
 CI-built Linux and Windows helpers each extract 6,146 files, running inside Prism Flatpak and under Wine 11 respectively.
 All extracted paths and bytes match. The Wine test verifies the Windows helper, not Windows 11 interactive authentication.
-A default-browser fallback and completed Windows 11 and macOS authentication remain unverified.
+### Browser fallback after 0.3.2
+
+The add-on now uses MinecraftAuth's device-code flow under the selected Bedrock application identity.
+After in-game consent, it opens the system browser and displays the code, reopen, copy-link, and cancellation actions.
+Authentication waits up to 15 minutes and retains the new account session only after successful licensing and Xbox identity verification.
+Cancelling also suppresses further automatic prompts for that account during the game session.
+The native WebView implementation and its platform UI dependencies are removed.
+Builds now package one helper per platform and run it inside the launcher environment.
+Existing licensed Store sessions remain usable.
+
+A private Linux client renders the production screen with a synthetic code.
+Clicking Cancel restores the previous screen, stops its worker, and leaves pack preparation uninterrupted.
+Microsoft also issues a real device code and reaches the Minecraft sign-in page through the browser.
+These checks do not verify completed fresh authentication, passkeys, native Windows 11, macOS, or the official launcher.
+The replayed stack passes 896 Java tests with 110 optional skips, six native tests with two optional skips, and 92 tooling tests.
 
 A lighting queue regression reproduces a dropped refresh when a server replaces a column during an older lighting job.
 The core now retains that refresh while dispatching unrelated ready columns.

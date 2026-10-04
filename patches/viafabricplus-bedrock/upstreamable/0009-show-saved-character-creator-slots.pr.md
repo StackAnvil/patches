@@ -10,9 +10,9 @@ The bundled Xodus-based helper signs into Microsoft Store with the selected Xbox
 
 Read resident and ordinary multi-run NTFS streams or the package segment index. Unpack BR archives with shared offsets and empty stubs, then atomically publish a versioned cache with file checksums. Decode native PNG face strips and BGRA TGA tint masks and feed equipped built-in pieces into the asset loader. Wave, Clap, Over There, and Follow Me use their extracted animation sources for preview and world playback.
 
-Local Linux tests acquired the official license and all 57 stable vanilla layers through the bundled helper. Fresh interactive Store sign-in and Windows and macOS runtime flows still need verification. CI builds interactive and headless helpers for the four supported platforms. The runtime requires no installed game, copied keys, or user-supplied extractor.
+Local Linux tests acquired the official license and all 57 stable vanilla layers through the bundled helper. Fresh interactive Store sign-in and Windows and macOS runtime flows still need verification. CI builds one helper for each of the four supported platforms. The runtime requires no installed game, copied keys, or user-supplied extractor.
 
-Flatpak uses a separate helper without WebKitGTK. It retains Store token expiry checks, selected Xbox identity checks, and fresh device-bound licensing. Missing or expired Store credentials report that interactive sign-in is required. The normal host helper retains its interactive Store sign-in path. The add-on does not request host execution permissions.
+The helper runs inside the launcher environment, including Flatpak, without a WebView or host execution permission. It retains Store token expiry checks, selected Xbox identity checks, and fresh device-bound licensing. Missing credentials first use the selected Bedrock account for silent licensing. After in-game consent, device-code authentication opens the system browser under the same application identity.
 
 Linux Flatpak tests acquired 6,117 official files with valid Store credentials, then indexed 21,770 resources across 57 packs. Missing and expired credentials produced no assets. Java process tests cover early loader exits, private diagnostics, sign-in requirements, and successful response handling. Loader errors no longer appear as a closed stdin stream.
 
@@ -1416,3 +1416,27 @@ The published add-on checksum and all eight embedded helper checksums are verifi
 The embedded interactive helper retains its host runtime requirement.
 Ask still controls interactive fallback when silent token acquisition is unavailable.
 Default-browser fallback, fresh interactive authentication, Windows 11, macOS, and official-launcher runtime checks remain required.
+
+
+### Browser authentication after 0.3.2
+
+Replace the native WebView login with MinecraftAuth's device-code flow under the selected Bedrock application identity.
+The default **Ask** setting still tries existing credentials and silent MSA licensing before requesting consent.
+The browser screen shows a code with reopen, copy-link, and cancel actions.
+It waits up to 15 minutes, keeping authentication on a separate cancellable worker.
+Cancellation leaves the pack worker uninterrupted and suppresses later automatic prompts for that account during this game session.
+Only successful licensing and selected-XUID verification permit replacing the current MSA session.
+
+Remove native UI dependencies and the duplicate helper variant.
+One helper per platform now performs licensed extraction inside the launcher environment, including default Prism Flatpak permissions.
+Existing licensed Store sessions remain usable.
+This change follows the selected account's existing application identity, rather than requesting a refresh under Xodus's unrelated application.
+Microsoft issues a real device code through the LIVE endpoint, and the browser reaches the Minecraft sign-in page.
+
+A private Linux client renders the production screen with a synthetic code and uses its Cancel button.
+The previous screen returns, its worker stops, and the caller remains uninterrupted.
+Automated tests cover cancellation, successful completion followed by screen closure, and cancellation suppressing subsequent automatic prompts.
+The replayed stack passes 896 Java tests with 110 optional skips.
+Six native tests pass with two optional skips, and all 92 tooling tests pass.
+Fresh browser authentication, passkeys, Windows 11, macOS, and official-launcher runtime behavior remain unverified.
+These changes follow the published 0.3.2 release and are not included in that tag.
