@@ -1604,3 +1604,51 @@ Charging and spell-color particle callbacks use actor lifetime tokens, so replac
 Four client tests cover flags, typed colors, local identity, and cleanup.
 The optional native fixtures pass when enabled, including 1,504 spell-color cases and the captured charging inputs.
 This change does not complete all particle queries, interpolation, actor events, or effect timing.
+
+
+### Native first-person actor drawing
+
+The matching 1.26.51.1 executable draws the actor before its separate item pass.
+`renderFirstPerson` at `0x1447ca170` passes zero position and clears actor rotations.
+The actor root block at `0x14558da04` subtracts the render height offset, converts axes, and applies model scale.
+Its ordinary offset is `24 * modelScale + 1/128` blocks before bone drawing.
+Player height updates, including `0x1433433f0`, set the render offset to half the collision height.
+
+The add-on now retains the sampled first-person pose and submits the complete hierarchy before Java item transforms.
+It keeps separate models for this view and applies the same pose to persona surfaces.
+Authored visibility hides a bone's surfaces while preserving independently visible descendants and their parent transforms.
+The existing camera and projection remain scoped to the same appearance.
+Minecraft's individual hand submission is suppressed while this native actor is submitted.
+Unknown visibility or unavailable graphs retain the existing hand path.
+Render materials are cached per surface and lighting family.
+
+The private executable fixture covers 324 root matrices with signed script scales, zero model scale, arbitrary input matrices, and skipped offsets.
+The optional `STACKANVIL_ACTOR_ROOT` test checks those results.
+Portable tests cover camera-space positions, axis conversion, collapsed scale, and hidden parent surfaces with animated children.
+The complete stack build passes 996 tests, skips 114 optional cases, and has no failures or errors.
+The focused native root and hierarchy tests also pass with the private fixture enabled.
+
+This path uses the ordinary player scale.
+Script scale, global actor animations, server costume selection, and native held-item transforms remain incomplete.
+The server costume patch retains its existing hand path until its selected first-person surfaces can resolve.
+Native visible motion, persona overlap, and timing still require comparison.
+Native assets, executable exports, and capture fixtures remain private.
+
+The first live screenshot exposed a pivot-name mismatch.
+The native model parser folds bone and parent names to ASCII lowercase; the query hashes retain their literal spelling.
+A prior executable probe covers all byte values, SIMD lengths, and mixed-case UTF-8 names across 443 inputs.
+The query snapshot now folds stored bone names by that rule.
+Queries remain literal, and non-ASCII letters retain their original bytes.
+The regression uses camel-case geometry with lowercase native arm/item queries and checks the resulting short-arm offset.
+This prevents a missing arm pivot from adding 22 pixels of incorrect vertical displacement.
+
+The final direct and ViaProxy tests connect to an isolated server with the matching game build.
+A private fixture supplies the licensed classic-player graph to each client.
+The actual Minecraft entry submits one complete actor, suppresses duplicate Java arms, and restores its pose and appearance scopes.
+Both final screenshots show the posed arm after the pivot correction.
+These tests verify drawing through both routes, not account downloads or native pixel parity.
+Persona overlap, equipped items, script scaling, and visible motion remain unverified.
+
+An earlier attempt used an older server and correctly failed before gameplay.
+The first matching runs passed entry checks but showed no arm.
+Those screenshots exposed the pivot fault and demonstrate why submission checks alone cannot establish visible behavior.

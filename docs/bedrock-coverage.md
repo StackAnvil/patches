@@ -195,7 +195,7 @@ These results do not complete U2.
 | G1 | Input locks | Incomplete | Core retains all eleven target permission categories and filters auth input. Raw movement and jump/sneak input survive movement locks. The add-on applies movement, directional, jump, sneak, camera, and passenger dismount restrictions through direct connections and ViaProxy. Manual mounting, broader native control comparisons, and vehicle tests remain incomplete. |
 | G2 | Movement effects and prediction corrections | Incomplete | Implement missing packets and compare translated movement timing with the native client. |
 | G3 | Voxel shapes | Incomplete | Core retains the registry and compiles custom face rules, transformed slices, and culling layers into accepted server packs. Direct and ViaProxy add-on terrain paths apply the conditions. Broader native comparisons, vanilla partial-block slices, registry replacement, and alternative terrain renderers remain incomplete. These grids do not define collision or selection. |
-| G4 | Animation commands, entity overrides, mob properties, and equipment updates | Incomplete | Core retains lifetime-bound command state, and the add-on plays runtime controllers for supported actor and player graphs. Player command delivery and sampling pass direct and ViaProxy replays. Complete ordinary mob drawing, first-person bone drawing, expression versions, emote composition, other entity overrides, and native visible comparisons. |
+| G4 | Animation commands, entity overrides, mob properties, and equipment updates | Incomplete | Core retains lifetime-bound command state, and the add-on plays runtime controllers for supported actor and player graphs. Player command delivery and sampling pass direct and ViaProxy replays. Complete ordinary mob drawing, first-person costume and item selection, expression versions, emote composition, other entity overrides, and native visible comparisons. |
 | G5 | Movement attributes and attack/use prediction | Incomplete | Apply ignored movement attributes and complete native input and cooldown behavior. |
 | G6 | Interaction and entity metadata | Incomplete | Audit variant mappings, interactions, flags, properties, and unsupported metadata. Core now derives local armor and toughness from vanilla and custom wearable definitions. Both routes verify updates, dimension changes, and retained or cleared equipment after respawns. Remote equipment, custom equip interactions, and rejection recovery still need comparisons. Core now preserves effect icons independently of particles. |
 
@@ -345,7 +345,7 @@ The sound-control change also passes the [complete main-branch CI build](https:/
 | S2 | Complete local persona assembly | Incomplete | Resolve unavailable free assets and remaining geometry, layering, and animation sources. |
 | S3 | Classic geometry and animation formats | Incomplete | Complete inherited legacy sources, aliases, metadata, and inheritance comparisons. |
 | S4 | Emotes and animation fidelity | Incomplete | Complete unavailable remote assets, events, effects, platform filters, timing, rotations, and scale comparisons. |
-| S5 | Native first-person and held-item drawing | Incomplete | Submit sampled native geometry and complete charging, equip, swing, equipment, and input timing. |
+| S5 | Native first-person and held-item drawing | Incomplete | Classic and persona graphs submit their sampled hierarchy in camera space. Verify visible motion and persona overlap, then complete server costume selection, script/global transforms, held items, charging, equipment, and input timing. |
 | S6 | Complete incoming skin records through ViaProxy | Implemented | Complete records and local-avatar ownership pass isolated direct and proxy playback. Broader remote-player, lifecycle, and native visual comparisons remain required. |
 | D1 | Palettes, color channels, and limb editing | Unverified | Compare remaining palette options, asynchronous saves, and fresh native limb edits. |
 | D2 | Classic packs and imported-skin synchronization | Incomplete | Complete imported images without downloadable pack references and remaining account/platform flows. |
@@ -1212,10 +1212,30 @@ The repeated proxy run verifies two local transfers whose Bedrock UUID differs f
 The failed report alone does not establish a packet-delivery defect.
 
 **Incomplete and unverified:** Ordinary mob drawing and other stop-expression versions remain open.
-First-person graph sampling currently changes visibility and camera state but does not apply the sampled bone pose to hand drawing.
+First-person graph sampling now applies the pose to classic and persona hand-view hierarchies.
+Server costume selection, global transforms, held-item placement, and native visible comparisons remain incomplete.
 Active emote composition, complete effect timing, and dynamic visible comparisons still require work.
 The current native command fixture covers player bodies and does not establish custom-actor command drawing through either route.
 These results supersede the earlier statement that the client does not advertise the animation channel.
 See the [core notes](../patches/viabedrock/upstreamable/0086-transport-native-actor-animation-commands.pr.md),
 [graph notes](../patches/viafabricplus-bedrock/upstreamable/0014-animate-numeric-looping-bedrock-bones.pr.md),
 and [player notes](../patches/viafabricplus-bedrock/upstreamable/0016-render-server-player-costumes.pr.md).
+
+
+## First-person actor drawing boundary
+
+The add-on submits supported classic and persona actor hierarchies before Java item transforms.
+Separate models retain the sampled pose, parent bones, and authored surface visibility.
+The root uses the target executable's camera-space axis basis, collision-height offset, and normal model scale.
+The root matrix agrees with 324 private executable cases.
+The portable hierarchy test preserves a visible arm beneath a hidden, animated parent.
+The full build passes 996 tests with no failures or errors and skips 114 optional cases.
+
+This establishes the matrix and hierarchy boundaries.
+Final direct and ViaProxy tests use a matching isolated server and a privately supplied licensed classic-player graph.
+Both actual Minecraft entry checks pass, and both final screenshots show the posed arm after the pivot correction.
+The initial matching runs passed submission checks while the arm remained offscreen because camel-case bone pivots did not resolve.
+The query snapshot now follows the native parser's ASCII name folding while query names remain literal.
+These results verify client drawing on both routes, not account acquisition or native pixel parity.
+Server costume selection, script scale, global actor transforms, native held-item placement, and visible native timing remain incomplete.
+See the [first-person implementation notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md#native-first-person-actor-drawing).

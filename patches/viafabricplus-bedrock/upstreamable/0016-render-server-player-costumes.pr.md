@@ -77,6 +77,10 @@ Camera framing, lighting, full animation timing, and broader lifecycle behavior 
 
 ## Command graphs for classic players
 
+Server costumes retain the existing first-person hand path.
+Their body resource selection does not yet resolve the selected native hand surfaces.
+The shared first-person actor renderer therefore admits classic and persona appearances only until costume selection supports that view.
+
 A classic player without a server costume can load the accepted built-in player graph when an animation command arrives.
 The renderer reevaluates graph demand after an earlier lookup without commands.
 The resource cache retains server provenance separately from graph availability.
