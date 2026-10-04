@@ -1584,3 +1584,11 @@ Use MochaFloats 6.0.2 with the same parser, lexer, and interpreter modules as Vi
 Numeric regressions cover rounding before comparisons, persistent assignments, and query inputs. Broader native animation and particle comparisons remain required.
 
 Validation: the add-on suite passes 446 tests with 108 optional tests skipped, including 13,578 saved native easing cases. The add-on bundles the fork's lexer, parser, and runtime modules. Its nested ViaBedrock JAR retains the MIT notice.
+
+### Core math integration
+
+Animation and view bobbing now use core's native easing, angle functions, and regenerated sine lookup. The duplicate client math classes are removed. Finite scalar results above 32,768 remain intact. Non-finite checks and parser and execution limits remain.
+
+Bedrock 1.26.51.1 constant and runtime paths match across 9,367 angle cases. The probes cover directed endpoints, half-turn ties, extrapolation, large finite inputs, and overflow intermediates. Their prepared numeric contexts and host C remainder import do not establish visible animation parity.
+
+Validation: the full build passes 958 Java tests, including both native math fixtures. The bundle builds. Direct and ViaProxy particle graphs exercise all three shared functions and produce matching dimensions. Their downloaded archives retain the authored expressions. Visible parity and the existing actor and appearance gaps remain open.

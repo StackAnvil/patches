@@ -1,4 +1,4 @@
-From dc3d7f47401e6d6d7683b25be2c8daf6271332a9 Mon Sep 17 00:00:00 2001
+From 84cc8e879529bd319c68a68f5b1976a9067512ab Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:22:35 +0200
 Subject: [PATCH] feat(entities): evaluate named actor properties and
@@ -75,23 +75,45 @@ Retain named unused parameters in Checkstyle because independently
 replayed upstream patches still compile on Java 17. Keep Java 25 syntax
 and semantic checks active; the toolchain upgrade does not require a
 mechanical rename across those unrelated patches.
+
+Share native Molang easing and trigonometry in core with client animation.
+Preserve directed rotation interpolation and the target's [-180,180)
+angle reduction, including the float addition before the remainder.
+The previous library sorted endpoints and repeatedly subtracted turns,
+which reverses animations and can stall on large finite float values.
+
+Target Bedrock 1.26.51.1/protocol 2193 constant dispatcher 140ae6140 and
+rotation helper 140aeb870 match runtime operations 140b2c2b0 and
+140b2d270 across 9,367 angle and interpolation cases. The private emulator
+supplies numeric nodes and stacks, mocks eligibility and cleanup, and
+supplies the fmodf import with host C float remainder. Native arithmetic
+and runtime stack operations execute unchanged. This establishes these
+math operations, not the complete parser or visible animation.
+The official Molang reference describes directed shortest interpolation:
+https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/mathfunctions/math_lerprotate
 ---
  build.gradle                                  |  11 +-
  .../main/groovy/viabedrock.checkstyle.gradle  |   8 +-
  gradle.properties                             |   2 +-
- .../api/model/entity/CustomEntity.java        |  70 ++++--
+ .../api/model/entity/CustomEntity.java        |  70 ++++-
  .../viabedrock/api/model/entity/Entity.java   |  21 ++
- .../viabedrock/api/util/MoLangEngine.java     | 205 +++++++++++++++++-
+ .../api/util/BedrockTrigonometry.java         |  33 +++
+ .../viabedrock/api/util/MoLangEngine.java     | 209 ++++++++++++++-
+ .../viabedrock/api/util/MoLangMath.java       | 248 ++++++++++++++++++
  .../META-INF/licenses/mochafloats.txt         |  24 ++
- .../CustomEntityMaterialSelectionTest.java    |  65 ++++++
+ .../CustomEntityMaterialSelectionTest.java    |  65 +++++
  .../CustomEntityModelSelectionTest.java       |   2 +-
- .../api/model/entity/EntityScaleTest.java     | 157 ++++++++++++++
- .../viabedrock/api/util/MoLangEngineTest.java |  94 ++++++++
- 11 files changed, 631 insertions(+), 28 deletions(-)
+ .../api/model/entity/EntityScaleTest.java     | 157 +++++++++++
+ .../viabedrock/api/util/MoLangEngineTest.java |  94 +++++++
+ .../viabedrock/api/util/MoLangMathTest.java   | 115 ++++++++
+ 14 files changed, 1031 insertions(+), 28 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/util/BedrockTrigonometry.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/util/MoLangMath.java
  create mode 100644 src/main/resources/META-INF/licenses/mochafloats.txt
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityMaterialSelectionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/EntityScaleTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/util/MoLangMathTest.java
 
 diff --git a/build.gradle b/build.gradle
 index 6d6dce4a9..467722b1c 100644
@@ -366,11 +388,50 @@ index 0cee5d86a..0c4213f3d 100644
      public void tick() {
          this.age++;
      }
+diff --git a/src/main/java/net/raphimc/viabedrock/api/util/BedrockTrigonometry.java b/src/main/java/net/raphimc/viabedrock/api/util/BedrockTrigonometry.java
+new file mode 100644
+index 000000000..db96764c2
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/util/BedrockTrigonometry.java
+@@ -0,0 +1,33 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.util;
++
++/** The native float lookup shared by actor expressions and view bobbing. */
++public final class BedrockTrigonometry {
++
++    private static final float[] SINE = sineTable();
++
++    private BedrockTrigonometry() {
++    }
++
++    public static float sine(final float radians) {
++        return SINE[(int) (radians * 10430.378F) & 65535];
++    }
++
++    public static float cosine(final float radians) {
++        return SINE[(int) (radians * 10430.378F + 16384F) & 65535];
++    }
++
++    private static float[] sineTable() {
++        final float[] values = new float[65536];
++        final float step = (2F * (float) Math.PI) / values.length;
++        for (int index = 0; index < values.length; index++) {
++            values[index] = (float) Math.sin(index * step);
++        }
++        return values;
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java b/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
-index 8f4c4f894..b11b671f3 100644
+index 8f4c4f894..5d07f7971 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
-@@ -17,22 +17,44 @@
+@@ -17,31 +17,65 @@
   */
  package net.raphimc.viabedrock.api.util;
  
@@ -397,6 +458,7 @@ index 8f4c4f894..b11b671f3 100644
 +import org.redlance.mocha.runtime.value.NumberValue;
 +import org.redlance.mocha.runtime.value.Value;
 +import org.redlance.mocha.runtime.value.Function;
++import org.redlance.mocha.runtime.value.ObjectValue;
  
  import java.io.IOException;
  import java.io.Reader;
@@ -422,7 +484,12 @@ index 8f4c4f894..b11b671f3 100644
      public static Value eval(final Scope scope, final String expression) throws IOException {
          return eval(scope, parse(expression));
      }
-@@ -42,6 +64,14 @@ public final class MoLangEngine {
+ 
+     public static Value eval(final Scope scope, final List<Expression> expressions) {
+         final Scope localScope = scope.copy();
++        if (localScope.get("math") instanceof ObjectValue math) {
++            localScope.set("math", MoLangMath.extend(math));
++        }
          final MutableObjectBinding tempBinding = new MutableObjectBinding();
          localScope.set("temp", tempBinding);
          localScope.set("t", tempBinding);
@@ -437,7 +504,7 @@ index 8f4c4f894..b11b671f3 100644
          localScope.readOnly(true);
  
          final ExpressionInterpreter<Void> evaluator = new ExpressionInterpreter<>(null, localScope);
-@@ -67,7 +97,166 @@ public final class MoLangEngine {
+@@ -67,7 +101,166 @@ public final class MoLangEngine {
      }
  
      public static List<Expression> parse(final Reader reader) throws IOException {
@@ -605,6 +672,260 @@ index 8f4c4f894..b11b671f3 100644
      }
  
      private MoLangEngine() {
+diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MoLangMath.java b/src/main/java/net/raphimc/viabedrock/api/util/MoLangMath.java
+new file mode 100644
+index 000000000..875d51eca
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/util/MoLangMath.java
+@@ -0,0 +1,248 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.util;
++
++import org.redlance.mocha.runtime.value.Function;
++import org.redlance.mocha.runtime.value.NumberValue;
++import org.redlance.mocha.runtime.value.ObjectProperty;
++import org.redlance.mocha.runtime.value.ObjectValue;
++
++import java.util.HashMap;
++import java.util.Locale;
++import java.util.Map;
++
++import static net.raphimc.viabedrock.api.util.BedrockTrigonometry.cosine;
++import static net.raphimc.viabedrock.api.util.BedrockTrigonometry.sine;
++
++/** Shared Molang functions using the target Bedrock float arithmetic. */
++public final class MoLangMath {
++
++    private static final float PI = (float) Math.PI;
++    private static final float TAU = 2F * PI;
++    private static final Map<String, ObjectProperty> FUNCTIONS = functions();
++
++    private MoLangMath() {
++    }
++
++    public static ObjectValue extend(final ObjectValue standard) {
++        return name -> {
++            final ObjectProperty property = FUNCTIONS.get(name.toLowerCase(Locale.ROOT));
++            return property == null ? standard.getProperty(name) : property;
++        };
++    }
++
++    private static Map<String, ObjectProperty> functions() {
++        final Map<String, ObjectProperty> functions = new HashMap<>();
++        functions.put("min_angle", ObjectProperty.property((Function<Object>) (_, arguments) ->
++                NumberValue.of(minAngle(arguments.next().eval().getAsNumber())), true));
++        functions.put("lerprotate", ObjectProperty.property((Function<Object>) (_, arguments) -> {
++            final float start = arguments.next().eval().getAsNumber();
++            final float end = arguments.next().eval().getAsNumber();
++            final float progress = arguments.next().eval().getAsNumber();
++            return NumberValue.of(lerpRotate(start, end, progress));
++        }, true));
++        for (final Operation operation : Operation.values()) {
++            final Function<Object> function =
++                    (_, arguments) -> {
++                        final float start = arguments.next().eval().getAsNumber();
++                        final float end = arguments.next().eval().getAsNumber();
++                        final float progress = arguments.next().eval().getAsNumber();
++                        return NumberValue.of(operation.evaluate(start, end, progress));
++                    };
++            functions.put(
++                    operation.name().toLowerCase(Locale.ROOT),
++                    ObjectProperty.property(function, true));
++        }
++        return Map.copyOf(functions);
++    }
++
++    /** Native reduction adds the half-turn before the remainder, including float rounding. */
++    public static float minAngle(final float angle) {
++        float reduced = (angle + 180F) % 360F;
++        if (reduced < 0F) {
++            reduced += 360F;
++        }
++        return reduced - 180F;
++    }
++
++    /** Preserve the authored start angle and interpolate its shortest directed delta. */
++    public static float lerpRotate(final float start, final float end, final float progress) {
++        return minAngle(end - start) * progress + start;
++    }
++
++    private enum Operation {
++        INVERSE_LERP,
++        EASE_IN_QUAD,
++        EASE_OUT_QUAD,
++        EASE_IN_OUT_QUAD,
++        EASE_IN_CUBIC,
++        EASE_OUT_CUBIC,
++        EASE_IN_OUT_CUBIC,
++        EASE_IN_QUART,
++        EASE_OUT_QUART,
++        EASE_IN_OUT_QUART,
++        EASE_IN_QUINT,
++        EASE_OUT_QUINT,
++        EASE_IN_OUT_QUINT,
++        EASE_IN_SINE,
++        EASE_OUT_SINE,
++        EASE_IN_OUT_SINE,
++        EASE_IN_EXPO,
++        EASE_OUT_EXPO,
++        EASE_IN_OUT_EXPO,
++        EASE_IN_CIRC,
++        EASE_OUT_CIRC,
++        EASE_IN_OUT_CIRC,
++        EASE_IN_BOUNCE,
++        EASE_OUT_BOUNCE,
++        EASE_IN_OUT_BOUNCE,
++        EASE_IN_BACK,
++        EASE_OUT_BACK,
++        EASE_IN_OUT_BACK,
++        EASE_IN_ELASTIC,
++        EASE_OUT_ELASTIC,
++        EASE_IN_OUT_ELASTIC;
++
++        float evaluate(final float start, final float end, final float t) {
++            final float distance = end - start;
++            final float doubled = t + t;
++            final float previous = t - 1F;
++            final float after = doubled - 2F;
++            return switch (this) {
++                case INVERSE_LERP -> (t - start) / distance;
++                case EASE_IN_QUAD -> distance * t * t + start;
++                case EASE_OUT_QUAD -> -distance * t * (t - 2F) + start;
++                case EASE_IN_OUT_QUAD ->
++                    doubled >= 1F
++                            ? distance * -.5F * ((doubled - 3F) * (doubled - 1F) - 1F) + start
++                            : distance * .5F * doubled * doubled + start;
++                case EASE_IN_CUBIC -> distance * t * t * t + start;
++                case EASE_OUT_CUBIC -> (previous * previous * previous + 1F) * distance + start;
++                case EASE_IN_OUT_CUBIC ->
++                    doubled >= 1F
++                            ? distance * .5F * (after * after * after + 2F) + start
++                            : distance * .5F * doubled * doubled * doubled + start;
++                case EASE_IN_QUART -> distance * t * t * t * t + start;
++                case EASE_OUT_QUART ->
++                    start - (previous * previous * previous * previous - 1F) * distance;
++                case EASE_IN_OUT_QUART ->
++                    doubled >= 1F
++                            ? distance * -.5F * (after * after * after * after - 2F) + start
++                            : distance * .5F * doubled * doubled * doubled * doubled + start;
++                case EASE_IN_QUINT -> distance * t * t * t * t * t + start;
++                case EASE_OUT_QUINT ->
++                    (previous * previous * previous * previous * previous + 1F) * distance
++                                + start;
++                case EASE_IN_OUT_QUINT ->
++                    doubled >= 1F
++                            ? distance * .5F * (after * after * after * after * after + 2F)
++                                        + start
++                            : distance * .5F * doubled * doubled * doubled * doubled * doubled
++                                        + start;
++                case EASE_IN_SINE -> distance - cosine(t * (PI / 2F)) * distance + start;
++                case EASE_OUT_SINE -> distance * sine(t * (PI / 2F)) + start;
++                case EASE_IN_OUT_SINE -> (cosine(t * PI) - 1F) * (distance * -.5F) + start;
++                // The target's exponential curves do not special-case their endpoints.
++                case EASE_IN_EXPO -> exp2(previous * 10F) * distance + start;
++                case EASE_OUT_EXPO -> (1F - exp2(t * -10F)) * distance + start;
++                case EASE_IN_OUT_EXPO ->
++                    doubled >= 1F
++                            ? start + (2F - exp2((doubled - 1F) * -10F)) * distance * .5F
++                            : start + exp2((doubled - 1F) * 10F) * distance * .5F;
++                case EASE_IN_CIRC -> start - distance * (sqrt(1F - t * t) - 1F);
++                case EASE_OUT_CIRC -> start + distance * sqrt(1F - previous * previous);
++                case EASE_IN_OUT_CIRC ->
++                    doubled >= 1F
++                            ? start + distance * .5F * (1F + sqrt(1F - after * after))
++                            : start + distance * -.5F * (-1F + sqrt(1F - doubled * doubled));
++                case EASE_IN_BOUNCE -> distance - bounce(1F - t) * distance + start;
++                case EASE_OUT_BOUNCE -> bounce(t) * distance + start;
++                case EASE_IN_OUT_BOUNCE ->
++                    t < .5F
++                            ? (distance - bounce(1F - doubled) * distance) * .5F + start
++                            : bounce(doubled - 1F) * distance * .5F + distance * .5F + start;
++                case EASE_IN_BACK -> (t * 2.70158F - 1.70158F) * distance * t * t + start;
++                case EASE_OUT_BACK ->
++                    ((previous * 2.70158F + 1.70158F) * previous * previous + 1F) * distance
++                                + start;
++                case EASE_IN_OUT_BACK ->
++                    start
++                                + (doubled >= 1F
++                                            ? (after * 3.5949094F + 2.5949094F) * after * after
++                                                        + 2F
++                                            : (doubled * 3.5949094F - 2.5949094F)
++                                                        * doubled
++                                                        * doubled)
++                                        * (distance * .5F);
++                case EASE_IN_ELASTIC ->
++                    t == 0F
++                            ? start
++                            : t == 1F
++                                    ? start + distance
++                                    : start
++                                                - distance
++                                                        * exp2(10F * previous)
++                                                        * elasticSine(previous);
++                case EASE_OUT_ELASTIC ->
++                    t == 0F
++                            ? start
++                            : t == 1F
++                                    ? start + distance
++                                    : start
++                                                + exp2(-10F * t) * distance * elasticSine(t)
++                                                + distance;
++                case EASE_IN_OUT_ELASTIC ->
++                    t == 0F
++                            ? start
++                            : doubled == 2F
++                                    ? start + distance
++                                    : doubled >= 1F
++                                            ? start
++                                                        + (exp2((doubled - 1F) * -10F)
++                                                                        * distance
++                                                                        * elasticSine(doubled - 1F)
++                                                                        * .5F
++                                                                + distance)
++                                            : start
++                                                        + distance
++                                                                * exp2((doubled - 1F) * 10F)
++                                                                * elasticSine(doubled - 1F)
++                                                                * -.5F;
++            };
++        }
++    }
++
++    private static float bounce(float t) {
++        if (t < .36363637F) {
++            return 7.5625F * t * t;
++        }
++        final float offset;
++        if (t < .72727275F) {
++            t -= .54545456F;
++            offset = .75F;
++        } else if (t < .90909094F) {
++            t -= .8181818F;
++            offset = .9375F;
++        } else {
++            t -= .95454544F;
++            offset = .984375F;
++        }
++        return 7.5625F * t * t + offset;
++    }
++
++    private static float sqrt(final float value) {
++        return (float) Math.sqrt(value);
++    }
++
++    private static float exp2(final float value) {
++        return (float) Math.pow(2D, value);
++    }
++
++    private static float elasticSine(final float phase) {
++        return sine((phase - .075F) * TAU / .3F);
++    }
++
++}
 diff --git a/src/main/resources/META-INF/licenses/mochafloats.txt b/src/main/resources/META-INF/licenses/mochafloats.txt
 new file mode 100644
 index 000000000..34dbe88b4
@@ -980,6 +1301,127 @@ index 000000000..72a6d85b6
 +        scope.set("variable", variables);
 +        scope.set("v", variables);
 +        return scope;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/util/MoLangMathTest.java b/src/test/java/net/raphimc/viabedrock/api/util/MoLangMathTest.java
+new file mode 100644
+index 000000000..ba6b3cdaf
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/util/MoLangMathTest.java
+@@ -0,0 +1,115 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.util;
++
++import com.google.gson.JsonParser;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++import org.redlance.mocha.parser.ast.Expression;
++import org.redlance.mocha.runtime.MolangInterpreter;
++import org.redlance.mocha.runtime.Scope;
++import org.redlance.mocha.runtime.value.MutableObjectBinding;
++import org.redlance.mocha.runtime.value.Value;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.time.Duration;
++import java.util.HashMap;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class MoLangMathTest {
++
++    @Test
++    void reducesHalfTurnsAndLargeFiniteAnglesWithoutIteration() {
++        assertTimeoutPreemptively(Duration.ofSeconds(2), () -> {
++            assertEquals(-180F, MoLangMath.minAngle(180F));
++            assertEquals(-180F, MoLangMath.minAngle(-180F));
++            assertEquals(-180F, MoLangMath.minAngle(540F));
++            assertEquals(0F, MoLangMath.minAngle(-720F));
++            assertEquals(-60F, MoLangMath.minAngle(1E30F));
++            assertEquals(60F, MoLangMath.minAngle(-1E30F));
++            assertTrue(Float.isFinite(MoLangMath.minAngle(Float.MAX_VALUE)));
++            assertTrue(Float.isFinite(MoLangMath.minAngle(-Float.MAX_VALUE)));
++        });
++    }
++
++    @Test
++    void preservesDirectedEndpointsWrapsTiesAndAllowsExtrapolation() throws Exception {
++        final float[][] cases = {
++            {90F, 0F, 0F, 90F}, {90F, 0F, .25F, 67.5F}, {90F, 0F, 1F, 0F},
++            {350F, 10F, .5F, 360F}, {10F, 350F, .5F, 0F}, {0F, 180F, .5F, -90F},
++            {180F, 0F, .5F, 90F}, {90F, 0F, 2F, -90F}, {720F, -90F, 1F, 630F}
++        };
++        for (float[] row : cases) {
++            assertEquals(row[3], MoLangMath.lerpRotate(row[0], row[1], row[2]));
++        }
++        final Scope scope = MolangInterpreter.standard().scope();
++        final MutableObjectBinding variables = new MutableObjectBinding();
++        scope.set("v", variables);
++        assertEquals(1.25F, MoLangEngine.eval(scope,
++                "v.n=0; return math.lerprotate(v.n=v.n+1,v.n=v.n+1,(v.n=v.n+1)/12)").getAsNumber());
++        assertEquals(3F, variables.get("n").getAsNumber());
++        assertEquals(-180F, MoLangEngine.eval(scope, "math.min_angle(180)").getAsNumber());
++        assertEquals(.25F, MoLangEngine.eval(scope, "math.ease_in_quad(0,1,0.5)").getAsNumber());
++        assertEquals(2F, MoLangEngine.eval(scope, "math.inverse_lerp(5,7,9)").getAsNumber());
++        assertEquals(3F, MoLangEngine.eval(scope, "math.abs(-3)").getAsNumber());
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_MOLANG_ANGLES", matches = ".+")
++    void matchesNativeConstantAndRuntimeAngleCases() throws Exception {
++        final var fixture = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_MOLANG_ANGLES")))).getAsJsonObject();
++        final Scope scope = MolangInterpreter.standard().scope();
++        final MutableObjectBinding queries = new MutableObjectBinding();
++        scope.set("q", queries);
++        final var angleProgram = MoLangEngine.parse("math.min_angle(q.a)");
++        final var rotationProgram = MoLangEngine.parse("math.lerprotate(q.a,q.b,q.t)");
++        for (var element : fixture.getAsJsonArray("cases")) {
++            final var row = element.getAsJsonObject();
++            final var args = row.getAsJsonArray("arguments");
++            final float a = args.get(0).getAsFloat();
++            final boolean rotation = args.size() == 3;
++            final float b = rotation ? args.get(1).getAsFloat() : 0F;
++            final float t = rotation ? args.get(2).getAsFloat() : 0F;
++            final float expected = Float.intBitsToFloat((int) row.get("resultBits").getAsLong());
++            final float result = rotation ? MoLangMath.lerpRotate(a, b, t) : MoLangMath.minAngle(a);
++            assertEquals(Float.floatToIntBits(expected), Float.floatToIntBits(result), row.toString());
++            queries.set("a", Value.of(a));
++            queries.set("b", Value.of(b));
++            queries.set("t", Value.of(t));
++            assertEquals(Float.isFinite(expected) ? (expected == 0F ? 0F : expected) : 0F,
++                    MoLangEngine.eval(scope, rotation ? rotationProgram : angleProgram).getAsNumber(), row.toString());
++        }
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_MOLANG_EASING", matches = ".+")
++    void exposesNativeEasingToProtocolControllerEvaluation() throws Exception {
++        final var fixture = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_MOLANG_EASING")))).getAsJsonObject();
++        final Scope scope = MolangInterpreter.standard().scope();
++        final MutableObjectBinding queries = new MutableObjectBinding();
++        scope.set("q", queries);
++        final var programs = new HashMap<String, List<Expression>>();
++        for (var element : fixture.getAsJsonArray("cases")) {
++            final var row = element.getAsJsonObject();
++            final String name = row.get("name").getAsString();
++            if (!programs.containsKey(name)) {
++                programs.put(name, MoLangEngine.parse(name + "(q.a,q.b,q.t)"));
++            }
++            final var args = row.getAsJsonArray("arguments");
++            queries.set("a", Value.of(args.get(0).getAsFloat()));
++            queries.set("b", Value.of(args.get(1).getAsFloat()));
++            queries.set("t", Value.of(args.get(2).getAsFloat()));
++            final float expected = row.get("result").isJsonNull() ? 0F : row.get("result").getAsFloat();
++            assertEquals(expected, MoLangEngine.eval(scope, programs.get(name)).getAsNumber(),
++                    8 * Math.ulp(expected) + .00001F, row.toString());
++        }
++        assertEquals(31, programs.size());
 +    }
 +
 +}

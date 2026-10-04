@@ -743,3 +743,19 @@ The full migration build passes 952 Java tests, with 109 optional tests skipped.
 Direct and ViaProxy playback checks reach spawn, transport the complete particle fixture, and load the converted Java resource pack. Each route admits four particle requests, starts two native emitters, and decodes one Java fallback. Both routes produce matching dimensions, tint, positions, and fallback records without Store sign-in. The replay self-tests pass.
 
 These checks use a sparse fixture. They do not establish complete skin, actor, or visible particle parity.
+
+### Shared native Molang math
+
+**Implemented:** Core supplies native easing, angle reduction, directed rotation interpolation, and the regenerated sine lookup. The add-on uses these functions for animation and view bobbing. Protocol controller evaluation uses the same functions. The duplicate client math classes are removed.
+
+`math.min_angle` reduces angles into `[-180, 180)` with the target's float addition before the remainder. Large finite values finish without repeated subtraction. `math.lerprotate` preserves the authored start and follows its shortest directed delta. Half-turn ties follow the negative direction. The client retains finite scalar values above 32,768. Non-finite checks and parser and execution limits remain.
+
+The [official rotation reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/mathfunctions/math_lerprotate) describes directed shortest interpolation. Target Bedrock 1.26.51.1, protocol 2193, supplies the numeric evidence. Constant dispatcher `140ae6140` and helper `140aeb870` match runtime operations `140b2c2b0` and `140b2d270` across 9,367 private cases. These include endpoint order, wrapping, half-turn ties, extrapolation, float boundaries, and overflow intermediates.
+
+**Probe boundary:** The emulator supplies numeric nodes and runtime stacks. It mocks eligibility and cleanup calls. The host C library supplies the float remainder import. Native arithmetic instructions and runtime stack operations execute unchanged. These comparisons do not verify the complete parser, the Windows CRT implementation, or visible animation.
+
+**Remaining:** Other standard math functions, randomness, complete query state, and visible native comparisons remain unverified. Missing ViaProxy actor and appearance transport remains open.
+
+**Validation:** All four builds pass, with 958 Java tests passing and 109 optional tests skipped. Core and client tests compare all 9,367 native angle cases and 13,578 native easing cases. The bundle and both north-star patch application checks pass.
+
+An authored particle graph uses angle reduction, directed rotation, and easing for its size. Direct and ViaProxy playback load the converted pack and reach spawn. Both downloaded archives contain the new expressions. Each route admits four requests, starts two emitters, and decodes one fallback. The emitters produce width `2.0`, height `0.125`, and matching tint and position records. These sparse replay checks do not establish complete visible parity. Existing skin-update failures and missing ViaProxy actor and appearance state remain open.
