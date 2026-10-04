@@ -1,4 +1,4 @@
-From d00cb4f50665ec45e4e065c27a19d616451f21f1 Mon Sep 17 00:00:00 2001
+From c20d26930bdca5fc14f5a4cb7860d17b4d502044 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:38:26 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -166,7 +166,7 @@ a capture before attributing its exact failure to this case.
  .../CustomBlockResourceRewriter.java          | 233 ++++++++
  .../CustomBlockStateDefinitions.java          | 153 +++++
  .../protocol/storage/ChunkTracker.java        |  33 +-
- .../storage/CustomBlockPackStorage.java       | 103 ++++
+ .../storage/CustomBlockPackStorage.java       |  85 +++
  .../protocol/storage/ResourcePackStorage.java |  49 ++
  .../protocol/storage/VoxelShapeRegistry.java  | 125 ++++
  .../api/model/CustomBlockCullingTest.java     |  54 ++
@@ -179,9 +179,9 @@ a capture before attributing its exact failure to this case.
  .../CustomBlockMaterialVisibilityTest.java    | 106 ++++
  .../CustomBlockStateDefinitionsTest.java      | 218 +++++++
  .../protocol/storage/ChunkTrackerTest.java    |  23 +
- .../storage/CustomBlockPackStorageTest.java   | 168 ++++++
+ .../storage/CustomBlockPackStorageTest.java   | 169 ++++++
  .../storage/VoxelShapeRegistryTest.java       | 130 +++++
- 35 files changed, 3832 insertions(+), 21 deletions(-)
+ 35 files changed, 3815 insertions(+), 21 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockCulling.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockVisual.java
@@ -905,7 +905,7 @@ index ebb964cc0..79b387cb6 100644
          final byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
          output.writeInt(bytes.length);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
-index a083986aa..41c70790d 100644
+index 0a88cbd57..84b46db1b 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 @@ -53,7 +53,12 @@ import net.raphimc.viabedrock.protocol.task.*;
@@ -946,11 +946,10 @@ index a083986aa..41c70790d 100644
          user.put(new BlockInteractionSoundTracker());
          user.put(new ResourcePackDownloadTracker());
          user.put(new BlobCache(user));
-@@ -175,7 +183,22 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
+@@ -176,11 +184,26 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
                  ViaBedrock.getPlatform().getLogger().warning("Received unknown packet " + wrapper.getId() + " in state " + serverState + " with content: " + ByteBufUtil.hexDump(content));
                  throw CancelException.generate();
              }
--            if (serverState == State.LOGIN && !LOGIN_STATE_WHITELIST.contains(packet) && BEFORE_PLAY_STATE_WHITELIST.contains(packet)) { // Bedrock client can skip the login state
 +            final CustomBlockPackStorage customBlocks =
 +                    wrapper.user().get(CustomBlockPackStorage.class);
 +            if (customBlocks != null && packet == ClientboundBedrockPackets.START_GAME) {
@@ -963,6 +962,11 @@ index a083986aa..41c70790d 100644
 +                customBlocks.queue(packet, payload);
 +                throw CancelException.generate();
 +            }
+             if (serverState != State.PLAY && (packet == ClientboundBedrockPackets.PLAYER_LIST || packet == ClientboundBedrockPackets.PLAYER_SKIN)) {
+                 wrapper.user().get(NativeSkinStorage.class).deferBeforeJoin(packet, ((PacketWrapperImpl) wrapper).getInputBuffer());
+                 throw CancelException.generate();
+             }
+-            if (serverState == State.LOGIN && !LOGIN_STATE_WHITELIST.contains(packet) && BEFORE_PLAY_STATE_WHITELIST.contains(packet)) { // Bedrock client can skip the login state
 +            if (serverState == State.LOGIN
 +                    && !LOGIN_STATE_WHITELIST.contains(packet)
 +                    && BEFORE_PLAY_STATE_WHITELIST.contains(
@@ -971,7 +975,7 @@ index a083986aa..41c70790d 100644
                  final PacketWrapper playStatus = PacketWrapper.create(ClientboundBedrockPackets.PLAY_STATUS, wrapper.user());
                  playStatus.write(Types.INT, PlayStatus.LoginSuccess.getValue()); // status
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
-index 67d3faf45..df1b54ac5 100644
+index 0885ea827..78fae2504 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
 @@ -383,7 +383,8 @@ public final class JoinPackets {
@@ -2509,10 +2513,10 @@ index 455a0d19a..ce2de9aa1 100644
              } finally {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorage.java
 new file mode 100644
-index 000000000..9096b713f
+index 000000000..181f0ac46
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorage.java
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,85 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2523,12 +2527,10 @@ index 000000000..9096b713f
 +import com.viaversion.viaversion.api.connection.StorableObject;
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
-+import com.viaversion.viaversion.api.protocol.packet.Direction;
-+import com.viaversion.viaversion.exception.CancelException;
 +import io.netty.buffer.Unpooled;
 +import io.netty.buffer.ByteBuf;
-+import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.api.util.PacketFactory;
 +
 +import java.util.ArrayDeque;
 +import java.util.Queue;
@@ -2577,7 +2579,7 @@ index 000000000..9096b713f
 +        this.drain((type, payload) -> {
 +            final ByteBuf input = Unpooled.wrappedBuffer(payload);
 +            try {
-+                dispatch(PacketWrapper.create(type, input, user));
++                PacketFactory.replayClientbound(PacketWrapper.create(type, input, user));
 +            } finally {
 +                input.release();
 +            }
@@ -2589,22 +2591,6 @@ index 000000000..9096b713f
 +        while ((packet = this.packets.poll()) != null) {
 +            this.bytes -= packet.payload.length;
 +            receiver.accept(packet.type, packet.payload);
-+        }
-+    }
-+
-+    static void dispatch(final PacketWrapper wrapper) {
-+        // Base protocols already processed this packet before it reached the block-pack gate.
-+        // PacketWrapper.send would prepend them again and reinterpret the Bedrock packet id.
-+        final var protocols = wrapper.user().getProtocolInfo().getPipeline()
-+                .pipes(BedrockProtocol.class, false, Direction.CLIENTBOUND).stream()
-+                .filter(protocol -> !protocol.isBaseProtocol()).toList();
-+        try {
-+            wrapper.apply(Direction.CLIENTBOUND, wrapper.getPacketType().state(), protocols);
-+            if (!wrapper.isCancelled()) {
-+                wrapper.sendRaw();
-+            }
-+        } catch (final CancelException ignored) {
-+            // A Bedrock handler can consume the packet and emit its own Java packets.
 +        }
 +    }
 +
@@ -4315,10 +4301,10 @@ index 7c82ff031..f1b3d8e19 100644
          final BedrockDataPalette palette = new BedrockDataPalette();
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorageTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorageTest.java
 new file mode 100644
-index 000000000..3b4c56314
+index 000000000..9b5cd6fca
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorageTest.java
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,169 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -4329,6 +4315,7 @@ index 000000000..3b4c56314
 +import org.junit.jupiter.api.Test;
 +import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.api.util.PacketFactory;
 +import com.viaversion.viaversion.api.connection.ProtocolInfo;
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import com.viaversion.viaversion.api.protocol.Protocol;
@@ -4455,7 +4442,7 @@ index 000000000..3b4c56314
 +        gate.drain((type, bytes) -> {
 +            final ByteBuf payload = Unpooled.wrappedBuffer(bytes);
 +            try {
-+                CustomBlockPackStorage.dispatch(new PacketWrapperImpl(type, payload, user));
++                PacketFactory.replayClientbound(new PacketWrapperImpl(type, payload, user));
 +            } finally {
 +                payload.release();
 +            }

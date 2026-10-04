@@ -303,10 +303,11 @@ async function main(): Promise<void> {
     if (mode === "replay") {
       const recording = resolve(input);
       await inspectJournal(join(recording, "packets.sbr"));
-      if (client === "addon") {
+      if (client !== "native") {
         const { stdout } = await execute("java", [`-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`, "com.enderdash.agent.replay.SceneFeatures", join(recording, "packets.sbr")]);
         const features = JSON.parse(stdout) as SceneFeatures;
-        if (features.localGeometrySkinUpdates) await execute("java", [`-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`, "com.enderdash.agent.replay.SceneFeatures", "--self-identity", join(recording, "packets.sbr"), join(directory, "replay-self-uuid.txt")]);
+        if (features.localGeometrySkinUpdates && client === "proxy") await writeFile(join(directory, "replay-local-avatar.txt"), "1\n", { mode: 0o600 });
+        if (features.localGeometrySkinUpdates && client === "addon") await execute("java", [`-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`, "com.enderdash.agent.replay.SceneFeatures", "--self-identity", join(recording, "packets.sbr"), join(directory, "replay-self-uuid.txt")]);
       }
       const udp = await port(true);
       const log = join(directory, "replay.log");
@@ -391,7 +392,7 @@ async function main(): Promise<void> {
     const expected = JSON.parse(stdout) as SceneFeatures;
     const auditFile = join(directory, "render-audit.json");
     const audit = existsSync(auditFile) ? JSON.parse(await readFile(auditFile, "utf8")) as RenderAudit : undefined;
-    const failures = client === "addon" ? verifyRendering(expected, audit, clientLog, !!original.ids[12]) : ["The proxy route lacks native actor and player appearance state; lighting observations remain available in the private frame audit."];
+    const failures = verifyRendering(expected, audit, clientLog, !!original.ids[12]);
     await writeFile(join(directory, "verification.json"), JSON.stringify({ transport: "pass", rendering: failures.length ? "fail" : "pass", failures, unregisteredActors: expected.unregisteredActorIdentifiers ?? [], expected }, null, 2), { mode: 0o600 });
     console.log("PASS offline scene transport: playable spawn, complete payloads, and Java resource pack load.");
     if (failures.length) {

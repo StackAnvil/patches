@@ -346,6 +346,7 @@ The sound-control change also passes the [complete main-branch CI build](https:/
 | S3 | Classic geometry and animation formats | Incomplete | Complete inherited legacy sources, aliases, metadata, and inheritance comparisons. |
 | S4 | Emotes and animation fidelity | Incomplete | Complete unavailable remote assets, events, effects, platform filters, timing, rotations, and scale comparisons. |
 | S5 | Native first-person and held-item drawing | Incomplete | Submit sampled native geometry and complete charging, equip, swing, equipment, and input timing. |
+| S6 | Complete incoming skin records through ViaProxy | Implemented | Complete records and local-avatar ownership pass isolated direct and proxy playback. Broader remote-player, lifecycle, and native visual comparisons remain required. |
 | D1 | Palettes, color channels, and limb editing | Unverified | Compare remaining palette options, asynchronous saves, and fresh native limb edits. |
 | D2 | Classic packs and imported-skin synchronization | Incomplete | Complete imported images without downloadable pack references and remaining account/platform flows. |
 | D3 | Catalog acquisition, purchases, redemption, and wallet | Incomplete | Complete acquisition and interactive Store behavior with native account comparisons. |
@@ -759,3 +760,51 @@ The [official rotation reference](https://learn.microsoft.com/en-us/minecraft/cr
 **Validation:** All four builds pass, with 958 Java tests passing and 109 optional tests skipped. Core and client tests compare all 9,367 native angle cases and 13,578 native easing cases. The bundle and both north-star patch application checks pass.
 
 An authored particle graph uses angle reduction, directed rotation, and easing for its size. Direct and ViaProxy playback load the converted pack and reach spawn. Both downloaded archives contain the new expressions. Each route admits four requests, starts two emitters, and decodes one fallback. The emitters produce width `2.0`, height `0.125`, and matching tint and position records. These sparse replay checks do not establish complete visible parity. Existing skin-update failures and missing ViaProxy actor and appearance state remain open.
+
+
+### Complete incoming skin records on both routes
+
+**Implemented:** Core transports the complete protocol 2193 `SkinData` record on a negotiated Java channel.
+The add-on uses the same codec and rendering path through direct connections and ViaProxy.
+Animated images, persona pieces, tints, geometry, cape data, and profile flags retain their wire representation.
+Fragments contain at most 256 KiB; the transport accepts records up to 64 MiB.
+These are transport memory bounds, not native format limits.
+
+Core retains every ordered update until Java join and channel registration complete.
+It also copies early player-list and skin payloads until StartGame initializes their Java state.
+The captured target session supplies a player list before StartGame.
+Replayed packets use normal handlers without applying Java base protocols twice.
+Each pending queue has separate limits of 128 MiB and 10,000 entries.
+Negotiation overflow discards the oldest record with a warning; invalid pre-join queue growth is rejected.
+Clients without the channel retain their previous utility path.
+
+Core identifies local ownership from the login UUID or authoritative actor ID.
+The add-on applies these updates under its actual local-avatar UUID.
+This fixes ViaProxy sessions where the Java and Bedrock login UUIDs differ.
+The receiver captures its source connection at play initialization.
+Assembly and installation run on the Minecraft thread, reject replaced connections, and release partial transfers on cleanup.
+
+**Automated checks:** All four builds pass with 967 Java tests passing and 109 optional tests skipped.
+The saved native math fixtures remain enabled.
+Tests compare complete classic and persona records larger than five MiB after codec round trips and fragment assembly.
+They cover sequencing, replacement, cleanup, bounds, malformed counts, image overflow, early-packet ordering, queue limits, negotiation, failed sends, and local ownership with negative actor IDs.
+The bundle, both north-star application checks, TypeScript check, and 14 replay tests pass.
+
+**Integration boundary:** An authored fixture adds three skin changes to a recorded target session.
+It includes classic and persona records, 1024-pixel body images, cape pixels, three animation images, geometry, persona pieces, tints, and profile fields.
+Each added record travels in 21 fragments.
+Both routes must install all five updates, including the original early player-list record and its later repetition.
+The private renderer audit compares hashes of the complete records at installation.
+The replay camera uses the actual Java avatar identity on ViaProxy; it does not overwrite that identity.
+
+Final direct playback `2026-10-04T11-07-16.944Z-replay-scene` and ViaProxy playback `2026-10-04T11-05-20.391Z-replay-scene` pass transport and rendering checks.
+Each installs five geometry records with no rejected skins and matching complete-record hashes.
+The audit observes three local native avatar submissions directly and one through ViaProxy.
+Final screenshots show the authored first-person hand in the same sparse nighttime scene.
+These observations establish delivery, installation, and local renderer selection within this fixture.
+They do not establish visible parity against the official client.
+
+**Remaining:** This transport does not supply server actor graphs, equipment, attachable resources, or emote assets.
+Outbound selection and account synchronization through ViaProxy remain incomplete.
+These sparse playback checks do not establish native face, tint, animation, cape, first-person, or overall visible parity.
+Remote-player changes, removal, ID reuse, world transitions, disconnect timing, and broader server scenes require further observations.

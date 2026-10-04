@@ -8,6 +8,7 @@ import java.util.UUID;
 public final class ReplayCamera {
     private static boolean checked;
     private static UUID identity;
+    private static boolean useLocalAvatar;
     private static Path directory;
     private static int localEntityId = Integer.MIN_VALUE;
     private static boolean ready;
@@ -22,10 +23,12 @@ public final class ReplayCamera {
                 directory = Path.of(Files.readString(Path.of("stackanvil-replay-directory.txt")).trim());
                 Path marker = directory.resolve("replay-self-uuid.txt");
                 if (Files.exists(marker)) identity = UUID.fromString(Files.readString(marker).trim());
+                useLocalAvatar = Files.exists(directory.resolve("replay-local-avatar.txt"));
                 checked = true;
             }
             Object player = minecraft.getClass().getField("player").get(minecraft);
             if (player != null) localEntityId = ((Number) player.getClass().getMethod("getId").invoke(player)).intValue();
+            if (useLocalAvatar && player != null) identity = (UUID) player.getClass().getMethod("getUUID").invoke(player);
             boolean matches = identity != null && player != null && identity.equals(player.getClass().getMethod("getUUID").invoke(player));
             ReplaySceneDiagnostics.sample(minecraft, player, directory, matches);
             if (!matches) return;

@@ -1,16 +1,297 @@
-From 5b07d4fff69a3879415c0247741ec1f571cac598 Mon Sep 17 00:00:00 2001
+From aa5ca29d2c184deec730ab55d0f312e55da106a7 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 13:52:46 +0200
 Subject: [PATCH] fix(skins): encode current Bedrock skin packets
 
 PlayerSkinPacket uses varint list lengths, numeric persona enums, UUID pack IDs, and fixed-width colors. Preserve the trailing trust fields so decoded skins can be sent back without discarding them. This enables connected skin changes and prevents malformed packets.
----
- .../viabedrock/protocol/model/SkinData.java   |  2 +-
- .../protocol/types/model/SkinType.java        | 53 ++++++++-----
- .../protocol/types/model/SkinTypeTest.java    | 74 +++++++++++++++++++
- 3 files changed, 109 insertions(+), 20 deletions(-)
- create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/model/SkinTypeTest.java
 
+Transport complete SkinData to advertised Java clients with a versioned,
+fragmented player_skin channel. Reuse the target protocol codec to preserve
+all RGBA images, animation metadata, cape and geometry fields, persona
+pieces and colors, flags, trust, and profile hash on direct and proxy routes.
+Retain ordered immutable snapshots during configuration and flush after
+Java join and capability registration. Keep legacy utility clients working.
+
+Bound transport and negotiation memory explicitly, allocate received bytes
+only as they arrive, and discard partial transfers on replacement or close.
+Check list counts against remaining packet bytes before allocating and use
+long image dimension products to reject overflow. Tests cover full classic
+and persona records above five MiB, payload bounds, sequencing, lifecycle,
+late negotiation, failed delivery, and malformed native fields.
+
+The target server capture includes a player-list packet before StartGame.
+Retain early player-list and skin packets in order until Java join, then
+replay them through the normal handlers without reapplying base protocols.
+This preserves initial profiles as well as their appearances and retains
+removal and replacement semantics. Other pre-join packets are unchanged.
+
+Carry local-player ownership in each fragment. ViaProxy's Java login UUID
+can differ from the Bedrock actor UUID, so UUID-only installation misses
+the local avatar even though every skin field arrived. Establish ownership
+from the current actor unique ID or login identity and retain it through
+fragment assembly. Add player-list identity before calling the provider.
+---
+ .../api/model/NativeSkinAssembler.java        |  63 +++++++
+ .../api/model/NativeSkinFragment.java         | 101 +++++++++++
+ .../viabedrock/api/util/PacketFactory.java    |  17 ++
+ .../viabedrock/protocol/BedrockProtocol.java  |   5 +
+ .../viabedrock/protocol/model/SkinData.java   |   2 +-
+ .../protocol/packet/HudPackets.java           |   3 +-
+ .../protocol/packet/JoinPackets.java          |   1 +
+ .../protocol/packet/MultiStatePackets.java    |   2 +
+ .../protocol/provider/SkinProvider.java       |  16 ++
+ .../protocol/storage/NativeSkinStorage.java   | 121 +++++++++++++
+ .../protocol/types/model/SkinType.java        |  67 ++++---
+ .../protocol/types/primitive/ImageType.java   |   2 +-
+ .../api/model/NativeSkinTransportTest.java    | 165 ++++++++++++++++++
+ .../protocol/provider/SkinProviderTest.java   |  27 +++
+ .../storage/NativeSkinStorageTest.java        | 163 +++++++++++++++++
+ .../protocol/types/model/SkinTypeTest.java    |  74 ++++++++
+ .../types/primitive/ImageTypeTest.java        |  33 ++++
+ 17 files changed, 836 insertions(+), 26 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeSkinAssembler.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeSkinFragment.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/NativeSkinStorage.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeSkinTransportTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/provider/SkinProviderTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/NativeSkinStorageTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/model/SkinTypeTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/primitive/ImageTypeTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeSkinAssembler.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeSkinAssembler.java
+new file mode 100644
+index 000000000..4c42121b4
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeSkinAssembler.java
+@@ -0,0 +1,63 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.model.SkinData;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++import java.io.ByteArrayOutputStream;
++import java.util.UUID;
++
++/** One ordered transfer per client connection. Allocate only bytes that actually arrive. */
++public final class NativeSkinAssembler {
++
++    private UUID player;
++    private UUID transfer;
++    private boolean localPlayer;
++    private int totalLength;
++    private ByteArrayOutputStream bytes;
++
++    public SkinData accept(final NativeSkinFragment fragment) {
++        if (fragment.offset() == 0) {
++            this.clear();
++            this.player = fragment.player();
++            this.transfer = fragment.transfer();
++            this.localPlayer = fragment.localPlayer();
++            this.totalLength = fragment.totalLength();
++            this.bytes = new ByteArrayOutputStream(Math.min(this.totalLength, NativeSkinFragment.FRAGMENT_BYTES));
++        }
++        if (this.bytes == null || !fragment.player().equals(this.player) || !fragment.transfer().equals(this.transfer)
++                || fragment.localPlayer() != this.localPlayer || fragment.totalLength() != this.totalLength || fragment.offset() != this.bytes.size()) {
++            this.clear();
++            throw new IllegalArgumentException("Out-of-order native skin fragment");
++        }
++        this.bytes.writeBytes(fragment.data());
++        if (this.bytes.size() != this.totalLength) {
++            return null;
++        }
++        final ByteBuf buffer = Unpooled.wrappedBuffer(this.bytes.toByteArray());
++        this.clear();
++        try {
++            final SkinData skin = BedrockTypes.SKIN.read(buffer);
++            if (buffer.isReadable()) {
++                throw new IllegalArgumentException("Unexpected native skin fields");
++            }
++            return skin;
++        } finally {
++            buffer.release();
++        }
++    }
++
++    public void clear() {
++        this.player = null;
++        this.transfer = null;
++        this.totalLength = 0;
++        this.bytes = null;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeSkinFragment.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeSkinFragment.java
+new file mode 100644
+index 000000000..be6447044
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeSkinFragment.java
+@@ -0,0 +1,101 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.model.SkinData;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++import java.util.Arrays;
++import java.util.Objects;
++import java.util.UUID;
++import java.util.function.Consumer;
++
++/** A versioned fragment of the target protocol's complete SkinData, including persona and animation fields. */
++public record NativeSkinFragment(UUID player, boolean localPlayer, UUID transfer, int totalLength, int offset, byte[] data) {
++
++    public static final String CHANNEL = "viabedrock:player_skin";
++    public static final int FRAGMENT_BYTES = 256 * 1024;
++    // Transport memory limits, not claims about the native client's supported skin dimensions.
++    public static final int MAX_SKIN_BYTES = 64 * 1024 * 1024;
++    public static final Type<NativeSkinFragment> TYPE = new Type<>(NativeSkinFragment.class) {
++        @Override
++        public NativeSkinFragment read(final ByteBuf buffer) {
++            if (Types.VAR_INT.readPrimitive(buffer) != 1
++                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IllegalArgumentException("Unsupported native skin format");
++            }
++            final UUID player = Types.UUID.read(buffer);
++            final boolean localPlayer = buffer.readBoolean();
++            final UUID transfer = Types.UUID.read(buffer);
++            final int totalLength = Types.VAR_INT.readPrimitive(buffer);
++            final int offset = Types.VAR_INT.readPrimitive(buffer);
++            final int length = buffer.readableBytes();
++            validate(totalLength, offset, length);
++            final byte[] data = new byte[length];
++            buffer.readBytes(data);
++            return new NativeSkinFragment(player, localPlayer, transfer, totalLength, offset, data);
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final NativeSkinFragment value) {
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            Types.UUID.write(buffer, value.player);
++            buffer.writeBoolean(value.localPlayer);
++            Types.UUID.write(buffer, value.transfer);
++            Types.VAR_INT.writePrimitive(buffer, value.totalLength);
++            Types.VAR_INT.writePrimitive(buffer, value.offset);
++            buffer.writeBytes(value.data);
++        }
++    };
++
++    public NativeSkinFragment {
++        Objects.requireNonNull(player);
++        Objects.requireNonNull(transfer);
++        validate(totalLength, offset, data.length);
++        data = data.clone();
++    }
++
++    @Override
++    public byte[] data() {
++        return this.data.clone();
++    }
++
++    public static byte[] encode(final SkinData skin) {
++        final ByteBuf buffer = Unpooled.buffer(256, MAX_SKIN_BYTES);
++        try {
++            BedrockTypes.SKIN.write(buffer, skin);
++            final byte[] encoded = new byte[buffer.readableBytes()];
++            buffer.readBytes(encoded);
++            return encoded;
++        } finally {
++            buffer.release();
++        }
++    }
++
++    /** Send each transfer contiguously. Java's ordered connection preserves fragment order. */
++    public static void split(final UUID player, final boolean localPlayer, final byte[] skin, final Consumer<NativeSkinFragment> send) {
++        validate(skin.length, 0, Math.min(FRAGMENT_BYTES, skin.length));
++        final UUID transfer = UUID.randomUUID();
++        for (int offset = 0; offset < skin.length; offset += FRAGMENT_BYTES) {
++            send.accept(new NativeSkinFragment(player, localPlayer, transfer, skin.length, offset,
++                    Arrays.copyOfRange(skin, offset, Math.min(offset + FRAGMENT_BYTES, skin.length))));
++        }
++    }
++
++    private static void validate(final int totalLength, final int offset, final int length) {
++        if (totalLength <= 0 || totalLength > MAX_SKIN_BYTES || offset < 0 || offset >= totalLength
++                || length <= 0 || length > FRAGMENT_BYTES || length > totalLength - offset) {
++            throw new IllegalArgumentException("Invalid native skin fragment range");
++        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/util/PacketFactory.java b/src/main/java/net/raphimc/viabedrock/api/util/PacketFactory.java
+index 4bdf42be8..c51ffd409 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/util/PacketFactory.java
++++ b/src/main/java/net/raphimc/viabedrock/api/util/PacketFactory.java
+@@ -22,6 +22,8 @@ import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.minecraft.BlockPosition;
+ import com.viaversion.viaversion.api.minecraft.blockentity.BlockEntity;
+ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.Direction;
++import com.viaversion.viaversion.exception.CancelException;
+ import com.viaversion.viaversion.api.type.Types;
+ import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
+ import com.viaversion.viaversion.libs.gson.JsonNull;
+@@ -174,6 +176,21 @@ public final class PacketFactory {
+         wrapper.write(Types.VAR_INT, 0); // Default randomization type
+     }
+ 
++    /** Replays an already received Bedrock packet without applying base protocols a second time. */
++    public static void replayClientbound(final PacketWrapper wrapper) {
++        final var protocols = wrapper.user().getProtocolInfo().getPipeline()
++                .pipes(BedrockProtocol.class, false, Direction.CLIENTBOUND).stream()
++                .filter(protocol -> !protocol.isBaseProtocol()).toList();
++        try {
++            wrapper.apply(Direction.CLIENTBOUND, wrapper.getPacketType().state(), protocols);
++            if (!wrapper.isCancelled()) {
++                wrapper.sendRaw();
++            }
++        } catch (final CancelException ignored) {
++            // The Bedrock handler consumed the packet and can send translated packets itself.
++        }
++    }
++
+     private PacketFactory() {
+     }
+ 
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+index a083986aa..0a88cbd57 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+@@ -150,6 +150,7 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
+         user.put(new BlobCache(user));
+         user.put(new PacketSyncStorage(user));
+         user.put(new ChannelStorage());
++        user.put(new NativeSkinStorage(user));
+         user.put(new PlayerListStorage());
+         user.put(new PlayerWaypointTracker(user));
+         user.put(new ScoreboardTracker());
+@@ -175,6 +176,10 @@ public class BedrockProtocol extends StatelessTransitionProtocol<ClientboundBedr
+                 ViaBedrock.getPlatform().getLogger().warning("Received unknown packet " + wrapper.getId() + " in state " + serverState + " with content: " + ByteBufUtil.hexDump(content));
+                 throw CancelException.generate();
+             }
++            if (serverState != State.PLAY && (packet == ClientboundBedrockPackets.PLAYER_LIST || packet == ClientboundBedrockPackets.PLAYER_SKIN)) {
++                wrapper.user().get(NativeSkinStorage.class).deferBeforeJoin(packet, ((PacketWrapperImpl) wrapper).getInputBuffer());
++                throw CancelException.generate();
++            }
+             if (serverState == State.LOGIN && !LOGIN_STATE_WHITELIST.contains(packet) && BEFORE_PLAY_STATE_WHITELIST.contains(packet)) { // Bedrock client can skip the login state
+                 ViaBedrock.getPlatform().getLogger().warning("Skipping LOGIN state");
+                 final PacketWrapper playStatus = PacketWrapper.create(ClientboundBedrockPackets.PLAY_STATUS, wrapper.user());
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/SkinData.java b/src/main/java/net/raphimc/viabedrock/protocol/model/SkinData.java
 index d912bfd0c..bc8f797ca 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/model/SkinData.java
@@ -24,8 +305,229 @@ index d912bfd0c..bc8f797ca 100644
  
      public record AnimationData(BufferedImage image, int type, float frames, int expression) {
      }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
+index a0824a642..5ed7e465a 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/HudPackets.java
+@@ -97,9 +97,8 @@ public final class HudPackets {
+                             new GameProfile.Property("is_subclient", String.valueOf(isSubClient))
+                         }));
+ 
+-                        Via.getManager().getProviders().get(SkinProvider.class).setSkin(wrapper.user(), uuid, skin);
+-
+                         final Pair<Long, String> entry = playerListStorage.addPlayer(uuid, entityUniqueId, name);
++                        Via.getManager().getProviders().get(SkinProvider.class).setSkin(wrapper.user(), uuid, skin);
+                         if (entry != null) {
+                             uuidsToRemoveSafe.add(uuid);
+                         }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+index 67d3faf45..0885ea827 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+@@ -570,6 +570,7 @@ public final class JoinPackets {
+         joinGame.write(Types.BOOLEAN, false); // online mode
+         joinGame.write(Types.BOOLEAN, false); // enforces secure chat
+         joinGame.send(BedrockProtocol.class);
++        user.get(NativeSkinStorage.class).markJoined();
+ 
+         clientPlayer.createTeam();
+         clientPlayer.sendInitialEntityData();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+index 8dbfb1743..cbd0153c3 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+@@ -40,6 +40,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.DisconnectFa
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.MinecraftPacketIds;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolationSeverity;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolationType;
++import net.raphimc.viabedrock.protocol.storage.NativeSkinStorage;
+ import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
+ import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
+ import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
+@@ -134,6 +135,7 @@ public final class MultiStatePackets {
+         if (channel.equals("minecraft:register")) {
+             final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
+             wrapper.user().get(ChannelStorage.class).addChannels(channels);
++            wrapper.user().get(NativeSkinStorage.class).flush();
+             if (channels.contains(NativeBlockIdentifiers.CHANNEL)
+                     && wrapper.user().has(ChunkTracker.class)) {
+                 wrapper.user().get(ChunkTracker.class).sendNativeBlockSnapshot();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/provider/SkinProvider.java b/src/main/java/net/raphimc/viabedrock/protocol/provider/SkinProvider.java
+index cc2b1ea5a..b4c053418 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/provider/SkinProvider.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/provider/SkinProvider.java
+@@ -20,6 +20,7 @@ package net.raphimc.viabedrock.protocol.provider;
+ import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.platform.providers.Provider;
+ import com.viaversion.viaversion.libs.gson.JsonObject;
++import net.raphimc.viabedrock.api.model.NativeSkinFragment;
+ import net.raphimc.viabedrock.api.modinterface.BedrockSkinUtilityInterface;
+ import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
+ import net.raphimc.viabedrock.api.resourcepack.content.Content;
+@@ -34,6 +35,9 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.InputMode;
+ import net.raphimc.viabedrock.protocol.model.SkinData;
+ import net.raphimc.viabedrock.protocol.storage.AuthData;
+ import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
++import net.raphimc.viabedrock.protocol.storage.NativeSkinStorage;
++import net.raphimc.viabedrock.protocol.storage.PlayerListStorage;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+ import net.raphimc.viabedrock.protocol.storage.HandshakeStorage;
+ import net.raphimc.viabedrock.protocol.types.primitive.ImageType;
+ 
+@@ -120,7 +124,15 @@ public class SkinProvider implements Provider {
+     }
+ 
+     public void setSkin(final UserConnection user, final UUID playerUuid, final SkinData skin) {
++        final EntityTracker entities = user.get(EntityTracker.class);
++        final var entry = user.get(PlayerListStorage.class).getPlayer(playerUuid);
++        final boolean local = isLocalPlayer(playerUuid, user.getProtocolInfo().getUuid(),
++                entry == null ? null : entry.key(), entities == null ? null : entities.getClientPlayer().abilities().entityUniqueId());
++        user.get(NativeSkinStorage.class).update(playerUuid, local, skin);
+         final ChannelStorage channelStorage = user.get(ChannelStorage.class);
++        if (channelStorage.hasChannel(NativeSkinFragment.CHANNEL)) {
++            return;
++        }
+         if (channelStorage.hasChannel(ViaBedrockUtilityInterface.CHANNEL)) {
+             ViaBedrockUtilityInterface.sendSkin(user, playerUuid, skin);
+         } else if (channelStorage.hasChannel(BedrockSkinUtilityInterface.CHANNEL)) {
+@@ -128,4 +140,8 @@ public class SkinProvider implements Provider {
+         }
+     }
+ 
++    static boolean isLocalPlayer(final UUID player, final UUID loginPlayer, final Long actorId, final Long localActorId) {
++        return player.equals(loginPlayer) || actorId != null && actorId.equals(localActorId);
++    }
++
+ }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeSkinStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeSkinStorage.java
+new file mode 100644
+index 000000000..358166ab1
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/NativeSkinStorage.java
+@@ -0,0 +1,121 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.StoredObject;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.api.model.NativeSkinFragment;
++import net.raphimc.viabedrock.api.util.PacketFactory;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.model.SkinData;
++
++import java.util.ArrayDeque;
++import java.util.Deque;
++import java.util.UUID;
++import java.util.function.BiConsumer;
++import java.util.function.Consumer;
++
++/** Keeps ordered wire snapshots until the Java play listener advertises native skin support. */
++public final class NativeSkinStorage extends StoredObject {
++
++    private static final int MAX_PENDING_RECORDS = 10000;
++    private static final long MAX_PENDING_BYTES = 128L * 1024 * 1024;
++    private final Deque<Update> pending = new ArrayDeque<>();
++    private long pendingBytes;
++    private final Deque<DeferredPacket> beforeJoin = new ArrayDeque<>();
++    private long beforeJoinBytes;
++    private boolean joined;
++
++    public NativeSkinStorage(final UserConnection user) {
++        super(user);
++    }
++
++    /** Player-list and skin packets can arrive before StartGame initializes their Java state. */
++    public void deferBeforeJoin(final ClientboundBedrockPackets type, final ByteBuf input) {
++        if (type != ClientboundBedrockPackets.PLAYER_LIST && type != ClientboundBedrockPackets.PLAYER_SKIN) {
++            throw new IllegalArgumentException("Not a skin or player-list packet");
++        }
++        if (this.joined || input.readableBytes() == 0 || this.beforeJoin.size() >= MAX_PENDING_RECORDS
++                || this.beforeJoinBytes + input.readableBytes() > MAX_PENDING_BYTES) {
++            throw new IllegalArgumentException("Invalid pre-join skin packet queue");
++        }
++        final byte[] payload = new byte[input.readableBytes()];
++        input.getBytes(input.readerIndex(), payload);
++        this.beforeJoin.addLast(new DeferredPacket(type, payload));
++        this.beforeJoinBytes += payload.length;
++    }
++
++    void drainBeforeJoin(final BiConsumer<ClientboundBedrockPackets, byte[]> dispatch) {
++        while (!this.beforeJoin.isEmpty()) {
++            final DeferredPacket packet = this.beforeJoin.getFirst();
++            dispatch.accept(packet.type(), packet.payload());
++            this.beforeJoinBytes -= packet.payload().length;
++            this.beforeJoin.removeFirst();
++        }
++    }
++
++    public void update(final UUID player, final boolean localPlayer, final SkinData skin) {
++        final byte[] encoded = NativeSkinFragment.encode(skin);
++        this.pending.addLast(new Update(player, localPlayer, encoded));
++        this.pendingBytes += encoded.length;
++        while (this.pendingBytes > MAX_PENDING_BYTES || this.pending.size() > MAX_PENDING_RECORDS) {
++            final Update oldest = this.pending.removeFirst();
++            this.pendingBytes -= oldest.data().length;
++            ViaBedrock.getPlatform().getLogger().warning("Native skin negotiation cache is full; discarded pending skin for " + oldest.player());
++        }
++        this.flush();
++    }
++
++    public void markJoined() {
++        this.joined = true;
++        this.drainBeforeJoin((type, payload) -> {
++            final ByteBuf buffer = Unpooled.wrappedBuffer(payload);
++            try {
++                PacketFactory.replayClientbound(PacketWrapper.create(type, buffer, this.user()));
++            } finally {
++                buffer.release();
++            }
++        });
++        this.flush();
++    }
++
++    public void flush() {
++        this.flush(update -> NativeSkinFragment.split(update.player(), update.localPlayer(), update.data(), fragment -> {
++            final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
++            packet.write(Types.STRING, NativeSkinFragment.CHANNEL);
++            packet.write(NativeSkinFragment.TYPE, fragment);
++            packet.send(BedrockProtocol.class);
++        }));
++    }
++
++    void flush(final Consumer<Update> send) {
++        if (!this.joined || this.user().getProtocolInfo().getServerState() != State.PLAY
++                || !this.user().get(ChannelStorage.class).hasChannel(NativeSkinFragment.CHANNEL)) {
++            return;
++        }
++        while (!this.pending.isEmpty()) {
++            final Update update = this.pending.getFirst();
++            send.accept(update);
++            this.pendingBytes -= update.data().length;
++            this.pending.removeFirst();
++        }
++    }
++
++    private record DeferredPacket(ClientboundBedrockPackets type, byte[] payload) {
++    }
++
++    record Update(UUID player, boolean localPlayer, byte[] data) {
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/model/SkinType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/model/SkinType.java
-index 3ac33a68c..42bd478d7 100644
+index 3ac33a68c..e336a8798 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/types/model/SkinType.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/types/model/SkinType.java
 @@ -24,10 +24,11 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.persona_Piec
@@ -49,16 +551,35 @@ index 3ac33a68c..42bd478d7 100644
      @Override
      public SkinData read(final ByteBuf buffer) {
          final String skinId = BedrockTypes.STRING.read(buffer);
-@@ -61,7 +61,7 @@ public class SkinType extends Type<SkinData> {
+@@ -43,7 +43,7 @@ public class SkinType extends Type<SkinData> {
+         final String skinResourcePatch = BedrockTypes.STRING.read(buffer);
+         final BufferedImage skinData = BedrockTypes.IMAGE.read(buffer);
+ 
+-        final int animationCount = BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
++        final int animationCount = readCount(buffer, 15);
+         final List<SkinData.AnimationData> animations = new ArrayList<>(animationCount);
+         for (int i = 0; i < animationCount; i++) {
+             final BufferedImage image = BedrockTypes.IMAGE.read(buffer);
+@@ -61,9 +61,9 @@ public class SkinType extends Type<SkinData> {
          final String fullSkinId = BedrockTypes.STRING.read(buffer);
  
          final String armSize = persona_ArmSize_Type.getByValue(buffer.readUnsignedByte()).name();
 -        final String skinColor = new Color(buffer.readIntLE(), true).toString();
 +        final String skinColor = color(buffer.readIntLE());
  
-         final int piecesLength = BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
+-        final int piecesLength = BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
++        final int piecesLength = readCount(buffer, 23);
          final List<SkinData.PersonaPieceData> personaPieces = new ArrayList<>(piecesLength);
-@@ -80,7 +80,7 @@ public class SkinType extends Type<SkinData> {
+         for (int i = 0; i < piecesLength; i++) {
+             final String id = BedrockTypes.STRING.read(buffer);
+@@ -74,13 +74,13 @@ public class SkinType extends Type<SkinData> {
+             personaPieces.add(new SkinData.PersonaPieceData(id, type, packId, defaultPiece, productId));
+         }
+ 
+-        final int tintsLength = BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
++        final int tintsLength = readCount(buffer, 17);
+         final List<SkinData.PersonaPieceTintData> tintColors = new ArrayList<>(tintsLength);
+         for (int i = 0; i < tintsLength; i++) {
              final String type = persona_PieceType.getByName(BedrockTypes.STRING.read(buffer)).name();
              final List<String> colors = new ArrayList<>(4);
              for (int i2 = 0; i2 < 4; i2++) {
@@ -135,12 +656,20 @@ index 3ac33a68c..42bd478d7 100644
              }
          }
  
-@@ -144,6 +146,19 @@ public class SkinType extends Type<SkinData> {
+@@ -144,6 +146,27 @@ public class SkinType extends Type<SkinData> {
          buffer.writeBoolean(value.capeOnClassic());
          buffer.writeBoolean(value.primaryUser());
          buffer.writeBoolean(value.overridingPlayerAppearance());
 +        BedrockTypes.STRING.write(buffer, value.trustedSkinFlag());
 +        BedrockTypes.STRING.write(buffer, value.profileHash());
++    }
++
++    private static int readCount(final ByteBuf buffer, final int minimumEntryBytes) {
++        final int count = BedrockTypes.UNSIGNED_VAR_INT.read(buffer);
++        if (count < 0 || count > buffer.readableBytes() / minimumEntryBytes) {
++            throw new IllegalArgumentException("Skin entry count exceeds remaining data");
++        }
++        return count;
 +    }
 +
 +    private static String color(final int value) {
@@ -155,6 +684,392 @@ index 3ac33a68c..42bd478d7 100644
      }
  
  }
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/types/primitive/ImageType.java b/src/main/java/net/raphimc/viabedrock/protocol/types/primitive/ImageType.java
+index 2431d957e..a92474825 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/types/primitive/ImageType.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/types/primitive/ImageType.java
+@@ -35,7 +35,7 @@ public class ImageType extends Type<BufferedImage> {
+         final int height = buffer.readIntLE();
+         final byte[] data = BedrockTypes.BYTE_ARRAY.read(buffer);
+ 
+-        if (width <= 0 || height <= 0 || data.length == 0 || data.length != width * height * 4) {
++        if (width <= 0 || height <= 0 || data.length == 0 || data.length != (long) width * height * 4) {
+             return null;
+         }
+ 
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeSkinTransportTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeSkinTransportTest.java
+new file mode 100644
+index 000000000..3e2acceef
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeSkinTransportTest.java
+@@ -0,0 +1,165 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.model.SkinData;
++import org.junit.jupiter.api.Test;
++
++import java.awt.image.BufferedImage;
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.List;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeSkinTransportTest {
++
++    @Test
++    void roundTripsCompleteMultiMegabyteClassicAndPersonaRecordsThroughJavaPayloads() {
++        for (final boolean persona : List.of(false, true)) {
++            final SkinData skin = skin(persona, 1024);
++            final byte[] encoded = NativeSkinFragment.encode(skin);
++            final List<NativeSkinFragment> fragments = new ArrayList<>();
++            final UUID player = UUID.randomUUID();
++            NativeSkinFragment.split(player, persona, encoded, fragments::add);
++            assertTrue(fragments.size() > 16);
++            final NativeSkinAssembler assembler = new NativeSkinAssembler();
++            SkinData decoded = null;
++            for (int i = 0; i < fragments.size(); i++) {
++                final ByteBuf packet = Unpooled.buffer();
++                try {
++                    NativeSkinFragment.TYPE.write(packet, fragments.get(i));
++                    assertTrue(packet.readableBytes() < 1024 * 1024);
++                    final NativeSkinFragment fragment = NativeSkinFragment.TYPE.read(packet);
++                    assertEquals(0, packet.readableBytes());
++                    assertEquals(player, fragment.player());
++                    assertEquals(persona, fragment.localPlayer());
++                    decoded = assembler.accept(fragment);
++                    assertEquals(i == fragments.size() - 1, decoded != null);
++                } finally {
++                    packet.release();
++                }
++            }
++            // Re-encoding compares every RGBA pixel and every field, including cape, geometry, animations, and trust.
++            assertArrayEquals(encoded, NativeSkinFragment.encode(decoded));
++        }
++    }
++
++    @Test
++    void supersedesIncompleteUpdatesAndRejectsMismatchedOrSkippedFragments() {
++        final UUID player = UUID.randomUUID();
++        final List<NativeSkinFragment> first = fragments(player, skin(false, 512));
++        final List<NativeSkinFragment> next = fragments(player, skin(true, 512));
++        final NativeSkinAssembler assembler = new NativeSkinAssembler();
++        assertNull(assembler.accept(first.get(0)));
++        assertNull(assembler.accept(next.get(0)));
++        assertThrows(IllegalArgumentException.class, () -> assembler.accept(first.get(1)));
++        assertThrows(IllegalArgumentException.class, () -> assembler.accept(next.get(1)));
++        assertNull(assembler.accept(next.get(0)));
++        assertThrows(IllegalArgumentException.class, () -> assembler.accept(next.get(2)));
++        assertNull(assembler.accept(next.get(0)));
++        final NativeSkinFragment continuation = next.get(1);
++        assertThrows(IllegalArgumentException.class, () -> assembler.accept(new NativeSkinFragment(UUID.randomUUID(), false,
++                continuation.transfer(), continuation.totalLength(), continuation.offset(), continuation.data())));
++        for (int i = 0; i < next.size(); i++) {
++            assertEquals(i == next.size() - 1, assembler.accept(next.get(i)) != null);
++        }
++    }
++
++    @Test
++    void releasesPartialDataOnDisconnectAndDoesNotKeepCompletedTransfers() {
++        final List<NativeSkinFragment> fragments = fragments(UUID.randomUUID(), skin(false, 512));
++        final NativeSkinAssembler assembler = new NativeSkinAssembler();
++        assembler.accept(fragments.get(0));
++        assembler.clear();
++        assertThrows(IllegalArgumentException.class, () -> assembler.accept(fragments.get(1)));
++        for (final NativeSkinFragment fragment : fragments) {
++            assembler.accept(fragment);
++        }
++        assertThrows(IllegalArgumentException.class, () -> assembler.accept(fragments.get(fragments.size() - 1)));
++    }
++
++    @Test
++    void validatesResourceBoundsAndRejectsTrailingOrUnsupportedData() {
++        final UUID player = UUID.randomUUID();
++        final UUID transfer = UUID.randomUUID();
++        assertThrows(IllegalArgumentException.class, () -> new NativeSkinFragment(player, false, transfer, Integer.MAX_VALUE, 0, new byte[1]));
++        assertThrows(IllegalArgumentException.class, () -> new NativeSkinFragment(player, false, transfer, 1, 1, new byte[1]));
++        assertThrows(IllegalArgumentException.class, () -> new NativeSkinFragment(player, false, transfer, 1, 0, new byte[2]));
++        final byte[] encoded = NativeSkinFragment.encode(skin(false, 1));
++        final NativeSkinAssembler assembler = new NativeSkinAssembler();
++        assertThrows(IllegalArgumentException.class, () -> assembler.accept(new NativeSkinFragment(player, false, transfer,
++                encoded.length + 1, 0, Arrays.copyOf(encoded, encoded.length + 1))));
++        assertNotNull(assembler.accept(new NativeSkinFragment(player, false, transfer, encoded.length, 0, encoded)));
++        final ByteBuf packet = Unpooled.buffer();
++        try {
++            Types.VAR_INT.writePrimitive(packet, 2);
++            Types.VAR_INT.writePrimitive(packet, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            assertThrows(IllegalArgumentException.class, () -> NativeSkinFragment.TYPE.read(packet));
++            packet.clear();
++            Types.VAR_INT.writePrimitive(packet, 1);
++            Types.VAR_INT.writePrimitive(packet, ProtocolConstants.BEDROCK_PROTOCOL_VERSION + 1);
++            assertThrows(IllegalArgumentException.class, () -> NativeSkinFragment.TYPE.read(packet));
++        } finally {
++            packet.release();
++        }
++    }
++
++    @Test
++    void snapshotsFragmentArraysAndRejectsImpossibleNativeCollectionCounts() {
++        final byte[] encoded = NativeSkinFragment.encode(skin(false, 1));
++        final NativeSkinFragment fragment = new NativeSkinFragment(UUID.randomUUID(), false, UUID.randomUUID(), encoded.length, 0, encoded);
++        encoded[0]++;
++        fragment.data()[0]++;
++        assertNotNull(new NativeSkinAssembler().accept(fragment));
++        final ByteBuf malformed = Unpooled.buffer();
++        try {
++            for (int i = 0; i < 3; i++) {
++                malformed.writeByte(0);
++            } // Empty ID, PlayFab ID, and resource patch
++            malformed.writeLong(0).writeByte(0); // Empty image
++            Types.VAR_INT.writePrimitive(malformed, Integer.MAX_VALUE); // Animation count with no entries
++            final byte[] data = new byte[malformed.readableBytes()];
++            malformed.readBytes(data);
++            assertThrows(IllegalArgumentException.class, () -> new NativeSkinAssembler().accept(
++                    new NativeSkinFragment(UUID.randomUUID(), false, UUID.randomUUID(), data.length, 0, data)));
++        } finally {
++            malformed.release();
++        }
++    }
++
++    private static List<NativeSkinFragment> fragments(final UUID player, final SkinData skin) {
++        final List<NativeSkinFragment> fragments = new ArrayList<>();
++        NativeSkinFragment.split(player, false, NativeSkinFragment.encode(skin), fragments::add);
++        return fragments;
++    }
++
++    static SkinData skin(final boolean persona, final int size) {
++        return new SkinData("id", "playfab", "{\"geometry\":{\"default\":\"geometry.test\"}}", image(size, size),
++                List.of(new SkinData.AnimationData(image(Math.min(size, 512), Math.min(size, 512)), 1, 4.5F, 1)),
++                image(64, 32), "{\"geometry.test\":{}}", "1.21.0", "{\"animations\":{}}", true, persona, !persona, true,
++                "cape", "full", "Slim", "#80442211",
++                List.of(new SkinData.PersonaPieceData("piece", "Hair", UUID.randomUUID().toString(), true, "product")),
++                List.of(new SkinData.PersonaPieceTintData("Hair", List.of("#00000000", "#ffffff00", "#11223344", "#ffffffff"))),
++                true, "True", "profile");
++    }
++
++    private static BufferedImage image(final int width, final int height) {
++        final BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
++        for (int y = 0; y < height; y++) {
++            for (int x = 0; x < width; x++) {
++                image.setRGB(x, y, Integer.rotateLeft(x * 92371 + y * 8293, 5));
++            }
++        }
++        return image;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/provider/SkinProviderTest.java b/src/test/java/net/raphimc/viabedrock/protocol/provider/SkinProviderTest.java
+new file mode 100644
+index 000000000..99d67e999
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/provider/SkinProviderTest.java
+@@ -0,0 +1,27 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.provider;
++
++import org.junit.jupiter.api.Test;
++
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class SkinProviderTest {
++
++    @Test
++    void identifiesTheLocalBedrockActorWhenTheJavaLoginUuidDiffers() {
++        final UUID bedrock = UUID.randomUUID();
++        final UUID javaPlayer = UUID.randomUUID();
++        assertTrue(SkinProvider.isLocalPlayer(bedrock, javaPlayer, -21474836474L, -21474836474L));
++        assertFalse(SkinProvider.isLocalPlayer(bedrock, javaPlayer, -21474836475L, -21474836474L));
++        assertFalse(SkinProvider.isLocalPlayer(bedrock, javaPlayer, null, -21474836474L));
++        assertTrue(SkinProvider.isLocalPlayer(bedrock, bedrock, null, null));
++        assertFalse(SkinProvider.isLocalPlayer(bedrock, javaPlayer, null, null));
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeSkinStorageTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeSkinStorageTest.java
+new file mode 100644
+index 000000000..741411093
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/NativeSkinStorageTest.java
+@@ -0,0 +1,163 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import net.raphimc.viabedrock.api.model.NativeSkinFragment;
++import net.raphimc.viabedrock.protocol.model.SkinData;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import io.netty.buffer.Unpooled;
++import org.junit.jupiter.api.Test;
++
++import java.awt.image.BufferedImage;
++import java.lang.reflect.Proxy;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.UUID;
++import java.util.concurrent.atomic.AtomicReference;
++import java.util.function.Consumer;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeSkinStorageTest {
++
++    @Test
++    void waitsForBothPlayJoinAndCapabilityThenSendsEveryUpdateInOrderOnce() {
++        final AtomicReference<State> state = new AtomicReference<>(State.CONFIGURATION);
++        final ChannelStorage channels = new ChannelStorage();
++        final NativeSkinStorage storage = new NativeSkinStorage(connection(state, channels));
++        final UUID player = UUID.randomUUID();
++        final UUID other = UUID.randomUUID();
++        final SkinData first = skin(0xFFFF0000);
++        final SkinData latest = skin(0xFF0000FF);
++        storage.update(player, true, first);
++        storage.update(other, false, first);
++        storage.update(player, true, latest);
++        final List<UUID> ids = new ArrayList<>();
++        final List<byte[]> delivered = new ArrayList<>();
++        final Consumer<NativeSkinStorage.Update> send = update -> {
++            ids.add(update.player());
++            delivered.add(update.data());
++            assertEquals(update.player().equals(player), update.localPlayer());
++        };
++        storage.flush(send);
++        assertTrue(ids.isEmpty());
++        storage.markJoined();
++        channels.addChannels(List.of(NativeSkinFragment.CHANNEL));
++        storage.flush(send);
++        assertTrue(ids.isEmpty());
++        state.set(State.PLAY);
++        storage.flush(send);
++        assertEquals(List.of(player, other, player), ids);
++        assertArrayEquals(NativeSkinFragment.encode(first), delivered.get(0));
++        assertArrayEquals(NativeSkinFragment.encode(first), delivered.get(1));
++        assertArrayEquals(NativeSkinFragment.encode(latest), delivered.get(2));
++        storage.flush(send);
++        assertEquals(3, ids.size());
++    }
++
++    @Test
++    void retainsPendingDataIfTheSenderFailsAndKeepsConnectionsIndependent() {
++        final AtomicReference<State> state = new AtomicReference<>(State.CONFIGURATION);
++        final ChannelStorage channels = new ChannelStorage();
++        final UserConnection user = connection(state, channels);
++        final NativeSkinStorage previous = new NativeSkinStorage(user);
++        final NativeSkinStorage current = new NativeSkinStorage(user);
++        final UUID player = UUID.randomUUID();
++        final SkinData old = skin(0xFFFF0000);
++        final SkinData replacement = skin(0xFF0000FF);
++        previous.update(player, true, old);
++        current.update(player, false, replacement);
++        previous.markJoined();
++        current.markJoined();
++        channels.addChannels(List.of(NativeSkinFragment.CHANNEL));
++        state.set(State.PLAY);
++        assertThrows(IllegalStateException.class, () -> current.flush(update -> {
++            throw new IllegalStateException();
++        }));
++        final List<byte[]> delivered = new ArrayList<>();
++        current.flush(update -> delivered.add(update.data()));
++        assertEquals(1, delivered.size());
++        assertArrayEquals(NativeSkinFragment.encode(replacement), delivered.get(0));
++        previous.flush(update -> assertArrayEquals(NativeSkinFragment.encode(old), update.data()));
++    }
++
++    @Test
++    void preservesEarlyPlayerListAndSkinPacketOrderWithoutRetainingTheirNetworkBuffers() {
++        final NativeSkinStorage storage = new NativeSkinStorage(connection(new AtomicReference<>(State.CONFIGURATION), new ChannelStorage()));
++        final byte[] first = {1, 2, 3};
++        final byte[] next = {4, 5};
++        final var input = Unpooled.wrappedBuffer(first);
++        final var continuation = Unpooled.wrappedBuffer(next);
++        try {
++            storage.deferBeforeJoin(ClientboundBedrockPackets.PLAYER_LIST, input);
++            storage.deferBeforeJoin(ClientboundBedrockPackets.PLAYER_SKIN, continuation);
++            assertEquals(0, input.readerIndex());
++            first[0] = 9;
++            final List<ClientboundBedrockPackets> types = new ArrayList<>();
++            final List<byte[]> payloads = new ArrayList<>();
++            storage.drainBeforeJoin((type, bytes) -> {
++                types.add(type);
++                payloads.add(bytes);
++            });
++            assertEquals(List.of(ClientboundBedrockPackets.PLAYER_LIST, ClientboundBedrockPackets.PLAYER_SKIN), types);
++            assertArrayEquals(new byte[]{1, 2, 3}, payloads.get(0));
++            assertArrayEquals(next, payloads.get(1));
++            storage.drainBeforeJoin((type, bytes) -> fail("Drained packet was replayed again"));
++            assertThrows(IllegalArgumentException.class, () -> storage.deferBeforeJoin(ClientboundBedrockPackets.TEXT, input));
++        } finally {
++            input.release();
++            continuation.release();
++        }
++    }
++
++    @Test
++    void boundsSmallEarlyPacketsAsWellAsTheirTotalBytes() {
++        final NativeSkinStorage storage = new NativeSkinStorage(connection(new AtomicReference<>(State.CONFIGURATION), new ChannelStorage()));
++        final var input = Unpooled.wrappedBuffer(new byte[]{0});
++        try {
++            assertThrows(IllegalArgumentException.class, () -> storage.deferBeforeJoin(ClientboundBedrockPackets.PLAYER_LIST, Unpooled.EMPTY_BUFFER));
++            for (int i = 0; i < 10000; i++) {
++                storage.deferBeforeJoin(ClientboundBedrockPackets.PLAYER_LIST, input);
++            }
++            assertThrows(IllegalArgumentException.class, () -> storage.deferBeforeJoin(ClientboundBedrockPackets.PLAYER_LIST, input));
++            storage.drainBeforeJoin((type, bytes) -> assertArrayEquals(new byte[]{0}, bytes));
++            storage.deferBeforeJoin(ClientboundBedrockPackets.PLAYER_LIST, input);
++        } finally {
++            input.release();
++        }
++    }
++
++    private static UserConnection connection(final AtomicReference<State> state, final ChannelStorage channels) {
++        final ProtocolInfo info = (ProtocolInfo) Proxy.newProxyInstance(ProtocolInfo.class.getClassLoader(), new Class<?>[]{ProtocolInfo.class},
++                (proxy, method, args) -> {
++                    if (method.getName().equals("getServerState")) {
++                        return state.get();
++                    }
++                    throw new UnsupportedOperationException(method.getName());
++                });
++        return (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(), new Class<?>[]{UserConnection.class},
++                (proxy, method, args) -> {
++                    if (method.getName().equals("getProtocolInfo")) {
++                        return info;
++                    }
++                    if (method.getName().equals("get") && args[0] == ChannelStorage.class) {
++                        return channels;
++                    }
++                    throw new UnsupportedOperationException(method.getName());
++                });
++    }
++
++    private static SkinData skin(final int pixel) {
++        final BufferedImage image = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
++        image.setRGB(0, 0, pixel);
++        return new SkinData("id", "", "", image, List.of(), null, "", "", "", false, false, false, false,
++                "", "", "Wide", "#00000000", List.of(), List.of(), false, "", "");
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/types/model/SkinTypeTest.java b/src/test/java/net/raphimc/viabedrock/protocol/types/model/SkinTypeTest.java
 new file mode 100644
 index 000000000..84fdd1f45
@@ -232,6 +1147,45 @@ index 000000000..84fdd1f45
 +        final BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
 +        image.setRGB(0, 0, color);
 +        return image;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/types/primitive/ImageTypeTest.java b/src/test/java/net/raphimc/viabedrock/protocol/types/primitive/ImageTypeTest.java
+new file mode 100644
+index 000000000..c18ad146e
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/types/primitive/ImageTypeTest.java
+@@ -0,0 +1,33 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.types.primitive;
++
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class ImageTypeTest {
++
++    @Test
++    void rejectsOverflowedDimensionsAndTruncatedPixelDataBeforeImageAllocation() {
++        final ByteBuf buffer = Unpooled.buffer();
++        try {
++            buffer.writeIntLE(0x40000001).writeIntLE(1);
++            BedrockTypes.BYTE_ARRAY.write(buffer, new byte[4]);
++            assertNull(BedrockTypes.IMAGE.read(buffer));
++            buffer.clear();
++            buffer.writeIntLE(64).writeIntLE(64);
++            BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(buffer, Integer.MAX_VALUE);
++            assertThrows(IllegalArgumentException.class, () -> BedrockTypes.IMAGE.read(buffer));
++        } finally {
++            buffer.release();
++        }
 +    }
 +
 +}

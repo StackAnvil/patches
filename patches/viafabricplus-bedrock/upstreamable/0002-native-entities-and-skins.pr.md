@@ -103,3 +103,28 @@ The native name producer also sets foreground alpha to 0.125 for sneaking actors
 Final validation: the checked stack passes 789 tests with zero failures, errors or skips (11 converter, 331 protocol, 447 add-on). The Prism bundle passes. Local recorded Hive and CubeCraft direct replays pass native appearance validation with 49 and 240 installed skins respectively and no rejected skins. The final CubeCraft replay exercises the crouched-opacity hook with no Mixin errors. ViaProxy transport and corrected marker anchors pass, but its native appearance validation remains unsupported without a skin and actor bridge. Exact native foreground baselines and billboard transforms remain unresolved.
 
 The earlier complete non-Geyser runtime run passes 45 gameplay cases, 15 entity actions, three resource-pack checks, both cache checks, and plain/Fabulously Optimized joins on both Java routes. After the bounded marker and opacity changes, final artifacts also pass all 15 entity actions, three gameplay guards and same-world reconnect. Artifact hashes stay fixed during each run, and owned displays and services are cleaned up. Recorded scenes, credentials and licensed native assets remain private.
+
+## Complete skin delivery through ViaProxy
+
+The renderer now receives full skin records through the core `viabedrock:player_skin` channel.
+Direct translation and ViaProxy use the same receiver and existing rendering path.
+Core retains configuration updates, so the previous direct-only skin queue and tick hook are removed.
+
+The receiver captures its Minecraft connection during Fabric's play initialization event.
+This avoids relying on `Context.player()`, which reads the current client player in the installed Fabric API.
+Assembly and installation run on the Minecraft thread.
+Disconnected or replaced connections cannot install queued updates into a new session.
+The existing appearance cleanup also releases incomplete transfers.
+Core marks updates for the local Bedrock actor.
+The receiver installs these records under the actual Java avatar UUID, including ViaProxy sessions with different login identities.
+
+Local live skin requests keep their optimistic preview and native acknowledgment behavior.
+Received authoritative updates use the shared transport.
+Server actor graphs, attachables, emote resources, and outbound account selection through ViaProxy remain separate requirements.
+
+The final authored playback fixture passes direct and ViaProxy transport and rendering checks.
+Each route installs all five geometry updates without rejection and matches hashes of the complete skin records.
+The audit observes three local native avatar submissions directly and one through ViaProxy.
+The fixture includes classic and persona records larger than five MiB, with cape and animation images and complete metadata.
+These observations verify incoming delivery and local-avatar ownership within the fixture.
+They do not establish visible native parity, remote-player lifecycle behavior, or the remaining actor and appearance resource paths.
