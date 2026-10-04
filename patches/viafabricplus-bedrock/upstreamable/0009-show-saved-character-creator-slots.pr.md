@@ -1541,3 +1541,10 @@ Use one library snapshot for server audio, captions, particle graphs, controller
 Direct server actors share core selection APIs with converted resource packs. Tests verify archive merging, immutable maps, mismatched layers, and domain collisions. The complete stack passes 933 Java tests, with 110 optional asset tests skipped. Incoming particle packets, actor binding, typed Molang evaluation, and visible effect parity remain incomplete.
 
 **Resource availability check:** An authored pack contains three particle definitions and one texture. Private main-thread instrumentation reads all three definitions and the identical texture bytes from the accepted converted resource pack on direct and ViaProxy connections. Both full replays reach spawn, transport every recorded payload, and load the Java resource pack without Store sign-in. This verifies resource availability, not incoming particle dispatch or visible effects. The existing direct skin-update failures and missing ViaProxy actor/appearance state remain open.
+
+
+## Shared native block mirror
+
+Receive the core's authoritative block identity channel and bind its mirror to the current client world. Preserve the mirror during resource reloads and clear it on disconnect. Native particles use this shared mirror instead of reading a direct-only ChunkTracker. Filtered effects require initialized world data. Unfiltered effects can start through ViaProxy.
+
+The full build passes 940 Java tests with 110 optional asset skips. A targeted filter test verifies the core mirror after an update at negative coordinates. Live direct and ViaProxy sessions each receive 2,712 initial section snapshots. Every client lookup matches the transported state and dictionary. Direct producer hashes also match the decoded snapshots. Updates match on both routes. These checks do not establish incoming particle dispatch, visible effect parity, or live dimension/unload/disconnect behavior.

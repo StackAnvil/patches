@@ -118,3 +118,14 @@ The core selectors also support direct consumers without compression. Targeted t
 Converted-pack format 3 belongs to the separate cache patch. Client resource snapshots belong to the Character Creator patch. Incoming particle dispatch, typed Molang variables, persistent actor binding, and visible particle comparisons remain incomplete.
 
 **Resource availability check:** An authored pack contains three particle definitions and one texture. Private main-thread instrumentation reads all three definitions and the identical texture bytes from the accepted converted resource pack on direct and ViaProxy connections. Both full replays reach spawn, transport every recorded payload, and load the Java resource pack without Store sign-in. This verifies resource availability, not incoming particle dispatch or visible effects. The existing direct skin-update failures and missing ViaProxy actor/appearance state remain open.
+
+
+## Authoritative block identities for native effects
+
+Transport the core's primary Bedrock state IDs and names through the native block channel. Preserve palette identity before Java mapping. Split dictionary fragments before section references, replay loaded state on late registration, and clear the client mirror after dimension resets or unloads. Uniform sections carry no cell array.
+
+The codec, section packing, and client mirror live in core. This allows direct and ViaProxy clients to use the same authoritative block filters. Clients that do not advertise the channel retain the standard translation.
+
+Validation: the patch applies alone to clean upstream and passes 32 tests and both Checkstyle tasks. The full stack passes 940 Java tests with 110 optional asset skips. The bundle builds. Tests cover packing widths, every coordinate, palette expansion and compaction, negative coordinates, updates, empty sections, malformed data, unknown IDs, and resets.
+
+An isolated target-build server supplies 2,712 section snapshots on each connection route. The direct producer matches all 11,108,352 cells against its source tracker. Every decoded section hash matches the producer. Both clients resolve every cell from the transported dictionary without a mismatch. Direct updates and six ViaProxy updates also match. Incoming particle dispatch, visible filter behavior, and live dimension/unload/disconnect observations remain unverified.
