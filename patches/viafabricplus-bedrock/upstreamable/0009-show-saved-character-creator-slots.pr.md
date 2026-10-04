@@ -1684,3 +1684,37 @@ Controller visibility requires that variable, so the visible arm checks scale-be
 Both routes retain the complete hierarchy, suppress duplicate Java hands, and restore their pose and appearance scopes.
 Both final screenshots show the scaled arm.
 These supplied resources do not verify account acquisition, persona overlap, or native pixel and motion parity.
+
+### First-person global actor transforms
+
+The matching 1.26.51.1 global pass at `0x141d5d280` applies death roll and exact upside-down names.
+The death helper at `0x141d5d070` uses the frame fraction and virtual death counter before the player roll.
+The progress is `sqrt(((deathTicks + frameAlpha - 1) / 20) * 1.6)`, capped at one.
+The player roll reaches 90 degrees.
+Exact raw names `Dinnerbone` and `Grumm` then add a half turn and the collision-height translation.
+Case changes and formatting remain significant.
+
+The first-person entry at `0x1447ca170` sets the local player property around actor and item drawing.
+That property suppresses gliding and riptide branches in the global pass.
+Executable probes verify unchanged matrices for both movement flags, separately and together, with supplied local first-person inputs.
+The private global fixture covers 415 matrices, including arbitrary input matrices and combined death and name transforms.
+The existing private root fixture covers 354 matrices.
+
+The hand renderer keeps the native ordering: height offset, half-turn basis, global transforms, axis conversion, script scale, and model offset.
+This replaces the collapsed basis that was valid only without an intervening global transform.
+Core transports the raw name through the versioned actor-state channel on both connection routes.
+The renderer uses the Java entity death counter and frame fraction.
+A portable composition test covers the root order and exact name matching.
+Both native matrix fixtures pass in the complete dependency build.
+That build passes 1,002 tests with 113 optional skips and no failures or errors.
+
+Native death-counter lifecycle, player-name initialization from gamertags, and visible native timing remain unverified.
+Other actor drawing roots, selected costume hands, held items, and persona overlap remain incomplete or unverified.
+All native executable data and licensed resources remain private.
+
+Final direct and ViaProxy checks inject private authored `SET_ENTITY_DATA` packets before the production decoder.
+Each frontend receives the unchanged formatted name `§aDinnerbone`, followed by the exact `Dinnerbone` name.
+Both actual Minecraft hand entries submit the expected matrix for combined death and name transforms with the licensed `0.9375` scale.
+They suppress duplicate Java hands and restore the pose and appearance scopes.
+The fixture then clears the name, and both final screenshots show the native arm.
+These supplied packet and graph inputs verify transport and draw-time composition, not native lifecycle or pixel parity.

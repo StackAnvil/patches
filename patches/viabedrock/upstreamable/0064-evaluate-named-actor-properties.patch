@@ -1,4 +1,4 @@
-From c77abb68b60b79a40d73d7d671dbd633b5c37626 Mon Sep 17 00:00:00 2001
+From f34ac60867f8ef60a601ddad739f1e32920e83f5 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:22:35 +0200
 Subject: [PATCH] feat(entities): evaluate named actor properties and
@@ -111,10 +111,10 @@ Native actor resources use the accepted converted resource-pack archive;
 no local Bedrock installation or frontend Store account is required.
 Player properties, actor events and animation timing remain separate work.
 
-Publish immutable actor inputs through viabedrock:actor_state after the
+Publish immutable actor inputs through viabedrock:actor_state_v2 after the
 Java play join and client capability registration. Retain native runtime
-identity, flags, typed named properties, variants, scale and optional raw
-spell color. Bind snapshots and removals to a stable per-actor lifetime
+identity, flags, typed named properties, variants, scale, raw name and
+optional raw spell color. Bind snapshots and removals to a stable per-actor lifetime
 UUID so replacing a Java or runtime identity cannot retain stale state.
 Local-player messages explicitly identify the frontend avatar mapping.
 
@@ -131,15 +131,20 @@ state already used by direct rendering. Their Molang consumers remain
 client rendering concerns. The general query/actor lifetime semantics are
 documented at https://mojang.github.io/bedrock-samples/Molang.html .
 Events, interpolation and complete animation behavior remain separate.
+
+Preserve NAME metadata formatting and case for native global transforms.
+Use wire version two and a new negotiated channel so older frontends do
+not read the changed snapshot layout. Native player gamertag initialization
+and death-counter lifecycle remain separate verification work.
 ---
  build.gradle                                  |  11 +-
  .../main/groovy/viabedrock.checkstyle.gradle  |   8 +-
  gradle.properties                             |   2 +-
- .../api/model/NativeActorMessage.java         | 170 ++++++++++++
+ .../api/model/NativeActorMessage.java         | 172 ++++++++++++
  .../api/model/NativeActorStates.java          |  51 ++++
  .../api/model/NativeCustomEntityMessage.java  | 142 ++++++++++
  .../api/model/entity/CustomEntity.java        | 101 ++++++-
- .../viabedrock/api/model/entity/Entity.java   |  72 +++++
+ .../viabedrock/api/model/entity/Entity.java   |  75 ++++++
  .../api/util/BedrockTrigonometry.java         |  33 +++
  .../viabedrock/api/util/MoLangEngine.java     | 209 ++++++++++++++-
  .../viabedrock/api/util/MoLangMath.java       | 248 ++++++++++++++++++
@@ -148,7 +153,7 @@ Events, interpolation and complete animation behavior remain separate.
  .../protocol/packet/WorldPackets.java         |   1 +
  .../protocol/storage/EntityTracker.java       |  25 ++
  .../META-INF/licenses/mochafloats.txt         |  24 ++
- .../api/model/NativeActorEntityTest.java      |  51 ++++
+ .../api/model/NativeActorEntityTest.java      |  60 +++++
  .../api/model/NativeActorMessageTest.java     | 126 +++++++++
  .../api/model/NativeActorStatesTest.java      |  73 ++++++
  .../model/NativeCustomEntityMessageTest.java  | 159 +++++++++++
@@ -157,7 +162,7 @@ Events, interpolation and complete animation behavior remain separate.
  .../api/model/entity/EntityScaleTest.java     | 157 +++++++++++
  .../viabedrock/api/util/MoLangEngineTest.java |  94 +++++++
  .../viabedrock/api/util/MoLangMathTest.java   | 115 ++++++++
- 25 files changed, 1923 insertions(+), 28 deletions(-)
+ 25 files changed, 1937 insertions(+), 28 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeCustomEntityMessage.java
@@ -249,10 +254,10 @@ index 44cfd6474..ea5f4da2d 100644
  maven_version=0.0.31-StackAnvil
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeActorMessage.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorMessage.java
 new file mode 100644
-index 000000000..864456bbd
+index 000000000..dc4553d23
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorMessage.java
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,172 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -277,7 +282,7 @@ index 000000000..864456bbd
 +/** Immutable native inputs, independent of frontend translation objects. */
 +public sealed interface NativeActorMessage permits NativeActorMessage.Snapshot, NativeActorMessage.Remove {
 +
-+    String CHANNEL = "viabedrock:actor_state";
++    String CHANNEL = "viabedrock:actor_state_v2";
 +    int MAX_PAYLOAD_BYTES = 1 << 20;
 +    int MAX_PROPERTIES = 4096;
 +    StringType STRING = new StringType(4096);
@@ -285,7 +290,7 @@ index 000000000..864456bbd
 +        @Override
 +        public NativeActorMessage read(final ByteBuf buffer) {
 +            if (buffer.readableBytes() > MAX_PAYLOAD_BYTES
-+                    || Types.VAR_INT.readPrimitive(buffer) != 1
++                    || Types.VAR_INT.readPrimitive(buffer) != 2
 +                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
 +                throw new IllegalArgumentException("Unsupported native actor state");
 +            }
@@ -297,6 +302,7 @@ index 000000000..864456bbd
 +            if (kind == 0) {
 +                final long runtimeId = buffer.readLong();
 +                final String identifier = STRING.read(buffer);
++                final String actorName = STRING.read(buffer);
 +                final float scale = buffer.readFloat();
 +                final int variant = buffer.readInt();
 +                final int markVariant = buffer.readInt();
@@ -326,7 +332,7 @@ index 000000000..864456bbd
 +                        throw new IllegalArgumentException("Duplicate native actor property");
 +                    }
 +                }
-+                message = new Snapshot(uuid, lifetime, local, runtimeId, identifier, scale, flags, variant, markVariant, spellColor, properties);
++                message = new Snapshot(uuid, lifetime, local, runtimeId, identifier, actorName, scale, flags, variant, markVariant, spellColor, properties);
 +            } else if (kind == 1) {
 +                message = new Remove(uuid, lifetime, local);
 +            } else {
@@ -341,7 +347,7 @@ index 000000000..864456bbd
 +        @Override
 +        public void write(final ByteBuf buffer, final NativeActorMessage message) {
 +            final int start = buffer.writerIndex();
-+            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, 2);
 +            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
 +            buffer.writeByte(message instanceof Snapshot ? 0 : 1);
 +            Types.UUID.write(buffer, message.uuid());
@@ -350,6 +356,7 @@ index 000000000..864456bbd
 +            if (message instanceof Snapshot snapshot) {
 +                buffer.writeLong(snapshot.runtimeId);
 +                STRING.write(buffer, snapshot.identifier);
++                STRING.write(buffer, snapshot.name);
 +                buffer.writeFloat(snapshot.scale).writeInt(snapshot.variant).writeInt(snapshot.markVariant);
 +                buffer.writeBoolean(snapshot.spellColor != null);
 +                if (snapshot.spellColor != null) {
@@ -404,7 +411,7 @@ index 000000000..864456bbd
 +
 +    boolean localPlayer();
 +
-+    record Snapshot(UUID uuid, UUID lifetime, boolean localPlayer, long runtimeId, String identifier,
++    record Snapshot(UUID uuid, UUID lifetime, boolean localPlayer, long runtimeId, String identifier, String name,
 +                    float scale, Set<ActorFlags> flags, int variant, int markVariant, Integer spellColor,
 +                    Map<String, Object> properties) implements NativeActorMessage {
 +        public Snapshot {
@@ -854,7 +861,7 @@ index 53394efee..39f02d436 100644
  
      private class ItemDisplayEntity extends Entity {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index 0cee5d86a..631a23134 100644
+index 0cee5d86a..0fb3e14ef 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 @@ -21,6 +21,10 @@ import com.viaversion.viaversion.api.connection.UserConnection;
@@ -914,7 +921,7 @@ index 0cee5d86a..631a23134 100644
          if (this.hasBossBar) {
              this.hasBossBar = false;
              final PacketWrapper bossEvent = PacketWrapper.create(ClientboundPackets26_3.BOSS_EVENT, this.user);
-@@ -289,6 +320,47 @@ public class Entity {
+@@ -289,6 +320,50 @@ public class Entity {
      }
  
      protected void onEntityDataChanged() {
@@ -922,11 +929,14 @@ index 0cee5d86a..631a23134 100644
 +    }
 +
 +    public final NativeActorMessage.Snapshot nativeActorSnapshot() {
++        final var name = this.entityData.get(ActorDataIds.NAME);
++        final String nativeName = name != null && name.dataType() == EntityDataTypesBedrock.STRING
++                && name.value() instanceof String text ? text : "";
 +        final var spell = this.entityData.get(ActorDataIds.DATA_SPELL_CASTING_COLOR);
 +        final Integer spellColor = spell != null && spell.dataType() == EntityDataTypesBedrock.INT
 +                && spell.value() instanceof Integer color ? color : null;
 +        return new NativeActorMessage.Snapshot(this.javaUuid(), this.nativeLifetime, this instanceof ClientPlayerEntity,
-+                this.runtimeId(), this.type == null ? "" : this.type, this.scale(), this.entityFlags(),
++                this.runtimeId(), this.type == null ? "" : this.type, nativeName, this.scale(), this.entityFlags(),
 +                this.nativeMetadataInt(ActorDataIds.VARIANT), this.nativeMetadataInt(ActorDataIds.MARK_VARIANT), spellColor, this.entityProperties());
 +    }
 +
@@ -1643,10 +1653,10 @@ index 000000000..34dbe88b4
 \ No newline at end of file
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeActorEntityTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorEntityTest.java
 new file mode 100644
-index 000000000..64b3fb3de
+index 000000000..c398d9fb7
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorEntityTest.java
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,60 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1679,6 +1689,8 @@ index 000000000..64b3fb3de
 +        actor.entityData().put(ActorDataIds.VARIANT, new EntityData(ActorDataIds.VARIANT.getValue(), EntityDataTypesBedrock.INT, 17));
 +        actor.entityData().put(ActorDataIds.DATA_SPELL_CASTING_COLOR,
 +                new EntityData(ActorDataIds.DATA_SPELL_CASTING_COLOR.getValue(), EntityDataTypesBedrock.INT, 0x89123456));
++        actor.entityData().put(ActorDataIds.NAME,
++                new EntityData(ActorDataIds.NAME.getValue(), EntityDataTypesBedrock.STRING, "§aDinnerbone"));
 +        final var before = actor.nativeActorSnapshot();
 +        actor.retainEntityProperties(Map.of("fixture:mode", "b"));
 +        final var after = actor.nativeActorSnapshot();
@@ -1695,12 +1707,19 @@ index 000000000..64b3fb3de
 +                new EntityData(ActorDataIds.DATA_SPELL_CASTING_COLOR.getValue(), EntityDataTypesBedrock.FLOAT, 42F));
 +        assertNull(actor.nativeActorSnapshot().spellColor());
 +        assertEquals(1F, after.scale());
++        assertEquals("§aDinnerbone", after.name());
++        actor.entityData().put(ActorDataIds.NAME,
++                new EntityData(ActorDataIds.NAME.getValue(), EntityDataTypesBedrock.STRING, ""));
++        assertEquals("", actor.nativeActorSnapshot().name());
++        actor.entityData().put(ActorDataIds.NAME,
++                new EntityData(ActorDataIds.NAME.getValue(), EntityDataTypesBedrock.INT, 17));
++        assertEquals("", actor.nativeActorSnapshot().name());
 +    }
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeActorMessageTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorMessageTest.java
 new file mode 100644
-index 000000000..ca0955ccb
+index 000000000..6f5f63a51
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorMessageTest.java
 @@ -0,0 +1,126 @@
@@ -1731,7 +1750,7 @@ index 000000000..ca0955ccb
 +                "enum", "MixedCase", "bool", true, "int", Integer.MIN_VALUE, "long", Long.MIN_VALUE,
 +                "float", -0F, "double", .125D));
 +        final var snapshot = new NativeActorMessage.Snapshot(UUID.randomUUID(), UUID.randomUUID(), true,
-+                Long.MIN_VALUE, "fixture:player", -2F, Set.of(ActorFlags.CHARGING, ActorFlags.USINGITEM),
++                Long.MIN_VALUE, "fixture:player", "§aDinnerbone", -2F, Set.of(ActorFlags.CHARGING, ActorFlags.USINGITEM),
 +                -17, 43, 0x89ABCDEF, properties);
 +        properties.clear();
 +        final var decoded = (NativeActorMessage.Snapshot) roundTrip(snapshot);
@@ -1741,7 +1760,7 @@ index 000000000..ca0955ccb
 +        assertThrows(UnsupportedOperationException.class, () -> decoded.properties().clear());
 +        assertThrows(UnsupportedOperationException.class, () -> decoded.flags().clear());
 +        final var absent = new NativeActorMessage.Snapshot(snapshot.uuid(), snapshot.lifetime(), false, 2,
-+                "fixture:actor", 0F, Set.of(), 0, 0, null, Map.of());
++                "fixture:actor", "", 0F, Set.of(), 0, 0, null, Map.of());
 +        assertEquals(absent, roundTrip(absent));
 +        assertEquals(new NativeActorMessage.Remove(snapshot.uuid(), snapshot.lifetime(), true),
 +                roundTrip(new NativeActorMessage.Remove(snapshot.uuid(), snapshot.lifetime(), true)));
@@ -1754,7 +1773,7 @@ index 000000000..ca0955ccb
 +            NativeActorMessage.TYPE.write(buffer, new NativeActorMessage.Remove(UUID.randomUUID(), UUID.randomUUID(), false));
 +            final byte[] valid = new byte[buffer.readableBytes()];
 +            buffer.getBytes(0, valid);
-+            buffer.setByte(0, 2);
++            buffer.setByte(0, 3);
 +            assertThrows(IllegalArgumentException.class, () -> NativeActorMessage.TYPE.read(buffer));
 +            buffer.clear().writeBytes(valid).setByte(1, 0);
 +            assertThrows(IllegalArgumentException.class, () -> NativeActorMessage.TYPE.read(buffer));
@@ -1774,7 +1793,7 @@ index 000000000..ca0955ccb
 +        final var buffer = Unpooled.buffer();
 +        try {
 +            final var snapshot = new NativeActorMessage.Snapshot(UUID.randomUUID(), UUID.randomUUID(), false, 1,
-+                    "fixture:actor", 1F, Set.of(), 0, 0, null, Map.of());
++                    "fixture:actor", "", 1F, Set.of(), 0, 0, null, Map.of());
 +            for (int tag : new int[]{2, 99}) {
 +                buffer.clear();
 +                NativeActorMessage.TYPE.write(buffer, snapshot);
@@ -1800,20 +1819,20 @@ index 000000000..ca0955ccb
 +                properties.put("key" + i, 1);
 +            }
 +            final var tooMany = new NativeActorMessage.Snapshot(UUID.randomUUID(), UUID.randomUUID(), false, 1,
-+                    "fixture:actor", 1F, Set.of(), 0, 0, null, properties);
++                    "fixture:actor", "", 1F, Set.of(), 0, 0, null, properties);
 +            assertThrows(IllegalArgumentException.class, () -> NativeActorMessage.TYPE.write(buffer, tooMany));
 +            properties.clear();
 +            for (int i = 0; i < 300; i++) {
 +                properties.put("key" + i, "x".repeat(4096));
 +            }
 +            final var tooLarge = new NativeActorMessage.Snapshot(UUID.randomUUID(), UUID.randomUUID(), false, 1,
-+                    "fixture:actor", 1F, Set.of(), 0, 0, null, properties);
++                    "fixture:actor", "", 1F, Set.of(), 0, 0, null, properties);
 +            buffer.clear();
 +            assertThrows(IllegalArgumentException.class, () -> NativeActorMessage.TYPE.write(buffer, tooLarge));
 +            buffer.clear().writeZero(NativeActorMessage.MAX_PAYLOAD_BYTES + 1);
 +            assertThrows(IllegalArgumentException.class, () -> NativeActorMessage.TYPE.read(buffer));
 +            assertThrows(IllegalArgumentException.class, () -> new NativeActorMessage.Snapshot(UUID.randomUUID(), UUID.randomUUID(), false, 1,
-+                    "fixture:actor", 1F, Set.of(), 0, 0, null, Map.of("mutable", new int[]{1})));
++                    "fixture:actor", "", 1F, Set.of(), 0, 0, null, Map.of("mutable", new int[]{1})));
 +        } finally {
 +            buffer.release();
 +        }
@@ -1832,7 +1851,7 @@ index 000000000..ca0955ccb
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeActorStatesTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorStatesTest.java
 new file mode 100644
-index 000000000..416d59c9b
+index 000000000..84dce59e4
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorStatesTest.java
 @@ -0,0 +1,73 @@
@@ -1904,7 +1923,7 @@ index 000000000..416d59c9b
 +    }
 +
 +    private static NativeActorMessage.Snapshot snapshot(final UUID uuid, final UUID lifetime, final boolean local, final long runtimeId) {
-+        return new NativeActorMessage.Snapshot(uuid, lifetime, local, runtimeId, "minecraft:player", 1F,
++        return new NativeActorMessage.Snapshot(uuid, lifetime, local, runtimeId, "minecraft:player", "", 1F,
 +                Set.of(ActorFlags.CHARGING), 1, 2, 0x89ABCDEF, Map.of("fixture:enabled", true));
 +    }
 +

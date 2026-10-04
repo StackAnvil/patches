@@ -345,7 +345,7 @@ The sound-control change also passes the [complete main-branch CI build](https:/
 | S2 | Complete local persona assembly | Incomplete | Resolve unavailable free assets and remaining geometry, layering, and animation sources. |
 | S3 | Classic geometry and animation formats | Incomplete | Complete inherited legacy sources, aliases, metadata, and inheritance comparisons. |
 | S4 | Emotes and animation fidelity | Incomplete | Complete unavailable remote assets, events, effects, platform filters, timing, rotations, and scale comparisons. |
-| S5 | Native first-person and held-item drawing | Incomplete | Classic and persona graphs submit their sampled hierarchy with authored actor scale in camera space. Verify visible motion and persona overlap, then complete server costume selection, global transforms, held items, charging, equipment, and input timing. |
+| S5 | Native first-person and held-item drawing | Incomplete | Classic and persona graphs submit their sampled hierarchy with authored scale, death roll, and raw-name transforms. Verify native visible timing and persona overlap, then complete costume hands, other global transforms, held items, charging, equipment, and input timing. |
 | S6 | Complete incoming skin records through ViaProxy | Implemented | Complete records and local-avatar ownership pass isolated direct and proxy playback. Broader remote-player, lifecycle, and native visual comparisons remain required. |
 | D1 | Palettes, color channels, and limb editing | Unverified | Compare remaining palette options, asynchronous saves, and fresh native limb edits. |
 | D2 | Classic packs and imported-skin synchronization | Incomplete | Complete imported images without downloadable pack references and remaining account/platform flows. |
@@ -885,7 +885,7 @@ Raw packets, assets, account data, and screenshots remain private.
 
 ### Native actor inputs and property indices
 
-**Implemented:** Core publishes immutable actor snapshots through the negotiated `viabedrock:actor_state` channel.
+**Implemented:** Core publishes immutable actor snapshots through the negotiated `viabedrock:actor_state_v2` channel.
 Snapshots retain named scalar properties, flags, scale, variants, typed spell color, runtime identity, and an actor lifetime token.
 Local-player snapshots resolve the actual Java profile identity on direct connections and ViaProxy.
 Removal checks the lifetime token before releasing state.
@@ -1262,3 +1262,34 @@ This verifies draw-time ordering and classic drawing with supplied resources, no
 **Incomplete:** Other actor drawing paths still require script-scale integration.
 Global actor transforms, selected costume hands, native held-item placement, persona overlap, and native visible timing remain open.
 This section supersedes the missing first-person script-scale integration described above.
+
+## First-person global actor transforms
+
+**Implemented:** The hand root applies native death roll and exact upside-down names before axis conversion and script scale.
+Core retains the raw `ActorDataIds.NAME` string in each actor snapshot.
+The renderer does not remove formatting or change case.
+Only `Dinnerbone` and `Grumm` trigger the name transform.
+
+The new snapshot uses wire version two and the negotiated `viabedrock:actor_state_v2` channel.
+This channel prevents an older add-on from reading the changed payload layout.
+Missing or incorrectly typed names produce an empty raw name.
+Ordinary Java translation remains independent of the channel.
+
+**Native evidence:** Matching executable probes cover 415 global matrices and 354 root matrices.
+The global cases combine death counters, frame fractions, collision heights, exact names, formatted names, and arbitrary input matrices.
+The local first-person flag suppresses native gliding and riptide rotations.
+Those movement flags leave the global matrix unchanged in the supplied first-person cases.
+The add-on build passes 1,002 tests with 113 optional skips and no failures or errors, with both matrix fixtures enabled.
+
+**Runtime evidence:** Final direct and ViaProxy clients receive authored `SET_ENTITY_DATA` packets through the normal core decoder.
+A formatted `§aDinnerbone` name reaches the frontend unchanged, followed by the exact `Dinnerbone` name.
+Both actual Minecraft hand entries submit the expected combined death and name matrix with the licensed `0.9375` scale.
+Both restore the pose and appearance scopes and suppress duplicate Java hands.
+The fixture then clears the name, and both final screenshots show the native arm.
+These authored inputs verify delivery and draw-time composition, not native name initialization or death timing.
+
+**Incomplete or unverified:** Native player-name initialization from gamertags and the native death-counter lifecycle remain unverified.
+The current death counter uses the Java entity clock.
+Other actor roots, selected costume hands, held-item placement, persona overlap, and native visible timing remain open.
+These matrix cases do not establish complete visual or lifecycle parity.
+This section supersedes the missing first-person global integration described above for death roll and explicit raw names.

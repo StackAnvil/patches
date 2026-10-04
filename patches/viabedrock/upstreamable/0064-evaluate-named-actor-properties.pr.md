@@ -77,7 +77,7 @@ Raw packets, assets, account data, and screenshots remain private.
 
 ## Native actor inputs through ViaProxy
 
-Core publishes immutable actor inputs through `viabedrock:actor_state` after capability registration and Java world initialization.
+Core publishes immutable actor inputs through `viabedrock:actor_state_v2` after capability registration and Java world initialization.
 Snapshots retain native flags, named properties, scale, variants, typed spell color, runtime identity, and an actor lifetime token.
 The local-player flag lets the frontend resolve its actual Java profile identity on either route.
 Removal checks the lifetime token before releasing state.
@@ -100,3 +100,24 @@ The bool, int, enum string, and float retain their values and types.
 Both routes remove and restore local inputs at each dimension change.
 Final screenshots show the grounded blue costume and green equipment on both routes, consistent with the native selection.
 Camera framing, lighting, full animation timing, and broader lifecycle behavior remain unverified.
+
+### Raw names for native global transforms
+
+Actor snapshots now include the raw typed `ActorDataIds.NAME` value.
+Sparse updates retain the prior name, and explicit empty strings clear it.
+Missing or incorrectly typed metadata produces an empty string.
+The codec preserves formatting and case within its existing string and payload bounds.
+Entity and codec tests cover these semantics.
+
+The payload uses wire version two and the negotiated `viabedrock:actor_state_v2` channel.
+An older add-on therefore cannot negotiate the previous name and receive the changed layout.
+Ordinary Java translation does not require this native channel.
+The frontend uses explicit raw names for target first-person global transforms.
+Native player-name initialization from gamertags remains unverified.
+
+Final direct and ViaProxy checks inject private authored `SET_ENTITY_DATA` packets before the production decoder.
+Each frontend receives the unchanged formatted name `§aDinnerbone`, followed by the exact `Dinnerbone` name.
+Both actual Minecraft hand entries submit the expected matrix for combined death and name transforms with the licensed `0.9375` scale.
+They suppress duplicate Java hands and restore the pose and appearance scopes.
+The fixture then clears the name, and both final screenshots show the native arm.
+These supplied packet and graph inputs verify transport and draw-time composition, not native lifecycle or pixel parity.
