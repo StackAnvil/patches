@@ -1,4 +1,4 @@
-From 16277206808f9bb1b85c75721324d57a7edcec59 Mon Sep 17 00:00:00 2001
+From 7f4ec5c798482d84ee26e8af3c7243c0e5fd9302 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:52:24 +0200
 Subject: [PATCH] perf(resource-packs): cache converted packs by content
@@ -44,13 +44,22 @@ after atomic disk writes, while still verifying persisted cache hits.
 Rebuild truncated ZIPs or malformed cached metadata from source so cache
 corruption cannot repeatedly reject joins. Preserve archive bytes and
 normalized immutable metadata across memory and disk results.
+
+Stream disk-cache misses into a temporary ZIP while computing its hash.
+Publish the completed archive atomically before its index, and remove
+partial staging files on failure. Avoid allocating the complete ZIP in
+heap memory while retaining identical archive bytes and descriptors.
+
+Restore entity scales as finite floats, matching the converter producer
+and entity renderer. Reject numbers outside the float domain so persisted
+metadata cannot disconnect a connection during custom actor spawning.
 ---
  build.gradle                                  |  10 +
- .../api/resourcepack/content/Content.java     |   2 +-
- .../http/ConvertedResourcePackCache.java      | 234 ++++++++++++++
+ .../api/resourcepack/content/Content.java     |  28 +-
+ .../http/ConvertedResourcePackCache.java      | 253 +++++++++++++++
  .../http/ConverterDataManifest.java           |  74 +++++
  .../http/ResourcePackHttpServer.java          | 145 ++++-----
- .../viabedrock/api/util/FileSystemUtil.java   |  14 +
+ .../viabedrock/api/util/FileSystemUtil.java   |  18 ++
  .../packet/ResourcePackClientResponse.java    |  52 +++
  .../protocol/packet/ResourcePackPackets.java  | 295 ++++++++++--------
  .../provider/ResourcePackProvider.java        |   8 +-
@@ -58,10 +67,10 @@ normalized immutable metadata across memory and disk results.
  .../impl/InMemoryResourcePackProvider.java    |  34 +-
  .../impl/NoOpResourcePackProvider.java        |  11 +-
  .../storage/ResourcePackLoadStateTracker.java |  62 ++--
- .../http/ConvertedResourcePackCacheTest.java  | 184 +++++++++++
+ .../http/ConvertedResourcePackCacheTest.java  | 255 +++++++++++++++
  .../ResourcePackClientResponseTest.java       |  74 +++++
  .../ResourcePackLoadStateTrackerTest.java     |  43 +++
- 16 files changed, 1043 insertions(+), 246 deletions(-)
+ 16 files changed, 1153 insertions(+), 256 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConverterDataManifest.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackClientResponse.java
@@ -91,24 +100,58 @@ index b081953c4..fcd360c46 100644
  
  def registerToolTask(String name, String toolMainClass, String toolDescription) {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
-index 622e99d2e..0f5b02b54 100644
+index 622e99d2e..b46d5b1af 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
-@@ -164,7 +164,7 @@ public abstract class Content {
-         final ByteArrayOutputStream baos = new ByteArrayOutputStream(4 * 1024 * 1024);
-         final ZipOutputStream zipOutputStream = new ZipOutputStream(baos);
-         zipOutputStream.setLevel(Deflater.BEST_SPEED);
+@@ -26,6 +26,7 @@ import java.awt.image.BufferedImage;
+ import java.io.ByteArrayInputStream;
+ import java.io.ByteArrayOutputStream;
+ import java.io.IOException;
++import java.io.OutputStream;
+ import java.io.UncheckedIOException;
+ import java.nio.charset.StandardCharsets;
+ import java.util.*;
+@@ -161,18 +162,23 @@ public abstract class Content {
+     }
+ 
+     public byte[] toZip() throws IOException {
+-        final ByteArrayOutputStream baos = new ByteArrayOutputStream(4 * 1024 * 1024);
+-        final ZipOutputStream zipOutputStream = new ZipOutputStream(baos);
+-        zipOutputStream.setLevel(Deflater.BEST_SPEED);
 -        for (String path : this.getFilesDeep("", "")) {
-+        for (String path : this.getFilesDeep("", "").stream().sorted().toList()) {
-             final ZipEntry entry = new ZipEntry(path);
-             entry.setTime(0L);
-             zipOutputStream.putNextEntry(entry);
+-            final ZipEntry entry = new ZipEntry(path);
+-            entry.setTime(0L);
+-            zipOutputStream.putNextEntry(entry);
+-            zipOutputStream.write(this.get(path));
+-            zipOutputStream.closeEntry();
++        final ByteArrayOutputStream output = new ByteArrayOutputStream(4 * 1024 * 1024);
++        this.writeZip(output);
++        return output.toByteArray();
++    }
++
++    /** Writes the deterministic archive and closes the supplied output. */
++    public void writeZip(final OutputStream output) throws IOException {
++        try (ZipOutputStream zip = new ZipOutputStream(output)) {
++            zip.setLevel(Deflater.BEST_SPEED);
++            for (String path : this.getFilesDeep("", "").stream().sorted().toList()) {
++                final ZipEntry entry = new ZipEntry(path);
++                entry.setTime(0L);
++                zip.putNextEntry(entry);
++                zip.write(this.get(path));
++                zip.closeEntry();
++            }
+         }
+-        zipOutputStream.close();
+-        return baos.toByteArray();
+     }
+ 
+     public static class LazyImage {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 new file mode 100644
-index 000000000..6cb743759
+index 000000000..e35932830
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-@@ -0,0 +1,234 @@
+@@ -0,0 +1,253 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -137,6 +180,7 @@ index 000000000..6cb743759
 +import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 +
++import java.io.BufferedOutputStream;
 +import java.io.DataOutputStream;
 +import java.io.IOException;
 +import java.io.OutputStream;
@@ -239,11 +283,24 @@ index 000000000..6cb743759
 +                }
 +            }
 +
-+            final Pack converted = this.convert(storage);
-+            final Path path = this.directory.resolve(converted.sha1() + ".zip");
-+            FileSystemUtil.writeAtomically(path, converted.bytes());
-+            FileSystemUtil.writeAtomically(index, converted.sha1().getBytes(StandardCharsets.US_ASCII));
-+            return new Pack(path, null, converted.size(), converted.sha1(), converted.id(), converted.converterData());
++            final Content content = this.convertContent(storage);
++            final Map<String, Object> metadata = ConverterDataManifest.decode(content.getString(ConverterDataManifest.PATH));
++            final Path temporary = Files.createTempFile(this.directory, "conversion-", ".tmp");
++            try {
++                final MessageDigest digest = digest("SHA-1");
++                try (var output = new BufferedOutputStream(new DigestOutputStream(Files.newOutputStream(temporary), digest), 64 * 1024)) {
++                    content.writeZip(output);
++                }
++                final String sha1 = HexFormat.of().formatHex(digest.digest());
++                final UUID id = UUID.nameUUIDFromBytes(("ViaBedrock:" + sha1).getBytes(StandardCharsets.UTF_8));
++                final long size = Files.size(temporary);
++                final Path path = this.directory.resolve(sha1 + ".zip");
++                FileSystemUtil.moveAtomically(temporary, path);
++                FileSystemUtil.writeAtomically(index, sha1.getBytes(StandardCharsets.US_ASCII));
++                return new Pack(path, null, size, sha1, id, metadata);
++            } finally {
++                Files.deleteIfExists(temporary);
++            }
 +        } catch (final Exception e) {
 +            throw new CompletionException("Failed to prepare converted resource pack", e);
 +        }
@@ -251,12 +308,17 @@ index 000000000..6cb743759
 +
 +    private Pack convert(final ResourcePackStorage storage) {
 +        try {
-+            final Content content = this.converter.apply(storage);
-+            content.putJson(ConverterDataManifest.PATH, ConverterDataManifest.encode(storage.getConverterData()));
++            final Content content = this.convertContent(storage);
 +            return describe(content.toZip(), ConverterDataManifest.decode(content.getString(ConverterDataManifest.PATH)));
 +        } catch (final Exception e) {
 +            throw new CompletionException("Failed to convert resource packs", e);
 +        }
++    }
++
++    private Content convertContent(final ResourcePackStorage storage) {
++        final Content content = this.converter.apply(storage);
++        content.putJson(ConverterDataManifest.PATH, ConverterDataManifest.encode(storage.getConverterData()));
++        return content;
 +    }
 +
 +    static Pack describe(final Path path) throws IOException {
@@ -345,7 +407,7 @@ index 000000000..6cb743759
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConverterDataManifest.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConverterDataManifest.java
 new file mode 100644
-index 000000000..ae7b50235
+index 000000000..fc384c9b5
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConverterDataManifest.java
 @@ -0,0 +1,74 @@
@@ -378,7 +440,7 @@ index 000000000..ae7b50235
 +        final JsonObject attachables = new JsonObject();
 +        final JsonObject missing = new JsonObject();
 +        data.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> {
-+            if (entry.getKey().startsWith("ce_") && entry.getKey().endsWith("_scale") && entry.getValue() instanceof Number scale && Double.isFinite(scale.doubleValue())) {
++            if (entry.getKey().startsWith("ce_") && entry.getKey().endsWith("_scale") && entry.getValue() instanceof Number scale && Float.isFinite(scale.floatValue())) {
 +                scales.addProperty(entry.getKey(), scale.doubleValue());
 +            } else if (entry.getKey().startsWith("ca_") && entry.getValue() instanceof Boolean ready) {
 +                attachables.addProperty(entry.getKey(), ready);
@@ -401,8 +463,8 @@ index 000000000..ae7b50235
 +        }
 +        final Map<String, Object> data = new LinkedHashMap<>();
 +        for (Map.Entry<String, JsonElement> entry : manifest.getAsJsonObject("entity_scales").entrySet()) {
-+            final double scale = entry.getValue().getAsDouble();
-+            if (!entry.getKey().startsWith("ce_") || !entry.getKey().endsWith("_scale") || !Double.isFinite(scale)) {
++            final float scale = entry.getValue().getAsFloat();
++            if (!entry.getKey().startsWith("ce_") || !entry.getKey().endsWith("_scale") || !Float.isFinite(scale)) {
 +                throw new IllegalArgumentException("Invalid converted entity scale");
 +            }
 +            data.put(entry.getKey(), scale);
@@ -608,10 +670,10 @@ index c769f6781..3763790a4 100644
              this.channelFuture.channel().close();
          }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/FileSystemUtil.java b/src/main/java/net/raphimc/viabedrock/api/util/FileSystemUtil.java
-index ac3b469c8..27dcc68ff 100644
+index ac3b469c8..34fa74686 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/util/FileSystemUtil.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/FileSystemUtil.java
-@@ -31,6 +31,20 @@ import java.util.stream.Stream;
+@@ -31,6 +31,24 @@ import java.util.stream.Stream;
  
  public final class FileSystemUtil {
  
@@ -619,13 +681,17 @@ index ac3b469c8..27dcc68ff 100644
 +        final Path temporary = Files.createTempFile(path.getParent(), path.getFileName().toString(), ".tmp");
 +        try {
 +            Files.write(temporary, bytes);
-+            try {
-+                Files.move(temporary, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-+            } catch (final AtomicMoveNotSupportedException ignored) {
-+                Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING);
-+            }
++            moveAtomically(temporary, path);
 +        } finally {
 +            Files.deleteIfExists(temporary);
++        }
++    }
++
++    public static void moveAtomically(final Path source, final Path destination) throws IOException {
++        try {
++            Files.move(source, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
++        } catch (final AtomicMoveNotSupportedException ignored) {
++            Files.move(source, destination, StandardCopyOption.REPLACE_EXISTING);
 +        }
 +    }
 +
@@ -1354,10 +1420,10 @@ index f7f550941..47cf78aef 100644
  }
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 new file mode 100644
-index 000000000..2f8e33799
+index 000000000..53ea1ce25
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
-@@ -0,0 +1,184 @@
+@@ -0,0 +1,255 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1380,17 +1446,22 @@ index 000000000..2f8e33799
 +import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 +import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
 +import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.resourcepack.content.ZipContent;
 +import net.raphimc.viabedrock.protocol.provider.impl.InMemoryResourcePackProvider;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 +import net.raphimc.viabedrock.platform.ViaBedrockConfig;
 +import org.junit.jupiter.api.Test;
 +import org.junit.jupiter.api.io.TempDir;
 +
++import java.io.IOException;
++import java.io.OutputStream;
 +import java.nio.file.Files;
 +import java.nio.file.Path;
 +import java.util.List;
 +import java.util.UUID;
 +import java.util.Map;
++import java.util.Random;
++import java.util.concurrent.CompletionException;
 +import java.util.Arrays;
 +import java.util.function.Function;
 +import java.util.concurrent.atomic.AtomicInteger;
@@ -1403,9 +1474,71 @@ index 000000000..2f8e33799
 +    Path directory;
 +
 +    @Test
++    void streamedDiskOutputMatchesMemoryArchiveAndMetadata() throws Exception {
++        final byte[] payload = new byte[2 * 1024 * 1024];
++        new Random(2193).nextBytes(payload);
++        final Map<String, Object> metadata = Map.of("ce_example_scale", 2.5F);
++        final Function<ResourcePackStorage, Content> converter = storage -> {
++            storage.getConverterData().putAll(metadata);
++            final InMemoryContent content = new InMemoryContent();
++            content.put("assets/example/payload", payload);
++            return content;
++        };
++        final ConvertedResourcePackCache memory = new ConvertedResourcePackCache(this.directory, ViaBedrockConfig.PackCacheMode.MEMORY, converter);
++        final ConvertedResourcePackCache disk = new ConvertedResourcePackCache(this.directory, ViaBedrockConfig.PackCacheMode.DISK, converter);
++        try {
++            final var expected = memory.prepare(new ResourcePackStorage(List.of())).join();
++            final var streamed = disk.prepare(new ResourcePackStorage(List.of())).join();
++            assertArrayEquals(expected.bytes(), Files.readAllBytes(streamed.path()));
++            assertEquals(expected.sha1(), streamed.sha1());
++            assertEquals(expected.id(), streamed.id());
++            assertEquals(expected.size(), streamed.size());
++            assertEquals(expected.converterData(), streamed.converterData());
++            assertNull(streamed.bytes());
++            assertEquals(streamed.sha1(), ConvertedResourcePackCache.describe(streamed.path()).sha1());
++        } finally {
++            memory.stop();
++            disk.stop();
++        }
++    }
++
++    @Test
++    void failedStreamingRemovesTemporaryFilesAndAllowsRetry() throws Exception {
++        final AtomicInteger conversions = new AtomicInteger();
++        final ConvertedResourcePackCache cache = new ConvertedResourcePackCache(this.directory, ViaBedrockConfig.PackCacheMode.DISK, storage -> {
++            if (conversions.getAndIncrement() == 0) {
++                return new InMemoryContent() {
++                    @Override
++                    public void writeZip(final OutputStream output) throws IOException {
++                        output.write(new byte[]{1, 2, 3});
++                        throw new IOException("Interrupted archive write");
++                    }
++                };
++            }
++            final InMemoryContent content = new InMemoryContent();
++            content.put("assets/example/payload", new byte[]{4, 5, 6});
++            return content;
++        });
++        try {
++            assertThrows(CompletionException.class, () -> cache.prepare(new ResourcePackStorage(List.of())).join());
++            try (var files = Files.list(this.directory)) {
++                assertEquals(0, files.count());
++            }
++            final var complete = cache.prepare(new ResourcePackStorage(List.of())).join();
++            assertEquals(2, conversions.get());
++            assertArrayEquals(new byte[]{4, 5, 6}, new ZipContent(Files.readAllBytes(complete.path())).get("assets/example/payload"));
++            try (var files = Files.list(this.directory)) {
++                assertEquals(2, files.count());
++            }
++        } finally {
++            cache.stop();
++        }
++    }
++
++    @Test
 +    void damagedDiskArchivesRebuildAndRestoreTheSameMetadata() throws Exception {
 +        final AtomicInteger conversions = new AtomicInteger();
-+        final Map<String, Object> metadata = Map.of("ce_example_scale", 2.5D);
++        final Map<String, Object> metadata = Map.of("ce_example_scale", 2.5F);
 +        final Function<ResourcePackStorage, Content> converter = storage -> {
 +            conversions.incrementAndGet();
 +            storage.getConverterData().putAll(metadata);
@@ -1488,7 +1621,7 @@ index 000000000..2f8e33799
 +
 +    @Test
 +    void restoresConverterMetadataAcrossMissesAndSharedMemoryAndDiskHits() {
-+        final Map<String, Object> expected = Map.of("ce_example:actor_default_scale", 2.5D, "ca_example:armor_default", true,
++        final Map<String, Object> expected = Map.of("ce_example:actor_default_scale", 2.5F, "ca_example:armor_default", true,
 +                "model_missing_entities/example:actor/default_unused", "missing texture textures/unused");
 +        for (ViaBedrockConfig.PackCacheMode mode : List.of(ViaBedrockConfig.PackCacheMode.MEMORY, ViaBedrockConfig.PackCacheMode.DISK)) {
 +            final AtomicInteger conversions = new AtomicInteger();
@@ -1531,6 +1664,10 @@ index 000000000..2f8e33799
 +    void rejectsUnsupportedObjectsAndInvalidScalesInConverterMetadata() {
 +        assertThrows(IllegalArgumentException.class, () -> ConverterDataManifest.encode(Map.of("ce_example_scale", new Object())));
 +        assertThrows(IllegalArgumentException.class, () -> ConverterDataManifest.encode(Map.of("ce_example_scale", Double.NaN)));
++        assertThrows(IllegalArgumentException.class, () -> ConverterDataManifest.encode(Map.of("ce_example_scale", Double.MAX_VALUE)));
++        final var manifest = ConverterDataManifest.encode(Map.of("ce_example_scale", 1F));
++        manifest.getAsJsonObject("entity_scales").addProperty("ce_example_scale", Double.MAX_VALUE);
++        assertThrows(IllegalArgumentException.class, () -> ConverterDataManifest.decode(manifest.toString()));
 +        assertThrows(IllegalArgumentException.class, () -> ConverterDataManifest.encode(Map.of("arbitrary_key", true)));
 +    }
 +

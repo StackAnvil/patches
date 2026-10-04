@@ -1087,3 +1087,61 @@ They check unsigned runtime IDs, immutable targets, malformed counts, truncation
 **Incomplete:** Client runtime controllers, ordinary mob integration, first-person drawing, and command effects remain missing.
 Direct and ViaProxy delivery and visible native comparisons remain unverified.
 See [the core patch notes](../patches/viabedrock/upstreamable/0086-transport-native-actor-animation-commands.pr.md) for the implemented boundary.
+
+
+### Resource conversion: measured parallelism and disk streaming
+
+**Implemented:** Core builds the four native resource archives as separate tasks in its existing conversion pool.
+Disk-cache misses stream ZIP output and its hash into a temporary file, then publish the completed archive before its index.
+Failed writes remove temporary files and allow retries.
+Both changes serve direct connections and ViaProxy.
+
+**Profile evidence:** The private input contains five captured CubeCraft packs, matching bundled definitions, and 42 licensed image layers.
+It targets Bedrock 1.26.51.1, build 51061372, and protocol 2193.
+Java 25 uses four available processors and a 2 GiB heap on Linux.
+JFR records stage durations, thread CPU time, and allocations.
+
+| Measured stage | Baseline | Optimized | Scope |
+| --- | --- | --- | --- |
+| Rewrite median | 1577 ms | 986 ms | Five fresh conversions after the first conversion |
+| Rewrite plus ZIP | 3150 ms | 2612 ms | About 17 percent less time |
+| ZIP packaging allocation | 346.6 MiB | 8.0 MiB | Seven iterations after two warm-ups |
+| ZIP packaging median | 1633 ms | 1599 ms | Identical prepared content |
+
+The output contains 15,823 entries and occupies about 86.7 MiB.
+The streamed and memory ZIP writers produce identical bytes, hashes, sizes, and entry content.
+The parallel native encoders also produce byte-identical archives.
+Full conversion comparison normalizes existing identity-based model element names and JSON property order.
+CubeConverter's object-hash names currently prevent stable complete ZIP hashes across fresh processes.
+
+**Automated evidence:** Partial-write and retry tests pass, alongside memory/disk descriptor and metadata comparisons.
+The complete build passes 982 Java tests with no failures or errors and 113 optional skips.
+Both owning patches pass their targeted suites and Checkstyle tasks before the remaining stack applies.
+
+**Remaining work:** Model generation still allocates substantial memory.
+The standalone profile excludes runtime custom-block visuals, licensed acquisition, network downloads, and Java client reloads.
+These phase improvements do not establish joining-time gains or prevent every possible timeout.
+macOS, Windows, concurrent conversions, and larger pack stacks still need performance measurements.
+See the [cache notes](../patches/viabedrock/upstreamable/0001-cache-converted-resource-packs.pr.md) and [native archive notes](../patches/viabedrock/upstreamable/0015-scale-play-sound-coordinates.pr.md).
+
+
+The first cold ViaProxy replay exposed a metadata type mismatch during custom entity spawning.
+The cache decoder now restores entity scales as finite floats, matching the converter and renderer.
+The metadata suite covers that type across cache misses, shared hits, corruption recovery, and reopened disk caches.
+It also rejects numeric overflow during encoding and decoding.
+
+
+**Runtime evidence:** A repeated cold ViaProxy replay enables disk caching and passes full transport and rendering checks.
+The scene hash remains `129f13f25af8110800fc0993c9d7aedc6d86477b1835e029dad2d5700051f5a8`.
+It installs all 216 recorded skins unchanged and submits 83,786 resolved custom models across 79,861 actor frames.
+Core reports 2253 ms for the first conversion and 2015 ms for the custom-block conversion.
+The client's two reloads each take roughly two to three seconds at the log's one-second resolution.
+JFR samples identify model JSON parsing and baking during those reloads.
+The loopback run uses fresh conversion caches and excludes licensed acquisition.
+It does not establish public-network joining improvements or native animation timing.
+
+
+The direct add-on replay also passes full transport and rendering checks with a fresh disk cache.
+Its complete scene hash matches the same original recording, and all 216 skin updates retain their recorded bytes.
+Core reports 2159 ms for the first conversion and 1942 ms for the custom-block conversion.
+These checks establish cache, loading, and rendering regressions on both routes, without establishing complete visual parity.

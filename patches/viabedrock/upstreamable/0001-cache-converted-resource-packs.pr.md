@@ -43,3 +43,57 @@ Transport liveness remains necessary while downloads or player prompts pause gam
 The complete stack builds for core, ViaProxy, and the add-on after folding this change into the cache patch.
 The suites report 980 passing tests, no failures or errors, and 113 optional skips.
 The cache patch also passes its tests and both Checkstyle tasks before the remaining patches apply.
+
+
+## Stream disk-cache output
+
+Disk-cache misses now write directly into a temporary ZIP and calculate SHA-1 during the write.
+The cache publishes the complete ZIP before its fingerprint index.
+Failed writes remove their temporary files and allow another conversion attempt.
+Memory and disabled cache modes retain their existing byte-array output.
+
+The private benchmark uses five captured CubeCraft packs, matching bundled definitions, and 42 licensed image layers from Bedrock 1.26.51.1.
+Its output contains 15,823 entries and occupies about 86.7 MiB.
+The process uses Java 25, four available processors, and a 2 GiB heap on Linux.
+JFR records stage durations, thread CPU time, and allocated bytes.
+Raw packs, licensed images, recordings, and profiles remain private.
+
+Seven measured ZIP iterations follow two warm-up iterations and use identical prepared content.
+Median packaging allocation decreases from 346.6 MiB to 8.0 MiB, about 98 percent.
+Median packaging time decreases from 1633 ms to 1599 ms.
+Both paths produce identical ZIP bytes, SHA-1, size, and entry content.
+An alternative that stores compressed images without deflation saves another 69 ms but changes the archive.
+This change retains the existing compression behavior.
+
+Two regression tests cover identical memory/disk output, metadata and descriptors, partial-write cleanup, and successful retry.
+The complete stack builds with 982 passing Java tests, no failures or errors, and 113 optional skips.
+The owning cache patch also passes its tests and both Checkstyle tasks before the remaining stack applies.
+
+These measurements cover packaging, not licensed acquisition, network downloads, client reloads, or joining time.
+
+
+## Preserve the entity scale type
+
+The first cold disk-cache replay exposed a restored-scale mismatch during custom entity spawning.
+The renderer expects a float, while the metadata decoder returned a double.
+The decoder now restores finite floats and rejects values outside the float domain.
+Existing numeric manifests remain readable without a format change.
+The cache regression uses the producer's float values across fresh conversions, shared hits, repaired archives, and reopened disk caches.
+An overflow regression covers both encoding and decoding.
+
+
+A repeated cold ViaProxy replay passes full transport and rendering checks with disk caching enabled.
+It installs all 216 recorded skins unchanged and submits resolved custom actor models.
+Both converted packs load before the complete scene finishes.
+The scene payload hash matches the original recording.
+JFR records both conversion and client reload activity.
+The first conversion takes 2253 ms and the custom-block conversion takes 2015 ms in this run.
+The client's two reloads each take roughly two to three seconds at the log's one-second resolution.
+Model JSON parsing and baking remain visible costs in that profile.
+These are current-run observations, not a comparison of joining times.
+
+
+The direct add-on replay also passes full transport and rendering checks with a fresh disk cache.
+Its complete scene hash matches the same original recording, and all 216 skin updates retain their recorded bytes.
+Core reports 2159 ms for the first conversion and 1942 ms for the custom-block conversion.
+These checks establish cache, loading, and rendering regressions on both routes, without establishing complete visual parity.

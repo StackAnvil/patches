@@ -141,3 +141,28 @@ The shared codec rejects escaping paths, invalid indexes, duplicate files, malfo
 Three actor archive tests cover ordering, provenance, excluded files, malformed metadata, byte preservation, and defensive reconstruction. The complete build passes 969 Java tests with 113 optional fixture tests skipped. A standalone checkout, adapted for predecessor context without setup, passes 35 tests and both Checkstyle tasks. Automatic isolated application still requires that predecessor context; the north-star cache patch applies cleanly.
 
 This supplies resources for client rendering. It does not supply missing custom actor state, properties, events, emote requests, or account synchronization through ViaProxy.
+
+
+## Parallel native archives
+
+Sound, caption, particle, and actor archives now use separate tasks in the existing conversion pool.
+The encoders retain their pack order, provenance, and format.
+This change adds no executor or worker pool.
+
+A private CubeCraft conversion profile uses five server packs and 42 matching licensed image layers.
+The process uses Java 25, four available processors, and a 2 GiB heap on Linux.
+Six fresh conversions run in each separate baseline and candidate process.
+After the first conversion, median rewrite time decreases from 1577 ms to 986 ms, about 37 percent.
+Median rewrite-plus-ZIP time decreases by about 17 percent.
+The first rewrite decreases from 1789 ms to 1212 ms.
+These measurements exclude downloads, licensed acquisition, and client reloads.
+
+All four native archives match the baseline byte for byte.
+All 15,823 output entries match after normalizing existing identity-based model element names and JSON property order.
+CubeConverter currently derives compiled element names from object hash codes.
+Consequently, complete fresh conversions do not have stable ZIP hashes across processes.
+That existing limitation is separate from the byte-identical ZIP writer comparison.
+
+The actor, sound, and particle codec suites and both Checkstyle tasks pass before the remaining stack applies.
+The complete stack builds with 982 passing Java tests, no failures or errors, and 113 optional skips.
+Model generation remains a large source of allocations and needs separate profiling before further changes.
