@@ -56,6 +56,8 @@ The full build applies every group in that order. Our upstream PR branch starts 
 
 ## Try a stack
 
+StackAnvil ViaBedrock, ViaProxy, and the Bedrock add-on require Java 25. CubeConverter builds with JDK 17.
+
 Install [Bun](https://bun.sh/), Git, the [GitHub CLI](https://cli.github.com/), and the JDK needed by your project. Then run:
 
 ```bash

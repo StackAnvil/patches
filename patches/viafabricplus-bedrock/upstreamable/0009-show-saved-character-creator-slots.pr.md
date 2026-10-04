@@ -1576,3 +1576,11 @@ These profiles have no Store session.
 Visible native parity, complete actor queries, remote actor transport, interpolation, removal, ID reuse, world transitions, and reload timing remain unverified.
 The fixture has a sparse world and an unstable camera; runtime records do not prove visible parity.
 Malformed JSON compatibility and further native variable forms remain open.
+
+### Shared float interpreter
+
+Use MochaFloats 6.0.2 with the same parser, lexer, and interpreter modules as ViaBedrock. Replace double AST constants with float constants. Retain typed packet variables, native easing functions, query bindings, precedence, and loop limits. The bytecode compiler is unused and is not bundled.
+
+Numeric regressions cover rounding before comparisons, persistent assignments, and query inputs. Broader native animation and particle comparisons remain required.
+
+Validation: the add-on suite passes 446 tests with 108 optional tests skipped, including 13,578 saved native easing cases. The add-on bundles the fork's lexer, parser, and runtime modules. Its nested ViaBedrock JAR retains the MIT notice.
