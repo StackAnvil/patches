@@ -29,3 +29,8 @@ Retain root `sounds.json` in the bounded server effect library. Particle sound e
 ### Shared actor visibility
 
 Server actor resource selection now retains render-controller JSON alongside sounds and particles. The actor graph can evaluate primary-model visibility in its animation variable scope. Pack overrides retain their native order. A targeted test verifies that the higher pack changes the selected hand and that first-person context changes the same scope. This broadens the existing server resource loader and reuses the licensed graph evaluator. It does not complete native camera or held-item transforms.
+
+
+### WAV actor samples
+
+Include loose WAV files in the bounded server effect library. This lets actor aliases and particle sound events use the shared WAV decoder. The layered effect test now resolves and decodes a lower-pack WAV after an upper configuration override. The full build passes. This file-selection check does not establish audible actor parity.

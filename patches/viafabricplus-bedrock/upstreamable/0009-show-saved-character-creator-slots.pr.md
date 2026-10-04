@@ -1500,3 +1500,10 @@ ViaProxy stop commands remove all tracked requests and handles.
 The lab stays muted. Native audible mixing, WAV loop metadata, multichannel output, other WAVE codecs, and native quantization comparisons remain required.
 The separate skin rendering gates remain incomplete.
 These changes follow the published 0.3.2 release.
+
+
+### Loose WAV extraction
+
+The licensed package selector now admits WAV files under `sounds/`. Cache format 9 invalidates older selections. The resource validator accepts WAV as a sound asset. Path checks and size limits still apply.
+
+Validation: the Rust selector test passes with admitted WAV paths and rejected misleading extensions. The full build passes with 915 Java tests passing and 110 optional asset tests skipped. Native WAV playback and decoder comparisons are described in the audio coverage ledger.

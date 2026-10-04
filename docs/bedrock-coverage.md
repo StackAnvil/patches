@@ -312,7 +312,9 @@ It does not suppress an entity key merely because that key ends in `ambient`.
 Directional cues use the supplied forward and up vectors and the player position.
 The native function normalizes the source direction and uses a forward-dot threshold of 0.5.
 An additional marker bypasses direction calculation and reaches caption storage unchanged.
-The caller's interpretation of that marker still needs tracing.
+Live callback captures now show that the server request path supplies an unmarked value.
+UI-category and non-positional server samples remain unmarked, so neither property identifies an own sound.
+The native path that supplies a marked value still needs tracing.
 Missing player context uses a zero position in this function.
 Coincident and vertical positions retain the native function's direction result; do not replace it with a guessed Java rule.
 
@@ -327,7 +329,7 @@ Executable inspection also finds top-right and bottom-right HUD anchors, each wi
 The settings expose caption enablement, own-sound filtering, ambient filtering, position, and duration.
 [Mojang's caption description](https://www.minecraft.net/en-us/article/closed-captions-for-bedrock-edition) confirms directional cues and configurable display duration, placement, and sound filtering.
 The production implementation must transport caption translations and reproduce these controls on both connection routes.
-The marker's source, default settings, update clock, range eligibility, and visible layout still need native comparisons.
+The marked path, factory defaults, update clock, production range gate, and broader layout comparisons remain incomplete.
 These executable checks do not establish audible or visible parity.
 
 The sound-control change also passes the [complete main-branch CI build](https://github.com/StackAnvil/patches/actions/runs/37169088563).
@@ -476,3 +478,40 @@ The reported pig and paper fallback does not reproduce on current main; the affe
 Dressing Room now initializes an unselected account from its active cloud character.
 Initialization preserves a local choice made during the download and keeps the existing preview if acquisition fails.
 Imported images without downloadable account references and later cloud-selection changes remain incomplete. ExploitPreventer compatibility is outside this investigation at the user's request.
+
+### Native caption layout and request eligibility
+
+A private native-client capture loads six authored caption events from a server resource pack.
+All six reach the production caption callback with their keys, source positions, supplied volume, listener vectors, and an unmarked value.
+This includes a UI-category event, a non-positional sample, and a zero-volume request.
+Callback arrival does not mean the zero-volume event passes the caption admission filter.
+The captured HUD shows localized text and separate left arrows for the at-player and offset source events.
+These observations verify the native fixture, not StackAnvil caption rendering.
+
+The pinned native HUD resource defines a caption area at 30% of screen width and a maximum height of 30%.
+Rows center their text and use separate left and right arrow controls.
+The lifetime property is the configured duration minus one second, followed by a one-second quartic fade.
+Executable function `144eb81a0` supplies that minus-one correction.
+The private saved profile starts with captions disabled, duration 1,500 milliseconds, and top-right placement.
+Loading a requested 6,000-millisecond duration writes back 4,000 milliseconds.
+This is an observed saved-profile result; factory defaults and the full settings bounds remain unverified.
+
+The live server request caller is `144719f20`.
+Before engine dispatch or caption notification, it compares the squared source-to-listener distance with a radius of `16 × max(volume, 1)` blocks.
+The native comparison rejects the boundary itself.
+The request's bypass byte skips this gate.
+An executable probe verifies 888 cases with different volumes, positions, listeners, bypass values, boundary distances, and non-finite inputs.
+Float operations and summation order matter at the boundary.
+The probe stops at the accept or reject branch; it does not establish audible playback or range behavior for every sound source.
+StackAnvil still retains the bypass field without implementing this native admission gate.
+
+### Loose WAV asset acquisition
+
+Licensed vanilla extraction now retains loose WAV sound files, alongside FSB and Ogg.
+Cache format 9 invalidates the earlier extraction allowlist.
+The server actor effect library also retains WAV files, so actor aliases and particle sound events can resolve them through pack overrides.
+The existing layered effect test now decodes a lower-pack WAV sample after an upper configuration override.
+The helper selector test verifies admitted sound paths and rejected unrelated extensions.
+The full build passes with 915 passing Java tests and 110 optional asset tests skipped.
+The separate Rust selector test passes.
+This closes two file-selection omissions; audible parity and production captions remain incomplete.
