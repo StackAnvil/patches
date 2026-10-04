@@ -30,7 +30,7 @@ Archive decoding validates paths, sizes, pack indexes, duplicate entries, and th
 Ordinary Java clients retain the mapped SOUND and STOP_SOUND translations.
 Java packets cannot express server instance handles, arbitrary loops, seeking, or independent pause controls.
 These controls require the client add-on.
-Core exposes the native request range comparison. The add-on evaluates it against the actual audio listener before registering handles. Captions, other sound-source range paths, and native stream interruption policies remain incomplete.
+Core exposes the native request range comparison. The add-on evaluates it against the actual audio listener before registering handles. Actor/local captions, broader caption comparisons, other sound-source range paths, and native stream interruption policies remain incomplete.
 
 ## Testing
 
@@ -87,3 +87,12 @@ The pinned executable's `144719f20` request callback applies a float distance ga
 Core preserves the native operation order. A private Java comparison matches all 1,188 native execution cases in the packet coordinate domain. The cases cover different listener positions, float rounding at large coordinates, volumes, bypass, and non-finite inputs. The native probe stops at the admission branch.
 
 A private synthetic fixture over a native recording passes through direct and ViaProxy connections. It verifies eligible OpenAL voices, rejected requests, distant bypass, increased-volume admission, preservation of an active handle after a rejected replacement, and final cleanup. Both clients load the server samples without a Store account. The lab is muted. These checks do not establish audible parity, all camera contexts, other sound-source gates, or exact bypass behavior in an ordinary Java client.
+
+
+## Server closed captions
+
+Core now supplies native caption admission and float direction calculations, localized duplicate refresh, elapsed-time state, and quartic fade values. A separate bounded, pack-ordered translation archive keeps the existing audio archive compatible with older readers. The add-on supplies player/listener pose, controls, and HUD drawing.
+
+Pinned native dispatch comparisons match 587 cases. A further 105 native executable cases verify the wall-clock float countdown at explicit performance-counter boundaries. The standalone patch passes 23 tests and both Checkstyle tasks. Direct and ViaProxy sessions load the recorded server translations without Store credentials, show five positive-volume cues in HUD state, reject the zero-volume cue, and expire them. HUD screenshots confirm rendered text and arrows on both routes; the proxy image shows all five rows with Java's tutorial disabled in the lab. Both transport-only replays retain separate skin/actor rendering failures. These observations do not establish complete native layout or audible parity.
+
+Actor/local sources, marked-source integration, settings-change timing, complete localization precedence, exact layout/font behavior, and audio-device-unavailable behavior remain incomplete or unverified. [Microsoft documents English fallback](https://github.com/MicrosoftDocs/minecraft-creator/blob/main/creator/Reference/Content/MCToolsValReference/langfiles.md), and [Mojang describes the caption controls](https://www.minecraft.net/en-us/article/closed-captions-for-bedrock-edition).

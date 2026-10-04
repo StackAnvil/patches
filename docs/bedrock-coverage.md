@@ -228,7 +228,7 @@ Core still needs to derive equipment attributes from target item definitions, in
 | R1 | General actor controllers and scripts | Incomplete | Complete transitions, weighted entries, variables, events, queries, and render-controller selection. |
 | R2 | Server particle dispatch | Incomplete | Retain actor identity and Molang variables, then route effects into native playback through both connection routes. |
 | R3 | Particle runtime | Incomplete | Complete components, actor contexts, child effects, concurrency, and visible lifecycle comparisons. |
-| R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core transports signed loops, optional playback fields, handle controls, and ordered sound resources through direct connections and ViaProxy. Add-on playback controls pass captured-session OpenAL checks on both routes. Native request admission now matches the tested float range gate on both add-on routes. Complete captions, stream policies, range behavior for other sources, audible comparisons, and broader lifecycle verification. |
+| R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core transports signed loops, optional playback fields, handle controls, and ordered sound resources through direct connections and ViaProxy. Add-on playback controls pass captured-session OpenAL checks on both routes. Native request admission now matches the tested float range gate on both add-on routes. Server captions now have core state, transported translations, client controls, and a HUD on both add-on routes. Complete actor/local captions, localization/layout comparisons, stream policies, range behavior for other sources, audible comparisons, and broader lifecycle verification. |
 | R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties through ViaProxy. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, and directional light occlusion. |
 | R6 | Equipped attachables | Incomplete | Transport graphs through ViaProxy. Complete variants, explicit bindings, per-bone materials, and material families. |
 
@@ -259,14 +259,14 @@ Ordinary Java clients retain standard sound translations; their protocol cannot 
 The captured native session replays through both direct and ViaProxy routes and loads the converted resource pack.
 Private instrumentation observes repeating playback, pitch 1.3, seek to 0.01 seconds, OpenAL pause and resume, and stop.
 ViaProxy envelope samples reach 0.2 from 0.3 over two seconds.
-The current full build passes 919 tests with 110 optional asset skips.
-The core audio patch's eighteen tests and both Checkstyle tasks also pass alone on the upstream base.
+The current full build passes 924 tests with 110 optional asset skips.
+The current core audio patch's 23 tests and both Checkstyle tasks also pass alone on the upstream base.
 
 These muted checks establish the tested controls, not audible parity.
 The sample uses a mapped Java fallback without Store sign-in.
 The custom sample transport and control checks below also pass without Store sign-in.
 The server request range gate is implemented through the add-on, as described below.
-Captions, other sound-source range paths, stream interruption policies, broader replacement races, finite-loop controls, and lifecycle comparisons remain required.
+Actor/local captions, broader caption localization and layout comparisons, other sound-source range paths, stream interruption policies, broader replacement races, finite-loop controls, and lifecycle comparisons remain required.
 The direct replay still fails its separate skin rendering gate; the audio checks use transport-only verification.
 
 ### WAV sample processing
@@ -302,7 +302,7 @@ WAV loop metadata, multichannel output, additional WAVE codecs, native quantizat
 ### Native caption behavior
 
 The inspected 1.26.51.1 executable has SHA-256 `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
-Private executable probes establish caption dispatch and storage behavior; production caption rendering remains missing.
+Private executable probes establish caption dispatch and storage behavior. The server-caption production path described below now uses these rules; actor/local sources remain incomplete.
 
 The dispatch probe executes 587 cases in native function `144f040c0`.
 It supplies settings, player pose, string copying, and the caption sink at explicit boundaries.
@@ -329,8 +329,10 @@ These checks cover insertion, expiry, and duplicate refresh with durations from 
 Executable inspection also finds top-right and bottom-right HUD anchors, each with a 50-unit vertical offset toward the screen interior.
 The settings expose caption enablement, own-sound filtering, ambient filtering, position, and duration.
 [Mojang's caption description](https://www.minecraft.net/en-us/article/closed-captions-for-bedrock-edition) confirms directional cues and configurable display duration, placement, and sound filtering.
-The production implementation must transport caption translations and reproduce these controls on both connection routes.
-The marked path, factory defaults, update clock, production range gate, and broader layout comparisons remain incomplete.
+The server-caption implementation now transports translations and provides these controls on both add-on connection routes.
+The settings factory and duration-vector initializer establish the defaults and available durations.
+The native model update and private probes establish the elapsed-time countdown.
+Marked actor/local sources and broader localization/layout comparisons remain incomplete or unverified.
 These executable checks do not establish audible or visible parity.
 
 The sound-control change also passes the [complete main-branch CI build](https://github.com/StackAnvil/patches/actions/runs/37169088563).
@@ -516,7 +518,7 @@ The existing layered effect test now decodes a lower-pack WAV sample after an up
 The helper selector test verifies admitted sound paths and rejected unrelated extensions.
 The full build passes with 915 passing Java tests and 110 optional asset tests skipped.
 The separate Rust selector test passes.
-This closes two file-selection omissions; audible parity and production captions remain incomplete.
+This closes two file-selection omissions. Server captions now have the separate path described below; audible parity and actor/local captions remain incomplete.
 
 ### Server sound request range gate
 
@@ -545,4 +547,48 @@ The full build passes with 919 Java tests passing and 110 optional asset tests s
 The audio patch also builds alone on the pinned upstream base with eighteen passing tests and both Checkstyle tasks.
 These checks establish the tested server request admission and handle behavior.
 They do not establish audible parity, every camera context, range behavior for other sound sources, or exact bypass behavior in an ordinary Java client.
-Captions and native stream policies remain incomplete.
+Actor/local captions, broader caption comparisons, and native stream policies remain incomplete.
+
+
+### Server closed captions
+
+**Implemented:** Core supplies caption admission, float direction calculations, localized duplicate refresh, elapsed-time state, and fade values.
+A separate bounded archive transports `texts/*.lang` in pack order through the converted resource pack.
+Existing native audio archives retain their format.
+An independent resource-format revision invalidates converted packs made before this additional archive existed.
+
+The add-on snapshots player position and listener orientation after server sound range admission.
+It resolves caption metadata independently of PCM decoding and audio channel allocation.
+Caption lookup uses server packs and already licensed resources; it does not initiate Store authentication.
+Disconnecting clears entries and prevents pending lookups from populating a later connection.
+
+The native settings factory starts with captions, own filtering, and ambient filtering disabled, and top-right placement.
+Its duration-vector initializer contains 1,000, 1,500, 2,000, 2,500, 3,000, 3,500, and 4,000 milliseconds.
+The default is 1,500 milliseconds.
+The add-on exposes these controls and draws directional arrows, centered text, a chat background, top/bottom-right placement, and a final one-second quartic fade.
+
+**Verified within scope:** The core admission/direction implementation matches all 587 private native dispatch cases.
+A further 105 executable cases verify wall-clock elapsed-time conversion and float countdown subtraction.
+The native probe supplies the performance-counter frequency/value and stops after the countdown loops.
+Targeted tests cover duplicate refresh, expiry/reinsertion order, marked filtering, fade values, archive separation, pack ordering, language overrides, and English fallback.
+Language precedence tests establish the implementation's behavior, not complete native localization parity.
+
+The captured six-event native scene reaches spawn and loads the Java resource pack through direct and ViaProxy routes without a Store account.
+Both routes show the five positive-volume English captions in HUD state, omit the zero-volume cue, and expire the entries.
+The scene payload hash matches on both routes.
+The private lab enables captions explicitly and remains muted.
+HUD screenshots confirm rendered text and arrows on both routes.
+The proxy screenshot shows all five rows after the lab disables Java's movement tutorial; the direct screenshot has a tutorial toast over two rows.
+These observations establish visible caption output, not complete native layout or audible parity.
+Both replays use transport-only verification and retain their separate skin/actor rendering failures.
+
+The complete build passes 924 Java tests, with 110 optional asset tests skipped.
+The sound patch applies alone to the pinned upstream base and passes 23 tests and both Checkstyle tasks.
+The licensed helper selector test retains language files and text archives, including invalid-path exclusions.
+Cache format 10 requires the English catalog and refreshes older extractions.
+Fresh licensed acquisition with this language selection remains unverified.
+
+**Remaining:** Actor and locally generated sound captions, marked-source integration, update/refresh behavior under settings changes, full localization precedence, custom fonts, exact row/layout comparisons, and caption behavior when the audio device is unavailable.
+The native local-emitter investigation establishes a separate marker argument and conditional actor-identity comparison; it does not yet establish a complete implemented actor-caption path.
+[Mojang's caption overview](https://www.minecraft.net/en-us/article/closed-captions-for-bedrock-edition) describes the controls.
+[Microsoft's language-file rules](https://github.com/MicrosoftDocs/minecraft-creator/blob/main/creator/Reference/Content/MCToolsValReference/langfiles.md) require English as the fallback language.

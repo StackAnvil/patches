@@ -1,4 +1,4 @@
-From d340e60a35b7b797fde54b900fb26a155c1d608e Mon Sep 17 00:00:00 2001
+From 57a01e9fbe6291f231c968cdd9c4099a931f028c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 19:48:51 +0200
 Subject: [PATCH] feat(audio): transport native server sound playback and
@@ -46,10 +46,24 @@ Its float radius is 16 times the supplied volume above one, otherwise 16.
 It rejects the radius boundary and unordered distances unless bypass is
 set. Preserve coordinate conversion and summation order at float precision
 instead of measuring with Java doubles or catalog attenuation settings.
+
+Carry caption translations in a separate bounded, pack-ordered resource
+archive so existing native sound-library readers remain compatible. Keep
+caption admission, native float direction calculations, localized duplicate
+refresh, elapsed-time state, and the one-second quartic fade in core.
+The client integration supplies player and listener pose and draws the HUD.
+
+Pinned 1.26.51.1 executable dispatch/storage probes establish filtering and
+refresh behavior. Its caption-model update uses wall-clock nanoseconds and
+float subtraction. Native HUD resources define a one-second in-quart fade
+inside the selected total lifetime. Local actor sounds and complete visible
+caption parity still require separate verification.
 ---
  build.gradle                                  |   6 +
+ .../viabedrock/api/model/SoundCaptions.java   |  94 ++++++++
  .../api/model/SoundPlaybackMessage.java       |  76 ++++++
- .../api/resourcepack/NativeSoundLibrary.java  | 137 +++++++++++
+ .../api/resourcepack/NativeSoundLibrary.java  | 160 ++++++++++++
+ .../api/resourcepack/SoundTranslations.java   |  52 ++++
  .../api/resourcepack/WaveSound.java           | 228 ++++++++++++++++++
  .../protocol/ClientboundBedrockPackets.java   |   4 +-
  .../bedrock/generated/MinecraftPacketIds.java |   1 +
@@ -57,19 +71,25 @@ instead of measuring with Java doubles or catalog attenuation settings.
  .../protocol/model/SoundUpdate.java           | 114 +++++++++
  .../protocol/packet/WorldEffectPackets.java   | 110 ++++-----
  .../rewriter/ResourcePackRewriter.java        |   2 +
- .../NativeSoundResourceRewriter.java          |  35 +++
+ .../NativeSoundResourceRewriter.java          |  37 +++
+ .../api/model/SoundCaptionsTest.java          |  80 ++++++
+ .../resourcepack/SoundTranslationsTest.java   |  46 ++++
  .../api/resourcepack/WaveSoundTest.java       | 182 ++++++++++++++
  .../protocol/model/PlaySoundTest.java         |  66 +++++
  .../packet/NativeSoundLibraryTest.java        |  60 +++++
  .../protocol/packet/PlaySoundPacketsTest.java |  88 +++++++
  .../protocol/packet/SoundUpdateTest.java      |  79 ++++++
- 16 files changed, 1183 insertions(+), 68 deletions(-)
+ 20 files changed, 1480 insertions(+), 68 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SoundCaptions.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SoundPlaybackMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslations.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/WaveSound.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/PlaySound.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/SoundUpdate.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeSoundResourceRewriter.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/SoundCaptionsTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslationsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/WaveSoundTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/PlaySoundTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/NativeSoundLibraryTest.java
@@ -89,6 +109,106 @@ index 4cc0760e1..912a6321c 100644
 +
 +testing.suites.test {
 +    useJUnitJupiter("6.1.3")
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/SoundCaptions.java b/src/main/java/net/raphimc/viabedrock/api/model/SoundCaptions.java
+new file mode 100644
+index 000000000..4e8fc997c
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/SoundCaptions.java
+@@ -0,0 +1,94 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.protocol.model.Position3f;
++
++import java.util.ArrayList;
++import java.util.List;
++
++/** Native caption admission, direction, localized duplicate refresh, and elapsed-time state. */
++public final class SoundCaptions {
++
++    private final List<Caption> captions = new ArrayList<>();
++    private Long updatedAt;
++
++    public static boolean admits(final String event, final String subtitle, final float suppliedVolume,
++                                 final boolean enabled, final boolean hideAmbient) {
++        return enabled && suppliedVolume > 0 && !event.isEmpty() && subtitle != null && !subtitle.isEmpty()
++                && !(hideAmbient && (subtitle.startsWith("subtitles.ambient.") || subtitle.startsWith("subtitles.weather.")));
++    }
++
++    public static Direction direction(final Position3f source, final Position3f player,
++                                      final Position3f forward, final Position3f up, final boolean ownSound) {
++        if (ownSound) {
++            return Direction.NONE;
++        }
++        final float rightZ = forward.x() * up.y() - forward.y() * up.x();
++        final float rightY = up.x() * forward.z() - forward.x() * up.z();
++        final float rightX = up.z() * forward.y() - up.y() * forward.z();
++        final float rightLength = (float) Math.sqrt(rightZ * rightZ + rightY * rightY + rightX * rightX);
++        final float x = source.x() - player.x();
++        final float y = source.y() - player.y();
++        final float z = source.z() - player.z();
++        final float length = (float) Math.sqrt(z * z + y * y + x * x);
++        final float normalizedZ = length >= 0.0001F ? z / length : 0;
++        final float normalizedY = length >= 0.0001F ? y / length : 0;
++        final float normalizedX = length < 0.0001F ? 0 : x / length;
++        final float front = forward.z() * normalizedZ + forward.y() * normalizedY + forward.x() * normalizedX;
++        if (!(front <= 0.5F)) {
++            return Direction.NONE;
++        }
++        final float horizontalZ = rightLength >= 0.0001F ? rightZ / rightLength : 0;
++        final float horizontalY = rightLength >= 0.0001F ? rightY / rightLength : 0;
++        final float horizontalX = rightLength < 0.0001F ? 0 : rightX / rightLength;
++        return horizontalZ * normalizedZ + horizontalY * normalizedY + horizontalX * normalizedX > 0
++                ? Direction.RIGHT : Direction.LEFT;
++    }
++
++    public void advance(final long nowNanos) {
++        if (this.updatedAt != null) {
++            final float elapsed = (float) (nowNanos - this.updatedAt) / 1_000_000_000F;
++            this.captions.replaceAll(caption -> new Caption(caption.text, caption.direction, caption.ownSound, caption.seconds - elapsed));
++        }
++        this.updatedAt = nowNanos;
++    }
++
++    public void refresh(final String text, final Direction direction, final boolean ownSound, final int durationMillis) {
++        this.captions.removeIf(caption -> caption.seconds <= 0);
++        final Caption replacement = new Caption(text, direction, ownSound, (float) durationMillis / 1000F);
++        for (int index = 0; index < this.captions.size(); index++) {
++            if (this.captions.get(index).text.equals(text)) {
++                this.captions.set(index, replacement);
++                return;
++            }
++        }
++        this.captions.add(replacement);
++    }
++
++    public List<Caption> visible(final boolean hideOwn) {
++        return this.captions.stream().filter(caption -> caption.seconds > 0 && !(hideOwn && caption.ownSound)).toList();
++    }
++
++    public void clear() {
++        this.captions.clear();
++        this.updatedAt = null;
++    }
++
++    public enum Direction {
++        NONE, LEFT, RIGHT
++    }
++
++    public record Caption(String text, Direction direction, boolean ownSound, float seconds) {
++
++        public float opacity() {
++            final float fade = Math.max(0, Math.min(1, 1 - this.seconds));
++            return 1 - fade * fade * fade * fade;
++        }
++
++    }
++
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/SoundPlaybackMessage.java b/src/main/java/net/raphimc/viabedrock/api/model/SoundPlaybackMessage.java
 new file mode 100644
@@ -174,10 +294,10 @@ index 000000000..e20d2267d
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java
 new file mode 100644
-index 000000000..9f69df9b4
+index 000000000..735159531
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,160 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -207,12 +327,21 @@ index 000000000..9f69df9b4
 +public final class NativeSoundLibrary {
 +
 +    public static final String PATH = "assets/viabedrock/sound_library.zip";
++    public static final String TRANSLATIONS_PATH = "assets/viabedrock/sound_translations.zip";
 +    private static final int MAX_PACKS = 4096;
 +    private static final int MAX_FILES = 32768;
 +    private static final int MAX_FILE_BYTES = 32 * 1024 * 1024;
 +    private static final int MAX_TOTAL_BYTES = 256 * 1024 * 1024;
 +
 +    public static byte[] encode(final List<Content> packs) throws IOException {
++        return encode(packs, false);
++    }
++
++    public static byte[] encodeTranslations(final List<Content> packs) throws IOException {
++        return encode(packs, true);
++    }
++
++    private static byte[] encode(final List<Content> packs, final boolean translations) throws IOException {
 +        if (packs.size() > MAX_PACKS) {
 +            throw new IOException("Too many native sound packs");
 +        }
@@ -225,14 +354,18 @@ index 000000000..9f69df9b4
 +            for (int index = 0; index < packs.size(); index++) {
 +                final Content pack = packs.get(index);
 +                final TreeSet<String> paths = new TreeSet<>();
-+                if (pack.contains("sounds.json")) {
++                if (translations) {
++                    paths.addAll(pack.getFilesDeep("texts/", ".lang"));
++                } else if (pack.contains("sounds.json")) {
 +                    paths.add("sounds.json");
 +                }
-+                for (final String extension : List.of(".json", ".ogg", ".fsb", ".wav")) {
-+                    paths.addAll(pack.getFilesDeep("sounds/", extension));
++                if (!translations) {
++                    for (final String extension : List.of(".json", ".ogg", ".fsb", ".wav")) {
++                        paths.addAll(pack.getFilesDeep("sounds/", extension));
++                    }
 +                }
 +                for (final String path : paths) {
-+                    validatePath(path);
++                    validatePath(path, translations);
 +                    final byte[] file = pack.get(path);
 +                    total += file.length;
 +                    if (++count > MAX_FILES || file.length > MAX_FILE_BYTES || total > MAX_TOTAL_BYTES) {
@@ -246,6 +379,14 @@ index 000000000..9f69df9b4
 +    }
 +
 +    public static List<Map<String, byte[]>> decode(final InputStream input) throws IOException {
++        return decode(input, false);
++    }
++
++    public static List<Map<String, byte[]>> decodeTranslations(final InputStream input) throws IOException {
++        return decode(input, true);
++    }
++
++    private static List<Map<String, byte[]>> decode(final InputStream input, final boolean translations) throws IOException {
 +        final List<Map<String, byte[]>> packs = new ArrayList<>();
 +        long total = 0;
 +        int count = 0;
@@ -276,7 +417,7 @@ index 000000000..9f69df9b4
 +                    throw new IOException("Invalid native sound pack index", invalid);
 +                }
 +                final String path = name.substring(separator + 1);
-+                validatePath(path);
++                validatePath(path, translations);
 +                if (entry.isDirectory() || index < 0 || index >= packCount || ++count > MAX_FILES) {
 +                    throw new IOException("Invalid native sound entry");
 +                }
@@ -291,8 +432,10 @@ index 000000000..9f69df9b4
 +        return packs.stream().map(Map::copyOf).toList();
 +    }
 +
-+    private static void validatePath(final String path) throws IOException {
-+        if ((!path.equals("sounds.json") && !path.startsWith("sounds/"))
++    private static void validatePath(final String path, final boolean translations) throws IOException {
++        final boolean permitted = translations ? path.startsWith("texts/") && path.endsWith(".lang")
++                : path.equals("sounds.json") || path.startsWith("sounds/");
++        if (!permitted
 +                || path.length() > 512 || path.indexOf('\\') >= 0 || path.indexOf('\0') >= 0) {
 +            throw new IOException("Invalid native sound path");
 +        }
@@ -312,6 +455,64 @@ index 000000000..9f69df9b4
 +    }
 +
 +    private NativeSoundLibrary() {
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslations.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslations.java
+new file mode 100644
+index 000000000..45bbd83cf
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslations.java
+@@ -0,0 +1,52 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack;
++
++import java.nio.charset.StandardCharsets;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Locale;
++import java.util.Map;
++
++/** Pack-ordered caption translations with English fallback and case-independent locale codes. */
++public final class SoundTranslations {
++
++    private final Map<String, Map<String, String>> languages = new HashMap<>();
++
++    public SoundTranslations(final List<Map<String, byte[]>> packs) {
++        for (final Map<String, byte[]> pack : packs) {
++            for (final Map.Entry<String, byte[]> entry : pack.entrySet()) {
++                final String path = entry.getKey();
++                if (!path.startsWith("texts/") || !path.endsWith(".lang") || path.indexOf('/', 6) >= 0) {
++                    continue;
++                }
++                final Map<String, String> translations = this.languages.computeIfAbsent(
++                        path.substring(6, path.length() - 5).toLowerCase(Locale.ROOT), ignored -> new HashMap<>());
++                for (final String rawLine : new String(entry.getValue(), StandardCharsets.UTF_8).split("\\n")) {
++                    String line = rawLine;
++                    final int comment = line.indexOf("##");
++                    if (comment >= 0) {
++                        line = line.substring(0, comment);
++                    }
++                    line = line.trim();
++                    final int separator = line.indexOf('=');
++                    if (separator > 0) {
++                        translations.put(line.substring(0, separator), line.substring(separator + 1));
++                    }
++                }
++            }
++        }
++    }
++
++    public String translate(final String key, final String locale) {
++        final Map<String, String> selected = this.languages.get(locale.toLowerCase(Locale.ROOT));
++        if (selected != null && selected.containsKey(key)) {
++            return selected.get(key);
++        }
++        return this.languages.getOrDefault("en_us", Map.of()).getOrDefault(key, key);
 +    }
 +
 +}
@@ -944,10 +1145,10 @@ index 07a19fa95..42dcc34a7 100644
      public static Content bedrockToJava(final ResourcePackStorage resourcePackStorage) throws InterruptedException {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeSoundResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeSoundResourceRewriter.java
 new file mode 100644
-index 000000000..787ff3fc3
+index 000000000..2f820bc3e
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeSoundResourceRewriter.java
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,37 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -974,12 +1175,152 @@ index 000000000..787ff3fc3
 +        submitter.accept(() -> {
 +            final Content result = new InMemoryContent();
 +            try {
-+                result.put(NativeSoundLibrary.PATH, NativeSoundLibrary.encode(storage.getPackStackBottomToTop().stream().map(ResourcePack::content).toList()));
++                final var packs = storage.getPackStackBottomToTop().stream().map(ResourcePack::content).toList();
++                result.put(NativeSoundLibrary.PATH, NativeSoundLibrary.encode(packs));
++                result.put(NativeSoundLibrary.TRANSLATIONS_PATH, NativeSoundLibrary.encodeTranslations(packs));
 +            } catch (final IOException invalid) {
 +                throw new UncheckedIOException(invalid);
 +            }
 +            return result;
 +        });
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/SoundCaptionsTest.java b/src/test/java/net/raphimc/viabedrock/api/model/SoundCaptionsTest.java
+new file mode 100644
+index 000000000..5fa8eadc1
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/SoundCaptionsTest.java
+@@ -0,0 +1,80 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import org.junit.jupiter.api.Test;
++
++import static net.raphimc.viabedrock.api.model.SoundCaptions.Direction.*;
++import static org.junit.jupiter.api.Assertions.*;
++
++class SoundCaptionsTest {
++
++    @Test
++    void preservesNativeDirectionThresholdAndMarkedSoundSuppression() {
++        final Position3f forward = new Position3f(0, 0, 1);
++        final Position3f up = new Position3f(0, 1, 0);
++        final Position3f player = new Position3f(17, 64, -31);
++        assertEquals(NONE, SoundCaptions.direction(player.add(0, 0, 1), player, forward, up, false));
++        assertEquals(LEFT, SoundCaptions.direction(player.add(1, 0, 0), player, forward, up, false));
++        assertEquals(RIGHT, SoundCaptions.direction(player.add(-1, 0, 0), player, forward, up, false));
++        assertEquals(LEFT, SoundCaptions.direction(player, player, forward, up, false));
++        assertEquals(LEFT, SoundCaptions.direction(player.add(0, 1, 0), player, forward, up, false));
++        assertEquals(NONE, SoundCaptions.direction(player.add(1, 0, 0), player, forward, up, true));
++        assertEquals(LEFT, SoundCaptions.direction(new Position3f((float) Math.sqrt(3), 0, 1), Position3f.ZERO, forward, up, false));
++    }
++
++    @Test
++    void filtersCaptionMetadataAndAmbientPrefixesBeforeLocalization() {
++        final String entity = "subtitles.entity.pig.ambient";
++        assertTrue(SoundCaptions.admits("pig.ambient", entity, 1, true, true));
++        for (final String prefix : new String[]{"subtitles.ambient.cave", "subtitles.weather.rain"}) {
++            assertFalse(SoundCaptions.admits("event", prefix, 1, true, true));
++            assertTrue(SoundCaptions.admits("event", prefix, 1, true, false));
++        }
++        for (final float volume : new float[]{0, -1, Float.NaN}) {
++            assertFalse(SoundCaptions.admits("event", entity, volume, true, false));
++        }
++        assertFalse(SoundCaptions.admits("event", entity, 1, false, false));
++        assertFalse(SoundCaptions.admits("", entity, 1, true, false));
++        assertFalse(SoundCaptions.admits("event", null, 1, true, false));
++        assertFalse(SoundCaptions.admits("event", "", 1, true, false));
++    }
++
++    @Test
++    void refreshesLocalizedDuplicatesWithoutReorderingAndExpiresByElapsedTime() {
++        final var state = new SoundCaptions();
++        state.advance(1_000_000_000L);
++        state.refresh("first", LEFT, true, 1500);
++        state.refresh("second", NONE, false, 4000);
++        state.advance(1_500_000_000L);
++        state.refresh("first", RIGHT, false, 2000);
++        final var first = state.visible(false).get(0);
++        assertEquals(RIGHT, first.direction());
++        assertFalse(first.ownSound());
++        assertEquals(2, first.seconds());
++        assertEquals(2, state.visible(true).size());
++        state.advance(3_500_000_000L);
++        assertEquals(1, state.visible(false).size());
++        assertEquals(1.5F, state.visible(false).get(0).seconds());
++        state.refresh("first", LEFT, true, 1500);
++        assertEquals("second", state.visible(false).get(0).text());
++        assertEquals(1, state.visible(true).size());
++        state.clear();
++        state.advance(9_000_000_000L);
++        state.refresh("first", NONE, false, 1500);
++        assertEquals(1.5F, state.visible(false).get(0).seconds());
++    }
++
++    @Test
++    void usesOneSecondQuarticFadeWithinTheTotalDuration() {
++        assertEquals(1, new SoundCaptions.Caption("", NONE, false, 1.5F).opacity());
++        assertEquals(1, new SoundCaptions.Caption("", NONE, false, 1).opacity());
++        assertEquals(.9375F, new SoundCaptions.Caption("", NONE, false, .5F).opacity());
++        assertEquals(0, new SoundCaptions.Caption("", NONE, false, 0).opacity());
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslationsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslationsTest.java
+new file mode 100644
+index 000000000..7076a51d3
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslationsTest.java
+@@ -0,0 +1,46 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack;
++
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import org.junit.jupiter.api.Test;
++
++import java.io.ByteArrayInputStream;
++import java.io.IOException;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class SoundTranslationsTest {
++
++    @Test
++    void carriesOnlyTranslationsAndPreservesLocaleOverridesAndFallbacks() throws Exception {
++        final var lower = new InMemoryContent();
++        final var upper = new InMemoryContent();
++        lower.putString("texts/en_US.lang", "first=base\nsecond=fallback\nempty=base\n");
++        lower.putString("texts/de_DE.lang", "first=lower\n");
++        lower.put("sounds/test.ogg", new byte[]{1});
++        upper.putString("texts/en_US.lang", "second=upper\nmissing=english\n");
++        upper.putString("texts/de_DE.lang", "## comment\nfirst=old\r\nfirst=selected=a ## note\nempty=\r\n");
++        upper.put("textures/test.png", new byte[]{2});
++        final byte[] archive = NativeSoundLibrary.encodeTranslations(List.of(lower, upper));
++        final var packs = NativeSoundLibrary.decodeTranslations(new ByteArrayInputStream(archive));
++        assertEquals(2, packs.get(0).size());
++        assertEquals(2, packs.get(1).size());
++        final var translations = new SoundTranslations(packs);
++        assertEquals("selected=a", translations.translate("first", "de_de"));
++        assertEquals("upper", translations.translate("second", "de_DE"));
++        assertEquals("english", translations.translate("missing", "de_de"));
++        assertEquals("", translations.translate("empty", "de_de"));
++        assertEquals("base", translations.translate("first", "unknown"));
++        assertEquals("absent", translations.translate("absent", "de_de"));
++        assertArrayEquals(archive, NativeSoundLibrary.encodeTranslations(List.of(lower, upper)));
++        assertThrows(IOException.class, () -> NativeSoundLibrary.decode(new ByteArrayInputStream(archive)));
++        final byte[] audio = NativeSoundLibrary.encode(List.of(lower, upper));
++        assertThrows(IOException.class, () -> NativeSoundLibrary.decodeTranslations(new ByteArrayInputStream(audio)));
 +    }
 +
 +}

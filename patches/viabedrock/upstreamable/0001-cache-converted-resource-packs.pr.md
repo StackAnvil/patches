@@ -12,3 +12,8 @@ Please check that a changed source pack cannot reuse an older conversion, and th
 The live joins used the full StackAnvil patch stack and a local ViaProxy build compatible with the current ViaBedrock API.
 
 Cache hit regressions also compare typed converter metadata across disk and shared memory hits. Model scale, attachable readiness and unresolved-asset diagnostics remain available when conversion is skipped. The full 252-test core suite passes.
+
+
+## Shared resource formats
+
+A separate resource-format revision participates in every cache fingerprint, including conversion profiles selected by later features. It invalidates older conversions when emitted resource files or formats change. The caption translation archive requires this refresh; unchanged input files must not preserve a conversion that lacks the archive.

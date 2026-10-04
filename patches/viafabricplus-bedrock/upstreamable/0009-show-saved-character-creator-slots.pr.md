@@ -1514,3 +1514,14 @@ Validation: the Rust selector test passes with admitted WAV paths and rejected m
 Apply core's native request distance comparison against the client's audio listener before registering handles or decoding samples. A distant replacement must leave the existing handle intact. Use request volume for eligibility; sample positional flags and attenuation do not change this gate.
 
 Validation: the Java comparison matches 1,188 native packet-domain cases. The full build passes with 919 Java tests passing and 110 optional asset skips. Muted direct and ViaProxy fixture replays verify the four eligible OpenAL voices, rejection of two new handles, preservation after a rejected replacement, and cleanup to zero requests and handles. The fixture changes sound requests over a native recording. Audible parity, other range paths, and broader camera contexts remain unverified.
+
+
+## Server closed captions
+
+The client snapshots player/listener pose after native sound range admission and resolves caption metadata independently of sample decoding and channel allocation. Core owns admission, direction, duplicate refresh, time, and fade state. The client supplies persisted controls and HUD drawing. Server translations arrive through a separate core resource archive on direct and ViaProxy routes. Already licensed catalogs remain available without initiating Store sign-in.
+
+The pinned native factory and duration-vector initializer establish disabled caption/filter defaults, top-right placement, a 1,500 millisecond default, and half-second duration steps from 1,000 to 4,000 milliseconds. The HUD uses the native 30% area, 50-unit inset, arrows, centered text, chat background, and final one-second quartic fade.
+
+Private direct and proxy sessions reach spawn, load the recorded server translations without a Store account, show all five positive-volume cues in HUD state, exclude the zero-volume cue, and expire entries. HUD screenshots confirm visible text and arrows on both routes. The proxy image shows all five rows with Java's tutorial disabled in the lab; the direct image has a tutorial toast over two rows. The transport-only replays retain separate skin/actor rendering failures. Complete native layout parity, actor/local caption sources, marked-source integration, settings-change timing, localization precedence, custom fonts, and audio-device-unavailable behavior remain incomplete or unverified.
+
+The independent licensed helper now retains `texts/*.lang` and text archives. Cache format 10 requires the English catalog, which refreshes older incomplete extractions. Targeted Rust selector tests and Java cache tests pass. Fresh licensed acquisition with this language selection remains unverified. [Microsoft documents English fallback](https://github.com/MicrosoftDocs/minecraft-creator/blob/main/creator/Reference/Content/MCToolsValReference/langfiles.md).
