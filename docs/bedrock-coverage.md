@@ -920,3 +920,57 @@ The bool, int, enum string, and float retain their values and types.
 Both routes remove and restore local inputs at each dimension change.
 Final screenshots show the grounded blue costume and green equipment on both routes, consistent with the native selection.
 Camera framing, lighting, full animation timing, and broader lifecycle behavior remain unverified.
+
+### Server animation commands: native reference
+
+**Incomplete:** `ANIMATE_ENTITY` still has no production handler.
+Actor snapshots carry inputs for resource graphs, but they do not reproduce `/playanimation` commands.
+Custom actors still use a restricted animation evaluator; players and equipped models use the general actor graph.
+Both render paths need command playback before this requirement can pass.
+
+**Protocol evidence:** The [protocol 2193 schema](https://mojang.github.io/bedrock-protocol-docs/1.26.50/packets/animate-entity-packet/) identifies packet 158 and seven serialized fields.
+The [command reference](https://learn.microsoft.com/en-us/minecraft/creator/commands/commands/playanimation?view=minecraft-bedrock-experimental) documents the command arguments.
+The [gophertunnel codec](https://github.com/Sandertv/gophertunnel/blob/master/minecraft/protocol/packet/animate_entity.go) provides an independent field-order comparison.
+Its comments about state selection and unused blending are leads, not verified behavior for this target.
+
+| Wire order | Field | Encoding confirmed in the capture |
+| --- | --- | --- |
+| 0 | Animation | Bedrock string |
+| 1 | Next state | Bedrock string |
+| 2 | Stop expression | Bedrock string |
+| 3 | Stop expression version | Signed 32-bit integer, little endian |
+| 4 | Controller | Bedrock string |
+| 5 | Blend-out time | 32-bit float, little endian |
+| 6 | Target runtime IDs | Unsigned variable-length count and 64-bit IDs |
+
+**Native evidence:** Capture `2026-10-04T14-52-23.541Z-record-local` uses official Bedrock 1.26.51.1, build 51061372, protocol 2193.
+Its complete scene payload hash is `8cb16a9a749e84ff3b257d6977c19756c23c64f65e484beb3129ad2821319bbb`.
+Seven commands target the local player with an authored resource pack.
+The pack defines two looping arm poses and one finite animation, without runtime controller resource files.
+Every decoded command consumes its complete payload and sends stop-expression version 1.
+
+The native screenshots establish these behaviors:
+
+- A command creates a controller slot even when the pack defines no controller with that name.
+- Another command using the same slot replaces the active animation.
+- A `q.state_time > 2` stop expression with next state `default` returns the arm to its base pose.
+- That transition does not resume the previous command automatically.
+- A next state naming an earlier animation in the same slot returns to that earlier pose.
+
+The command with omitted options sends controller `__runtime_controller`, next state `default`, stop expression `query.any_animation_finished`, and zero blend-out time.
+That packet uses the declared alias `fixture_wave`; the other commands use full animation identifiers.
+The screenshots do not establish alias resolution or finite-animation timing reliably.
+One command sends blend-out time 1, but still images do not establish the blend curve or duration.
+
+**Executable cross-check:** Read-only PistonDecompiler inspection uses the matching executable, SHA-256 `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+Packet reflection function `141087ea0` and command execution function `14857c450` provide schema and construction evidence.
+They do not establish the client playback algorithm.
+Raw packets, screenshots, executable bytes, and decompiled output remain private.
+
+**Remaining implementation:** Core must decode all fields and resolve targets against authoritative actor identities and lifetimes.
+Negotiated command delivery must work through ViaProxy and direct connections.
+The add-on needs per-actor runtime controller slots, command-defined states, resource resolution, stop-expression evaluation, transitions, blending, and effect playback.
+Playback must release state on actor removal, world changes, disconnect, and resource replacement.
+Further native comparisons must cover alias resolution, clock resets, blending, independent slots, multiple targets, and missing resources.
+Direct and ViaProxy playback of this command capture remain unverified.
+This research does not change packet handling or establish complete animation parity.
