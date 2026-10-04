@@ -1,4 +1,4 @@
-From 3a40f00c0a59883fb8ae3244f90199d1480448f7 Mon Sep 17 00:00:00 2001
+From 63c67d16d6ef17f5f25feb7144aa1c68f6872820 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:07 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -296,9 +296,23 @@ including resolved stack order and original server provenance. Resource
 reload and world cleanup release the cached graph snapshot. A missing or
 invalid archive retains ordinary rendering without requesting Store login.
 Custom actor state still requires its separate core transport through proxies.
+
+Receive complete core-evaluated custom actor snapshots through the shared
+negotiated channel on both direct connections and ViaProxy. Capture the
+Minecraft connection at play initialization and install state on its
+client thread. Replaced connections and cleared lifetimes cannot install
+queued actor updates into the next session.
+
+Remove the direct-only CustomEntity mixin. Core selects native transport
+or converted Java item displays from the client's advertised capability,
+so the add-on no longer cancels core fallback spawns globally. Empty model
+updates hide actors without losing their identity; removals release them.
+Semantic tests cover immutable scale updates, hidden selections, removal,
+independent UUIDs, replacement and cleanup. Actor events, player properties
+and complete native animation playback remain separate requirements.
 ---
  build.gradle.kts                              |   6 +
- .../bedrock/ViaFabricPlusBedrock.java         |  10 +
+ .../bedrock/ViaFabricPlusBedrock.java         |  17 ++
  .../access/IBedrockActorRenderType.java       |  14 +
  .../render/MixinAbstractClientPlayer.java     |  38 +++
  .../render/MixinBedrockActorPipelines.java    |  25 ++
@@ -308,7 +322,6 @@ Custom actor state still requires its separate core transport through proxies.
  .../features/render/MixinBedrockNameTags.java |  61 ++++
  .../render/MixinBedrockRidingMetadata.java    |  38 +++
  .../render/MixinBedrockRidingPosition.java    |  27 ++
- .../features/render/MixinCustomEntity.java    |  59 ++++
  .../render/MixinEntityRenderDispatcher.java   |  93 ++++++
  .../render/MixinMinecraftSkinLifecycle.java   |  41 +++
  .../render/MixinPlayerSkinWidget.java         |  28 ++
@@ -324,13 +337,14 @@ Custom actor state still requires its separate core transport through proxies.
  .../bedrock/render/BedrockPlayerRenderer.java |  53 ++++
  .../bedrock/render/BedrockPlayerSkins.java    | 264 ++++++++++++++++++
  .../bedrock/render/BedrockRidingAnchors.java  |  71 +++++
- .../render/CustomEntityRenderStore.java       |  54 ++++
+ .../render/CustomEntityRenderStore.java       |  71 +++++
+ .../render/NativeCustomEntityPayload.java     |  24 ++
  .../bedrock/render/NativeSkinPayload.java     |  22 ++
  .../bedrock/visual/BedrockPlayerImages.java   |   2 +-
  .../shaders/core/bedrock_actor.fsh            |  46 +++
  .../shaders/core/bedrock_actor.vsh            |  47 ++++
  .../viafabricplus-bedrock.accesswidener       |   3 +
- .../viafabricplus-bedrock.mixins.json         |  12 +
+ .../viafabricplus-bedrock.mixins.json         |  11 +
  .../BedrockActorMaterialDefinitionsTest.java  | 147 ++++++++++
  .../render/BedrockActorMaterialsTest.java     |  48 ++++
  .../render/BedrockActorUvTransformTest.java   |  27 ++
@@ -340,8 +354,8 @@ Custom actor state still requires its separate core transport through proxies.
  .../bedrock/render/BedrockNameTagsTest.java   | 100 +++++++
  .../render/BedrockPlayerMaterialsTest.java    |  42 +++
  .../render/BedrockRidingAnchorsTest.java      | 130 +++++++++
- .../render/CustomEntityRenderStoreTest.java   |  36 +++
- 44 files changed, 2900 insertions(+), 1 deletion(-)
+ .../render/CustomEntityRenderStoreTest.java   |  62 ++++
+ 44 files changed, 2914 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractClientPlayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorPipelines.java
@@ -351,7 +365,6 @@ Custom actor state still requires its separate core transport through proxies.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRidingMetadata.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockRidingPosition.java
- create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinCustomEntity.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftSkinLifecycle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinPlayerSkinWidget.java
@@ -368,6 +381,7 @@ Custom actor state still requires its separate core transport through proxies.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockRidingAnchors.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStore.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeCustomEntityPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeSkinPayload.java
  create mode 100644 src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.fsh
  create mode 100644 src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.vsh
@@ -404,22 +418,24 @@ index 4200e37..a7b7f6e 100644
 +    useJUnitPlatform()
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index a8f239a..89eaa8b 100644
+index a8f239a..4f85837 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-@@ -21,6 +21,11 @@
+@@ -21,6 +21,13 @@
  
  package com.viaversion.viafabricplus.bedrock;
  
 +import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
 +import com.viaversion.viafabricplus.bedrock.render.NativeSkinPayload;
++import com.viaversion.viafabricplus.bedrock.render.NativeCustomEntityPayload;
++import com.viaversion.viafabricplus.bedrock.render.CustomEntityRenderStore;
 +import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 +import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 +import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
  import com.viaversion.viafabricplus.ViaFabricPlus;
  import com.viaversion.viafabricplus.api.entrypoint.ViaFabricPlusEntrypoint;
  import com.viaversion.viafabricplus.bedrock.account.BedrockAccount;
-@@ -49,6 +54,11 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -49,6 +56,16 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
  
      @Override
      public void onPreSettingsLoading() {
@@ -428,6 +444,11 @@ index a8f239a..89eaa8b 100644
 +        ClientPlayConnectionEvents.INIT.register((listener, client) ->
 +            ClientPlayNetworking.registerReceiver(NativeSkinPayload.TYPE,
 +                (payload, context) -> BedrockPlayerSkins.accept(listener.getConnection(), payload.fragment())));
++        PayloadTypeRegistry.clientboundPlay().register(NativeCustomEntityPayload.TYPE, NativeCustomEntityPayload.CODEC);
++        ClientPlayConnectionEvents.INIT.register((listener, client) ->
++            ClientPlayNetworking.registerReceiver(NativeCustomEntityPayload.TYPE,
++                (payload, context) -> CustomEntityRenderStore.accept(listener.getConnection(), payload.message())));
++        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> CustomEntityRenderStore.clear());
          this.settings = new BedrockSettings();
          this.account = new BedrockAccount(ViaFabricPlus.api().path().resolve("bedrock.json"));
      }
@@ -823,71 +844,6 @@ index 0000000..ee3a1d9
 +                passenger.getVehicleAttachmentPoint(vehicle));
 +        if (position != null) cir.setReturnValue(position);
 +    }
-+}
-diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinCustomEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinCustomEntity.java
-new file mode 100644
-index 0000000..4829d16
---- /dev/null
-+++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinCustomEntity.java
-@@ -0,0 +1,59 @@
-+/*
-+ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
-+ * Copyright (C) 2026 ViaVersion and contributors
-+ *
-+ * This program is free software: you can redistribute it and/or modify
-+ * it under the terms of the GNU General Public License as published by
-+ * the Free Software Foundation, either version 3 of the License, or
-+ * (at your option) any later version.
-+ *
-+ * This program is distributed in the hope that it will be useful,
-+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
-+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-+ * GNU General Public License for more details.
-+ *
-+ * You should have received a copy of the GNU General Public License
-+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
-+ */
-+
-+package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
-+
-+import com.viaversion.viafabricplus.bedrock.render.CustomEntityRenderStore;
-+import java.util.List;
-+import net.raphimc.viabedrock.api.model.entity.CustomEntity;
-+import org.spongepowered.asm.mixin.Mixin;
-+import org.spongepowered.asm.mixin.Shadow;
-+import org.spongepowered.asm.mixin.injection.At;
-+import org.spongepowered.asm.mixin.injection.Inject;
-+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
-+
-+@Mixin(value = CustomEntity.class, remap = false)
-+public abstract class MixinCustomEntity {
-+
-+    @Shadow
-+    private List<CustomEntity.EvaluatedModel> models;
-+
-+    @Shadow
-+    private boolean spawned;
-+
-+    @Inject(method = "evaluateRenderControllerChange", at = @At("RETURN"))
-+    private void publishRenderModels(final CallbackInfoReturnable<Boolean> cir) {
-+        if (cir.getReturnValueZ()) {
-+            final CustomEntity entity = (CustomEntity) (Object) this;
-+            CustomEntityRenderStore.update(entity.javaUuid(), entity.type(), entity.scale(), this.models);
-+        }
-+    }
-+
-+    @Inject(method = "spawn", at = @At("HEAD"), cancellable = true)
-+    private void useNativeRenderer(final CallbackInfo ci) {
-+        this.spawned = true;
-+        ci.cancel();
-+    }
-+
-+    @Inject(method = "remove", at = @At("HEAD"))
-+    private void removeRenderModels(final CallbackInfo ci) {
-+        CustomEntityRenderStore.remove(((CustomEntity) (Object) this).javaUuid());
-+    }
-+
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
 new file mode 100644
@@ -2400,10 +2356,10 @@ index 0000000..ad046ca
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStore.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStore.java
 new file mode 100644
-index 0000000..4ffe604
+index 0000000..f9a830b
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStore.java
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,71 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2429,34 +2385,81 @@ index 0000000..4ffe604
 +import java.util.UUID;
 +import java.util.concurrent.ConcurrentHashMap;
 +import net.raphimc.viabedrock.api.model.entity.CustomEntity;
++import net.raphimc.viabedrock.api.model.NativeCustomEntityMessage;
++import net.minecraft.client.Minecraft;
++import net.minecraft.network.Connection;
 +
 +/** Publishes immutable actor render state across the protocol and render threads. */
 +public final class CustomEntityRenderStore {
 +
 +    private static final Map<UUID, RenderData> MODELS = new ConcurrentHashMap<>();
 +
++    private static volatile long generation;
++
 +    private CustomEntityRenderStore() {
 +    }
 +
-+    public static void update(final UUID uuid, final String identifier, final float scale, final List<CustomEntity.EvaluatedModel> models) {
-+        MODELS.put(uuid, new RenderData(identifier, scale, List.copyOf(models)));
++    public static void accept(final Connection connection, final NativeCustomEntityMessage message) {
++        final long receivedGeneration = generation;
++        Minecraft.getInstance().execute(() -> {
++            final var listener = Minecraft.getInstance().getConnection();
++            if (generation == receivedGeneration && connection.isConnected()
++                    && listener != null && listener.getConnection() == connection) {
++                apply(message);
++            }
++        });
++    }
++
++    static void apply(final NativeCustomEntityMessage message) {
++        if (message instanceof NativeCustomEntityMessage.Snapshot snapshot) {
++            MODELS.put(snapshot.uuid(), new RenderData(snapshot.identifier(), snapshot.scale(), snapshot.models()));
++        } else if (message instanceof NativeCustomEntityMessage.Remove remove) {
++            MODELS.remove(remove.uuid());
++        }
 +    }
 +
 +    public static RenderData get(final UUID uuid) {
 +        return MODELS.get(uuid);
 +    }
 +
-+    public static void remove(final UUID uuid) {
-+        MODELS.remove(uuid);
-+    }
-+
 +    public static void clear() {
++        generation++;
 +        MODELS.clear();
 +    }
 +
 +    public record RenderData(String identifier, float scale, List<CustomEntity.EvaluatedModel> models) {
 +    }
 +
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeCustomEntityPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeCustomEntityPayload.java
+new file mode 100644
+index 0000000..a22a69c
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeCustomEntityPayload.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.NativeCustomEntityMessage;
++
++public record NativeCustomEntityPayload(NativeCustomEntityMessage message) implements CustomPacketPayload {
++    public static final Type<NativeCustomEntityPayload> TYPE = new Type<>(Identifier.parse(NativeCustomEntityMessage.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, NativeCustomEntityPayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> NativeCustomEntityMessage.TYPE.write(buffer, payload.message),
++            buffer -> new NativeCustomEntityPayload(NativeCustomEntityMessage.TYPE.read(buffer)));
++
++    @Override
++    public Type<NativeCustomEntityPayload> type() {
++        return TYPE;
++    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeSkinPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeSkinPayload.java
 new file mode 100644
@@ -2616,10 +2619,10 @@ index 35145bc..91ad0d7 100644
 +accessible field net/minecraft/client/renderer/RenderPipelines ENTITY_SNIPPET Lcom/mojang/renderpearl/api/pipeline/RenderPipeline$Snippet;
 +accessible method net/minecraft/client/renderer/rendertype/RenderType create (Ljava/lang/String;Lnet/minecraft/client/renderer/rendertype/RenderSetup;)Lnet/minecraft/client/renderer/rendertype/RenderType;
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 17da109..a323d8c 100644
+index 17da109..792c730 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -45,6 +45,18 @@
+@@ -45,6 +45,17 @@
      "features.misc.MixinClientSuggestionProvider",
      "features.misc.MixinInventoryScreen",
      "features.misc.MixinMinecraft",
@@ -2629,7 +2632,6 @@ index 17da109..a323d8c 100644
 +    "features.render.MixinBedrockNameTags",
 +    "features.render.MixinBedrockNameTagMetadata",
 +    "features.render.MixinBedrockNameTagRenderer",
-+    "features.render.MixinCustomEntity",
 +    "features.render.MixinBedrockRidingMetadata",
 +    "features.render.MixinBedrockRidingPosition",
 +    "features.render.MixinEntityRenderDispatcher",
@@ -3540,10 +3542,10 @@ index 0000000..fc3e87d
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStoreTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStoreTest.java
 new file mode 100644
-index 0000000..922a673
+index 0000000..101df6e
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/CustomEntityRenderStoreTest.java
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,62 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3557,7 +3559,9 @@ index 0000000..922a673
 +import net.raphimc.viabedrock.api.model.entity.CustomEntity;
 +import org.junit.jupiter.api.Test;
 +
-+import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.*;
++import net.raphimc.viabedrock.api.model.NativeCustomEntityMessage;
++import java.util.List;
 +
 +final class CustomEntityRenderStoreTest {
 +
@@ -3566,16 +3570,40 @@ index 0000000..922a673
 +        final UUID uuid = UUID.randomUUID();
 +        final var models = new ArrayList<CustomEntity.EvaluatedModel>();
 +        try {
-+            CustomEntityRenderStore.update(uuid, "test:actor", 5F, models);
++            CustomEntityRenderStore.apply(new NativeCustomEntityMessage.Snapshot(uuid, "test:actor", 5F, models));
 +            final var before = CustomEntityRenderStore.get(uuid);
 +            models.add(null);
 +            assertEquals(0, before.models().size());
 +
-+            CustomEntityRenderStore.update(uuid, "test:actor", 1.7F, before.models());
++            CustomEntityRenderStore.apply(new NativeCustomEntityMessage.Snapshot(uuid, "test:actor", 1.7F, before.models()));
 +            assertEquals(5F, before.scale());
 +            assertEquals(1.7F, CustomEntityRenderStore.get(uuid).scale());
 +        } finally {
-+            CustomEntityRenderStore.remove(uuid);
++            CustomEntityRenderStore.clear();
++        }
++    }
++
++    @Test
++    void clearsSelectionsRemovesActorsAndSeparatesReusedIdentities() {
++        final UUID first = UUID.randomUUID();
++        final UUID second = UUID.randomUUID();
++        final var model = new CustomEntity.EvaluatedModel("body", "geometry.body", "textures/body", java.util.Map.of(), false, 1F, null);
++        try {
++            CustomEntityRenderStore.apply(new NativeCustomEntityMessage.Snapshot(first, "test:actor", 2F, List.of(model)));
++            CustomEntityRenderStore.apply(new NativeCustomEntityMessage.Snapshot(second, "test:actor", 3F, List.of(model)));
++            CustomEntityRenderStore.apply(new NativeCustomEntityMessage.Snapshot(first, "test:actor", 0F, List.of()));
++            assertTrue(CustomEntityRenderStore.get(first).models().isEmpty());
++            assertEquals(0F, CustomEntityRenderStore.get(first).scale());
++            CustomEntityRenderStore.apply(new NativeCustomEntityMessage.Remove(first));
++            assertNull(CustomEntityRenderStore.get(first));
++            assertEquals(3F, CustomEntityRenderStore.get(second).scale());
++            CustomEntityRenderStore.apply(new NativeCustomEntityMessage.Snapshot(first, "test:replacement", -1F, List.of(model)));
++            assertEquals(-1F, CustomEntityRenderStore.get(first).scale());
++            CustomEntityRenderStore.clear();
++            assertNull(CustomEntityRenderStore.get(first));
++            assertNull(CustomEntityRenderStore.get(second));
++        } finally {
++            CustomEntityRenderStore.clear();
 +        }
 +    }
 +

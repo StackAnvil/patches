@@ -133,4 +133,31 @@ They do not establish visible native parity, remote-player lifecycle behavior, o
 
 Native renderers now read the core actor archive from an accepted server resource pack. They reconstruct ordered core definitions with server provenance and cache the result for the current resource lifetime. Resource reload and disconnect clear the snapshot. No synthetic connection or frontend Store login is required.
 
-Player costumes and equipment can use this snapshot through ViaProxy. Custom entity rendering can read its resources, but its actor state still requires a direct connection. Missing proxy actor properties, events, emote state, and account synchronization remain separate gaps.
+Player costumes and equipment can use this snapshot through ViaProxy. Custom entity rendering now receives core-evaluated model state through the negotiated actor channel. Missing proxy actor properties, events, emote state, and account synchronization remain separate gaps.
+
+
+## Shared custom actor receiver
+
+The native renderer now receives complete model selections through `viabedrock:custom_entity`.
+Direct connections and ViaProxy use the same receiver and accepted actor resources.
+The direct-only custom entity mixin is removed.
+Core retains the ordinary Java fallback when the client does not advertise support.
+
+The receiver captures its Minecraft connection during play initialization.
+Installation runs on the Minecraft thread and checks both connection identity and the cleanup generation.
+Replaced connections and cleared lifetimes cannot install queued updates into the next session.
+Empty selections, removal, independent actors, replacement, and immutable scale updates have semantic tests.
+Player properties, actor events, emote state, and outbound account synchronization remain incomplete.
+
+
+**Recorded-scene verification:** The protocol 2193 CubeCraft recording passes direct playback `2026-10-04T13-33-22.116Z-replay-scene` and ViaProxy playback `2026-10-04T13-30-14.727Z-replay-scene`.
+Both preserve the complete scene payload hash and load the accepted resource pack.
+Each route receives 77 model updates for 31 actor identifiers and 43 geometry/texture combinations.
+The identifier sets, selected combinations, and scale sets match exactly.
+The banner scale remains 1.7 and the hanging logo scale remains 5.
+Actual renderer submissions and final screenshots show the custom banners, NPC models, and hanging logo on both routes.
+Neither run reports unresolved model errors or rejected skins.
+
+These observations verify transport and supported rendering within this recorded scene.
+They do not establish complete native visual parity, actor event support, or broader lifecycle behavior.
+Raw packets, assets, account data, and screenshots remain private.

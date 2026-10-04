@@ -1,4 +1,4 @@
-From 84cc8e879529bd319c68a68f5b1976a9067512ab Mon Sep 17 00:00:00 2001
+From 6fbc1f02c3aa7a3ed633db2acc4dc4fc335f410c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:22:35 +0200
 Subject: [PATCH] feat(entities): evaluate named actor properties and
@@ -91,25 +91,51 @@ and runtime stack operations execute unchanged. This establishes these
 math operations, not the complete parser or visible animation.
 The official Molang reference describes directed shortest interpolation:
 https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/mathfunctions/math_lerprotate
+
+Publish the complete evaluated controller snapshot under the actual Java
+actor UUID when a client negotiates viabedrock:custom_entity. Both direct
+clients and ViaProxy use this ordered state channel. Preserve model and
+material order, UV expressions, lighting, empty selections and signed scale.
+Remove snapshots with their actor; late capability registration replaces
+existing display parts and republishes live actors. Clients without the
+capability retain the existing converted Java item-display representation.
+
+Bound payload bytes, string lengths and model/material counts before
+allocating untrusted state. Reject duplicate bindings and mismatched wire
+versions instead of installing partial state. Six semantic codec tests
+cover round trips, immutable ownership, clearing versus removal, signed
+zero, invalid headers/counts, truncation, duplicate bindings and byte limits.
+
+This transports the evaluated state already used by the direct renderer.
+Native actor resources use the accepted converted resource-pack archive;
+no local Bedrock installation or frontend Store account is required.
+Player properties, actor events and animation timing remain separate work.
 ---
  build.gradle                                  |  11 +-
  .../main/groovy/viabedrock.checkstyle.gradle  |   8 +-
  gradle.properties                             |   2 +-
- .../api/model/entity/CustomEntity.java        |  70 ++++-
+ .../api/model/NativeCustomEntityMessage.java  | 142 ++++++++++
+ .../api/model/entity/CustomEntity.java        | 101 ++++++-
  .../viabedrock/api/model/entity/Entity.java   |  21 ++
  .../api/util/BedrockTrigonometry.java         |  33 +++
  .../viabedrock/api/util/MoLangEngine.java     | 209 ++++++++++++++-
  .../viabedrock/api/util/MoLangMath.java       | 248 ++++++++++++++++++
+ .../protocol/packet/JoinPackets.java          |   1 +
+ .../protocol/packet/MultiStatePackets.java    |   6 +
+ .../protocol/storage/EntityTracker.java       |   8 +
  .../META-INF/licenses/mochafloats.txt         |  24 ++
+ .../model/NativeCustomEntityMessageTest.java  | 159 +++++++++++
  .../CustomEntityMaterialSelectionTest.java    |  65 +++++
  .../CustomEntityModelSelectionTest.java       |   2 +-
  .../api/model/entity/EntityScaleTest.java     | 157 +++++++++++
  .../viabedrock/api/util/MoLangEngineTest.java |  94 +++++++
  .../viabedrock/api/util/MoLangMathTest.java   | 115 ++++++++
- 14 files changed, 1031 insertions(+), 28 deletions(-)
+ 19 files changed, 1378 insertions(+), 28 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeCustomEntityMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/util/BedrockTrigonometry.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/util/MoLangMath.java
  create mode 100644 src/main/resources/META-INF/licenses/mochafloats.txt
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeCustomEntityMessageTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityMaterialSelectionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/EntityScaleTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
@@ -189,11 +215,173 @@ index 44cfd6474..ea5f4da2d 100644
  maven_group=net.raphimc
  maven_name=ViaBedrock
  maven_version=0.0.31-StackAnvil
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeCustomEntityMessage.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeCustomEntityMessage.java
+new file mode 100644
+index 000000000..e99bbbd44
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeCustomEntityMessage.java
+@@ -0,0 +1,142 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.api.type.types.StringType;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.api.model.entity.CustomEntity;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import org.cube.converter.data.bedrock.controller.BedrockRenderController;
++
++import java.util.ArrayList;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.UUID;
++
++/** Core-evaluated render controllers for the actual Java actor identity. */
++public sealed interface NativeCustomEntityMessage permits NativeCustomEntityMessage.Snapshot, NativeCustomEntityMessage.Remove {
++
++    String CHANNEL = "viabedrock:custom_entity";
++    int MAX_PAYLOAD_BYTES = 1 << 20;
++    int MAX_MODELS = 128;
++    int MAX_MATERIALS = 128;
++    StringType STRING = new StringType(4096);
++    Type<NativeCustomEntityMessage> TYPE = new Type<>(NativeCustomEntityMessage.class) {
++        @Override
++        public NativeCustomEntityMessage read(final ByteBuf buffer) {
++            if (buffer.readableBytes() > MAX_PAYLOAD_BYTES
++                    || Types.VAR_INT.readPrimitive(buffer) != 1
++                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IllegalArgumentException("Unsupported native actor message");
++            }
++            final int kind = buffer.readUnsignedByte();
++            final UUID uuid = Types.UUID.read(buffer);
++            final NativeCustomEntityMessage message;
++            if (kind == 0) {
++                final String identifier = STRING.read(buffer);
++                final float scale = buffer.readFloat();
++                final int count = count(buffer, MAX_MODELS);
++                final List<CustomEntity.EvaluatedModel> models = new ArrayList<>(count);
++                for (int i = 0; i < count; i++) {
++                    final String key = STRING.read(buffer);
++                    final String geometry = STRING.read(buffer);
++                    final String texture = STRING.read(buffer);
++                    final int materialCount = count(buffer, MAX_MATERIALS);
++                    final LinkedHashMap<String, String> materials = new LinkedHashMap<>();
++                    for (int j = 0; j < materialCount; j++) {
++                        if (materials.putIfAbsent(STRING.read(buffer), STRING.read(buffer)) != null) {
++                            throw new IllegalArgumentException("Duplicate actor material binding");
++                        }
++                    }
++                    final boolean ignoreLighting = buffer.readBoolean();
++                    final float lightMultiplier = buffer.readFloat();
++                    final BedrockRenderController.UvAnimation uv = buffer.readBoolean()
++                            ? new BedrockRenderController.UvAnimation(STRING.read(buffer), STRING.read(buffer), STRING.read(buffer), STRING.read(buffer)) : null;
++                    models.add(new CustomEntity.EvaluatedModel(key, geometry, texture, materials, ignoreLighting, lightMultiplier, uv));
++                }
++                message = new Snapshot(uuid, identifier, scale, models);
++            } else if (kind == 1) {
++                message = new Remove(uuid);
++            } else {
++                throw new IllegalArgumentException("Unknown native actor message");
++            }
++            if (buffer.isReadable()) {
++                throw new IllegalArgumentException("Trailing native actor data");
++            }
++            return message;
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final NativeCustomEntityMessage message) {
++            final int start = buffer.writerIndex();
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            buffer.writeByte(message instanceof Snapshot ? 0 : 1);
++            Types.UUID.write(buffer, message.uuid());
++            if (message instanceof Snapshot snapshot) {
++                if (snapshot.models.size() > MAX_MODELS) {
++                    throw new IllegalArgumentException("Too many native actor models");
++                }
++                STRING.write(buffer, snapshot.identifier);
++                buffer.writeFloat(snapshot.scale);
++                Types.VAR_INT.writePrimitive(buffer, snapshot.models.size());
++                for (CustomEntity.EvaluatedModel model : snapshot.models) {
++                    if (model.materials().size() > MAX_MATERIALS) {
++                        throw new IllegalArgumentException("Too many native actor materials");
++                    }
++                    STRING.write(buffer, model.key());
++                    STRING.write(buffer, model.geometryValue());
++                    STRING.write(buffer, model.textureValue());
++                    Types.VAR_INT.writePrimitive(buffer, model.materials().size());
++                    for (var entry : model.materials().entrySet()) {
++                        STRING.write(buffer, entry.getKey());
++                        STRING.write(buffer, entry.getValue());
++                        checkSize(buffer, start);
++                    }
++                    buffer.writeBoolean(model.ignoreLighting()).writeFloat(model.lightColorMultiplier());
++                    final var uv = model.uvAnimation();
++                    buffer.writeBoolean(uv != null);
++                    if (uv != null) {
++                        STRING.write(buffer, uv.offsetU());
++                        STRING.write(buffer, uv.offsetV());
++                        STRING.write(buffer, uv.scaleU());
++                        STRING.write(buffer, uv.scaleV());
++                    }
++                    checkSize(buffer, start);
++                }
++            }
++            checkSize(buffer, start);
++        }
++
++        private static int count(final ByteBuf buffer, final int maximum) {
++            final int count = Types.VAR_INT.readPrimitive(buffer);
++            if (count < 0 || count > maximum) {
++                throw new IllegalArgumentException("Invalid native actor entry count");
++            }
++            return count;
++        }
++
++        private static void checkSize(final ByteBuf buffer, final int start) {
++            if (buffer.writerIndex() - start > MAX_PAYLOAD_BYTES) {
++                throw new IllegalArgumentException("Native actor message exceeds the payload limit");
++            }
++        }
++    };
++
++    UUID uuid();
++
++    record Snapshot(UUID uuid, String identifier, float scale, List<CustomEntity.EvaluatedModel> models) implements NativeCustomEntityMessage {
++        public Snapshot {
++            models = List.copyOf(models);
++        }
++    }
++
++    record Remove(UUID uuid) implements NativeCustomEntityMessage {
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
-index 53394efee..2a77ab4d1 100644
+index 53394efee..39f02d436 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
-@@ -46,11 +46,11 @@ import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+@@ -26,11 +26,13 @@ import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
+ import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
+ import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
+ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
+ import com.viaversion.viaversion.api.type.Types;
+ import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
+ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
++import net.raphimc.viabedrock.api.model.NativeCustomEntityMessage;
+ import net.raphimc.viabedrock.api.resourcepack.definition.EntityDefinitions;
+ import net.raphimc.viabedrock.api.util.MathUtil;
+ import net.raphimc.viabedrock.api.util.MoLangEngine;
+@@ -46,11 +48,11 @@ import net.raphimc.viabedrock.protocol.storage.EntityTracker;
  import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
  import org.cube.converter.data.bedrock.BedrockEntityData;
  import org.cube.converter.data.bedrock.controller.BedrockRenderController;
@@ -210,7 +398,7 @@ index 53394efee..2a77ab4d1 100644
  
  import java.io.IOException;
  import java.util.*;
-@@ -73,6 +73,7 @@ public class CustomEntity extends Entity {
+@@ -73,6 +75,7 @@ public class CustomEntity extends Entity {
      private final List<EvaluatedModel> models = new ArrayList<>();
      private final List<ItemDisplayEntity> partEntities = new ArrayList<>();
      private boolean spawned;
@@ -218,7 +406,7 @@ index 53394efee..2a77ab4d1 100644
  
      public CustomEntity(final UserConnection user, final long uniqueId, final long runtimeId, final String type, final int javaId, final EntityDefinitions.EntityDefinition entityDefinition) {
          super(user, uniqueId, runtimeId, type, javaId, UUID.randomUUID(), EntityTypes26_3.INTERACTION);
-@@ -106,12 +107,24 @@ public class CustomEntity extends Entity {
+@@ -106,12 +109,24 @@ public class CustomEntity extends Entity {
          this.entityScope.set("texture", textureBinding);
  
          final MutableObjectBinding materialBinding = new MutableObjectBinding();
@@ -243,7 +431,49 @@ index 53394efee..2a77ab4d1 100644
      @Override
      public void setPosition(final Position3f position) {
          super.setPosition(position);
-@@ -179,7 +192,7 @@ public class CustomEntity extends Entity {
+@@ -136,6 +151,9 @@ public class CustomEntity extends Entity {
+     @Override
+     public void remove() {
+         super.remove();
++        if (this.nativeRendererAvailable()) {
++            this.sendNativeState(new NativeCustomEntityMessage.Remove(this.javaUuid()));
++        }
+         this.despawn();
+     }
+ 
+@@ -149,8 +167,31 @@ public class CustomEntity extends Entity {
+         }
+     }
+ 
++    public void refreshNativeRenderer() {
++        if (this.spawned && this.nativeRendererAvailable()) {
++            this.despawn();
++            this.spawn();
++        }
++    }
++
++    private boolean nativeRendererAvailable() {
++        return this.user.getProtocolInfo().getServerState() == State.PLAY
++                && this.user.get(ChannelStorage.class).hasChannel(NativeCustomEntityMessage.CHANNEL);
++    }
++
++    private void sendNativeState(final NativeCustomEntityMessage message) {
++        final PacketWrapper payload = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user);
++        payload.write(Types.STRING, NativeCustomEntityMessage.CHANNEL);
++        payload.write(NativeCustomEntityMessage.TYPE, message);
++        payload.send(BedrockProtocol.class);
++    }
++
+     private void spawn() {
+         this.spawned = true;
++        if (this.nativeRendererAvailable()) {
++            this.sendNativeState(new NativeCustomEntityMessage.Snapshot(this.javaUuid(), this.entityDefinition.identifier(), this.scale(), this.models));
++            return;
++        }
+         if (this.models.isEmpty()) {
+             return;
+         }
+@@ -179,7 +220,7 @@ public class CustomEntity extends Entity {
              final StructuredItem item = new StructuredItem(BedrockProtocol.MAPPINGS.getJavaItems().get("minecraft:paper"), 1, data);
              javaEntityData.add(new EntityData(partEntity.getJavaEntityDataIndex(EntityDataFields.ITEM_STACK), VersionedTypes.V26_3.entityDataTypes.itemType, item));
  
@@ -252,7 +482,16 @@ index 53394efee..2a77ab4d1 100644
              javaEntityData.add(new EntityData(partEntity.getJavaEntityDataIndex(EntityDataFields.SCALE), VersionedTypes.V26_3.entityDataTypes.vector3FType, new Vector3f(scale, scale, scale)));
              javaEntityData.add(new EntityData(partEntity.getJavaEntityDataIndex(EntityDataFields.TRANSLATION), VersionedTypes.V26_3.entityDataTypes.vector3FType, new Vector3f(0F, scale * 0.5F, 0F)));
  
-@@ -217,8 +230,15 @@ public class CustomEntity extends Entity {
+@@ -211,14 +252,24 @@ public class CustomEntity extends Entity {
+             entityIds[i] = this.partEntities.get(i).javaId();
+         }
+         this.partEntities.clear();
++        if (entityIds.length == 0) {
++            return;
++        }
+         final PacketWrapper removeEntities = PacketWrapper.create(ClientboundPackets26_3.REMOVE_ENTITIES, this.user);
+         removeEntities.write(Types.VAR_INT_ARRAY_PRIMITIVE, entityIds); // entity ids
+         removeEntities.send(BedrockProtocol.class);
      }
  
      private boolean evaluateRenderControllerChange() {
@@ -268,7 +507,7 @@ index 53394efee..2a77ab4d1 100644
          if (this.entityData.containsKey(ActorDataIds.VARIANT)) {
              queryBinding.set("variant", Value.of(this.entityData.get(ActorDataIds.VARIANT).<Integer>value()));
          }
-@@ -240,6 +260,13 @@ public class CustomEntity extends Entity {
+@@ -240,6 +291,13 @@ public class CustomEntity extends Entity {
          executionScope.set("query", queryBinding);
          executionScope.set("q", queryBinding);
  
@@ -282,7 +521,7 @@ index 53394efee..2a77ab4d1 100644
          final List<EvaluatedModel> newModels = new ArrayList<>();
          final ResourcePackStorage resourcePackStorage = user.get(ResourcePackStorage.class);
          for (BedrockEntityData.RenderController entityRenderController : this.entityDefinition.entityData().getControllers()) {
-@@ -261,9 +288,11 @@ public class CustomEntity extends Entity {
+@@ -261,9 +319,11 @@ public class CustomEntity extends Entity {
  
              try {
                  final Scope renderControllerGeometryScope = executionScope.copy();
@@ -296,7 +535,7 @@ index 53394efee..2a77ab4d1 100644
  
                  final String geometryValue = MoLangEngine.eval(renderControllerGeometryScope, renderController.geometryExpression()).getAsString();
                  final String geometryName = this.inverseGeometryMap.get(geometryValue);
-@@ -271,16 +300,16 @@ public class CustomEntity extends Entity {
+@@ -271,16 +331,16 @@ public class CustomEntity extends Entity {
                      final String textureValue = MoLangEngine.eval(renderControllerTextureScope, textureExpression).getAsString();
                      final String textureName = this.inverseTextureMap.get(textureValue);
                      if (geometryName != null && textureName != null) {
@@ -316,7 +555,7 @@ index 53394efee..2a77ab4d1 100644
      }
  
      static boolean replaceModels(final List<EvaluatedModel> current, final List<EvaluatedModel> next) {
-@@ -292,7 +321,7 @@ public class CustomEntity extends Entity {
+@@ -292,7 +352,7 @@ public class CustomEntity extends Entity {
          return true;
      }
  
@@ -325,7 +564,7 @@ index 53394efee..2a77ab4d1 100644
          final MutableObjectBinding arrayBinding = new MutableObjectBinding();
          for (BedrockRenderController.Array array : arrays) {
              if (array.name().toLowerCase(Locale.ROOT).startsWith("array.")) {
-@@ -307,7 +336,22 @@ public class CustomEntity extends Entity {
+@@ -307,7 +367,22 @@ public class CustomEntity extends Entity {
          return arrayBinding;
      }
  
@@ -926,6 +1165,68 @@ index 000000000..875d51eca
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+index 0885ea827..838bc3fd2 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+@@ -571,6 +571,7 @@ public final class JoinPackets {
+         joinGame.write(Types.BOOLEAN, false); // enforces secure chat
+         joinGame.send(BedrockProtocol.class);
+         user.get(NativeSkinStorage.class).markJoined();
++        user.get(EntityTracker.class).sendNativeCustomEntitySnapshot();
+ 
+         clientPlayer.createTeam();
+         clientPlayer.sendInitialEntityData();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+index cbd0153c3..d24ee4bf0 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+@@ -29,6 +29,7 @@ import com.viaversion.viaversion.util.Key;
+ import net.lenni0451.mcstructs_bedrock.text.utils.BedrockTranslator;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.model.NativeBlockIdentifiers;
++import net.raphimc.viabedrock.api.model.NativeCustomEntityMessage;
+ import net.raphimc.viabedrock.api.modinterface.ViaBedrockUtilityInterface;
+ import net.raphimc.viabedrock.api.util.PacketFactory;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+@@ -42,6 +43,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolat
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketViolationType;
+ import net.raphimc.viabedrock.protocol.storage.NativeSkinStorage;
+ import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+ import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
+ import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
+ import net.raphimc.viabedrock.protocol.storage.PacketSyncStorage;
+@@ -136,6 +138,10 @@ public final class MultiStatePackets {
+             final List<String> channels = Arrays.asList(new String(wrapper.read(Types.SERVERBOUND_CUSTOM_PAYLOAD_DATA), StandardCharsets.UTF_8).split("\0"));
+             wrapper.user().get(ChannelStorage.class).addChannels(channels);
+             wrapper.user().get(NativeSkinStorage.class).flush();
++            if (channels.contains(NativeCustomEntityMessage.CHANNEL)
++                    && wrapper.user().has(EntityTracker.class)) {
++                wrapper.user().get(EntityTracker.class).sendNativeCustomEntitySnapshot();
++            }
+             if (channels.contains(NativeBlockIdentifiers.CHANNEL)
+                     && wrapper.user().has(ChunkTracker.class)) {
+                 wrapper.user().get(ChunkTracker.class).sendNativeBlockSnapshot();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
+index fb0efe925..d279eba51 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityTracker.java
+@@ -310,6 +310,14 @@ public class EntityTracker extends StoredObject {
+         }
+     }
+ 
++    public void sendNativeCustomEntitySnapshot() {
++        for (Entity entity : this.entities.values()) {
++            if (entity instanceof CustomEntity customEntity) {
++                customEntity.refreshNativeRenderer();
++            }
++        }
++    }
++
+     public void tick() {
+         for (Entity entity : this.entities.values()) {
+             if (entity != this.clientPlayerEntity) {
 diff --git a/src/main/resources/META-INF/licenses/mochafloats.txt b/src/main/resources/META-INF/licenses/mochafloats.txt
 new file mode 100644
 index 000000000..34dbe88b4
@@ -957,6 +1258,171 @@ index 000000000..34dbe88b4
 +OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 +SOFTWARE.
 \ No newline at end of file
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeCustomEntityMessageTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeCustomEntityMessageTest.java
+new file mode 100644
+index 000000000..3dc6f9c3c
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeCustomEntityMessageTest.java
+@@ -0,0 +1,159 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.entity.CustomEntity;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import org.cube.converter.data.bedrock.controller.BedrockRenderController;
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeCustomEntityMessageTest {
++
++    @Test
++    void preservesModelOrderMaterialOrderUvExpressionsAndSignedScale() {
++        final var materials = new LinkedHashMap<String, String>();
++        materials.put("*", "entity_alphatest");
++        materials.put("wing*", "entity_emissive_alpha");
++        final var models = new ArrayList<CustomEntity.EvaluatedModel>();
++        models.add(new CustomEntity.EvaluatedModel("body", "geometry.body", "textures/body", materials,
++                true, .625F, new BedrockRenderController.UvAnimation("q.life_time", "-0.25", "2", "v.scale")));
++        models.add(new CustomEntity.EvaluatedModel("overlay", "geometry.overlay", "textures/overlay", materials,
++                false, 1F, null));
++        final var snapshot = new NativeCustomEntityMessage.Snapshot(UUID.randomUUID(), "fixture:actor", -2F, models);
++        models.clear();
++        materials.clear();
++        final var decoded = (NativeCustomEntityMessage.Snapshot) roundTrip(snapshot);
++        assertEquals(snapshot, decoded);
++        assertEquals(List.of("*", "wing*"), List.copyOf(decoded.models().getFirst().materials().keySet()));
++        assertThrows(UnsupportedOperationException.class, () -> decoded.models().clear());
++        assertThrows(UnsupportedOperationException.class, () -> decoded.models().getFirst().materials().clear());
++    }
++
++    @Test
++    void distinguishesHiddenModelsFromRemovalAndPreservesNegativeZero() {
++        final UUID uuid = UUID.randomUUID();
++        final var hidden = new NativeCustomEntityMessage.Snapshot(uuid, "fixture:actor", -0F, List.of());
++        assertEquals(hidden, roundTrip(hidden));
++        assertEquals(Float.floatToRawIntBits(-0F), Float.floatToRawIntBits(((NativeCustomEntityMessage.Snapshot) roundTrip(hidden)).scale()));
++        assertEquals(new NativeCustomEntityMessage.Remove(uuid), roundTrip(new NativeCustomEntityMessage.Remove(uuid)));
++    }
++
++    @Test
++    void rejectsMismatchedVersionsAndTrailingData() {
++        final var buffer = Unpooled.buffer();
++        try {
++            NativeCustomEntityMessage.TYPE.write(buffer, new NativeCustomEntityMessage.Remove(UUID.randomUUID()));
++            final byte[] original = new byte[buffer.readableBytes()];
++            buffer.getBytes(0, original);
++            buffer.setByte(0, 2);
++            assertThrows(IllegalArgumentException.class, () -> NativeCustomEntityMessage.TYPE.read(buffer));
++            buffer.clear().writeBytes(original);
++            buffer.setByte(1, 0);
++            assertThrows(IllegalArgumentException.class, () -> NativeCustomEntityMessage.TYPE.read(buffer));
++            buffer.clear().writeBytes(original).writeByte(0);
++            assertThrows(IllegalArgumentException.class, () -> NativeCustomEntityMessage.TYPE.read(buffer));
++            buffer.clear().writeBytes(original);
++            buffer.setByte(3, 99);
++            assertThrows(IllegalArgumentException.class, () -> NativeCustomEntityMessage.TYPE.read(buffer));
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void rejectsInvalidCountsBeforeAllocatingModels() {
++        final var buffer = Unpooled.buffer();
++        try {
++            for (int count : new int[]{-1, NativeCustomEntityMessage.MAX_MODELS + 1}) {
++                buffer.clear();
++                Types.VAR_INT.writePrimitive(buffer, 1);
++                Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++                buffer.writeByte(0);
++                Types.UUID.write(buffer, UUID.randomUUID());
++                Types.STRING.write(buffer, "fixture:actor");
++                buffer.writeFloat(1F);
++                Types.VAR_INT.writePrimitive(buffer, count);
++                assertThrows(IllegalArgumentException.class, () -> NativeCustomEntityMessage.TYPE.read(buffer));
++            }
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void boundsEncodedModelsAndTotalPayloadBytes() {
++        final var buffer = Unpooled.buffer();
++        try {
++            final var model = new CustomEntity.EvaluatedModel("body", "geometry.body", "textures/body", Collections.emptyMap(), false, 1F, null);
++            assertThrows(IllegalArgumentException.class, () -> NativeCustomEntityMessage.TYPE.write(buffer,
++                    new NativeCustomEntityMessage.Snapshot(UUID.randomUUID(), "fixture:actor", 1F,
++                            Collections.nCopies(NativeCustomEntityMessage.MAX_MODELS + 1, model))));
++            buffer.clear();
++            final var materials = new LinkedHashMap<String, String>();
++            for (int i = 0; i < NativeCustomEntityMessage.MAX_MATERIALS; i++) {
++                materials.put("bone" + i, "x".repeat(4096));
++            }
++            final var largeModel = new CustomEntity.EvaluatedModel("body", "geometry.body", "textures/body", materials, false, 1F, null);
++            assertThrows(IllegalArgumentException.class, () -> NativeCustomEntityMessage.TYPE.write(buffer,
++                    new NativeCustomEntityMessage.Snapshot(UUID.randomUUID(), "fixture:actor", 1F, List.of(largeModel, largeModel))));
++            buffer.clear().writeZero(NativeCustomEntityMessage.MAX_PAYLOAD_BYTES + 1);
++            assertThrows(IllegalArgumentException.class, () -> NativeCustomEntityMessage.TYPE.read(buffer));
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void rejectsDuplicateMaterialBindingsAndTruncatedModels() {
++        final var buffer = Unpooled.buffer();
++        try {
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            buffer.writeByte(0);
++            Types.UUID.write(buffer, UUID.randomUUID());
++            Types.STRING.write(buffer, "fixture:actor");
++            buffer.writeFloat(1F);
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.STRING.write(buffer, "body");
++            Types.STRING.write(buffer, "geometry.body");
++            Types.STRING.write(buffer, "textures/body");
++            Types.VAR_INT.writePrimitive(buffer, 2);
++            for (int i = 0; i < 2; i++) {
++                Types.STRING.write(buffer, "*");
++                Types.STRING.write(buffer, "material" + i);
++            }
++            assertThrows(IllegalArgumentException.class, () -> NativeCustomEntityMessage.TYPE.read(buffer));
++            buffer.clear();
++            NativeCustomEntityMessage.TYPE.write(buffer, new NativeCustomEntityMessage.Snapshot(UUID.randomUUID(), "fixture:actor", 1F,
++                    List.of(new CustomEntity.EvaluatedModel("body", "geometry.body", "textures/body", Collections.emptyMap(), false, 1F, null))));
++            buffer.writerIndex(buffer.writerIndex() - 1);
++            assertThrows(IndexOutOfBoundsException.class, () -> NativeCustomEntityMessage.TYPE.read(buffer));
++        } finally {
++            buffer.release();
++        }
++    }
++
++    private static NativeCustomEntityMessage roundTrip(final NativeCustomEntityMessage message) {
++        final var buffer = Unpooled.buffer();
++        try {
++            NativeCustomEntityMessage.TYPE.write(buffer, message);
++            return NativeCustomEntityMessage.TYPE.read(buffer);
++        } finally {
++            buffer.release();
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityMaterialSelectionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityMaterialSelectionTest.java
 new file mode 100644
 index 000000000..3264732fa

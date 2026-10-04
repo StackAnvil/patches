@@ -225,7 +225,7 @@ Core still needs to derive equipment attributes from target item definitions, in
 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
-| R1 | General actor controllers and scripts | Incomplete | Complete transitions, weighted entries, variables, events, queries, and render-controller selection. |
+| R1 | General actor controllers and scripts | Incomplete | Core-evaluated custom actor model selections now travel through the negotiated channel on both routes. Complete transitions, weighted entries, variables, events, queries, and native comparisons. |
 | R2 | Server particle dispatch | Incomplete | Core transports complete requests, typed variables, actor identity, and Java fallback bodies to native clients. Direct and ViaProxy authored fixtures verify dispatch, typed size/tint records, and fallback decoding. Complete actor queries, remote actor transport, interpolation, lifecycle comparisons, and visible native parity remain open. |
 | R3 | Particle runtime | Incomplete | Complete components, actor contexts, child effects, concurrency, and visible lifecycle comparisons. |
 | R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core transports signed loops, optional playback fields, handle controls, and ordered sound resources through direct connections and ViaProxy. Add-on playback controls pass captured-session OpenAL checks on both routes. Native request admission now matches the tested float range gate on both add-on routes. Server captions now have core state, transported translations, client controls, and a HUD on both add-on routes. Complete actor/local captions, localization/layout comparisons, stream policies, range behavior for other sources, audible comparisons, and broader lifecycle verification. |
@@ -813,7 +813,7 @@ Remote-player changes, removal, ID reuse, world transitions, disconnect timing, 
 
 **Implemented:** Core exports a separate native actor archive in converted-resource format 4. It preserves resolved pack order and server provenance across definitions, geometry, controllers, animations, materials, images, translations, samples, and item bindings. Existing sound, caption, and particle archive formats remain compatible. The frontend reconstructs the same core loaders from an accepted server resource pack. Resource reload and disconnect clear its cached snapshot.
 
-This resource path works without a frontend Store session or local Bedrock installation. Player costumes and equipped models use it on direct and ViaProxy connections. Custom entity renderers can read these resources, but their authoritative actor state still requires a direct connection.
+This resource path works without a frontend Store session or local Bedrock installation. Player costumes and equipped models use it on direct and ViaProxy connections. Custom entity renderers now receive core-evaluated model selections through the negotiated actor channel on both routes.
 
 Core applies converted model selectors after both vanilla and custom item mapping. It retains gameplay components and native item identity. Missing assets and rejected packs retain the normal Java representation. The equipment renderer uses native item identity to evaluate authored item bindings with owner queries, properties, and equipment context. A selected definition keeps its independent playback lifetime until it changes or disappears. Supported native surfaces replace their corresponding vanilla armor layer; unsupported surfaces retain the fallback.
 
@@ -821,7 +821,7 @@ Core applies converted model selectors after both vanilla and custom item mappin
 
 **Automated checks:** All four builds pass with 969 Java tests passing and 113 optional fixture tests skipped. Archive tests verify order, provenance, complete bytes, reconstruction, excluded paths, malformed headers, and indexes. Item and binding tests cover vanilla and custom models, unchanged gameplay data, accepted and rejected resources, explicit conditions, generic fallback, wearer changes, equipment context, and query isolation. Both north-star patch application checks pass. An isolated effects checkout, manually adapted for predecessor context without setup, passes 35 tests and both Checkstyle tasks. That result does not establish automatic isolated application of the effects patch.
 
-**Remaining:** ViaProxy still lacks custom actor state, properties, events, emote state, and outbound account synchronization. This archive has memory bounds of 32 MiB per file, 256 MiB decompressed content, and 4,096 layers. Larger real packs need verification. First-person equipment, explicit bone binding expressions, per-bone materials, non-default variants, additional material families, competing eligible item bindings, and unavailable licensed default assets remain incomplete or unverified. Resource availability and submitted surfaces do not establish complete visible parity. All earlier skin, persona, account, gameplay, editor, audio, particle, UI, and platform requirements remain active.
+**Remaining:** ViaProxy now receives evaluated custom actor models. Additional actor and player properties, events, emote state, and outbound account synchronization remain incomplete. This archive has memory bounds of 32 MiB per file, 256 MiB decompressed content, and 4,096 layers. Larger real packs need verification. First-person equipment, explicit bone binding expressions, per-bone materials, non-default variants, additional material families, competing eligible item bindings, and unavailable licensed default assets remain incomplete or unverified. Resource availability and submitted surfaces do not establish complete visible parity. All earlier skin, persona, account, gameplay, editor, audio, particle, UI, and platform requirements remain active.
 
 **Integration evidence:** The unchanged native scene payloads pass direct playback `2026-10-04T12-34-33.379Z-replay-scene` and ViaProxy playback `2026-10-04T12-31-09.735Z-replay-scene`. Both load the accepted pack without a frontend Store account. The reconstructed library contains 61 layers, one server pack, the player-specific iron attachable, and both authored geometries. Each route installs both recorded skins without rejection. Equipment selection changes from zero to one supported surface after the captured chest update. Both wing bones reach full scale.
 
@@ -842,3 +842,43 @@ The recorded persona has one animated face image and two geometry models. The se
 **Remaining:** Complete chunk replacement, inline plus requested data, cache mode, dimension changes, unload timing, other server implementations, and additional persona visibility combinations still need native comparisons. This change does not complete all chunk, skin, camera, material, actor-state, or platform requirements.
 
 **Integration evidence:** Final direct playback `2026-10-04T12-59-03.846Z-replay-scene` and ViaProxy playback `2026-10-04T12-56-11.137Z-replay-scene` preserve the unchanged second native capture. Each emits all 134 native section requests, with identical positions and multiplicity. Both avatars remain grounded at Y = -60 over a solid block. Final screenshots show the recorded terrain, the costume's uniform head without the original face, and green wings without duplicate vanilla chest armor. This resolves the earlier fixture's missing terrain and face overlay. Camera angle, lighting, timing, broader animation behavior, and additional lifecycle observations remain unverified. Missing optional built-in animation assets still produce an account warning; they do not prevent this supported scene from loading.
+
+
+### Negotiated custom actor selections through ViaProxy
+
+**Implemented:** Core sends the full evaluated model selection under the actual Java actor UUID.
+The snapshot preserves model and material order, texture and geometry identity, scale, lighting, and UV expressions.
+An empty selection hides the actor. Removal releases its state.
+Late registration replaces existing display parts and republishes live actors.
+Clients without the capability retain converted Java item displays.
+
+The add-on uses the same receiver on direct connections and ViaProxy.
+The previous direct-only custom entity mixin is removed.
+State installation checks the captured Minecraft connection and cleanup generation on the client thread.
+Accepted actor resources remain the source for geometry, textures, materials, and animation graphs.
+This path requires no frontend Store account or local Bedrock installation.
+
+**Automated checks:** All four builds pass with 977 Java tests passing and 113 optional fixture skips.
+Six new codec tests cover complete immutable snapshots, signed zero, hidden selections, removal, malformed payloads, and memory limits.
+The render-store tests cover scale updates, clearing, independent identities, removal, and replacement.
+Both north-star application checks and the Prism bundle pass.
+ViaBedrock and ViaProxy use Java 25, with class version 69 verified in the final artifacts.
+
+**Remaining:** Complete animation timing, script variables, actor events, player properties, interpolation, and broader lifecycle comparisons remain open.
+The channel limits each payload to one MiB, with 128 models and 128 material bindings per model.
+Larger real definitions require verification.
+Existing tests cover malformed input and store cleanup, but live late registration and queued disconnect races still need integration observations.
+This step does not establish complete visible native parity or complete Bedrock coverage.
+
+
+**Recorded-scene verification:** The protocol 2193 CubeCraft recording passes direct playback `2026-10-04T13-33-22.116Z-replay-scene` and ViaProxy playback `2026-10-04T13-30-14.727Z-replay-scene`.
+Both preserve the complete scene payload hash and load the accepted resource pack.
+Each route receives 77 model updates for 31 actor identifiers and 43 geometry/texture combinations.
+The identifier sets, selected combinations, and scale sets match exactly.
+The banner scale remains 1.7 and the hanging logo scale remains 5.
+Actual renderer submissions and final screenshots show the custom banners, NPC models, and hanging logo on both routes.
+Neither run reports unresolved model errors or rejected skins.
+
+These observations verify transport and supported rendering within this recorded scene.
+They do not establish complete native visual parity, actor event support, or broader lifecycle behavior.
+Raw packets, assets, account data, and screenshots remain private.

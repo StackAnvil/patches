@@ -45,3 +45,32 @@ Angle reduction preserves the target's float addition before the remainder and m
 Target Bedrock 1.26.51.1, protocol 2193, supplies 9,367 native comparisons. Constant dispatcher `140ae6140` and helper `140aeb870` match runtime operations `140b2c2b0` and `140b2d270`. The emulator supplies numeric nodes, runtime stacks, eligibility, cleanup, and a host C float remainder import. Native arithmetic and runtime stack operations execute unchanged. Raw data stays private. These probes do not establish complete parser or visible animation parity.
 
 Validation: the full build passes 958 Java tests, including both native math fixtures. The bundle builds. Direct and ViaProxy particle graphs exercise all three shared functions and produce matching dimensions. Their downloaded archives retain the authored expressions. Visible parity and the existing actor and appearance gaps remain open.
+
+
+## Negotiated custom actor state
+
+Core publishes complete evaluated controller snapshots through `viabedrock:custom_entity`.
+The payload uses the actual Java actor UUID and retains ordered models and material bindings.
+It includes scale, lighting, and all four UV expressions.
+An empty selection hides the actor. Removal releases its state.
+Late registration removes existing display parts and republishes live actors.
+Clients without the capability keep converted Java item displays.
+
+The codec rejects mismatched versions, duplicate material bindings, invalid counts, and trailing data.
+Limits are one MiB per payload, 128 models, 128 bindings per model, and 4,096 characters per string.
+Six semantic tests cover complete round trips, immutable ownership, signed zero, removal, truncation, and these limits.
+The add-on receives this state through both direct connections and ViaProxy.
+Player properties, actor events, and complete animation behavior remain separate requirements.
+
+
+**Recorded-scene verification:** The protocol 2193 CubeCraft recording passes direct playback `2026-10-04T13-33-22.116Z-replay-scene` and ViaProxy playback `2026-10-04T13-30-14.727Z-replay-scene`.
+Both preserve the complete scene payload hash and load the accepted resource pack.
+Each route receives 77 model updates for 31 actor identifiers and 43 geometry/texture combinations.
+The identifier sets, selected combinations, and scale sets match exactly.
+The banner scale remains 1.7 and the hanging logo scale remains 5.
+Actual renderer submissions and final screenshots show the custom banners, NPC models, and hanging logo on both routes.
+Neither run reports unresolved model errors or rejected skins.
+
+These observations verify transport and supported rendering within this recorded scene.
+They do not establish complete native visual parity, actor event support, or broader lifecycle behavior.
+Raw packets, assets, account data, and screenshots remain private.
