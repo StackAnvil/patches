@@ -1,4 +1,4 @@
-From 4df906ce6fb3e6d8339b46d7ade8e46a82b6b72c Mon Sep 17 00:00:00 2001
+From ee842c749512747bcc71d274d5f2e9b39a993d56 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1344,6 +1344,27 @@ Remove the native WebView login and its platform UI dependencies. One
 helper per platform now performs verified licensing and extraction inside
 the launcher environment, including Flatpak, without host execution or
 WebKit. Retain existing licensed Store sessions for cache compatibility.
+
+Native server sound commands use the shared PCM backend and the core's
+versioned payload. Preserve handles, pending control order, finite and
+infinite loop counts, playback offsets, volume and pitch changes, fades,
+seeking, and independent server/game pause state. Stop replaced handles
+and cancel pending work on disconnect or audio-device teardown. Keep
+server audio independent of emote cleanup.
+
+Resolve native definitions and samples from the converted resource pack
+so ViaProxy uses the same playback path. Reuse already licensed assets
+without initiating sign-in from an audio callback. If those assets are
+unavailable, decode the mapped Java sample and preserve playback controls.
+
+PCM streams repeat whole frames without copying the sample for each loop.
+Track processed OpenAL buffers so seeking preserves remaining loop counts
+instead of counting prefetched frames as played. Bound queued controls and
+use generation checks to discard work from a replaced resource context.
+
+The pinned native capture establishes packet layouts and API availability.
+Audible native comparisons, listener-range eligibility, captions, and
+stream interruption policies remain separate verification requirements.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   54 +
@@ -1357,7 +1378,7 @@ WebKit. Retain existing licensed Store sessions for cache compatibility.
  native/persona-assets/src/main.rs             |  572 ++
  native/persona-assets/src/remote.rs           |  315 +
  native/persona-assets/src/store.rs            |   92 +
- .../bedrock/ViaFabricPlusBedrock.java         |    3 +
+ .../bedrock/ViaFabricPlusBedrock.java         |   10 +
  .../appearance/BedrockActorAnimation.java     |  713 +++
  .../appearance/BedrockActorVisibility.java    |   95 +
  .../appearance/BedrockAnimationParticle.java  |   70 +
@@ -1365,7 +1386,7 @@ WebKit. Retain existing licensed Store sessions for cache compatibility.
  .../appearance/BedrockAppearanceStore.java    |  186 +-
  .../appearance/BedrockBoneAnimation.java      |  535 ++
  .../bedrock/appearance/BedrockBrArchive.java  |   73 +
- .../appearance/BedrockBuiltinAssets.java      |  460 ++
+ .../appearance/BedrockBuiltinAssets.java      |  467 ++
  .../appearance/BedrockCharacterProfiles.java  | 1527 +++++
  .../appearance/BedrockClassicAssets.java      |   85 +
  .../appearance/BedrockClassicModel.java       |    1 +
@@ -1404,6 +1425,7 @@ WebKit. Retain existing licensed Store sessions for cache compatibility.
  .../appearance/BedrockParticleShape.java      |  165 +
  .../appearance/BedrockParticleSpace.java      |   43 +
  .../appearance/BedrockParticleTexture.java    |   24 +
+ .../bedrock/appearance/BedrockPcmStream.java  |   70 +
  .../BedrockPersonaAnimationAtlas.java         |   96 +
  .../appearance/BedrockPersonaAnimations.java  |  128 +
  .../appearance/BedrockPersonaAssembler.java   |  193 +
@@ -1417,15 +1439,18 @@ WebKit. Retain existing licensed Store sessions for cache compatibility.
  .../appearance/BedrockPersonaProfile.java     |  184 +
  .../appearance/BedrockPersonaSources.java     |  253 +
  .../appearance/BedrockPersonaTint.java        |  325 ++
- .../appearance/BedrockResourceLibrary.java    |  361 ++
+ .../appearance/BedrockResourceLibrary.java    |  368 ++
+ .../appearance/BedrockServerSounds.java       |   82 +
  .../bedrock/appearance/BedrockSoundBank.java  |  137 +
+ .../appearance/BedrockSoundEnvelope.java      |   40 +
  .../bedrock/appearance/BedrockSoundEvent.java |  174 +
  .../bedrock/appearance/BedrockSoundFile.java  |   94 +
- .../appearance/BedrockSoundPlayback.java      |  257 +
+ .../appearance/BedrockSoundPlayback.java      |  402 ++
  .../appearance/BedrockStoreBrowser.java       |  151 +
  .../appearance/BedrockStoreSignIn.java        |   99 +
  .../appearance/BedrockStoreTokens.java        |   70 +
  .../appearance/BedrockTrigonometry.java       |   30 +
+ .../appearance/SoundPlaybackPayload.java      |   22 +
  .../ViaFabricPlusEmoteProvider.java           |   40 +
  .../appearance/ViaFabricPlusSkinProvider.java |   16 +-
  .../access/IBedrockChannelAccess.java         |   12 +
@@ -1442,10 +1467,12 @@ WebKit. Retain existing licensed Store sessions for cache compatibility.
  .../render/MixinBedrockWalkingAnimation.java  |   35 +
  .../render/MixinMinecraftSkinLifecycle.java   |    6 +
  .../features/render/MixinOptionsEmote.java    |   34 +
- .../features/sound/MixinBedrockChannel.java   |   15 +
+ .../features/sound/MixinBedrockChannel.java   |   17 +
  .../sound/MixinBedrockChannelAccess.java      |   32 +
+ .../sound/MixinBedrockPcmChannel.java         |   25 +
  .../sound/MixinBedrockSoundEngine.java        |   50 +
  .../sound/MixinBedrockSoundManager.java       |   16 +
+ .../sound/MixinMinecraftServerSounds.java     |   22 +
  .../bedrock/render/BedrockAnimatedModel.java  |  164 +
  .../bedrock/render/BedrockBoneTransform.java  |   27 +
  .../render/BedrockFirstPersonCamera.java      |   61 +
@@ -1477,7 +1504,7 @@ WebKit. Retain existing licensed Store sessions for cache compatibility.
  .../licenses/vgmstream.txt                    |   23 +
  .../persona-package.json                      |    7 +
  .../persona-piece-types.json                  |   67 +
- .../viafabricplus-bedrock.mixins.json         |   17 +-
+ .../viafabricplus-bedrock.mixins.json         |   19 +-
  .../BedrockAccountAppearanceTest.java         |   69 +
  .../appearance/BedrockActorAnimationTest.java |  646 +++
  .../BedrockActorVisibilityTest.java           |  142 +
@@ -1522,6 +1549,7 @@ WebKit. Retain existing licensed Store sessions for cache compatibility.
  .../appearance/BedrockParticleShapeTest.java  |  160 +
  .../appearance/BedrockParticleSoundTest.java  |  149 +
  .../appearance/BedrockParticleSpaceTest.java  |  160 +
+ .../appearance/BedrockPcmStreamTest.java      |   63 +
  .../BedrockPersonaAnimationAtlasTest.java     |  109 +
  .../BedrockPersonaAssemblerTest.java          |  246 +
  .../appearance/BedrockPersonaAssetsTest.java  |  368 ++
@@ -1534,6 +1562,7 @@ WebKit. Retain existing licensed Store sessions for cache compatibility.
  .../appearance/BedrockPersonaTintTest.java    |  280 +
  .../BedrockResourceLibraryTest.java           |  332 ++
  .../appearance/BedrockSoundBankTest.java      |  122 +
+ .../appearance/BedrockSoundEnvelopeTest.java  |   30 +
  .../appearance/BedrockSoundEventTest.java     |  268 +
  .../appearance/BedrockSoundFileTest.java      |  108 +
  .../appearance/BedrockStoreBrowserTest.java   |   43 +
@@ -1551,7 +1580,7 @@ WebKit. Retain existing licensed Store sessions for cache compatibility.
  .../render/BedrockPlayerModelTest.java        |  100 +
  .../render/BedrockViewBobbingTest.java        |   93 +
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 206 files changed, 40053 insertions(+), 110 deletions(-)
+ 214 files changed, 40577 insertions(+), 110 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -1605,6 +1634,7 @@ WebKit. Retain existing licensed Store sessions for cache compatibility.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleShape.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleSpace.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleTexture.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPcmStream.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimationAtlas.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimations.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssembler.java
@@ -1619,7 +1649,9 @@ WebKit. Retain existing licensed Store sessions for cache compatibility.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaSources.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaTint.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerSounds.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundBank.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEnvelope.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEvent.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundFile.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlayback.java
@@ -1627,6 +1659,7 @@ WebKit. Retain existing licensed Store sessions for cache compatibility.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockStoreSignIn.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockStoreTokens.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockTrigonometry.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/SoundPlaybackPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusEmoteProvider.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockChannelAccess.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockSoundEngine.java
@@ -1643,8 +1676,10 @@ WebKit. Retain existing licensed Store sessions for cache compatibility.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinOptionsEmote.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockChannel.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockChannelAccess.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockPcmChannel.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockSoundEngine.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockSoundManager.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinMinecraftServerSounds.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockBoneTransform.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonCamera.java
@@ -1712,6 +1747,7 @@ WebKit. Retain existing licensed Store sessions for cache compatibility.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleShapeTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleSoundTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleSpaceTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPcmStreamTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimationAtlasTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssemblerTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAssetsTest.java
@@ -1724,6 +1760,7 @@ WebKit. Retain existing licensed Store sessions for cache compatibility.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaTintTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibraryTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundBankTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEnvelopeTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEventTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundFileTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockStoreBrowserTest.java
@@ -9234,10 +9271,21 @@ index 0000000..8c14f18
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index 92f1b49..3f458ef 100644
+index 92f1b49..0776163 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-@@ -32,6 +32,8 @@ import com.viaversion.viafabricplus.bedrock.settings.BedrockSettings;
+@@ -21,6 +21,10 @@
+ 
+ package com.viaversion.viafabricplus.bedrock;
+ 
++import com.viaversion.viafabricplus.bedrock.appearance.SoundPlaybackPayload;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockSoundPlayback;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
++import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
+ import com.viaversion.viafabricplus.ViaFabricPlus;
+ import com.viaversion.viafabricplus.api.entrypoint.ViaFabricPlusEntrypoint;
+ import com.viaversion.viafabricplus.bedrock.account.BedrockAccount;
+@@ -32,6 +36,8 @@ import com.viaversion.viafabricplus.bedrock.settings.BedrockSettings;
  import com.viaversion.viaversion.api.Via;
  import net.raphimc.viabedrock.protocol.provider.NettyPipelineProvider;
  import net.raphimc.viabedrock.protocol.provider.SkinProvider;
@@ -9246,7 +9294,17 @@ index 92f1b49..3f458ef 100644
  import org.apache.logging.log4j.LogManager;
  import org.apache.logging.log4j.Logger;
  
-@@ -61,6 +63,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -51,6 +57,9 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+ 
+     @Override
+     public void onPreSettingsLoading() {
++        PayloadTypeRegistry.clientboundPlay().register(SoundPlaybackPayload.TYPE, SoundPlaybackPayload.CODEC);
++        ClientPlayNetworking.registerGlobalReceiver(SoundPlaybackPayload.TYPE,
++                (payload, context) -> BedrockSoundPlayback.accept(payload.message()));
+         this.settings = new BedrockSettings();
+         this.account = new BedrockAccount(ViaFabricPlus.api().path().resolve("bedrock.json"));
+         this.appearances = new BedrockAppearanceStore(ViaFabricPlus.api().path().resolve("bedrock-appearances"));
+@@ -61,6 +70,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
          new ViaFabricPlusViaBedrockPlatform();
          Via.getManager().getProviders().use(NettyPipelineProvider.class, new ViaFabricPlusNettyPipelineProvider());
          Via.getManager().getProviders().use(SkinProvider.class, new ViaFabricPlusSkinProvider());
@@ -11185,10 +11243,10 @@ index 0000000..61a8010
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssets.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssets.java
 new file mode 100644
-index 0000000..8b395b7
+index 0000000..694221d
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssets.java
-@@ -0,0 +1,460 @@
+@@ -0,0 +1,467 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -11230,7 +11288,7 @@ index 0000000..8b395b7
 +    private static final int MAX_LOGICAL_FILES = 32768;
 +    private static final int CACHE_FORMAT = 8;
 +    private static final String PACK_ID = "2099de18-429a-465a-a49b-fc4710a17bb3";
-+    private static final Map<String, Contents> LOADED = new LinkedHashMap<>();
++    private static final Map<String, Contents> LOADED = new java.util.concurrent.ConcurrentHashMap<>();
 +
 +    private BedrockBuiltinAssets() {}
 +
@@ -11257,6 +11315,13 @@ index 0000000..8b395b7
 +                        staging -> acquire(root, staging, account, accountId, build));
 +        LOADED.put(key, contents);
 +        return contents;
++    }
++
++    static Contents loaded(final BedrockAuthManager account) throws IOException {
++        if (account == null) return null;
++        final JsonObject build = json(resource("/assets/viafabricplus-bedrock/persona-package.json"));
++        return LOADED.get(BedrockAppearanceStore.accountId(account) + "/" + build.get("version").getAsString()
++                + "/" + build.get("headerSha256").getAsString());
 +    }
 +
 +    @FunctionalInterface
@@ -19944,6 +20009,82 @@ index 0000000..879b9bf
 +        }
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPcmStream.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPcmStream.java
+new file mode 100644
+index 0000000..d4037fc
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPcmStream.java
+@@ -0,0 +1,70 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import net.minecraft.client.sounds.AudioStream;
++
++import javax.sound.sampled.AudioFormat;
++import java.nio.ByteBuffer;
++import java.util.ArrayDeque;
++
++/** Repeats whole PCM frames without duplicating the sample, and tracks queued OpenAL frames. */
++public final class BedrockPcmStream implements AudioStream {
++    private final byte[] pcm;
++    private final AudioFormat format;
++    private final int frameCount;
++    private final int loops;
++    private final long end;
++    private final ArrayDeque<Integer> queued = new ArrayDeque<>();
++    private long cursor, processed;
++    private boolean closed;
++
++    BedrockPcmStream(final byte[] pcm, final AudioFormat format, final int loops, final float offset) {
++        if (pcm.length == 0 || pcm.length % format.getFrameSize() != 0 || loops < -1
++                || !Float.isFinite(offset) || offset < 0) throw new IllegalArgumentException("Invalid sound playback bounds");
++        this.pcm = pcm;
++        this.format = format;
++        this.frameCount = pcm.length / format.getFrameSize();
++        this.loops = loops;
++        this.end = loops == -1 ? Long.MAX_VALUE : (loops + 1L) * this.frameCount;
++        this.cursor = this.processed = Math.min(this.frameCount, (long) (offset * format.getSampleRate()));
++    }
++
++    @Override public AudioFormat getFormat() { return this.format; }
++
++    @Override
++    public ByteBuffer read(final int requested) {
++        if (requested < 0) throw new IllegalArgumentException("Negative PCM buffer size");
++        final int frames = this.closed ? 0 : (int) Math.min(requested / this.format.getFrameSize(), this.end - this.cursor);
++        if (frames == 0) return null;
++        final ByteBuffer bytes = ByteBuffer.allocateDirect(frames * this.format.getFrameSize());
++        int remaining = frames;
++        while (remaining > 0) {
++            final int start = (int) (this.cursor % this.frameCount);
++            final int count = Math.min(remaining, this.frameCount - start);
++            bytes.put(this.pcm, start * this.format.getFrameSize(), count * this.format.getFrameSize());
++            this.cursor += count;
++            remaining -= count;
++        }
++        if (frames > 0) this.queued.addLast(frames);
++        return bytes.flip();
++    }
++
++    /** Called on the sound executor after Channel removes processed OpenAL buffers. */
++    public void processed(final int count) {
++        for (int index = 0; index < count; index++) {
++            final Integer frames = this.queued.pollFirst();
++            if (frames == null) throw new IllegalStateException("Unexpected processed PCM buffer");
++            this.processed += frames;
++        }
++    }
++
++    int remainingLoops(final int sampleOffset) {
++        return this.loops == -1 ? -1 : (int) Math.max(0, this.loops - (this.processed + Math.max(0, sampleOffset)) / this.frameCount);
++    }
++
++    @Override public void close() { this.closed = true; }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimationAtlas.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimationAtlas.java
 new file mode 100644
 index 0000000..6e767c6
@@ -22826,10 +22967,10 @@ index 0000000..fdd5aa6
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
 new file mode 100644
-index 0000000..c25b3bd
+index 0000000..937b7cb
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
-@@ -0,0 +1,361 @@
+@@ -0,0 +1,368 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -22930,6 +23071,13 @@ index 0000000..c25b3bd
 +        } catch (RuntimeException invalid) {
 +            throw new IOException("Invalid vanilla resource library", invalid);
 +        }
++    }
++
++    static BedrockResourceLibrary soundLibrary(final BedrockResourceLibrary builtin, final List<Map<String, byte[]>> serverPacks) throws IOException {
++        final List<Pack> packs = new ArrayList<>();
++        if (builtin != null) packs.addAll(builtin.packs);
++        for (int index = 0; index < serverPacks.size(); index++) packs.add(new Pack(Integer.toString(index), serverPacks.get(index)));
++        return new BedrockResourceLibrary(packs);
 +    }
 +
 +    static boolean packName(final String name) {
@@ -23191,6 +23339,94 @@ index 0000000..c25b3bd
 +
 +    private record Pack(String name, Map<String, byte[]> files) {}
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerSounds.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerSounds.java
+new file mode 100644
+index 0000000..338cc8a
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerSounds.java
+@@ -0,0 +1,82 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.resources.sounds.SimpleSoundInstance;
++import net.minecraft.client.resources.sounds.SoundInstance;
++import net.minecraft.client.sounds.SoundManager;
++import net.minecraft.resources.Identifier;
++import net.minecraft.sounds.SoundSource;
++import net.minecraft.util.RandomSource;
++import net.raphimc.viabedrock.api.model.SoundPlaybackMessage;
++import net.raphimc.viabedrock.api.resourcepack.NativeSoundLibrary;
++
++import java.io.IOException;
++import java.util.List;
++import java.util.concurrent.ThreadLocalRandom;
++
++/** Resolves transported server samples, already licensed assets, or the mapped Java fallback. */
++final class BedrockServerSounds {
++    private static final java.util.concurrent.atomic.AtomicLong GENERATION = new java.util.concurrent.atomic.AtomicLong();
++    private static volatile Snapshot snapshot;
++
++    private BedrockServerSounds() {}
++
++    static void clear() { GENERATION.incrementAndGet(); snapshot = null; }
++
++    private static BedrockResourceLibrary library() throws IOException {
++        final long generation = GENERATION.get();
++        final var cached = snapshot;
++        final var builtin = BedrockBuiltinAssets.loaded(ViaFabricPlusBedrock.impl().account().get());
++        if (cached != null && cached.generation == generation && cached.builtin == builtin) return cached.library;
++        final List<java.util.Map<String, byte[]>> packs;
++        if (cached != null && cached.generation == generation) packs = cached.packs;
++        else {
++            final var resource = Minecraft.getInstance().getResourceManager()
++                    .getResource(Identifier.fromNamespaceAndPath("viabedrock", "sound_library.zip"));
++            if (resource.isPresent()) {
++                try (var input = resource.get().open()) { packs = NativeSoundLibrary.decode(input); }
++            } else packs = List.of();
++        }
++        final var library = BedrockResourceLibrary.soundLibrary(builtin == null ? null : builtin.library(), packs);
++        if (GENERATION.get() == generation) snapshot = new Snapshot(generation, builtin, packs, library);
++        return library;
++    }
++
++    private record Snapshot(long generation, BedrockBuiltinAssets.Contents builtin,
++                            List<java.util.Map<String, byte[]>> packs, BedrockResourceLibrary library) {}
++
++    static BedrockBuiltinAssets.Contents.ResolvedSound resolve(final SoundPlaybackMessage.Play play) throws IOException {
++        try {
++            final var nativeSound = library().soundEvent(play.sound().name(), bound -> ThreadLocalRandom.current().nextInt(bound),
++                    play.sound().volume(), play.sound().pitch(), false);
++            if (nativeSound != null) return nativeSound;
++        } catch (IOException unavailable) {
++            if (play.fallback().isEmpty()) throw unavailable;
++        }
++        if (play.fallback().isEmpty()) return null;
++        final var minecraft = Minecraft.getInstance();
++        final var categories = SoundSource.values();
++        final var category = play.category() >= 0 && play.category() < categories.length ? categories[play.category()] : SoundSource.MASTER;
++        final var request = new SimpleSoundInstance(Identifier.parse(play.fallback()), category, 1, 1, RandomSource.create(),
++                false, 0, SoundInstance.Attenuation.LINEAR, 0, 0, 0, false);
++        final var definition = request.getOrResolve(minecraft.getSoundManager());
++        final var sound = request.getSound();
++        if (definition == null || sound == SoundManager.EMPTY_SOUND || sound == SoundManager.INTENTIONALLY_EMPTY_SOUND) return null;
++        final byte[] bytes;
++        try (var input = minecraft.getResourceManager().getResourceOrThrow(sound.getPath()).open()) {
++            bytes = input.readNBytes(BedrockBuiltinAssets.MAX_FILE_BYTES + 1);
++        }
++        final var sample = new BedrockSoundEvent.Sample(sound.getPath().toString(), request.getVolume(), request.getPitch(),
++                1, sound.shouldStream(), true, true, true);
++        final var event = new BedrockSoundEvent(category.getName(), definition.getSubtitle() == null ? "" : definition.getSubtitle().getString(),
++                1, sound.getAttenuationDistance(play.sound().volume()), false, List.of(sample));
++        return new BedrockBuiltinAssets.Contents.ResolvedSound(event,
++                event.select(_ -> 0, play.sound().volume(), play.sound().pitch(), false), BedrockSoundFile.read(bytes));
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundBank.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundBank.java
 new file mode 100644
 index 0000000..79aa2cd
@@ -23333,6 +23569,52 @@ index 0000000..79aa2cd
 +    }
 +
 +    record Audio(byte[] pcm, int sampleRate, int channels, int samples, int loopStart, int loopEnd) {}
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEnvelope.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEnvelope.java
+new file mode 100644
+index 0000000..17d67df
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEnvelope.java
+@@ -0,0 +1,40 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++/** Volume requests and fades remain relative to the selected sample's authored gain. */
++final class BedrockSoundEnvelope {
++    private float start, target;
++    private long begins;
++    private double duration;
++
++    BedrockSoundEnvelope(final float volume) { this.set(volume); }
++
++    void set(final float volume) {
++        this.start = this.target = finite(volume);
++        this.duration = 0;
++    }
++
++    void fade(final float seconds, final float volume, final long now) {
++        final float next = finite(volume);
++        if (!Float.isFinite(seconds) || seconds < 0) throw new IllegalArgumentException("Invalid sound fade duration");
++        this.start = this.volume(now);
++        this.target = next;
++        this.begins = now;
++        this.duration = seconds * 1_000_000_000D;
++    }
++
++    float volume(final long now) {
++        if (this.duration == 0) return this.target;
++        final double amount = Math.clamp((now - this.begins) / this.duration, 0, 1);
++        return (float) (this.start + (this.target - this.start) * amount);
++    }
++
++    private static float finite(final float volume) {
++        if (!Float.isFinite(volume) || volume < 0) throw new IllegalArgumentException("Invalid sound volume");
++        return volume;
++    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEvent.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEvent.java
 new file mode 100644
@@ -23616,10 +23898,10 @@ index 0000000..8357e8a
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlayback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlayback.java
 new file mode 100644
-index 0000000..7fe1451
+index 0000000..da93162
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlayback.java
-@@ -0,0 +1,257 @@
+@@ -0,0 +1,402 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -23640,6 +23922,8 @@ index 0000000..7fe1451
 +import net.minecraft.client.sounds.ChannelAccess;
 +import net.minecraft.client.sounds.SoundEngine;
 +import net.minecraft.sounds.SoundSource;
++import net.raphimc.viabedrock.api.model.SoundPlaybackMessage;
++import net.raphimc.viabedrock.protocol.model.SoundUpdate;
 +import net.minecraft.world.phys.Vec3;
 +import org.lwjgl.openal.AL;
 +import org.lwjgl.openal.AL10;
@@ -23665,7 +23949,7 @@ index 0000000..7fe1451
 +            "ambient", SoundSource.AMBIENT, "block", SoundSource.BLOCKS,
 +            "hostile", SoundSource.HOSTILE, "neutral", SoundSource.NEUTRAL,
 +            "player", SoundSource.PLAYERS, "record", SoundSource.RECORDS,
-+            "weather", SoundSource.WEATHER);
++            "weather", SoundSource.WEATHER, "music", SoundSource.MUSIC, "ui", SoundSource.MASTER);
 +    private static final Map<SoundEngine, State> STATES = new ConcurrentHashMap<>();
 +    private static final ExecutorService DECODER = Executors.newSingleThreadExecutor(
 +            Thread.ofPlatform().daemon().name("Bedrock sound decoder").factory());
@@ -23682,24 +23966,39 @@ index 0000000..7fe1451
 +    }
 +
 +    private static void play(final String event, final Vec3 position, final Resolver resolver) {
++        play(event, position, resolver, null);
++    }
++
++    private static void play(final String event, final Vec3 position, final Resolver resolver, final ServerRequest request) {
 +        final Minecraft minecraft = Minecraft.getInstance();
 +        final SoundEngine engine = ((MixinBedrockSoundManager) minecraft.getSoundManager()).viaFabricPlusBedrock$engine();
 +        final var access = (IBedrockSoundEngine) engine;
 +        if (!access.viaFabricPlusBedrock$isLoaded()) return;
 +        final State state = STATES.computeIfAbsent(engine, _ -> new State());
 +        if (state.abandoned) return;
-+        if (state.pending.incrementAndGet() > 32) { state.pending.decrementAndGet(); return; }
++        if (request != null) {
++            request.musicGeneration = state.musicStops.get();
++            state.requests.add(request);
++            final Long id = request.play.sound().serverHandle();
++            if (id != null) {
++                final ServerRequest replaced = state.handles.put(id, request);
++                if (replaced != null) cancel(state, replaced);
++            }
++        }
++        if (state.pending.incrementAndGet() > 32) { state.pending.decrementAndGet(); cancel(state, request); return; }
 +        final long generation = state.generation.get();
++        final long animationGeneration = state.animationGeneration.get();
 +        DECODER.execute(() -> {
 +            try {
-+                if (state.generation.get() != generation) return;
++                if (!current(state, generation, animationGeneration, request)) return;
 +                final var sound = resolver.resolve();
-+                if (sound == null) return;
++                if (sound == null || request != null && request.musicGeneration != state.musicStops.get()
++                        && sound.event().category().equals("music")) { cancel(state, request); return; }
 +                final int size = sound.audio().pcm().length;
 +                // Reserve before queuing onto the client: decoded requests count toward the cap too.
-+                if (state.bytes.addAndGet(size) > MAX_ACTIVE_PCM_BYTES) { state.bytes.addAndGet(-size); return; }
++                if (state.bytes.addAndGet(size) > MAX_ACTIVE_PCM_BYTES) { state.bytes.addAndGet(-size); cancel(state, request); return; }
 +                minecraft.execute(() -> {
-+                    if (state.generation.get() != generation || !access.viaFabricPlusBedrock$isLoaded()) {
++                    if (!current(state, generation, animationGeneration, request) || !access.viaFabricPlusBedrock$isLoaded()) {
 +                        state.bytes.addAndGet(-size);
 +                        return;
 +                    }
@@ -23708,31 +24007,131 @@ index 0000000..7fe1451
 +                            .whenComplete((handle, error) -> {
 +                                if (error != null || handle == null) {
 +                                    state.bytes.addAndGet(-size);
++                                    cancel(state, request);
 +                                    if (error != null) ViaFabricPlusBedrock.impl().logger()
 +                                            .warn("Could not allocate Bedrock animation sound channel", error);
 +                                    return;
 +                                }
-+                                if (state.generation.get() != generation) {
++                                if (!current(state, generation, animationGeneration, request)) {
 +                                    ((IBedrockChannelAccess) channels).viaFabricPlusBedrock$release(
 +                                            handle, () -> state.bytes.addAndGet(-size));
 +                                    return;
 +                                }
 +                                handle.execute(channel -> {
-+                                    if (state.generation.get() != generation) {
++                                    if (!current(state, generation, animationGeneration, request)) {
 +                                        ((IBedrockChannelAccess) channels).viaFabricPlusBedrock$release(
 +                                                handle, () -> state.bytes.addAndGet(-size));
 +                                        return;
 +                                    }
-+                                    start(state, handle, channel, sound, position, access);
++                                    start(state, handle, channel, sound, position, access, request);
 +                                });
 +                            });
 +                });
 +            } catch (Exception error) {
++                cancel(state, request);
 +                ViaFabricPlusBedrock.impl().logger().warn("Could not load Bedrock animation sound {}", event, error);
 +            } finally {
 +                state.pending.decrementAndGet();
 +            }
 +        });
++    }
++
++    public static void accept(final SoundPlaybackMessage message) {
++        if (message instanceof SoundPlaybackMessage.Play play) {
++            final var position = play.sound().positionEighths();
++            play(play.sound().name(), new Vec3(position.x() / 8D, position.y() / 8D, position.z() / 8D),
++                    () -> BedrockServerSounds.resolve(play), new ServerRequest(play));
++        } else if (message instanceof SoundPlaybackMessage.Update update) {
++            STATES.values().forEach(state -> {
++                final ServerRequest request = state.handles.get(update.handle());
++                if (request == null) return;
++                if (update.event() instanceof SoundUpdate.Stop) { cancel(state, request); return; }
++                synchronized (request) {
++                    if (request.cancelled) return;
++                    if (request.handle == null) {
++                        if (request.commands.size() >= 256) cancel(state, request);
++                        else request.commands.addLast(update.event());
++                    } else request.handle.execute(channel -> {
++                        if (!request.cancelled) apply(state, request, channel, update.event());
++                    });
++                }
++            });
++        } else if (message instanceof SoundPlaybackMessage.Stop stop) {
++            STATES.values().forEach(state -> {
++                if (stop.music()) state.musicStops.incrementAndGet();
++                state.requests.forEach(request -> {
++                    if (stop.all() || request.play.sound().name().equals(stop.name())
++                            || stop.music() && (request.play.category() == SoundSource.MUSIC.ordinal()
++                            || request.sound != null && request.sound.event().category().equals("music"))) cancel(state, request);
++                });
++            });
++        }
++    }
++
++    public static void stopServer() {
++        STATES.values().forEach(state -> state.requests.forEach(request -> cancel(state, request)));
++        BedrockServerSounds.clear();
++    }
++
++    private static boolean current(final State state, final long generation, final long animationGeneration, final ServerRequest request) {
++        return state.generation.get() == generation && (request == null
++                ? state.animationGeneration.get() == animationGeneration : !request.cancelled);
++    }
++
++    private static void cancel(final State state, final ServerRequest request) {
++        if (request == null) return;
++        request.cancelled = true;
++        state.requests.remove(request);
++        if (request.play.sound().serverHandle() != null) state.handles.remove(request.play.sound().serverHandle(), request);
++        if (request.handle != null) request.handle.execute(Channel::stop);
++    }
++
++    private static void apply(final State state, final ServerRequest request, final Channel channel, final SoundUpdate.Event event) {
++        try {
++            if (event instanceof SoundUpdate.Volume volume) request.envelope.set(volume.volume());
++            else if (event instanceof SoundUpdate.Fade fade) request.envelope.fade(fade.duration(), fade.targetVolume(), System.nanoTime());
++            else if (event instanceof SoundUpdate.Pitch pitch) {
++                if (!Float.isFinite(pitch.pitch()) || pitch.pitch() <= 0) return;
++                channel.setPitch(pitch.pitch() * request.sound.selection().sample().pitch());
++            } else if (event instanceof SoundUpdate.Pause) {
++                request.paused = true;
++                channel.pause();
++            } else if (event instanceof SoundUpdate.Resume) {
++                request.paused = false;
++                if (!state.paused || state.pauseExceptions.contains(request.voice.category)) channel.unpause();
++            } else if (event instanceof SoundUpdate.Seek seek) {
++                if (!Float.isFinite(seek.seconds()) || seek.seconds() < 0) return;
++                final int loops = request.stream.remainingLoops(AL10.alGetSourcei(request.voice.source, AL11.AL_SAMPLE_OFFSET));
++                final var audio = request.sound.audio();
++                channel.stop();
++                ((MixinBedrockChannel) channel).viaFabricPlusBedrock$removeProcessedBuffers();
++                request.stream.close();
++                request.stream = new BedrockPcmStream(audio.pcm(), request.stream.getFormat(), loops, seek.seconds());
++                channel.attachBufferStream(request.stream);
++                channel.play();
++                if (request.paused || state.paused && !state.pauseExceptions.contains(request.voice.category)) channel.pause();
++            }
++            volume(channel, request.voice, (IBedrockSoundEngine) ((MixinBedrockSoundManager) Minecraft.getInstance().getSoundManager()).viaFabricPlusBedrock$engine());
++        } catch (RuntimeException invalid) {
++            ViaFabricPlusBedrock.impl().logger().warn("Could not apply server sound control", invalid);
++        }
++    }
++
++    private static final class ServerRequest {
++        private final SoundPlaybackMessage.Play play;
++        private final BedrockSoundEnvelope envelope;
++        private final java.util.ArrayDeque<SoundUpdate.Event> commands = new java.util.ArrayDeque<>();
++        private volatile boolean cancelled, paused;
++        private long musicGeneration;
++        private volatile ChannelAccess.ChannelHandle handle;
++        private volatile BedrockBuiltinAssets.Contents.ResolvedSound sound;
++        private Voice voice;
++        private BedrockPcmStream stream;
++
++        private ServerRequest(final SoundPlaybackMessage.Play play) {
++            this.play = play;
++            this.envelope = new BedrockSoundEnvelope(play.sound().volume());
++        }
 +    }
 +
 +    @FunctionalInterface
@@ -23743,14 +24142,18 @@ index 0000000..7fe1451
 +    private static void start(
 +            final State state, final ChannelAccess.ChannelHandle handle, final Channel channel,
 +            final BedrockBuiltinAssets.Contents.ResolvedSound sound, final Vec3 position,
-+            final IBedrockSoundEngine engine) {
++            final IBedrockSoundEngine engine, final ServerRequest request) {
 +        final var audio = sound.audio();
 +        final var selection = sound.selection();
 +        final SoundSource category = sound.event().group(CATEGORIES, SoundSource.MASTER);
 +        final AudioFormat format = new AudioFormat(audio.sampleRate(), 16, audio.channels(), true, false);
 +        SoundBuffer buffer = null;
 +        try {
-+            if (selection.sample().stream()) {
++            if (request != null) {
++                request.stream = new BedrockPcmStream(audio.pcm(), format, request.play.sound().loopCount(),
++                        request.play.sound().playbackPosition() == null ? 0 : request.play.sound().playbackPosition());
++                channel.attachBufferStream(request.stream);
++            } else if (selection.sample().stream()) {
 +                channel.attachBufferStream(new PcmStream(audio.pcm(), format));
 +            } else {
 +                final ByteBuffer pcm = ByteBuffer.allocateDirect(audio.pcm().length);
@@ -23772,13 +24175,23 @@ index 0000000..7fe1451
 +                AL10.alSourcef(source, AL10.AL_MAX_DISTANCE, attenuation.maximum());
 +                AL10.alSourcef(source, AL10.AL_ROLLOFF_FACTOR, 1);
 +            } else channel.disableAttenuation();
-+            final Voice voice = new Voice(buffer, audio.pcm().length, category, selection.volume(), source);
++            final Voice voice = new Voice(buffer, audio.pcm().length, category, selection.volume(), source, request);
 +            state.voices.put(handle, voice);
-+            volume(channel, voice, engine);
 +            channel.play();
-+            if (state.paused && !state.pauseExceptions.contains(category)) channel.pause();
++            if (request != null) {
++                synchronized (request) {
++                    request.voice = voice;
++                    request.sound = sound;
++                    request.handle = handle;
++                    if (request.cancelled) channel.stop();
++                    else while (!request.commands.isEmpty()) apply(state, request, channel, request.commands.removeFirst());
++                }
++            }
++            volume(channel, voice, engine);
++            if (state.paused && !state.pauseExceptions.contains(category) || request != null && request.paused) channel.pause();
 +        } catch (RuntimeException error) {
 +            state.voices.remove(handle);
++            cancel(state, request);
 +            final SoundBuffer failedBuffer = buffer;
 +            ((IBedrockChannelAccess) engine.viaFabricPlusBedrock$channels()).viaFabricPlusBedrock$release(handle, () -> {
 +                if (failedBuffer != null) failedBuffer.discardAlBuffer();
@@ -23789,7 +24202,9 @@ index 0000000..7fe1451
 +    }
 +
 +    private static void volume(final Channel channel, final Voice voice, final IBedrockSoundEngine engine) {
-+        final float gain = voice.volume * engine.viaFabricPlusBedrock$categoryGain(1, voice.category);
++        final float raw = voice.request == null ? voice.volume
++                : voice.request.envelope.volume(System.nanoTime()) * voice.request.sound.selection().sample().volume();
++        final float gain = raw * engine.viaFabricPlusBedrock$categoryGain(1, voice.category);
 +        AL10.alSourcef(voice.source, AL10.AL_MAX_GAIN,
 +                AL.getCapabilities().AL_SOFT_gain_clamp_ex ? Math.max(1, gain) : 1);
 +        channel.setVolume(gain);
@@ -23804,6 +24219,7 @@ index 0000000..7fe1451
 +                if (state.voices.remove(handle, voice)) {
 +                    if (voice.buffer != null) voice.buffer.discardAlBuffer();
 +                    state.bytes.addAndGet(-voice.bytes);
++                    cancel(state, voice.request);
 +                }
 +            } else handle.execute(channel -> volume(channel, voice, access));
 +        });
@@ -23814,6 +24230,8 @@ index 0000000..7fe1451
 +        final State state = STATES.remove(engine);
 +        if (state == null) return;
 +        state.generation.incrementAndGet();
++        state.requests.forEach(request -> cancel(state, request));
++        BedrockServerSounds.clear();
 +        state.voices.values().forEach(voice -> { if (voice.buffer != null) voice.buffer.discardAlBuffer(); });
 +        state.voices.clear();
 +    }
@@ -23823,13 +24241,17 @@ index 0000000..7fe1451
 +        final State state = STATES.computeIfAbsent(engine, _ -> new State());
 +        state.abandoned = true;
 +        state.generation.incrementAndGet();
++        state.requests.forEach(request -> request.cancelled = true);
++        state.requests.clear();
++        state.handles.clear();
++        BedrockServerSounds.clear();
 +        state.voices.clear();
 +    }
 +
 +    public static void stop() {
 +        STATES.values().forEach(state -> {
-+            state.generation.incrementAndGet();
-+            state.voices.keySet().forEach(handle -> handle.execute(Channel::stop));
++            state.animationGeneration.incrementAndGet();
++            state.voices.forEach((handle, voice) -> { if (voice.request == null) handle.execute(Channel::stop); });
 +        });
 +    }
 +
@@ -23845,18 +24267,23 @@ index 0000000..7fe1451
 +    public static void resume(final SoundEngine engine) {
 +        final State state = STATES.get(engine);
 +        if (state != null) { state.paused = false; state.pauseExceptions = Set.of(); }
-+        // Vanilla resumes every channel in ChannelAccess, including these voices.
++        // Vanilla resumes all channels; restore restrictions from independent server pause commands.
++        if (state != null) state.requests.forEach(request -> {
++            if (request.paused && request.handle != null) request.handle.execute(Channel::pause);
++        });
 +    }
 +
 +    private static final class State {
-+        private final AtomicLong generation = new AtomicLong(), bytes = new AtomicLong();
++        private final AtomicLong generation = new AtomicLong(), animationGeneration = new AtomicLong(), musicStops = new AtomicLong(), bytes = new AtomicLong();
++        private final Set<ServerRequest> requests = ConcurrentHashMap.newKeySet();
++        private final Map<Long, ServerRequest> handles = new ConcurrentHashMap<>();
 +        private final AtomicInteger pending = new AtomicInteger();
 +        private final Map<ChannelAccess.ChannelHandle, Voice> voices = new ConcurrentHashMap<>();
 +        private volatile boolean paused, abandoned;
 +        private volatile Set<SoundSource> pauseExceptions = Set.of();
 +    }
 +
-+    private record Voice(SoundBuffer buffer, int bytes, SoundSource category, float volume, int source) {}
++    private record Voice(SoundBuffer buffer, int bytes, SoundSource category, float volume, int source, ServerRequest request) {}
 +
 +    private static final class PcmStream implements AudioStream {
 +        private final AudioFormat format;
@@ -24250,6 +24677,34 @@ index 0000000..a3b2ac9
 +        }
 +        return values;
 +    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/SoundPlaybackPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/SoundPlaybackPayload.java
+new file mode 100644
+index 0000000..f7fef8a
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/SoundPlaybackPayload.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.SoundPlaybackMessage;
++
++public record SoundPlaybackPayload(SoundPlaybackMessage message) implements CustomPacketPayload {
++    public static final Type<SoundPlaybackPayload> TYPE = new Type<>(Identifier.parse(SoundPlaybackMessage.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, SoundPlaybackPayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> SoundPlaybackMessage.TYPE.write(buffer, payload.message),
++            buffer -> new SoundPlaybackPayload(SoundPlaybackMessage.TYPE.read(buffer)));
++
++    @Override
++    public Type<SoundPlaybackPayload> type() { return TYPE; }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusEmoteProvider.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/ViaFabricPlusEmoteProvider.java
 new file mode 100644
@@ -24834,10 +25289,10 @@ index 0000000..8242a24
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockChannel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockChannel.java
 new file mode 100644
-index 0000000..f3ba922
+index 0000000..12e7853
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockChannel.java
-@@ -0,0 +1,15 @@
+@@ -0,0 +1,17 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -24848,10 +25303,12 @@ index 0000000..f3ba922
 +import com.mojang.blaze3d.audio.Channel;
 +import org.spongepowered.asm.mixin.Mixin;
 +import org.spongepowered.asm.mixin.gen.Accessor;
++import org.spongepowered.asm.mixin.gen.Invoker;
 +
 +@Mixin(Channel.class)
 +public interface MixinBedrockChannel {
 +    @Accessor("source") int viaFabricPlusBedrock$source();
++    @Invoker("removeProcessedBuffers") int viaFabricPlusBedrock$removeProcessedBuffers();
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockChannelAccess.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockChannelAccess.java
 new file mode 100644
@@ -24889,6 +25346,37 @@ index 0000000..80b66e9
 +                cleanup.run();
 +            }
 +        });
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockPcmChannel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockPcmChannel.java
+new file mode 100644
+index 0000000..d586e51
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockPcmChannel.java
+@@ -0,0 +1,25 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.sound;
++
++import com.mojang.blaze3d.audio.Channel;
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockPcmStream;
++import net.minecraft.client.sounds.AudioStream;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
++
++@Mixin(Channel.class)
++public abstract class MixinBedrockPcmChannel {
++    @Shadow private AudioStream stream;
++
++    @Inject(method = "removeProcessedBuffers", at = @At("RETURN"))
++    private void removedPcmBuffers(final CallbackInfoReturnable<Integer> result) {
++        if (this.stream instanceof BedrockPcmStream pcm) pcm.processed(result.getReturnValue());
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockSoundEngine.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinBedrockSoundEngine.java
@@ -24968,6 +25456,34 @@ index 0000000..05b8f8a
 +@Mixin(SoundManager.class)
 +public interface MixinBedrockSoundManager {
 +    @Accessor("soundEngine") SoundEngine viaFabricPlusBedrock$engine();
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinMinecraftServerSounds.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinMinecraftServerSounds.java
+new file mode 100644
+index 0000000..9433e74
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/sound/MixinMinecraftServerSounds.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.sound;
++
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockSoundPlayback;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.screens.Screen;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(Minecraft.class)
++public abstract class MixinMinecraftServerSounds {
++    @Inject(method = "disconnect(Lnet/minecraft/client/gui/screens/Screen;ZZ)V", at = @At("HEAD"))
++    private void clearSounds(final Screen screen, final boolean transferring, final boolean skipSaving, final CallbackInfo ci) {
++        BedrockSoundPlayback.stopServer();
++    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
 new file mode 100644
@@ -30109,7 +30625,7 @@ index 0000000..a91a83e
 +  "f76b43c4-052c-ec24-bbc9-389f8b612668": "persona_top"
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 87ffba8..238f933 100644
+index 87ffba8..25e30c3 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
 @@ -55,9 +55,18 @@
@@ -30131,7 +30647,7 @@ index 87ffba8..238f933 100644
      "features.render.MixinPlayerSkinWidget",
      "features.render.MixinGuiSkinRenderer",
      "features.movement.MixinEntity",
-@@ -66,7 +75,13 @@
+@@ -66,7 +75,15 @@
      "features.movement.MixinHoneyBlock",
      "features.movement.MixinLivingEntity",
      "features.movement.MixinLocalPlayer",
@@ -30139,6 +30655,8 @@ index 87ffba8..238f933 100644
 +    "features.movement.MixinPlayer",
 +    "features.sound.MixinBedrockChannelAccess",
 +    "features.sound.MixinBedrockChannel",
++    "features.sound.MixinBedrockPcmChannel",
++    "features.sound.MixinMinecraftServerSounds",
 +    "features.sound.MixinBedrockSoundManager",
 +    "features.sound.MixinBedrockSoundEngine",
 +    "features.particle.MixinBedrockParticleEngine",
@@ -39045,6 +39563,75 @@ index 0000000..4fbdf01
 +        for (int axis = 0; axis < 3; axis++) assertEquals(expected.get(axis).getAsFloat(), actual.get(axis));
 +    }
 +}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPcmStreamTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPcmStreamTest.java
+new file mode 100644
+index 0000000..1aa8e73
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPcmStreamTest.java
+@@ -0,0 +1,63 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import org.junit.jupiter.api.Test;
++
++import javax.sound.sampled.AudioFormat;
++import java.nio.ByteOrder;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++class BedrockPcmStreamTest {
++    private static final AudioFormat FORMAT = new AudioFormat(1000, 16, 1, true, false);
++    private static final byte[] SAMPLE = {1, 0, 2, 0, 3, 0};
++
++    @Test
++    void finiteLoopsPreserveFrameAlignmentAndOffset() {
++        final var stream = new BedrockPcmStream(SAMPLE, FORMAT, 2, 0.001F);
++        final var first = stream.read(5).order(ByteOrder.LITTLE_ENDIAN);
++        assertEquals(4, first.remaining());
++        assertEquals(2, first.getShort());
++        assertEquals(3, first.getShort());
++        stream.processed(1);
++        assertEquals(1, stream.remainingLoops(0));
++        final var remaining = stream.read(100).order(ByteOrder.LITTLE_ENDIAN);
++        assertEquals(12, remaining.remaining());
++        for (int loop = 0; loop < 2; loop++) {
++            for (int frame = 1; frame <= 3; frame++) assertEquals(frame, remaining.getShort());
++        }
++        assertNull(stream.read(100));
++    }
++
++    @Test
++    void infiniteAndLargeLoopCountsDoNotDuplicateSampleStorage() {
++        for (final int loops : new int[]{-1, Integer.MAX_VALUE}) {
++            final var stream = new BedrockPcmStream(SAMPLE, FORMAT, loops, 0);
++            final var bytes = stream.read(120).order(ByteOrder.LITTLE_ENDIAN);
++            for (int frame = 0; frame < 60; frame++) assertEquals(frame % 3 + 1, bytes.getShort());
++            stream.processed(1);
++            assertEquals(loops == -1 ? -1 : Integer.MAX_VALUE - 20, stream.remainingLoops(0));
++            stream.close();
++            assertNull(stream.read(120));
++        }
++    }
++
++    @Test
++    void remainingLoopsUsePlayedFramesInsteadOfPrefetchedFrames() {
++        final var stream = new BedrockPcmStream(SAMPLE, FORMAT, 100, 0);
++        stream.read(120);
++        stream.read(120);
++        assertEquals(100, stream.remainingLoops(0));
++        stream.processed(1);
++        assertEquals(80, stream.remainingLoops(0));
++        assertEquals(78, stream.remainingLoops(6));
++        assertThrows(IllegalArgumentException.class, () -> stream.read(-1));
++        assertThrows(IllegalArgumentException.class, () -> new BedrockPcmStream(SAMPLE, FORMAT, -2, 0));
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimationAtlasTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPersonaAnimationAtlasTest.java
 new file mode 100644
 index 0000000..f664737
@@ -42055,6 +42642,42 @@ index 0000000..abfcc71
 +                | (metadata.length == 0 ? 0 : 1));
 +        bank.put(metadata).put(encoded);
 +        return bank.array();
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEnvelopeTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEnvelopeTest.java
+new file mode 100644
+index 0000000..c44a276
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEnvelopeTest.java
+@@ -0,0 +1,30 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.appearance;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++
++class BedrockSoundEnvelopeTest {
++    @Test
++    void replacementFadesStartAtCurrentGainAndVolumeCancelsFade() {
++        final var volume = new BedrockSoundEnvelope(1);
++        volume.fade(2, 0.2F, 0);
++        assertEquals(1, volume.volume(-1));
++        assertEquals(0.6F, volume.volume(1_000_000_000L), 0.000001F);
++        volume.fade(1, 1, 1_000_000_000L);
++        assertEquals(0.8F, volume.volume(1_500_000_000L), 0.000001F);
++        assertEquals(1, volume.volume(3_000_000_000L));
++        volume.set(0.3F);
++        assertEquals(0.3F, volume.volume(3_500_000_000L));
++        volume.fade(0, 0, 3_500_000_000L);
++        assertEquals(0, volume.volume(3_500_000_000L));
++        assertThrows(IllegalArgumentException.class, () -> volume.fade(Float.NaN, 1, 0));
++        assertThrows(IllegalArgumentException.class, () -> volume.set(Float.POSITIVE_INFINITY));
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEventTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundEventTest.java

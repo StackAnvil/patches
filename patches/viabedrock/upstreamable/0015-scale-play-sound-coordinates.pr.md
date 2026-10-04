@@ -1,6 +1,6 @@
 ## Purpose
 
-Preserve PlaySound coordinates in their native units and decode the complete payload with a signed loop count.
+Decode native server sound playback and controls in core. Transport the complete commands and ordered sound resources through direct connections and ViaProxy. Preserve standard Java playback when the client does not advertise native sound support.
 
 ## Evidence
 
@@ -16,18 +16,42 @@ Java 26.3 `ClientboundSoundPacket` stores its position as three integers in eigh
 
 ## Review focus
 
-The handler reads a typed PlaySound value. It preserves the signed loop count, listener-range flag, optional unsigned handle bits, and optional playback position. The Java translation uses the same fixed-point integers without scaling or a block-center offset.
+The typed PlaySound codec preserves fixed-point coordinates, signed loops, listener-range flags, optional unsigned handle bits, and optional playback position.
+Packet 348 now decodes all seven control variants. Each message carries seven tagged values; the final value supplies the effective command.
+The decoder rejects unknown tags and preserves following-value alignment.
+The captured fade command carries duration before target volume.
 
-This change does not implement loops, server handle controls, seeking, or listener-range overrides. Those need a playback path that can reproduce their behavior. Ordinary Java SOUND packets cannot express them.
+Clients advertise `viabedrock:sound_playback` through Java channel registration.
+Core forwards playback, stop commands, and handle controls in packet order.
+The converted Java resource pack carries bounded native sound files and definitions in bottom-to-top pack order.
+This lets the add-on use the same resources through ViaProxy.
+Archive decoding validates paths, sizes, pack indexes, duplicate entries, and the protocol header.
+
+Ordinary Java clients retain the mapped SOUND and STOP_SOUND translations.
+Java packets cannot express server instance handles, arbitrary loops, seeking, or independent pause controls.
+These controls require the client add-on.
+Listener-range eligibility, captions, and native stream interruption policies remain incomplete.
 
 ## Testing
 
-The targeted tests check Java packet coordinates for fractional negative positions and integer limits. They check signed loop counts, independent optional-field combinations, unsigned handle bits, following-value alignment, and codec round trips.
+Seven targeted tests pass with both Checkstyle tasks in a checkout containing only this patch on the pinned upstream base.
+They cover coordinate limits, optional fields, signed loops, each control layout, final-variant selection, malformed messages, archive overrides, deterministic ordering, and invalid paths.
 
-The patch applies alone to the pinned upstream base with `bun run pr check viabedrock --patch 0015-scale-play-sound-coordinates.patch`. Its two tests and both Checkstyle tasks pass in that isolated checkout.
+Both complete stacks replay successfully: 91 ViaBedrock patches and 23 add-on patches.
+`bun run build all` passes with matching StackAnvil dependencies: 907 tests pass and 110 optional asset tests skip.
+ViaProxy also builds.
 
-The full 91-patch ViaBedrock stack replays successfully. `bun run build all` passes with the matching StackAnvil dependencies: 898 tests pass and 110 optional asset tests skip across CubeConverter, ViaBedrock, and the client add-on. ViaProxy also builds.
+A controlled native 1.26.51.1 capture reaches StartGame and spawn and supplies all seven controls.
+The unchanged session replays through both the direct add-on and ViaProxy routes.
+Both routes spawn and load the converted resource pack.
+Private instrumentation observes actual OpenAL state: playback spans repeated PCM buffers, pitch changes to 1.3, seek resets the stream to 0.01 seconds, pause enters AL_PAUSED, and resume enters AL_PLAYING.
+The ViaProxy route also samples the volume envelope changing from 0.3 to 0.2 over two seconds.
+Stop removes the direct route's handle; the ViaProxy route stops producing active voice samples.
 
-The controlled native session reaches StartGame and spawn. Its packet values establish the wire units. It does not establish audible parity.
+The lab uses zero volume. These observations establish the tested control path, not audible parity.
+The sample uses a mapped Java fallback without Store sign-in.
+Live custom samples, finite-loop controls, replacement races, global pause interactions, and broader lifecycle comparisons remain unverified.
+The direct replay's existing skin rendering gate fails; the sound checks use the transport-only gate.
+Mixed wire variants are covered by tests and Gophertunnel's implementation, but have not been compared with the pinned native client.
 
-Private captures and game assets remain outside the repository.
+Private captures, instrumentation, and game assets remain outside the repository.

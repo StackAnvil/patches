@@ -1,28 +1,49 @@
-From c2415877b9f87d80a4b30b49f099d8aaa5f98f11 Mon Sep 17 00:00:00 2001
+From 1f597a2b12e7d51c5e15058df63d0592a89eb6bb Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 19:48:51 +0200
-Subject: [PATCH] fix(audio): preserve native PlaySound coordinate units
+Subject: [PATCH] feat(audio): transport native server sound playback and
+ controls
 
-A controlled 1.26.51.1 capture on protocol 2193 sends (-33, 567, -18)
-for a sound at (-4.125, 70.875, -2.25). Bedrock and Java both encode
-PlaySound positions in eighths of a block. Preserve the signed integers
-instead of multiplying them or converting through floating point.
+Native 1.26.51.1 captures on protocol 2193 establish that PlaySound uses
+signed eighth-block positions and signed loop counts. UpdateSoundData
+carries a 64-bit handle followed by seven tagged variants. Consume all
+seven fields and use the last variant, matching the shared native member.
+Fade serializes duration before target volume.
 
-Decode the full Bedrock payload into a typed value, including signed loop
-counts and independent optional handle and playback-position fields.
-These fields remain available for native playback integration; ordinary
-Java playback still cannot reproduce server handle controls or loops.
+Route ordered sound commands to clients advertising the native playback
+channel. Include mapped Java fallbacks so unavailable licensed assets do
+not prevent playback or joining. Ordinary Java clients retain positioned
+sound translation; their protocol cannot express per-instance controls.
 
-Test fractional negative positions, integer limits, signed loops, optional
-field combinations, and byte alignment of both protocol representations.
+Carry native sound definitions and samples in the converted resource
+pack, preserving pack order through ViaProxy. Bound archive entries,
+paths, and decompressed resources, and keep generated ZIP bytes stable.
+
+Test coordinate precision, signed loops, optional fields, all seven
+update variants, wire alignment, archive overrides, and invalid paths.
 ---
- build.gradle                                  |  6 ++
- .../viabedrock/protocol/model/PlaySound.java  | 50 +++++++++++
- .../protocol/packet/WorldEffectPackets.java   | 40 ++++-----
- .../protocol/packet/PlaySoundPacketsTest.java | 88 +++++++++++++++++++
- 4 files changed, 161 insertions(+), 23 deletions(-)
+ build.gradle                                  |   6 +
+ .../api/model/SoundPlaybackMessage.java       |  76 ++++++++++
+ .../api/resourcepack/NativeSoundLibrary.java  | 137 ++++++++++++++++++
+ .../protocol/ClientboundBedrockPackets.java   |   4 +-
+ .../bedrock/generated/MinecraftPacketIds.java |   1 +
+ .../viabedrock/protocol/model/PlaySound.java  |  50 +++++++
+ .../protocol/model/SoundUpdate.java           | 114 +++++++++++++++
+ .../protocol/packet/WorldEffectPackets.java   | 110 ++++++--------
+ .../rewriter/ResourcePackRewriter.java        |   2 +
+ .../NativeSoundResourceRewriter.java          |  35 +++++
+ .../packet/NativeSoundLibraryTest.java        |  60 ++++++++
+ .../protocol/packet/PlaySoundPacketsTest.java |  88 +++++++++++
+ .../protocol/packet/SoundUpdateTest.java      |  79 ++++++++++
+ 13 files changed, 694 insertions(+), 68 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SoundPlaybackMessage.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/PlaySound.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/SoundUpdate.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeSoundResourceRewriter.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/NativeSoundLibraryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlaySoundPacketsTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/SoundUpdateTest.java
 
 diff --git a/build.gradle b/build.gradle
 index 4cc0760e1..912a6321c 100644
@@ -38,6 +59,258 @@ index 4cc0760e1..912a6321c 100644
 +testing.suites.test {
 +    useJUnitJupiter("6.1.3")
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/SoundPlaybackMessage.java b/src/main/java/net/raphimc/viabedrock/api/model/SoundPlaybackMessage.java
+new file mode 100644
+index 000000000..e20d2267d
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/SoundPlaybackMessage.java
+@@ -0,0 +1,76 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.model.PlaySound;
++import net.raphimc.viabedrock.protocol.model.SoundUpdate;
++
++/** Ordered server audio commands for a client with native playback support. */
++public sealed interface SoundPlaybackMessage permits SoundPlaybackMessage.Play, SoundPlaybackMessage.Update, SoundPlaybackMessage.Stop {
++
++    String CHANNEL = "viabedrock:sound_playback";
++    Type<SoundPlaybackMessage> TYPE = new Type<>(SoundPlaybackMessage.class) {
++        @Override
++        public SoundPlaybackMessage read(final ByteBuf buffer) {
++            if (Types.VAR_INT.readPrimitive(buffer) != 1
++                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IllegalArgumentException("Unsupported sound playback message");
++            }
++            return switch (buffer.readUnsignedByte()) {
++                case 0 -> new Play(PlaySound.TYPE.read(buffer), Types.STRING.read(buffer), Types.VAR_INT.readPrimitive(buffer));
++                case 1 -> new Update(buffer.readLongLE(), SoundUpdate.readEvent(buffer));
++                case 2 -> new Stop(Types.STRING.read(buffer), buffer.readBoolean(), buffer.readBoolean());
++                default -> throw new IllegalArgumentException("Unknown sound playback message");
++            };
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final SoundPlaybackMessage value) {
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            buffer.writeByte(value.kind());
++            if (value instanceof Play play) {
++                PlaySound.TYPE.write(buffer, play.sound);
++                Types.STRING.write(buffer, play.fallback);
++                Types.VAR_INT.writePrimitive(buffer, play.category);
++            } else if (value instanceof Update update) {
++                buffer.writeLongLE(update.handle);
++                SoundUpdate.writeEvent(buffer, update.event);
++            } else if (value instanceof Stop stop) {
++                Types.STRING.write(buffer, stop.name);
++                buffer.writeBoolean(stop.all).writeBoolean(stop.music);
++            }
++        }
++    };
++
++    int kind();
++
++    record Play(PlaySound sound, String fallback, int category) implements SoundPlaybackMessage {
++        @Override
++        public int kind() {
++            return 0;
++        }
++    }
++
++    record Update(long handle, SoundUpdate.Event event) implements SoundPlaybackMessage {
++        @Override
++        public int kind() {
++            return 1;
++        }
++    }
++
++    record Stop(String name, boolean all, boolean music) implements SoundPlaybackMessage {
++        @Override
++        public int kind() {
++            return 2;
++        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java
+new file mode 100644
+index 000000000..6e8a5658b
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java
+@@ -0,0 +1,137 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack;
++
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++
++import java.io.ByteArrayOutputStream;
++import java.io.DataInputStream;
++import java.io.IOException;
++import java.io.InputStream;
++import java.nio.ByteBuffer;
++import java.util.ArrayList;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.TreeSet;
++import java.util.zip.Deflater;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipInputStream;
++import java.util.zip.ZipOutputStream;
++
++/** Native sound resources in bottom-to-top pack order, carried by the Java resource pack. */
++public final class NativeSoundLibrary {
++
++    public static final String PATH = "assets/viabedrock/sound_library.zip";
++    private static final int MAX_PACKS = 4096;
++    private static final int MAX_FILES = 32768;
++    private static final int MAX_FILE_BYTES = 32 * 1024 * 1024;
++    private static final int MAX_TOTAL_BYTES = 256 * 1024 * 1024;
++
++    public static byte[] encode(final List<Content> packs) throws IOException {
++        if (packs.size() > MAX_PACKS) {
++            throw new IOException("Too many native sound packs");
++        }
++        final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
++        long total = 0;
++        int count = 0;
++        try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
++            zip.setLevel(Deflater.BEST_SPEED);
++            put(zip, "header", ByteBuffer.allocate(12).putInt(1).putInt(ProtocolConstants.BEDROCK_PROTOCOL_VERSION).putInt(packs.size()).array());
++            for (int index = 0; index < packs.size(); index++) {
++                final Content pack = packs.get(index);
++                final TreeSet<String> paths = new TreeSet<>();
++                if (pack.contains("sounds.json")) {
++                    paths.add("sounds.json");
++                }
++                for (final String extension : List.of(".json", ".ogg", ".fsb")) {
++                    paths.addAll(pack.getFilesDeep("sounds/", extension));
++                }
++                for (final String path : paths) {
++                    validatePath(path);
++                    final byte[] file = pack.get(path);
++                    total += file.length;
++                    if (++count > MAX_FILES || file.length > MAX_FILE_BYTES || total > MAX_TOTAL_BYTES) {
++                        throw new IOException("Native sound resources exceed limits");
++                    }
++                    put(zip, index + "/" + path, file);
++                }
++            }
++        }
++        return bytes.toByteArray();
++    }
++
++    public static List<Map<String, byte[]>> decode(final InputStream input) throws IOException {
++        final List<Map<String, byte[]>> packs = new ArrayList<>();
++        long total = 0;
++        int count = 0;
++        try (ZipInputStream zip = new ZipInputStream(input)) {
++            final ZipEntry header = zip.getNextEntry();
++            if (header == null || !header.getName().equals("header")) {
++                throw new IOException("Missing native sound library header");
++            }
++            final DataInputStream fields = new DataInputStream(zip);
++            if (fields.readInt() != 1 || fields.readInt() != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IOException("Unsupported native sound library");
++            }
++            final int packCount = fields.readInt();
++            if (packCount < 0 || packCount > MAX_PACKS || zip.read() != -1) {
++                throw new IOException("Invalid native sound library header");
++            }
++            for (int index = 0; index < packCount; index++) {
++                packs.add(new LinkedHashMap<>());
++            }
++            ZipEntry entry;
++            while ((entry = zip.getNextEntry()) != null) {
++                final String name = entry.getName();
++                final int separator = name.indexOf('/');
++                final int index;
++                try {
++                    index = Integer.parseInt(name.substring(0, separator));
++                } catch (final RuntimeException invalid) {
++                    throw new IOException("Invalid native sound pack index", invalid);
++                }
++                final String path = name.substring(separator + 1);
++                validatePath(path);
++                if (entry.isDirectory() || index < 0 || index >= packCount || ++count > MAX_FILES) {
++                    throw new IOException("Invalid native sound entry");
++                }
++                final int limit = (int) Math.min(MAX_FILE_BYTES, MAX_TOTAL_BYTES - total);
++                final byte[] file = zip.readNBytes(limit + 1);
++                total += file.length;
++                if (file.length > limit || packs.get(index).putIfAbsent(path, file) != null) {
++                    throw new IOException("Duplicate or oversized native sound entry");
++                }
++            }
++        }
++        return packs.stream().map(Map::copyOf).toList();
++    }
++
++    private static void validatePath(final String path) throws IOException {
++        if ((!path.equals("sounds.json") && !path.startsWith("sounds/"))
++                || path.length() > 512 || path.indexOf('\\') >= 0 || path.indexOf('\0') >= 0) {
++            throw new IOException("Invalid native sound path");
++        }
++        for (final String part : path.split("/", -1)) {
++            if (part.isEmpty() || part.equals(".") || part.equals("..")) {
++                throw new IOException("Invalid native sound path");
++            }
++        }
++    }
++
++    private static void put(final ZipOutputStream zip, final String path, final byte[] bytes) throws IOException {
++        final ZipEntry entry = new ZipEntry(path);
++        entry.setTime(0);
++        zip.putNextEntry(entry);
++        zip.write(bytes);
++        zip.closeEntry();
++    }
++
++    private NativeSoundLibrary() {
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/ClientboundBedrockPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/ClientboundBedrockPackets.java
+index 609785cc6..c7a28a9de 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/ClientboundBedrockPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/ClientboundBedrockPackets.java
+@@ -189,8 +189,8 @@ public enum ClientboundBedrockPackets implements ClientboundPacketType {
+     VOXEL_SHAPES(MinecraftPacketIds.VoxelShapesPacket.getValue()),
+     SET_PLAYER_FURNACE_OPTIONS(MinecraftPacketIds.SetPlayerFurnaceOptions.getValue()),
+     RECORD_STARTED(MinecraftPacketIds.RecordStarted.getValue()),
+-    STONECUTTER_SET_RECIPE(MinecraftPacketIds.ClientboundStonecutterSetRecipePacket.getValue());
+-    // UPDATE_SOUND_DATA(MinecraftPacketIds.ClientboundUpdateSoundDataPacket.getValue());
++    STONECUTTER_SET_RECIPE(MinecraftPacketIds.ClientboundStonecutterSetRecipePacket.getValue()),
++    UPDATE_SOUND_DATA(MinecraftPacketIds.ClientboundUpdateSoundDataPacket.getValue());
+     // CONTROL_SCHEME_SET(MinecraftPacketIds.ClientboundControlSchemeSetPacket.getValue()),
+     // PRIMITIVE_SHAPES(MinecraftPacketIds.PrimitiveShapesPacket.getValue()),
+     // DATA_STORE(MinecraftPacketIds.ClientboundDataStore.getValue()),
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/MinecraftPacketIds.java b/src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/MinecraftPacketIds.java
+index 8ad52855f..f0d478948 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/MinecraftPacketIds.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/generated/MinecraftPacketIds.java
+@@ -225,6 +225,7 @@ public enum MinecraftPacketIds {
+     RecordStarted(352),
+     ClientboundMatchmakingState(353),
+     ServerboundStonecutterSetRecipePacket(354),
++    ClientboundUpdateSoundDataPacket(348),
+     ClientboundStonecutterSetRecipePacket(355),
+     ServerboundMatchmakingCancel(356),
+     ;
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/PlaySound.java b/src/main/java/net/raphimc/viabedrock/protocol/model/PlaySound.java
 new file mode 100644
 index 000000000..fe55dfca7
@@ -94,22 +367,200 @@ index 000000000..fe55dfca7
 +    };
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/SoundUpdate.java b/src/main/java/net/raphimc/viabedrock/protocol/model/SoundUpdate.java
+new file mode 100644
+index 000000000..3285c7609
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/SoundUpdate.java
+@@ -0,0 +1,114 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++public record SoundUpdate(long handle, Event event) {
++
++    public static final Type<SoundUpdate> TYPE = new Type<>(SoundUpdate.class) {
++        @Override
++        public SoundUpdate read(final ByteBuf buffer) {
++            final long handle = buffer.readLongLE();
++            Event event = null;
++            // Protocol 2193 serializes the same variant member seven times. The last read wins.
++            for (int i = 0; i < 7; i++) {
++                event = readEvent(buffer);
++            }
++            return new SoundUpdate(handle, event);
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final SoundUpdate value) {
++            buffer.writeLongLE(value.handle);
++            for (int i = 0; i < 7; i++) {
++                writeEvent(buffer, value.event);
++            }
++        }
++    };
++
++    public static Event readEvent(final ByteBuf buffer) {
++        return switch (BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(buffer)) {
++            case 0 -> new Stop();
++            case 1 -> new Volume(buffer.readFloatLE());
++            case 2 -> new Pitch(buffer.readFloatLE());
++            case 3 -> new Fade(buffer.readFloatLE(), buffer.readFloatLE());
++            case 4 -> new Seek(buffer.readFloatLE());
++            case 5 -> new Pause();
++            case 6 -> new Resume();
++            default -> throw new IllegalArgumentException("Unknown sound update variant");
++        };
++    }
++
++    public static void writeEvent(final ByteBuf buffer, final Event event) {
++        BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(buffer, event.id());
++        if (event instanceof Volume volume) {
++            buffer.writeFloatLE(volume.volume);
++        } else if (event instanceof Pitch pitch) {
++            buffer.writeFloatLE(pitch.pitch);
++        } else if (event instanceof Fade fade) {
++            buffer.writeFloatLE(fade.duration).writeFloatLE(fade.targetVolume);
++        } else if (event instanceof Seek seek) {
++            buffer.writeFloatLE(seek.seconds);
++        }
++    }
++
++    public sealed interface Event permits Stop, Volume, Pitch, Fade, Seek, Pause, Resume {
++        int id();
++    }
++
++    public record Stop() implements Event {
++        @Override
++        public int id() {
++            return 0;
++        }
++    }
++
++    public record Volume(float volume) implements Event {
++        @Override
++        public int id() {
++            return 1;
++        }
++    }
++
++    public record Pitch(float pitch) implements Event {
++        @Override
++        public int id() {
++            return 2;
++        }
++    }
++
++    public record Fade(float duration, float targetVolume) implements Event {
++        @Override
++        public int id() {
++            return 3;
++        }
++    }
++
++    public record Seek(float seconds) implements Event {
++        @Override
++        public int id() {
++            return 4;
++        }
++    }
++
++    public record Pause() implements Event {
++        @Override
++        public int id() {
++            return 5;
++        }
++    }
++
++    public record Resume() implements Event {
++        @Override
++        public int id() {
++            return 6;
++        }
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
-index 2539fa126..650c2b050 100644
+index 2539fa126..9924e3a01 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldEffectPackets.java
-@@ -50,6 +50,7 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.SoundSource;
+@@ -30,6 +30,7 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets
+ import com.viaversion.viaversion.util.Key;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.model.BlockState;
++import net.raphimc.viabedrock.api.model.SoundPlaybackMessage;
+ import net.raphimc.viabedrock.api.model.entity.Entity;
+ import net.raphimc.viabedrock.api.resourcepack.definition.SoundDefinitions;
+ import net.raphimc.viabedrock.api.resourcepack.definition.TextDefinitions;
+@@ -50,10 +51,13 @@ import net.raphimc.viabedrock.protocol.data.enums.java.generated.SoundSource;
  import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomBlockTags;
  import net.raphimc.viabedrock.protocol.model.BedrockItem;
  import net.raphimc.viabedrock.protocol.model.Position3f;
 +import net.raphimc.viabedrock.protocol.model.PlaySound;
++import net.raphimc.viabedrock.protocol.model.SoundUpdate;
  import net.raphimc.viabedrock.protocol.rewriter.BlockStateRewriter;
  import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
  import net.raphimc.viabedrock.protocol.storage.BreakingTracker;
-@@ -113,34 +114,15 @@ public final class WorldEffectPackets {
-          *     // TODO: Server handle based sound manager
-          * });*/
-         protocol.registerClientbound(ClientboundBedrockPackets.PLAY_SOUND, ClientboundPackets26_3.SOUND, wrapper -> {
+ import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
++import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
+ import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+@@ -69,83 +73,35 @@ public final class WorldEffectPackets {
+     private static final boolean LEVEL_SOUND_DEBUG_LOG = false;
+ 
+     public static void register(final BedrockProtocol protocol) {
+-        /*protocol.registerClientbound(ClientboundBedrockPackets.UPDATE_SOUND_DATA, null, wrapper -> {
+-         *     wrapper.read(BedrockTypes.UNSIGNED_LONG_LE); // server sound handle
+-         *
+-         *     if (wrapper.read(Types.BOOLEAN)) { // Stop Sound
+-         *         wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+-         *     }
+-         *
+-         *     if (wrapper.read(Types.BOOLEAN)) { // Set Volume
+-         *         wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+-         *
+-         *         final float volume = wrapper.read(BedrockTypes.FLOAT_LE); // volume
+-         *     }
+-         *
+-         *     if (wrapper.read(Types.BOOLEAN)) { // Set Pitch
+-         *         wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+-         *
+-         *         final float pitch = wrapper.read(BedrockTypes.FLOAT_LE); // pitch
+-         *     }
+-         *
+-         *     if  (wrapper.read(Types.BOOLEAN)) { // Set Fade
+-         *         wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+-         *
+-         *         final float targetVolume = wrapper.read(BedrockTypes.FLOAT_LE); // targetVolume
+-         *         final float duration = wrapper.read(BedrockTypes.FLOAT_LE); // duration
+-         *     }
+-         *
+-         *     if (wrapper.read(Types.BOOLEAN)) { // Set SeekTo
+-         *         wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+-         *
+-         *         final float seconds = wrapper.read(BedrockTypes.FLOAT_LE); // seconds
+-         *     }
+-         *
+-         *     if (wrapper.read(Types.BOOLEAN)) { // Set Pause
+-         *         wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+-         *     }
+-         *
+-         *     if (wrapper.read(Types.BOOLEAN)) { // Set Resume
+-         *         wrapper.read(BedrockTypes.UNSIGNED_VAR_INT);
+-         *     }
+-         *
+-         *     wrapper.cancel();
+-         *     // TODO: Server handle based sound manager
+-         * });*/
+-        protocol.registerClientbound(ClientboundBedrockPackets.PLAY_SOUND, ClientboundPackets26_3.SOUND, wrapper -> {
 -            final String name = wrapper.read(BedrockTypes.STRING); // sound name
 -            final BlockPosition position = wrapper.read(BedrockTypes.BLOCK_POSITION); // position
 -            final float volume = wrapper.read(BedrockTypes.FLOAT_LE); // volume
@@ -118,14 +569,24 @@ index 2539fa126..650c2b050 100644
 -            wrapper.read(Types.BOOLEAN); // bypass listener range check
 -            if (wrapper.read(Types.BOOLEAN)) { // has server sound handle
 -                wrapper.read(BedrockTypes.LONG_LE); // server sound handle
--            }
++        protocol.registerClientbound(ClientboundBedrockPackets.UPDATE_SOUND_DATA, null, wrapper -> {
++            final SoundUpdate update = wrapper.read(SoundUpdate.TYPE);
++            if (!nativeSound(wrapper, new SoundPlaybackMessage.Update(update.handle(), update.event()))) {
++                // Java's sound packet has no per-instance playback controls.
++                wrapper.cancel();
+             }
 -            if (wrapper.read(Types.BOOLEAN)) { // has playback position
 -                wrapper.read(BedrockTypes.FLOAT_LE); // playback position
--            }
--
--            final BedrockMappingData.JavaSound javaSound = BedrockProtocol.MAPPINGS.getBedrockToJavaSounds().get(name);
++        });
++        protocol.registerClientbound(ClientboundBedrockPackets.PLAY_SOUND, ClientboundPackets26_3.SOUND, wrapper -> {
 +            final PlaySound sound = wrapper.read(PlaySound.TYPE);
 +            final BedrockMappingData.JavaSound javaSound = BedrockProtocol.MAPPINGS.getBedrockToJavaSounds().get(sound.name());
++            if (nativeSound(wrapper, new SoundPlaybackMessage.Play(sound,
++                    javaSound == null ? "" : javaSound.identifier(), javaSound == null ? 0 : javaSound.category().ordinal()))) {
++                return;
+             }
+-
+-            final BedrockMappingData.JavaSound javaSound = BedrockProtocol.MAPPINGS.getBedrockToJavaSounds().get(name);
              if (javaSound == null) {
 -                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown bedrock sound: " + name);
 +                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown bedrock sound: " + sound.name());
@@ -145,10 +606,29 @@ index 2539fa126..650c2b050 100644
          });
          protocol.registerClientbound(ClientboundBedrockPackets.STOP_SOUND, ClientboundPackets26_3.STOP_SOUND, wrapper -> {
              final String name = wrapper.read(BedrockTypes.STRING); // sound name
-@@ -747,6 +729,18 @@ public final class WorldEffectPackets {
+             final boolean stopAll = wrapper.read(Types.BOOLEAN); // stop all
+-            wrapper.read(Types.BOOLEAN); // stop music | Ignored because it seems to do nothing
++            final boolean stopMusic = wrapper.read(Types.BOOLEAN);
++            if (nativeSound(wrapper, new SoundPlaybackMessage.Stop(name, stopAll, stopMusic))) {
++                return;
++            }
+ 
+             if (stopAll) {
+                 wrapper.write(Types.BYTE, (byte) 0); // flags
+@@ -747,6 +703,28 @@ public final class WorldEffectPackets {
          return configuredSound;
      }
  
++    private static boolean nativeSound(final PacketWrapper wrapper, final SoundPlaybackMessage message) {
++        if (!wrapper.user().get(ChannelStorage.class).hasChannel(SoundPlaybackMessage.CHANNEL)) {
++            return false;
++        }
++        wrapper.setPacketType(ClientboundPackets26_3.CUSTOM_PAYLOAD);
++        wrapper.write(Types.STRING, SoundPlaybackMessage.CHANNEL);
++        wrapper.write(SoundPlaybackMessage.TYPE, message);
++        return true;
++    }
++
 +    static void writePlaySound(final PacketWrapper wrapper, final PlaySound sound, final int soundId, final int category, final long seed) {
 +        wrapper.write(Types.SOUND_EVENT, Holder.of(soundId));
 +        wrapper.write(Types.VAR_INT, category);
@@ -164,6 +644,133 @@ index 2539fa126..650c2b050 100644
      private WorldEffectPackets() {
      }
  
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
+index 07a19fa95..42dcc34a7 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ResourcePackRewriter.java
+@@ -26,6 +26,7 @@ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomEntityResourc
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.GlyphSheetResourceRewriter;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import net.raphimc.viabedrock.protocol.rewriter.resourcepack.NativeSoundResourceRewriter;
+ 
+ import java.util.ArrayList;
+ import java.util.List;
+@@ -42,6 +43,7 @@ public final class ResourcePackRewriter {
+         REWRITERS.add(new CustomItemTextureResourceRewriter());
+         REWRITERS.add(new CustomAttachableResourceRewriter());
+         REWRITERS.add(new CustomEntityResourceRewriter());
++        REWRITERS.add(new NativeSoundResourceRewriter());
+     }
+ 
+     public static Content bedrockToJava(final ResourcePackStorage resourcePackStorage) throws InterruptedException {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeSoundResourceRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeSoundResourceRewriter.java
+new file mode 100644
+index 000000000..787ff3fc3
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeSoundResourceRewriter.java
+@@ -0,0 +1,35 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
++
++import net.raphimc.viabedrock.api.resourcepack.NativeSoundLibrary;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.rewriter.ResourcePackRewriter;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++
++import java.io.IOException;
++import java.io.UncheckedIOException;
++import java.util.function.Consumer;
++import java.util.function.Supplier;
++
++public final class NativeSoundResourceRewriter implements ResourcePackRewriter.Rewriter {
++
++    @Override
++    public void submitTasks(final ResourcePackStorage storage, final Consumer<Supplier<Content>> submitter) {
++        submitter.accept(() -> {
++            final Content result = new InMemoryContent();
++            try {
++                result.put(NativeSoundLibrary.PATH, NativeSoundLibrary.encode(storage.getPackStackBottomToTop().stream().map(ResourcePack::content).toList()));
++            } catch (final IOException invalid) {
++                throw new UncheckedIOException(invalid);
++            }
++            return result;
++        });
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeSoundLibraryTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeSoundLibraryTest.java
+new file mode 100644
+index 000000000..833e8c3e6
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/NativeSoundLibraryTest.java
+@@ -0,0 +1,60 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import net.raphimc.viabedrock.api.resourcepack.NativeSoundLibrary;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import org.junit.jupiter.api.Test;
++
++import java.io.ByteArrayInputStream;
++import java.io.ByteArrayOutputStream;
++import java.io.IOException;
++import java.nio.ByteBuffer;
++import java.util.List;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipOutputStream;
++
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++
++class NativeSoundLibraryTest {
++
++    @Test
++    void preservesPackOrderAndSampleOverridesWithoutUnrelatedFiles() throws Exception {
++        final var lower = new InMemoryContent();
++        final var upper = new InMemoryContent();
++        lower.put("sounds/test.ogg", new byte[]{1});
++        upper.put("sounds/test.ogg", new byte[]{2});
++        upper.put("textures/test.png", new byte[]{3});
++        final byte[] archive = NativeSoundLibrary.encode(List.of(lower, upper));
++        final var packs = NativeSoundLibrary.decode(new ByteArrayInputStream(archive));
++        assertEquals(2, packs.size());
++        assertEquals(1, packs.get(0).size());
++        assertEquals(1, packs.get(1).size());
++        assertArrayEquals(new byte[]{1}, packs.get(0).get("sounds/test.ogg"));
++        assertArrayEquals(new byte[]{2}, packs.get(1).get("sounds/test.ogg"));
++        assertArrayEquals(archive, NativeSoundLibrary.encode(List.of(lower, upper)));
++    }
++
++    @Test
++    void rejectsEscapingAndInvalidPackPaths() throws Exception {
++        for (final String path : List.of("0/sounds/../test.ogg", "1/sounds/test.ogg", "0/sounds//test.ogg")) {
++            final var bytes = new ByteArrayOutputStream();
++            try (var zip = new ZipOutputStream(bytes)) {
++                zip.putNextEntry(new ZipEntry("header"));
++                zip.write(ByteBuffer.allocate(12).putInt(1).putInt(ProtocolConstants.BEDROCK_PROTOCOL_VERSION).putInt(1).array());
++                zip.closeEntry();
++                zip.putNextEntry(new ZipEntry(path));
++                zip.write(1);
++                zip.closeEntry();
++            }
++            assertThrows(IOException.class, () -> NativeSoundLibrary.decode(new ByteArrayInputStream(bytes.toByteArray())));
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/PlaySoundPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlaySoundPacketsTest.java
 new file mode 100644
 index 000000000..11aa77cad
@@ -254,6 +861,91 @@ index 000000000..11aa77cad
 +                    }
 +                }
 +            }
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/SoundUpdateTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/SoundUpdateTest.java
+new file mode 100644
+index 000000000..a736cb21b
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/SoundUpdateTest.java
+@@ -0,0 +1,79 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.SoundPlaybackMessage;
++import net.raphimc.viabedrock.protocol.model.SoundUpdate;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++
++class SoundUpdateTest {
++
++    private static final SoundUpdate.Event[] EVENTS = {new SoundUpdate.Stop(), new SoundUpdate.Volume(0.3F),
++        new SoundUpdate.Pitch(1.3F), new SoundUpdate.Fade(2, 0.2F), new SoundUpdate.Seek(0.01F),
++        new SoundUpdate.Pause(), new SoundUpdate.Resume()};
++
++    @Test
++    void readsCapturedVariantLayoutsAndPreservesNextValue() throws Exception {
++        for (int tag = 0; tag < EVENTS.length; tag++) {
++            final var buffer = Unpooled.buffer();
++            try {
++                buffer.writeLongLE(Long.MIN_VALUE);
++                for (int repeat = 0; repeat < 7; repeat++) {
++                    buffer.writeByte(tag);
++                    switch (tag) {
++                        case 1 -> buffer.writeFloatLE(0.3F);
++                        case 2 -> buffer.writeFloatLE(1.3F);
++                        case 3 -> buffer.writeFloatLE(2).writeFloatLE(0.2F);
++                        case 4 -> buffer.writeFloatLE(0.01F);
++                    }
++                }
++                buffer.writeInt(42);
++                assertEquals(new SoundUpdate(Long.MIN_VALUE, EVENTS[tag]), SoundUpdate.TYPE.read(buffer));
++                assertEquals(42, buffer.readInt());
++                assertEquals(0, buffer.readableBytes());
++                final var message = new SoundPlaybackMessage.Update(Long.MIN_VALUE, EVENTS[tag]);
++                SoundPlaybackMessage.TYPE.write(buffer, message);
++                assertEquals(message, SoundPlaybackMessage.TYPE.read(buffer));
++                assertEquals(0, buffer.readableBytes());
++            } finally {
++                buffer.release();
++            }
++        }
++    }
++
++    @Test
++    void consumesAllSevenVariantsAndUsesLastValue() {
++        final var buffer = Unpooled.buffer();
++        try {
++            buffer.writeLongLE(1);
++            for (final var event : EVENTS) {
++                SoundUpdate.writeEvent(buffer, event);
++            }
++            assertEquals(new SoundUpdate(1, EVENTS[6]), SoundUpdate.TYPE.read(buffer));
++            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void rejectsUnknownAndTruncatedVariants() {
++        final var buffer = Unpooled.buffer();
++        try {
++            buffer.writeLongLE(1).writeByte(7);
++            assertThrows(IllegalArgumentException.class, () -> SoundUpdate.TYPE.read(buffer));
++            buffer.clear().writeLongLE(1).writeByte(3).writeFloatLE(2);
++            assertThrows(IndexOutOfBoundsException.class, () -> SoundUpdate.TYPE.read(buffer));
++        } finally {
++            buffer.release();
 +        }
 +    }
 +

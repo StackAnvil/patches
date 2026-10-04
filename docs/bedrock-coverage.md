@@ -39,21 +39,21 @@ These comparisons establish the tested Linux routes; other transports and platfo
 
 ## Protocol inventory
 
-The complete applied source defines 168 inbound packet types.
-There are 106 explicit registrations, 19 explicit cancellations, and 43 automatic fallback cancellations.
+The complete applied source defines 169 inbound packet types.
+There are 108 explicit registrations, 19 explicit cancellations, and 42 automatic fallback cancellations.
 These counts describe source registration, not feature completion.
 The inventory excludes commented enum entries and includes transition registrations.
 One declared packet, `STONECUTTER_SET_RECIPE` (355), is absent from the matching protocol 2193 schema.
 Its serverbound counterpart (354) is also absent.
 Mojang introduces both in [1.26.60-preview.21, protocol 2207](https://mojang.github.io/bedrock-protocol-docs/1.26.60-preview.21/packets/clientbound-stonecutter-set-recipe-packet/).
 Their missing handlers are outside the pinned target's coverage requirements.
-The matching schema contains 167 of the inbound declarations and 80 of the 81 outbound declarations.
+The matching schema contains 168 of the inbound declarations and 80 of the 81 outbound declarations.
 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
 | P1 | Every inbound packet and field | Incomplete | Audit registered handlers for discarded fields and implement applicable missing behavior. |
 | P2 | Every outbound packet and field | Incomplete | Audit request generation, flags, enum values, state transitions, and native client ordering. |
-| P3 | Target packets absent from enums | Incomplete | Matching schema comparison identifies 21 packet IDs absent from both direction enums, listed below. Audit native applicability and direction before adding production paths. |
+| P3 | Target packets absent from enums | Incomplete | Matching schema comparison identifies 20 packet IDs absent from both direction enums, listed below. Audit native applicability and direction before adding production paths. |
 | P4 | Intentional exclusions | Incomplete | Record versioned evidence for each telemetry, Education, platform, or obsolete exclusion. |
 
 A private capture of the rebuilt ViaProxy route records the target server's startup order on 2026-10-03.
@@ -75,7 +75,7 @@ Native handling of those conflicting signals and live paused-clock behavior rema
 ### Target packets absent from both direction enums
 
 The [Mojang 1.26.51 metadata release](https://github.com/Mojang/bedrock-protocol-docs/releases/tag/v1.26.51) declares protocol 2193.
-Its schema contains 231 packet IDs; 21 appear in neither direction enum.
+Its schema contains 231 packet IDs; 20 appear in neither direction enum.
 Some have commented declarations, which provide no runtime handling.
 This audit establishes missing declarations, not native applicability or complete field behavior.
 
@@ -88,7 +88,6 @@ This audit establishes missing declarations, not native applicability or complet
 | Presentation | `GraphicsOverrideParameterPacket`, `ClientboundTextureShiftPacket`, `CameraAimAssistActorPriorityPacket`, `LocatorBarPacket` |
 | Environment | `ClientboundAttributeLayerSyncPacket`; the matching schema describes it as currently disabled |
 | Store and presence | `ServerStoreInfoPacket`, `ServerPresenceInfoPacket` |
-| Audio | `ClientboundUpdateSoundDataPacket` |
 | Parties | `PartyChangedPacket`, `SendPartyDestinationCookiePacket`, `PartyDestinationCookieResponsePacket` |
 
 The [source guide](bedrock-development-sources.md) defines the version and enum research process.
@@ -229,7 +228,7 @@ Core still needs to derive equipment attributes from target item definitions, in
 | R1 | General actor controllers and scripts | Incomplete | Complete transitions, weighted entries, variables, events, queries, and render-controller selection. |
 | R2 | Server particle dispatch | Incomplete | Retain actor identity and Molang variables, then route effects into native playback through both connection routes. |
 | R3 | Particle runtime | Incomplete | Complete components, actor contexts, child effects, concurrency, and visible lifecycle comparisons. |
-| R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core decodes signed loops and optional playback fields. Complete playback integration for handles, loops, seeking, range behavior, controls, captions, and audible comparisons. |
+| R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core transports signed loops, optional playback fields, handle controls, and ordered sound resources through direct connections and ViaProxy. Add-on playback controls pass captured-session OpenAL checks on both routes. Complete listener-range eligibility, captions, stream policies, audible comparisons, and broader lifecycle verification. |
 | R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties through ViaProxy. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, and directional light occlusion. |
 | R6 | Equipped attachables | Incomplete | Transport graphs through ViaProxy. Complete variants, explicit bindings, per-bone materials, and material families. |
 
@@ -248,12 +247,25 @@ The same target's beta script API successfully sends volume, pitch, fade, seek, 
 Its UPDATE_SOUND_DATA payload carries a little-endian 64-bit handle, then seven tagged variants.
 Each captured message repeats the same variant seven times.
 Fade carries duration before target volume.
-The commented-out core decoder instead expects optional booleans and reverses the fade fields.
-[Gophertunnel's implementation](https://github.com/Sandertv/gophertunnel/blob/80c811b6186016b3860c358368cfa47e507f26e9/minecraft/protocol/packet/clientbound_update_sound_data.go) documents that only the final variant supplies the client's value.
+Core now decodes the complete message and uses the final variant as the effective command.
+[Gophertunnel's implementation](https://github.com/Sandertv/gophertunnel/blob/80c811b6186016b3860c358368cfa47e507f26e9/minecraft/protocol/packet/clientbound_update_sound_data.go) documents this selection rule.
 Mixed variants have not been compared with the pinned native client.
 
-These captures establish the packet format and available target API.
-They do not establish working StackAnvil handle controls or audible parity.
+Core transports playback and controls in order, plus sound resources through the converted Java pack.
+The add-on implements finite and infinite PCM loops, handle volume, pitch, fade, seek, pause, resume, and stop.
+It uses server samples, already loaded licensed assets, or a mapped Java sample without starting Store authentication.
+Ordinary Java clients retain standard sound translations; their protocol cannot express the handle controls.
+
+The captured native session replays through both direct and ViaProxy routes and loads the converted resource pack.
+Private instrumentation observes repeating playback, pitch 1.3, seek to 0.01 seconds, OpenAL pause and resume, and stop.
+ViaProxy envelope samples reach 0.2 from 0.3 over two seconds.
+The full build passes 907 tests with 110 optional asset skips.
+The core patch's seven targeted tests and both Checkstyle tasks also pass alone on the upstream base.
+
+These muted checks establish the tested controls, not audible parity.
+The sample uses a mapped Java fallback without Store sign-in.
+Live custom samples, listener-range eligibility, captions, stream interruption policies, replacement races, finite-loop controls, and broader lifecycle comparisons remain required.
+The direct replay still fails its separate skin rendering gate; the audio checks use transport-only verification.
 
 ## Skins, persona, and Dressing Room
 

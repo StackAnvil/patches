@@ -1446,3 +1446,27 @@ Downloaded artifacts contain exactly one helper per platform with a matching che
 The new Linux helper licenses and extracts 6,146 files from fresh state inside default Prism Flatpak permissions.
 All paths and bytes match the previous Windows extraction.
 The real browser code expires without completed authentication, so that boundary remains unverified.
+
+
+### Server sound playback
+
+The shared native backend now accepts complete core sound commands on direct and ViaProxy connections.
+It resolves ordered server resources, assets already loaded under a valid license, or mapped Java samples.
+Audio resolution does not acquire Store assets or open sign-in screens.
+
+PCM streams preserve signed finite and infinite loop counts without copying repeated samples.
+Processed OpenAL buffers supply the playback count used when seeking.
+Server handles support volume, pitch, timed fades, seek, pause, resume, and stop.
+Pending controls retain packet order while a sample decodes.
+Cancellation and generation checks cover queued decoding, channel allocation, engine resets, and disconnects.
+Animation cleanup uses a separate generation and leaves server voices active.
+
+Four targeted tests cover PCM frame alignment, finite and infinite repetition, remaining loops, and fade replacement.
+The full stack build passes 907 tests with 110 optional asset skips across all projects.
+A captured native control session replays through direct and ViaProxy routes, reaches spawn, and loads the converted pack.
+Private OpenAL instrumentation observes looping, pitch 1.3, seek to 0.01 seconds, independent pause and resume, and stop.
+The ViaProxy route's envelope reaches 0.2 from 0.3 over two seconds.
+The fixture uses the mapped Java sample without a Store account.
+
+The lab remains at zero volume. Audible parity, listener-range eligibility, captions, stream interruption policies, custom sample playback, handle replacement, finite-loop seeking, and broader pause/reset comparisons remain unverified or incomplete.
+These additions follow 0.3.2 and are not included in that release.
