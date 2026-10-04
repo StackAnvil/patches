@@ -1440,3 +1440,9 @@ The replayed stack passes 896 Java tests with 110 optional skips.
 Six native tests pass with two optional skips, and all 92 tooling tests pass.
 Fresh browser authentication, passkeys, Windows 11, macOS, and official-launcher runtime behavior remain unverified.
 These changes follow the published 0.3.2 release and are not included in that tag.
+
+All four updated helper builds and tests pass in [CI](https://github.com/StackAnvil/patches/actions/runs/37164336981).
+Downloaded artifacts contain exactly one helper per platform with a matching checksum.
+The new Linux helper licenses and extracts 6,146 files from fresh state inside default Prism Flatpak permissions.
+All paths and bytes match the previous Windows extraction.
+The real browser code expires without completed authentication, so that boundary remains unverified.

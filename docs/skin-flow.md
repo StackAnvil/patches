@@ -527,7 +527,7 @@ A fresh in-game test with default Prism permissions loads the account persona an
 CI-built Linux and Windows helpers produce identical paths and bytes for all 6,146 files under Flatpak and Wine 11.
 The [0.3.2 release](https://github.com/StackAnvil/patches/releases/tag/stack-v0.3.2) passes all four platform builds and tests and includes eight helpers with verified checksums.
 Ask remains the default for interactive fallback.
-The default-browser fallback is implemented after 0.3.2. A private Linux game test verifies the screen, cancellation, worker termination, and preserved pack-thread state. Microsoft issues a fresh device code and reaches its Minecraft sign-in page. Completed browser authentication, Windows 11, macOS, and official-launcher runtime behavior still need verification.
+The default-browser fallback is implemented after 0.3.2. A private Linux game test verifies the screen, cancellation, worker termination, and preserved pack-thread state. Microsoft issues a fresh device code and reaches its Minecraft sign-in page. Completed browser authentication, Windows 11, macOS, and official-launcher runtime behavior still need verification. All four new helper builds and tests pass in [CI](https://github.com/StackAnvil/patches/actions/runs/37164336981), and their downloaded checksums match. The new Linux helper extracts all 6,146 files from fresh state inside Prism Flatpak. Its output matches the previous Windows extraction.
 
 ### Verification still needed
 

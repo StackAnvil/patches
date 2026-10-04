@@ -348,6 +348,11 @@ Clicking Cancel restores the previous screen, stops its worker, and leaves pack 
 Microsoft also issues a real device code and reaches the Minecraft sign-in page through the browser.
 These checks do not verify completed fresh authentication, passkeys, native Windows 11, macOS, or the official launcher.
 The replayed stack passes 896 Java tests with 110 optional skips, six native tests with two optional skips, and 92 tooling tests.
+All four helper builds and tests pass in the [updated CI run](https://github.com/StackAnvil/patches/actions/runs/37164336981).
+Downloaded artifacts contain one helper per platform, each with a matching checksum.
+The new Linux helper licenses and extracts all 6,146 files from fresh state inside Prism Flatpak.
+Every extracted path and byte matches the previous Windows extraction.
+The browser code expires without a completed sign-in; fresh authentication remains unverified.
 
 A lighting queue regression reproduces a dropped refresh when a server replaces a column during an older lighting job.
 The core now retains that refresh while dispatching unrelated ready columns.
