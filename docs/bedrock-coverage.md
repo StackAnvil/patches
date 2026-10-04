@@ -974,3 +974,29 @@ Playback must release state on actor removal, world changes, disconnect, and res
 Further native comparisons must cover alias resolution, clock resets, blending, independent slots, multiple targets, and missing resources.
 Direct and ViaProxy playback of this command capture remain unverified.
 This research does not change packet handling or establish complete animation parity.
+
+
+### macOS Modrinth joining: NetherNet timeout
+
+**Implemented:** Add-on patch 0019 now removes Minecraft's application read timeout from both direct native transports.
+It preserves RakNet session deadlines and NetherNet handshake deadlines and native peer closure.
+Java TCP connections retain their application timeout.
+Core cannot change Minecraft's direct channel initialization, so this integration belongs in the add-on.
+
+**Reported evidence:** The [macOS Modrinth log](https://mclo.gs/2gcbHoK) repeatedly shows a 30-second gap between completed resource downloads and `ReadTimeoutException`.
+The interrupted built-in asset helper follows disconnect cancellation.
+Most attempts use NetherNet, which the previous timeout patch did not cover.
+The log identifies macOS 27.0 and Java 26.3, but no StackAnvil patch revision.
+It does not establish a launcher failure or the cause of the friends-list slowdown.
+
+**Transport verification:** A private loopback probe uses the exact pinned NetherNet and libdatachannel binaries on Linux.
+The unchanged baseline reproduces the application timeout.
+The updated pipeline survives a 45-second application pause and resumes payload exchange.
+A suspended server then causes native connectivity loss and client closure after about 26 seconds.
+Normal remote closure also reaches the client without an application timeout.
+The add-on and its dependencies build, and the owning patch applies without setup patches.
+
+**Unverified:** These probes do not establish Minecraft UI, Xbox signaling, or macOS runtime behavior.
+The friends-list slowdown still needs a reproducible request trace or corresponding client errors.
+CDN manifest warnings recover through protocol downloads in this log, but their original archives remain unavailable.
+See [the timeout patch notes](../patches/viafabricplus-bedrock/upstreamable/0019-preserve-raknet-sessions-during-resource-pack-prompts.pr.md) for the retained RakNet comparisons.
