@@ -97,3 +97,47 @@ The direct add-on replay also passes full transport and rendering checks with a 
 Its complete scene hash matches the same original recording, and all 216 skin updates retain their recorded bytes.
 Core reports 2159 ms for the first conversion and 1942 ms for the custom-block conversion.
 These checks establish cache, loading, and rendering regressions on both routes, without establishing complete visual parity.
+
+
+## Compress large ZIPs in parallel
+
+Core now uses Apache Commons Compress scatter/gather compression for archives with at least 8 MiB of source content and multiple entries.
+It limits each archive to four workers and the available processor count.
+Small archives and single-processor hosts keep the existing sequential writer.
+The cache already limits concurrent conversions to two per cache instance.
+The [Apache API](https://commons.apache.org/proper/commons-compress/apidocs/org/apache/commons/compress/archivers/zip/ParallelScatterZipCreator.html) documents entry ordering and executor ownership.
+
+Workers write compressed bytes into an owned temporary directory.
+The writer waits for every worker before closing backing stores and removing that directory.
+This order also applies after cancellation and output failures.
+Interrupted callers retain their interrupt status, and failed conversions use the existing cache retry path.
+
+The parallel backend preserves sorted entries, UTF-8 names, timestamps, decompressed bytes, and deterministic output across worker counts.
+Memory and disk output use the same backend selection.
+Previously cached archives remain valid because their resources and converter metadata retain the same meanings.
+
+The production-writer profile uses the same private CubeCraft input described above, Java 25, four processors, and a 2 GiB heap.
+Nine packaging iterations discard the first two iterations.
+Median streamed packaging falls from 1540 ms to 752 ms, about 51 percent.
+Main-thread packaging allocation rises from 8.0 MiB to 105.5 MiB.
+The archive grows from 90,896,162 bytes to 91,782,250 bytes, about 1 percent, because ZIP metadata differs.
+All 15,823 prepared entry contents remain byte-identical.
+
+Eight complete conversions discard the first two iterations.
+Median rewrite plus memory ZIP packaging falls from 2557 ms to 1707 ms, about 33 percent.
+Rewriting remains roughly one second.
+This profile measures conversion and packaging, not downloads, licensed acquisition, prompts, client reloads, or joining time.
+Temporary compressed data adds disk traffic and uses roughly one archive's compressed size before publication.
+macOS, Windows, concurrent conversions, and larger stacks still need performance measurements.
+
+Four regression tests cover content, ordering, timestamps, worker-count determinism, interruption, failed output, cleanup, retry, and output ownership.
+The cache tests and both Checkstyle tasks pass before the rest of the stack applies.
+The standalone patch applies to its pinned upstream base.
+All four projects build with 1008 passing Java tests, no failures or errors, and 115 optional skips.
+
+
+Cold disk-cache replays pass complete transport and rendering checks through both direct and ViaProxy connections.
+Both routes convert and load two packs with the parallel ZIP backend.
+The complete scene hash remains unchanged, all 216 recorded skins retain their bytes, and no unresolved model or block errors occur.
+The generated archives contain 15,601 and 15,959 entries.
+These checks establish packaging and loading regressions, not complete native visual parity or faster joining.

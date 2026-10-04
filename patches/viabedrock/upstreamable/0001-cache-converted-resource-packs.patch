@@ -1,4 +1,4 @@
-From 7f4ec5c798482d84ee26e8af3c7243c0e5fd9302 Mon Sep 17 00:00:00 2001
+From 156b2d9824a6c68ab27b7496017a8e208acd6adc Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:52:24 +0200
 Subject: [PATCH] perf(resource-packs): cache converted packs by content
@@ -53,9 +53,28 @@ heap memory while retaining identical archive bytes and descriptors.
 Restore entity scales as finite floats, matching the converter producer
 and entity renderer. Reject numbers outside the float domain so persisted
 metadata cannot disconnect a connection during custom actor spawning.
+
+Compress large converted ZIPs with Apache Commons Compress scatter/gather
+workers. Cap each archive at four workers and use temporary disk storage
+instead of buffering every compressed entry on the heap. Preserve sorted
+entry order, UTF-8 names, timestamps, file bytes, and deterministic output
+across worker counts. Small archives retain the existing sequential writer.
+
+Wait for all workers before closing backing stores and removing the owned
+temporary directory, including after interruption and failed writes. Keep
+interrupt status and surface compression failures to the existing cache
+retry path. Regression tests exercise ordering, content, cancellation,
+cleanup, failed output, retry, and output ownership.
+
+Cached older archives remain valid because their resources and metadata
+have the same meanings. No resource-format revision is needed for this
+packaging change. The parallel path consumes temporary disk space and has
+more allocation than the sequential writer; it does not replace RakNet
+liveness while acquisition, prompts, downloads, or client reloads are slow.
 ---
- build.gradle                                  |  10 +
- .../api/resourcepack/content/Content.java     |  28 +-
+ build.gradle                                  |  11 +
+ .../api/resourcepack/content/Content.java     |  24 +-
+ .../content/ResourcePackZipWriter.java        | 172 ++++++++++
  .../http/ConvertedResourcePackCache.java      | 253 +++++++++++++++
  .../http/ConverterDataManifest.java           |  74 +++++
  .../http/ResourcePackHttpServer.java          | 145 ++++-----
@@ -67,22 +86,33 @@ metadata cannot disconnect a connection during custom actor spawning.
  .../impl/InMemoryResourcePackProvider.java    |  34 +-
  .../impl/NoOpResourcePackProvider.java        |  11 +-
  .../storage/ResourcePackLoadStateTracker.java |  62 ++--
+ .../content/ResourcePackZipWriterTest.java    | 135 ++++++++
  .../http/ConvertedResourcePackCacheTest.java  | 255 +++++++++++++++
  .../ResourcePackClientResponseTest.java       |  74 +++++
  .../ResourcePackLoadStateTrackerTest.java     |  43 +++
- 16 files changed, 1153 insertions(+), 256 deletions(-)
+ 18 files changed, 1453 insertions(+), 260 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConverterDataManifest.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackClientResponse.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriterTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/ResourcePackClientResponseTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTrackerTest.java
 
 diff --git a/build.gradle b/build.gradle
-index b081953c4..fcd360c46 100644
+index b081953c4..0596643a6 100644
 --- a/build.gradle
 +++ b/build.gradle
-@@ -116,6 +116,16 @@ dependencies {
+@@ -103,6 +103,7 @@ dependencies {
+         exclude group: "com.viaversion.mcstructs", module: "snbt"
+         exclude group: "com.viaversion.mcstructs", module: "converter"
+     }
++    api "org.apache.commons:commons-compress:1.28.0"
+     api "com.vdurmont:semver4j:3.1.0"
+     api "com.mojang:brigadier:1.3.10"
+     api "at.yawk.lz4:lz4-java:1.12.0"
+@@ -116,6 +117,16 @@ dependencies {
      toolImplementation "org.jsoup:jsoup:1.23.2"
      toolImplementation "org.ow2.asm:asm-tree:9.10.1"
      toolImplementation "net.lenni0451.commons:asm:1.9.2"
@@ -100,10 +130,10 @@ index b081953c4..fcd360c46 100644
  
  def registerToolTask(String name, String toolMainClass, String toolDescription) {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
-index 622e99d2e..b46d5b1af 100644
+index 622e99d2e..1682dee07 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
-@@ -26,6 +26,7 @@ import java.awt.image.BufferedImage;
+@@ -26,13 +26,11 @@ import java.awt.image.BufferedImage;
  import java.io.ByteArrayInputStream;
  import java.io.ByteArrayOutputStream;
  import java.io.IOException;
@@ -111,7 +141,14 @@ index 622e99d2e..b46d5b1af 100644
  import java.io.UncheckedIOException;
  import java.nio.charset.StandardCharsets;
  import java.util.*;
-@@ -161,18 +162,23 @@ public abstract class Content {
+ import java.util.stream.Collectors;
+-import java.util.zip.Deflater;
+-import java.util.zip.ZipEntry;
+-import java.util.zip.ZipOutputStream;
+ 
+ public abstract class Content {
+ 
+@@ -161,18 +159,14 @@ public abstract class Content {
      }
  
      public byte[] toZip() throws IOException {
@@ -124,6 +161,9 @@ index 622e99d2e..b46d5b1af 100644
 -            zipOutputStream.putNextEntry(entry);
 -            zipOutputStream.write(this.get(path));
 -            zipOutputStream.closeEntry();
+-        }
+-        zipOutputStream.close();
+-        return baos.toByteArray();
 +        final ByteArrayOutputStream output = new ByteArrayOutputStream(4 * 1024 * 1024);
 +        this.writeZip(output);
 +        return output.toByteArray();
@@ -131,21 +171,188 @@ index 622e99d2e..b46d5b1af 100644
 +
 +    /** Writes the deterministic archive and closes the supplied output. */
 +    public void writeZip(final OutputStream output) throws IOException {
-+        try (ZipOutputStream zip = new ZipOutputStream(output)) {
-+            zip.setLevel(Deflater.BEST_SPEED);
-+            for (String path : this.getFilesDeep("", "").stream().sorted().toList()) {
-+                final ZipEntry entry = new ZipEntry(path);
-+                entry.setTime(0L);
-+                zip.putNextEntry(entry);
-+                zip.write(this.get(path));
-+                zip.closeEntry();
-+            }
-         }
--        zipOutputStream.close();
--        return baos.toByteArray();
++        ResourcePackZipWriter.write(this, output);
      }
  
      public static class LazyImage {
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java
+new file mode 100644
+index 000000000..d9c21a1c2
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java
+@@ -0,0 +1,172 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.api.resourcepack.content;
++
++import org.apache.commons.compress.archivers.zip.ParallelScatterZipCreator;
++import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
++import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream;
++import org.apache.commons.compress.parallel.FileBasedScatterGatherBackingStore;
++
++import java.io.ByteArrayInputStream;
++import java.io.IOException;
++import java.io.OutputStream;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.concurrent.ConcurrentLinkedQueue;
++import java.util.concurrent.ExecutionException;
++import java.util.concurrent.Executors;
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.atomic.AtomicInteger;
++import java.util.zip.Deflater;
++import java.util.zip.ZipEntry;
++import java.util.zip.ZipOutputStream;
++
++/** Compresses large archives in parallel while preserving entry order and bounded working storage. */
++final class ResourcePackZipWriter {
++
++    private static final long PARALLEL_THRESHOLD = 8 * 1024 * 1024;
++
++    private ResourcePackZipWriter() {
++    }
++
++    static void write(final Content content, final OutputStream output) throws IOException {
++        try (output) {
++            final List<Entry> entries = new ArrayList<>();
++            long bytes = 0;
++            for (final String path : content.getFilesDeep("", "").stream().sorted().toList()) {
++                final byte[] data = content.get(path);
++                entries.add(new Entry(path, data));
++                bytes += data.length;
++            }
++            final int workers = Math.min(4, Runtime.getRuntime().availableProcessors());
++            if (workers > 1 && entries.size() > 1 && bytes >= PARALLEL_THRESHOLD) {
++                writeParallel(entries, output, Path.of(System.getProperty("java.io.tmpdir")), workers);
++            } else {
++                try (ZipOutputStream zip = new ZipOutputStream(output)) {
++                    zip.setLevel(Deflater.BEST_SPEED);
++                    for (final Entry file : entries) {
++                        final ZipEntry entry = new ZipEntry(file.path());
++                        entry.setTime(0L);
++                        zip.putNextEntry(entry);
++                        zip.write(file.data());
++                        zip.closeEntry();
++                    }
++                }
++            }
++        }
++    }
++
++    static void writeParallel(final List<Entry> entries, final OutputStream output,
++                              final Path temporaryRoot, final int workers) throws IOException {
++        try (TemporaryDirectory directory = new TemporaryDirectory(Files.createTempDirectory(temporaryRoot, "viabedrock-zip-"), new ConcurrentLinkedQueue<>());
++             ZipArchiveOutputStream zip = new ZipArchiveOutputStream(output)) {
++            final AtomicInteger workerIndex = new AtomicInteger();
++            final var executor = Executors.newFixedThreadPool(workers, task -> {
++                final Thread thread = new Thread(task, "ViaBedrock ZIP Compressor-" + workerIndex.getAndIncrement());
++                thread.setDaemon(true);
++                return thread;
++            });
++            try {
++                final ParallelScatterZipCreator scatter = new ParallelScatterZipCreator(executor,
++                        directory::createStore, Deflater.BEST_SPEED);
++                zip.setEncoding("UTF-8");
++                for (final Entry file : entries) {
++                    final ZipArchiveEntry entry = new ZipArchiveEntry(file.path());
++                    entry.setTime(0L);
++                    entry.setMethod(ZipEntry.DEFLATED);
++                    scatter.addArchiveEntry(entry, () -> new ByteArrayInputStream(file.data()));
++                }
++                scatter.writeTo(zip);
++            } catch (final InterruptedException e) {
++                Thread.currentThread().interrupt();
++                throw new IOException("Interrupted resource-pack compression", e);
++            } catch (final ExecutionException e) {
++                throw new IOException("Failed to compress resource-pack entries", e.getCause());
++            } finally {
++                executor.shutdownNow();
++                boolean interrupted = Thread.interrupted();
++                while (!executor.isTerminated()) {
++                    try {
++                        executor.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
++                    } catch (final InterruptedException e) {
++                        interrupted = true;
++                    }
++                }
++                if (interrupted) {
++                    Thread.currentThread().interrupt();
++                }
++            }
++        }
++    }
++
++    record Entry(String path, byte[] data) {
++    }
++
++    /** Removes late-created worker files after the executor has terminated, including on failed writes. */
++    private record TemporaryDirectory(Path path, ConcurrentLinkedQueue<FileBasedScatterGatherBackingStore> stores) implements AutoCloseable {
++        FileBasedScatterGatherBackingStore createStore() throws IOException {
++            final var store = new FileBasedScatterGatherBackingStore(Files.createTempFile(this.path, "compressed-", ".tmp"));
++            this.stores.add(store);
++            return store;
++        }
++
++        @Override
++        public void close() throws IOException {
++            IOException failure = null;
++            for (final var store : this.stores) {
++                try {
++                    store.close();
++                } catch (final IOException e) {
++                    if (failure == null) {
++                        failure = e;
++                    } else {
++                        failure.addSuppressed(e);
++                    }
++                }
++            }
++            try (var files = Files.list(this.path)) {
++                for (final Path file : files.toList()) {
++                    try {
++                        Files.deleteIfExists(file);
++                    } catch (final IOException e) {
++                        if (failure == null) {
++                            failure = e;
++                        } else {
++                            failure.addSuppressed(e);
++                        }
++                    }
++                }
++            }
++            try {
++                Files.delete(this.path);
++            } catch (final IOException e) {
++                if (failure == null) {
++                    failure = e;
++                } else {
++                    failure.addSuppressed(e);
++                }
++            }
++            if (failure != null) {
++                throw failure;
++            }
++        }
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 new file mode 100644
 index 000000000..e35932830
@@ -1418,6 +1625,147 @@ index f7f550941..47cf78aef 100644
      }
  
  }
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriterTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriterTest.java
+new file mode 100644
+index 000000000..a4966951e
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriterTest.java
+@@ -0,0 +1,135 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.api.resourcepack.content;
++
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.io.TempDir;
++
++import java.io.ByteArrayOutputStream;
++import java.io.IOException;
++import java.io.OutputStream;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.Arrays;
++import java.util.List;
++import java.util.Random;
++import java.util.zip.ZipFile;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class ResourcePackZipWriterTest {
++
++    @TempDir
++    Path directory;
++
++    private static List<ResourcePackZipWriter.Entry> entries() {
++        final byte[] random = new byte[3 * 1024 * 1024];
++        new Random(2193).nextBytes(random);
++        return List.of(new ResourcePackZipWriter.Entry("assets/pack/a", random),
++                new ResourcePackZipWriter.Entry("assets/pack/b", new byte[random.length]),
++                new ResourcePackZipWriter.Entry("assets/pack/c", Arrays.copyOf(random, random.length)),
++                new ResourcePackZipWriter.Entry("assets/pack/é", new byte[0]));
++    }
++
++    @Test
++    void parallelWorkersPreserveBytesOrderTimestampsAndDeterminism() throws Exception {
++        final var entries = entries();
++        final ByteArrayOutputStream one = new ByteArrayOutputStream();
++        final ByteArrayOutputStream four = new ByteArrayOutputStream();
++        ResourcePackZipWriter.writeParallel(entries, one, this.directory, 1);
++        ResourcePackZipWriter.writeParallel(entries, four, this.directory, 4);
++        assertArrayEquals(one.toByteArray(), four.toByteArray());
++        try (var files = Files.list(this.directory)) {
++            assertEquals(0, files.count());
++        }
++        final Path archive = this.directory.resolve("result.zip");
++        Files.write(archive, four.toByteArray());
++        try (ZipFile zip = new ZipFile(archive.toFile())) {
++            final var actual = zip.stream().toList();
++            assertEquals(entries.stream().map(ResourcePackZipWriter.Entry::path).toList(), actual.stream().map(java.util.zip.ZipEntry::getName).toList());
++            for (int i = 0; i < entries.size(); i++) {
++                assertEquals(0L, actual.get(i).getTime());
++                try (var input = zip.getInputStream(actual.get(i))) {
++                    assertArrayEquals(entries.get(i).data(), input.readAllBytes());
++                }
++            }
++        }
++    }
++
++    @Test
++    void outputFailureRemovesAllWorkerFilesAndAllowsRetry() throws Exception {
++        final var entries = entries();
++        final OutputStream failing = new OutputStream() {
++            private int remaining = 1024;
++
++            @Override
++            public void write(final int value) throws IOException {
++                if (--this.remaining < 0) {
++                    throw new IOException();
++                }
++            }
++        };
++        assertThrows(IOException.class, () -> ResourcePackZipWriter.writeParallel(entries, failing, this.directory, 4));
++        try (var files = Files.list(this.directory)) {
++            assertEquals(0, files.count());
++        }
++        final ByteArrayOutputStream retry = new ByteArrayOutputStream();
++        ResourcePackZipWriter.writeParallel(entries, retry, this.directory, 4);
++        assertTrue(retry.size() > 0);
++        try (var files = Files.list(this.directory)) {
++            assertEquals(0, files.count());
++        }
++    }
++
++    @Test
++    void interruptionPreservesTheSignalAndRemovesWorkerStorage() throws Exception {
++        final var entries = entries();
++        try {
++            Thread.currentThread().interrupt();
++            final IOException error = assertThrows(IOException.class, () -> ResourcePackZipWriter.writeParallel(entries, OutputStream.nullOutputStream(), this.directory, 4));
++            assertInstanceOf(InterruptedException.class, error.getCause());
++            assertTrue(Thread.currentThread().isInterrupted());
++        } finally {
++            Thread.interrupted();
++        }
++        try (var files = Files.list(this.directory)) {
++            assertEquals(0, files.count());
++        }
++    }
++
++    @Test
++    void contentClosesItsOutputWhenReadingFails() {
++        final boolean[] closed = {false};
++        final InMemoryContent content = new InMemoryContent() {
++            @Override
++            public byte[] get(final String path) {
++                throw new IllegalStateException();
++            }
++        };
++        content.put("payload", new byte[1]);
++        final ByteArrayOutputStream output = new ByteArrayOutputStream() {
++            @Override
++            public void close() {
++                closed[0] = true;
++            }
++        };
++        assertThrows(IllegalStateException.class, () -> content.writeZip(output));
++        assertTrue(closed[0]);
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 new file mode 100644
 index 000000000..53ea1ce25

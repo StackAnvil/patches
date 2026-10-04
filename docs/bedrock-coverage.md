@@ -1371,3 +1371,52 @@ Both converted packs load, and rendering checks pass without unresolved model or
 The full stack build passes 1004 Java tests with no failures or errors and 115 optional skips.
 The shorter first ViaProxy run ended before the full scene and does not count as complete verification.
 These runs establish regressions on both routes, without establishing full visual parity or faster joins.
+
+
+## Resource conversion: parallel ZIP compression
+
+**Implemented:** Core compresses large converted packs with up to four workers and temporary disk storage.
+Small packs and single-processor hosts retain sequential packaging.
+The writer preserves resources and metadata, waits for workers, and removes temporary storage after completion, cancellation, or failed output.
+Both direct and ViaProxy connections use this core path.
+
+**Measured:** The existing private CubeCraft stack targets Bedrock 1.26.51.1, build 51061372, and protocol 2193.
+Java 25 uses four processors and a 2 GiB heap on Linux.
+The production writer reduces median streamed packaging from 1540 ms to 752 ms across seven iterations after two warm-ups.
+Every prepared entry remains byte-identical after extraction.
+The archive has 15,823 entries and grows about 1 percent because ZIP metadata differs.
+Main-thread packaging allocation rises from 8.0 MiB to 105.5 MiB, and temporary storage adds disk traffic.
+
+Eight complete conversions discard the first two iterations.
+Median rewrite plus ZIP packaging falls from 2557 ms to 1707 ms, about 33 percent.
+These results exclude acquisition, downloads, prompts, and client reloads.
+They do not prove joining-time gains or prevent every timeout.
+
+**Automated evidence:** Worker-count determinism, content, timestamps, interruption, cleanup, retry, and output ownership tests pass.
+The standalone cache patch applies to upstream, and the full stack replays and builds.
+The projects report 1008 passing Java tests, no failures or errors, and 115 optional skips.
+See the [parallel ZIP notes](../patches/viabedrock/upstreamable/0001-cache-converted-resource-packs.pr.md#compress-large-zips-in-parallel).
+
+**Runtime evidence:** Fresh disk-cache replays pass complete transport and rendering checks on direct and ViaProxy connections.
+Both routes load two newly converted archives with 15,601 and 15,959 entries through the parallel backend.
+The complete scene hash stays unchanged, all 216 recorded skins retain their bytes, and no unresolved model or block errors occur.
+These loading checks do not establish complete native visual parity.
+
+**Remaining:** Measure concurrent conversions, larger stacks, macOS, Windows, and end-to-end joining behavior.
+Transport liveness remains necessary while other phases wait.
+
+
+## Native first-person controller diagnostics
+
+**Investigated, still incomplete:** Live probes use the matching official Bedrock build and a private two-controller player fixture.
+Both controllers reach drawing, and both named hand bones pass their visibility expressions.
+The right-hand drawing matrix includes the native empty-hand animation transform.
+The left-hand matrix includes a separate vertical offset.
+The current add-on server graph does not reproduce these poses when the fixture omits animation roots.
+
+Renaming the fixture entity file to the built-in player filename retains the same native transforms.
+An explicit empty animation list instead produces the ordinary native player hand, including after changing the pack version.
+These results narrow the gap but do not establish the complete entity-definition merge rules or the reason for that fallback.
+No guessed merge rule enters production.
+Native animation inheritance, pose application, and final visible placement still need implementation and comparison on both routes.
+All original coverage requirements remain active.
