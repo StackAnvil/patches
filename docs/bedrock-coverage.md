@@ -925,8 +925,8 @@ Camera framing, lighting, full animation timing, and broader lifecycle behavior 
 
 **Incomplete:** `ANIMATE_ENTITY` still has no production handler.
 Actor snapshots carry inputs for resource graphs, but they do not reproduce `/playanimation` commands.
-Custom actors still use a restricted animation evaluator; players and equipped models use the general actor graph.
-Both render paths need command playback before this requirement can pass.
+Custom actors now share the general resource-defined graph with players and equipped models.
+The render paths still need runtime command playback before this requirement can pass.
 
 **Protocol evidence:** The [protocol 2193 schema](https://mojang.github.io/bedrock-protocol-docs/1.26.50/packets/animate-entity-packet/) identifies packet 158 and seven serialized fields.
 The [command reference](https://learn.microsoft.com/en-us/minecraft/creator/commands/commands/playanimation?view=minecraft-bedrock-experimental) documents the command arguments.
@@ -1000,3 +1000,32 @@ The add-on and its dependencies build, and the owning patch applies without setu
 The friends-list slowdown still needs a reproducible request trace or corresponding client errors.
 CDN manifest warnings recover through protocol downloads in this log, but their original archives remain unavailable.
 See [the timeout patch notes](../patches/viafabricplus-bedrock/upstreamable/0019-preserve-raknet-sessions-during-resource-pack-prompts.pr.md) for the retained RakNet comparisons.
+
+
+### Custom actors: shared animation graph
+
+**Implemented:** Custom actors now use the general resource-defined graph for bones, variables, weighted entries, transitions, and supported animation effects.
+Explicit legacy controller roots and modern script roots share that evaluator.
+Playback belongs to an actor object and authoritative lifetime, with resource and world changes as reset boundaries.
+Deferred draws receive immutable poses. Authored custom bone names retain their identity.
+UV expressions share actor variables, and effect locators follow the model pose and actor scale.
+
+**Automated evidence:** Targeted tests cover independent actor state, weighted poses, transitions, visibility, clocks, resource overrides, camera angles, pose reset, and scaled locators.
+The obsolete restricted evaluator and its limitation tests are removed.
+The full add-on build and its core and converter dependencies pass: 976 tests pass, with 113 optional tests skipped.
+The replay audit now observes the current immutable model payload path and requires that injection to succeed.
+Tooling type checks and all 14 replay tests pass.
+
+**Runtime evidence:** The saved CubeCraft scene uses protocol 2193 and unchanged payload hash `129f13f25af8110800fc0993c9d7aedc6d86477b1835e029dad2d5700051f5a8`.
+Complete direct and ViaProxy replays both pass transport and rendering checks with that same hash.
+Each installs all 216 recorded skin updates unchanged and evaluates 43 model selections from 77 immutable model updates.
+The direct route submits 69,770 resolved custom models across 66,542 actor render frames.
+ViaProxy submits 68,750 resolved custom models across 65,567 actor render frames.
+Both screenshots show custom NPCs and banners.
+These counts establish model delivery and draw submission, without proving native animation timing or complete visual parity.
+
+**Incomplete and unverified:** Native dynamic transition, weighted-pose, and effect-timing comparisons remain necessary for custom actors.
+The CubeCraft scene exposes an unsupported opaque particle effect with texture `_`.
+Other material families, dynamic geometry selection, additional queries, and named actor events remain incomplete.
+Server animation commands also remain part of the full coverage goal.
+See [the owning patch notes](../patches/viafabricplus-bedrock/upstreamable/0014-animate-numeric-looping-bedrock-bones.pr.md) for target evidence and scope.

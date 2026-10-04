@@ -1,4 +1,4 @@
-From ac3423d4647869a7f22c41631791082bea52a702 Mon Sep 17 00:00:00 2001
+From f656d4ffa349a71ca9c43e34d942e1f2c3e37784 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:39:38 +0200
 Subject: [PATCH] feat(players): render server player controllers and costumes
@@ -83,9 +83,9 @@ because only the base skin's render type respected the controller decision.
 Preserve the face and other persona surfaces when the original body remains
 selected. First-person selection remains a separate unverified requirement.
 ---
- .../appearance/BedrockActorAnimation.java     |  34 +++
+ .../appearance/BedrockActorAnimation.java     |   4 +
  .../appearance/BedrockPlayerControllers.java  | 121 +++++++++++
- .../appearance/BedrockResourceLibrary.java    |  11 +-
+ .../appearance/BedrockResourceLibrary.java    |   1 -
  .../bedrock/render/BedrockPersonaLayer.java   |   1 +
  .../render/BedrockPlayerCostumeLayer.java     |  32 +++
  .../bedrock/render/BedrockPlayerRenderer.java |   2 +
@@ -94,7 +94,7 @@ selected. First-person selection remains a separate unverified requirement.
  .../BedrockResourceLibraryTest.java           |  84 ++++++++
  .../BedrockServerActorVisibilityTest.java     |  45 ++++
  .../render/BedrockPlayerGeometryTest.java     |  32 +++
- 11 files changed, 646 insertions(+), 5 deletions(-)
+ 11 files changed, 606 insertions(+), 5 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerCostumeLayer.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllersTest.java
@@ -102,60 +102,20 @@ selected. First-person selection remains a separate unverified requirement.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerGeometryTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
-index f3e2caa..7bedd3f 100644
+index fbafc8c..6e64754 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
-@@ -7,6 +7,7 @@ package com.viaversion.viafabricplus.bedrock.appearance;
- 
- import com.google.gson.JsonElement;
- import com.google.gson.JsonObject;
-+import com.google.gson.JsonParser;
- 
- import java.io.IOException;
- import java.util.ArrayList;
-@@ -17,9 +18,42 @@ import java.util.List;
- import java.util.Map;
- import java.util.Set;
- import java.util.function.Consumer;
-+import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+@@ -22,6 +22,10 @@ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
  
  /** A resource-defined actor graph with shared variables and independent playback clocks. */
  public final class BedrockActorAnimation {
-+
 +    public static BedrockActorAnimation serverPlayer(final ResourcePackStorage packs) throws IOException {
-+        final Map<String, JsonObject> animations = new LinkedHashMap<>();
-+        final Map<String, ControllerResource> controllers = new LinkedHashMap<>();
-+        JsonObject player = null;
-+        try {
-+            for (final var pack : packs.getPackStackBottomToTop()) {
-+                for (final String path : pack.content().getFilesDeep("entity/", ".json")) {
-+                    final JsonObject description = JsonParser.parseString(pack.content().getString(path)).getAsJsonObject()
-+                            .getAsJsonObject("minecraft:client_entity").getAsJsonObject("description");
-+                    if ("minecraft:player".equals(description.get("identifier").getAsString())) player = description;
-+                }
-+                for (final String folder : List.of("animations/", "animation_controllers/")) {
-+                    for (final String path : pack.content().getFilesDeep(folder, ".json")) {
-+                        final JsonObject document = JsonParser.parseString(pack.content().getString(path)).getAsJsonObject();
-+                        final String field = folder.equals("animations/") ? "animations" : "animation_controllers";
-+                        final JsonObject definitions = document.getAsJsonObject(field);
-+                        if (definitions == null) continue;
-+                        final boolean deferred = deferredEntry(document.has("format_version") ? document.get("format_version").getAsString() : "1.10.0");
-+                        for (final var entry : definitions.entrySet()) {
-+                            if (field.equals("animations")) animations.put(entry.getKey(), entry.getValue().getAsJsonObject());
-+                            else controllers.put(entry.getKey(), new ControllerResource(entry.getValue().getAsJsonObject(), deferred));
-+                        }
-+                        if (animations.size() > 4096 || controllers.size() > 4096) throw new IOException("Too many server actor animation resources");
-+                    }
-+                }
-+            }
-+            return player == null ? null : new BedrockActorAnimation(player, Map.of(), animations, controllers, BedrockResourceLibrary.serverEffects(packs));
-+        } catch (RuntimeException e) {
-+            throw new IOException("Invalid server player animation graph", e);
-+        }
++        return serverEntity(packs, "minecraft:player");
 +    }
-     @FunctionalInterface
-     public interface Query {
-         Object evaluate(List<Object> arguments);
++
+     public static BedrockActorAnimation serverEntity(final ResourcePackStorage packs,
+                                                      final String identifier) throws IOException {
+         return serverActor(packs, "entity/", "minecraft:client_entity", identifier);
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockPlayerControllers.java
 new file mode 100644
 index 0000000..a70dacc
@@ -284,27 +244,10 @@ index 0000000..a70dacc
 +    public record Selection(boolean bodyVisible, List<Surface> surfaces) {}
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
-index 8481d64..10f75a4 100644
+index 58084cf..10f75a4 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
-@@ -20,6 +20,16 @@ import java.util.regex.Pattern;
- 
- /** Vanilla resources in pack order, with identifier overrides and per-resource format versions. */
- final class BedrockResourceLibrary {
-+    static BedrockResourceLibrary serverEffects(final net.raphimc.viabedrock.protocol.storage.ResourcePackStorage stack)
-+            throws IOException {
-+        final var packs = stack.getPackStackBottomToTop().stream()
-+                .map(net.raphimc.viabedrock.api.resourcepack.ResourcePack::content).toList();
-+        return withServerPacks(null, BedrockServerResources.mergeLibraries(List.of(
-+                net.raphimc.viabedrock.api.resourcepack.NativeSoundLibrary.resources(packs),
-+                net.raphimc.viabedrock.api.resourcepack.NativeSoundLibrary.translationResources(packs),
-+                net.raphimc.viabedrock.api.resourcepack.NativeParticleLibrary.resources(packs))));
-+    }
-+
-     private static final Pattern VERSION_PACK =
-             Pattern.compile("vanilla_(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:\\.(0|[1-9][0-9]*))?");
-     private static final Pattern MODEL_IDENTIFIER =
-@@ -178,7 +188,6 @@ final class BedrockResourceLibrary {
+@@ -188,7 +188,6 @@ final class BedrockResourceLibrary {
  
      byte[] particleTexture(final String path) throws IOException {
          BedrockBuiltinAssets.validPath(path);
