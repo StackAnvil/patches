@@ -1,4 +1,4 @@
-From 96672ecf4ac1f1bdc850e1d9ba67c76e19ee1c12 Mon Sep 17 00:00:00 2001
+From 7c412a9ef0c259b3742911cd4b2a6c5cbedd261b Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1405,6 +1405,14 @@ Retain texts/*.lang and texts archives in the independent licensed loader.
 Require the English catalog in cache format 10 so an older extraction cannot
 silently provide a translation-incomplete resource library. Keep server text
 transport separate from the existing audio archive for reader compatibility.
+
+Resolve particle level-sound parameters before PCM loading, apply core's
+native local-emitter range gate to the original float position, and dispatch
+unmarked captions from the resolved catalog metadata. Native 1.26.51.1's
+particle sound alias path calls this emitter with marker zero. Captions
+must not disappear merely because a sample is missing or no channel opens.
+The own-marker probe separately establishes the actor identity branch; it
+does not yet complete network actor sound transport or animation captions.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   54 +
@@ -1479,14 +1487,14 @@ transport separate from the existing audio archive for reader compatibility.
  .../appearance/BedrockPersonaProfile.java     |  184 +
  .../appearance/BedrockPersonaSources.java     |  253 +
  .../appearance/BedrockPersonaTint.java        |  325 ++
- .../appearance/BedrockResourceLibrary.java    |  373 ++
+ .../appearance/BedrockResourceLibrary.java    |  375 ++
  .../appearance/BedrockServerSounds.java       |  114 +
  .../bedrock/appearance/BedrockSoundBank.java  |  137 +
- .../appearance/BedrockSoundCaptions.java      |  121 +
+ .../appearance/BedrockSoundCaptions.java      |  142 +
  .../appearance/BedrockSoundEnvelope.java      |   40 +
  .../bedrock/appearance/BedrockSoundEvent.java |  174 +
  .../bedrock/appearance/BedrockSoundFile.java  |   99 +
- .../appearance/BedrockSoundPlayback.java      |  408 ++
+ .../appearance/BedrockSoundPlayback.java      |  421 ++
  .../appearance/BedrockStoreBrowser.java       |  151 +
  .../appearance/BedrockStoreSignIn.java        |   99 +
  .../appearance/BedrockStoreTokens.java        |   70 +
@@ -1591,7 +1599,7 @@ transport separate from the existing audio archive for reader compatibility.
  .../BedrockParticleQueriesTest.java           |   99 +
  .../BedrockParticleRegistryTest.java          |  130 +
  .../appearance/BedrockParticleShapeTest.java  |  160 +
- .../appearance/BedrockParticleSoundTest.java  |  149 +
+ .../appearance/BedrockParticleSoundTest.java  |  176 +
  .../appearance/BedrockParticleSpaceTest.java  |  160 +
  .../appearance/BedrockPcmStreamTest.java      |   63 +
  .../BedrockPersonaAnimationAtlasTest.java     |  109 +
@@ -1624,7 +1632,7 @@ transport separate from the existing audio archive for reader compatibility.
  .../render/BedrockPlayerModelTest.java        |  100 +
  .../render/BedrockViewBobbingTest.java        |   93 +
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 218 files changed, 40871 insertions(+), 110 deletions(-)
+ 218 files changed, 40934 insertions(+), 110 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -23027,10 +23035,10 @@ index 0000000..fdd5aa6
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
 new file mode 100644
-index 0000000..a7b6314
+index 0000000..f2fdee5
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockResourceLibrary.java
-@@ -0,0 +1,373 @@
+@@ -0,0 +1,375 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -23254,8 +23262,8 @@ index 0000000..a7b6314
 +                event, selection, BedrockSoundFile.read(this.sound(selection.sample().name())));
 +    }
 +
-+    BedrockBuiltinAssets.Contents.ResolvedSound levelSoundEvent(
-+            final String name, final java.util.random.RandomGenerator random) throws IOException {
++    LevelSound levelSound(
++            final String name, final java.util.random.RandomGenerator random) {
 +        final String canonical = BedrockLevelSounds.name(name);
 +        if (canonical == null) return null;
 +        final BedrockLevelSounds.Configured configured = this.levelSounds.get(canonical);
@@ -23263,8 +23271,10 @@ index 0000000..a7b6314
 +        final float pitch = configured.pitch().sample(random);
 +        final float volume = BedrockLevelSounds.volume(configured.volume().sample(random));
 +        if (volume <= 0) return null;
-+        return this.soundEvent(configured.sound(), random::nextInt, volume, pitch, false);
++        return new LevelSound(configured.sound(), volume, pitch);
 +    }
++
++    record LevelSound(String name, float volume, float pitch) {}
 +
 +    JsonObject model(final String identifier) throws IOException {
 +        final List<JsonObject> definitions = this.models.get(identifier);
@@ -23669,10 +23679,10 @@ index 0000000..79aa2cd
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundCaptions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundCaptions.java
 new file mode 100644
-index 0000000..6c7375b
+index 0000000..0ae94df
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundCaptions.java
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,142 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -23707,31 +23717,52 @@ index 0000000..6c7375b
 +    private BedrockSoundCaptions() {}
 +
 +    static void accept(final SoundPlaybackMessage.Play play, final ListenerTransform listener) {
++        final var source = play.sound().positionEighths();
++        submit(play.sound().name(), play.sound().volume(),
++                new Position3f(source.x() / 8F, source.y() / 8F, source.z() / 8F), listener,
++                locale -> BedrockServerSounds.caption(play, locale));
++    }
++
++    static void accept(final BedrockResourceLibrary resources, final BedrockResourceLibrary.LevelSound sound,
++                       final Position3f source, final ListenerTransform listener) {
++        submit(sound.name(), sound.volume(), source, listener, locale -> {
++            final var definition = resources.soundDefinition(sound.name());
++            if (definition == null || definition.subtitle().isEmpty()) return null;
++            final String key = definition.subtitle();
++            return new BedrockServerSounds.Caption(key, resources.translate(key, locale));
++        });
++    }
++
++    private static void submit(final String event, final float volume, final Position3f source,
++                               final ListenerTransform listener, final CaptionLookup lookup) {
 +        final var minecraft = Minecraft.getInstance();
 +        final var settings = ViaFabricPlusBedrock.impl().settings();
-+        final float volume = play.sound().volume();
-+        if (!settings.captions().isActive() || !(volume > 0) || play.sound().name().isEmpty()) return;
++        if (!settings.captions().isActive() || !(volume > 0) || event.isEmpty()) return;
 +        final boolean hideAmbient = settings.hideAmbientCaptions().isActive();
 +        final int duration = settings.captionDuration().value().millis();
 +        final String locale = minecraft.options.languageCode;
 +        final Position3f player = minecraft.player == null ? Position3f.ZERO : position(minecraft.player.position());
-+        final var source = play.sound().positionEighths();
-+        final var direction = SoundCaptions.direction(new Position3f(source.x() / 8F, source.y() / 8F, source.z() / 8F),
-+                player, position(listener.forward()), position(listener.up()), false);
++        // Individual particle sound events use the native unmarked local-emitter path.
++        final var direction = SoundCaptions.direction(source, player, position(listener.forward()), position(listener.up()), false);
 +        final long generation = GENERATION.get();
 +        LOOKUP.execute(() -> {
 +            try {
-+                final var caption = BedrockServerSounds.caption(play, locale);
-+                if (caption == null || !SoundCaptions.admits(play.sound().name(), caption.key(), volume, true, hideAmbient)) return;
++                final var caption = lookup.caption(locale);
++                if (caption == null || !SoundCaptions.admits(event, caption.key(), volume, true, hideAmbient)) return;
 +                minecraft.execute(() -> {
 +                    if (GENERATION.get() == generation && minecraft.level != null) {
 +                        STATE.refresh(caption.text(), direction, false, duration);
 +                    }
 +                });
 +            } catch (Exception error) {
-+                ViaFabricPlusBedrock.impl().logger().warn("Could not load Bedrock sound caption {}", play.sound().name(), error);
++                ViaFabricPlusBedrock.impl().logger().warn("Could not load Bedrock sound caption {}", event, error);
 +            }
 +        });
++    }
++
++    @FunctionalInterface
++    private interface CaptionLookup {
++        BedrockServerSounds.Caption caption(String locale) throws java.io.IOException;
 +    }
 +
 +    private static Position3f position(final Vec3 position) {
@@ -24127,10 +24158,10 @@ index 0000000..fed8518
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlayback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlayback.java
 new file mode 100644
-index 0000000..786df08
+index 0000000..7fd14c2
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundPlayback.java
-@@ -0,0 +1,408 @@
+@@ -0,0 +1,421 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -24152,6 +24183,8 @@ index 0000000..786df08
 +import net.minecraft.client.sounds.SoundEngine;
 +import net.minecraft.sounds.SoundSource;
 +import net.raphimc.viabedrock.api.model.SoundPlaybackMessage;
++import net.raphimc.viabedrock.api.model.SoundListenerRange;
++import net.raphimc.viabedrock.protocol.model.Position3f;
 +import net.raphimc.viabedrock.protocol.model.SoundUpdate;
 +import net.minecraft.world.phys.Vec3;
 +import org.lwjgl.openal.AL;
@@ -24191,7 +24224,18 @@ index 0000000..786df08
 +    }
 +
 +    static void playLevel(final BedrockResourceLibrary resources, final String event, final Vec3 position) {
-+        play(event, position, () -> resources.levelSoundEvent(event, ThreadLocalRandom.current()));
++        final var sound = resources.levelSound(event, ThreadLocalRandom.current());
++        if (sound == null) return;
++        final Minecraft minecraft = Minecraft.getInstance();
++        final SoundEngine engine = ((MixinBedrockSoundManager) minecraft.getSoundManager()).viaFabricPlusBedrock$engine();
++        final var listener = engine.getListenerTransform();
++        final Vec3 listenerPosition = listener.position();
++        final var source = new Position3f((float) position.x, (float) position.y, (float) position.z);
++        if (!SoundListenerRange.passes(source,
++                new Position3f((float) listenerPosition.x, (float) listenerPosition.y, (float) listenerPosition.z), sound.volume())) return;
++        BedrockSoundCaptions.accept(resources, sound, source, listener);
++        play(sound.name(), position, () -> resources.soundEvent(sound.name(),
++                bound -> ThreadLocalRandom.current().nextInt(bound), sound.volume(), sound.pitch(), false));
 +    }
 +
 +    private static void play(final String event, final Vec3 position, final Resolver resolver) {
@@ -39593,10 +39637,10 @@ index 0000000..1371bee
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleSoundTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleSoundTest.java
 new file mode 100644
-index 0000000..f072d95
+index 0000000..dcf4126
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleSoundTest.java
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,176 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import com.google.gson.JsonObject;
@@ -39611,6 +39655,8 @@ index 0000000..f072d95
 +import java.util.ArrayList;
 +import java.util.LinkedHashMap;
 +import java.util.List;
++import java.util.Map;
++import java.nio.charset.StandardCharsets;
 +import java.util.Random;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -39683,6 +39729,29 @@ index 0000000..f072d95
 +    }
 +
 +    @Test
++    void selectsCaptionMetadataBeforeOpeningAnUnavailableSample() throws Exception {
++        final var library = BedrockResourceLibrary.soundLibrary(null, List.of(Map.of(
++                "sounds.json", """
++                        {"individual_event_sounds":{"events":{"block.click":{"sound":"test:click","volume":0.5,"pitch":1.2}}}}
++                        """.getBytes(StandardCharsets.UTF_8),
++                "sounds/sound_definitions.json", """
++                        {"format_version":"1.14.0","sound_definitions":{"test:click":{
++                          "category":"block","subtitle":"subtitles.test.click","sounds":["sounds/missing"]}}}
++                        """.getBytes(StandardCharsets.UTF_8),
++                "texts/en_US.lang", "subtitles.test.click=Click\n".getBytes(StandardCharsets.UTF_8))));
++        final var random = new Random(1);
++        final var request = library.levelSound("BLOCK.CLICK", random);
++        assertNotNull(request);
++        assertEquals(.5F, request.volume());
++        assertEquals(1.2F, request.pitch());
++        final var definition = library.soundDefinition(request.name());
++        assertNotNull(definition);
++        assertFalse(library.translate(definition.subtitle(), "de_de").isEmpty());
++        assertThrows(IOException.class, () -> library.soundEvent(request.name(), random::nextInt, request.volume(), request.pitch(), false));
++        assertNull(library.levelSound("unknown.test.event", random));
++    }
++
++    @Test
 +    void retainsInheritedRangesAndOrdersMixedActions() throws Exception {
 +        final var configurations = BedrockLevelSounds.read(json("""
 +                {"individual_event_sounds":{"volume":"[0.2, 0.6]","pitch":1.2,"events":{
@@ -39727,14 +39796,16 @@ index 0000000..f072d95
 +        };
 +        final List<String> events = List.of("drip.lava.pointed_dripstone", "drip.water.pointed_dripstone", "block.beehive.drip");
 +        for (final String event : events) {
-+            final var resolved = library.levelSoundEvent(event, random);
++            final var request = library.levelSound(event, random);
++            assertNotNull(request, event);
++            final var resolved = library.soundEvent(request.name(), random::nextInt, request.volume(), request.pitch(), false);
 +            assertNotNull(resolved, event);
 +            assertTrue(resolved.audio().pcm().length > 0);
 +            assertSame(library.soundDefinitions().get(event), resolved.event());
 +            assertEquals(event.equals("block.beehive.drip") ? .3F : .65F, resolved.selection().volume(), 1e-6F);
 +            assertEquals(event.equals("block.beehive.drip") ? .8F : 1, resolved.selection().pitch(), 1e-6F);
 +        }
-+        assertNull(library.levelSoundEvent("unknown.test.event", random));
++        assertNull(library.levelSound("unknown.test.event", random));
 +    }
 +
 +    private static BedrockMolang.Program variable() {

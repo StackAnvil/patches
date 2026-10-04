@@ -34,3 +34,8 @@ Server actor resource selection now retains render-controller JSON alongside sou
 ### WAV actor samples
 
 Include loose WAV files in the bounded server effect library. This lets actor aliases and particle sound events use the shared WAV decoder. The layered effect test now resolves and decodes a lower-pack WAV after an upper configuration override. The full build passes. This file-selection check does not establish audible actor parity.
+
+
+### Particle caption resources
+
+Retain pack language files with server effect catalogs, so local particle sound captions receive the same translation ordering as their definitions. Effect-library tests select level-sound metadata separately from sample decoding. Proxy actor/effect graph transport remains incomplete; the shared sound resource transport is independent of that gap.

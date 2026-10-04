@@ -259,8 +259,8 @@ Ordinary Java clients retain standard sound translations; their protocol cannot 
 The captured native session replays through both direct and ViaProxy routes and loads the converted resource pack.
 Private instrumentation observes repeating playback, pitch 1.3, seek to 0.01 seconds, OpenAL pause and resume, and stop.
 ViaProxy envelope samples reach 0.2 from 0.3 over two seconds.
-The current full build passes 924 tests with 110 optional asset skips.
-The current core audio patch's 23 tests and both Checkstyle tasks also pass alone on the upstream base.
+The current full build passes 926 tests with 110 optional asset skips.
+The current core audio patch's 24 tests and both Checkstyle tasks also pass alone on the upstream base.
 
 These muted checks establish the tested controls, not audible parity.
 The sample uses a mapped Java fallback without Store sign-in.
@@ -582,7 +582,7 @@ The proxy screenshot shows all five rows after the lab disables Java's movement 
 These observations establish visible caption output, not complete native layout or audible parity.
 Both replays use transport-only verification and retain their separate skin/actor rendering failures.
 
-The complete build passes 924 Java tests, with 110 optional asset tests skipped.
+The initial server-caption build passed 924 Java tests, with 110 optional asset tests skipped.
 The sound patch applies alone to the pinned upstream base and passes 23 tests and both Checkstyle tasks.
 The licensed helper selector test retains language files and text archives, including invalid-path exclusions.
 Cache format 10 requires the English catalog and refreshes older extractions.
@@ -592,3 +592,18 @@ Fresh licensed acquisition with this language selection remains unverified.
 The native local-emitter investigation establishes a separate marker argument and conditional actor-identity comparison; it does not yet establish a complete implemented actor-caption path.
 [Mojang's caption overview](https://www.minecraft.net/en-us/article/closed-captions-for-bedrock-edition) describes the controls.
 [Microsoft's language-file rules](https://github.com/MicrosoftDocs/minecraft-creator/blob/main/creator/Reference/Content/MCToolsValReference/langfiles.md) require English as the fallback language.
+
+
+### Local particle sound captions
+
+**Implemented:** Particle `sound_effect` actions resolve their individual level-sound configuration before opening a sample. Core supplies the shared native float listener gate. The client applies it to the original float source position, then dispatches unmarked caption metadata independently of PCM decoding. Server effect libraries retain language files in pack order.
+
+The pinned native particle alias path calls local emitter `1446a9460` with marker zero. Its range calculation matches the server gate's float operation order, without packet coordinate quantization or a bypass flag. Java matches all 444 native local-emitter admission cases. A targeted test verifies sub-eighth coordinates around the strict radius boundary. A metadata test retains a configured caption when its sample is unavailable.
+
+A separate native execution probe covers 800 actor-marker cases in `1447185c0`. It supplies the weak-reference result and prepared component pools, executes the actor availability/generation/removal branches and the actual unique-ID getter, and stops before local-emitter playback. Matching actor unique IDs produce the marker only while the local actor context is valid. These receipts establish the marker calculation, not implemented network actor caption transport.
+
+**Verified within scope:** A synthetic resource pack supplies near, quiet, and distant local cues. Its near cue intentionally has no PCM sample. A private main-thread audit invokes the production `playLevel` entry point in direct and ViaProxy sessions. Both clients load server translations without Store credentials, admit the near caption, exclude the quiet and distant captions, and expire the rows. HUD screenshots show caption output; concurrent server rows clip part of the added caption within the height limit. The scene transports completely, while separate skin/actor rendering checks still fail. This does not verify incoming particle packets, actor/effect graph transport, complete native layout, or audible output.
+
+The complete build passes 926 Java tests with 110 optional asset tests skipped. The audio patch applies alone to the pinned base and passes 24 tests plus both Checkstyle tasks. The targeted particle/resource-library run enables private native reference fixtures and passes 12 tests with two unrelated optional conditions skipped.
+
+**Remaining:** Network level-sound actor identity and global-position handling, attached-animation caption behavior, local gameplay captions, complete localization/layout comparisons, and audible parity remain incomplete or unverified. Native global level-sound inspection places generic cues two blocks from the listener toward their source; this differs from bypassing the server PlaySound range gate. No production behavior depends on an installed native game.

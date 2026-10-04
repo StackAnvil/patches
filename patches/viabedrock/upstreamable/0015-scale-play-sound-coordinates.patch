@@ -1,4 +1,4 @@
-From 57a01e9fbe6291f231c968cdd9c4099a931f028c Mon Sep 17 00:00:00 2001
+From 4ad61bd31766fde3d55be04f66f1916070c40514 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 19:48:51 +0200
 Subject: [PATCH] feat(audio): transport native server sound playback and
@@ -58,29 +58,37 @@ refresh behavior. Its caption-model update uses wall-clock nanoseconds and
 float subtraction. Native HUD resources define a one-second in-quart fade
 inside the selected total lifetime. Local actor sounds and complete visible
 caption parity still require separate verification.
+
+Share the native float listener gate with local emitters without quantizing
+particle positions into PlaySound's fixed-point packet domain. Native
+1.26.51.1 local-emitter execution verifies 444 admission cases; the existing
+server request gate retains its bypass behavior and coordinate conversion.
 ---
  build.gradle                                  |   6 +
  .../viabedrock/api/model/SoundCaptions.java   |  94 ++++++++
+ .../api/model/SoundListenerRange.java         |  24 ++
  .../api/model/SoundPlaybackMessage.java       |  76 ++++++
  .../api/resourcepack/NativeSoundLibrary.java  | 160 ++++++++++++
  .../api/resourcepack/SoundTranslations.java   |  52 ++++
  .../api/resourcepack/WaveSound.java           | 228 ++++++++++++++++++
  .../protocol/ClientboundBedrockPackets.java   |   4 +-
  .../bedrock/generated/MinecraftPacketIds.java |   1 +
- .../viabedrock/protocol/model/PlaySound.java  |  63 +++++
+ .../viabedrock/protocol/model/PlaySound.java  |  58 +++++
  .../protocol/model/SoundUpdate.java           | 114 +++++++++
  .../protocol/packet/WorldEffectPackets.java   | 110 ++++-----
  .../rewriter/ResourcePackRewriter.java        |   2 +
  .../NativeSoundResourceRewriter.java          |  37 +++
  .../api/model/SoundCaptionsTest.java          |  80 ++++++
+ .../api/model/SoundListenerRangeTest.java     |  27 +++
  .../resourcepack/SoundTranslationsTest.java   |  46 ++++
  .../api/resourcepack/WaveSoundTest.java       | 182 ++++++++++++++
  .../protocol/model/PlaySoundTest.java         |  66 +++++
  .../packet/NativeSoundLibraryTest.java        |  60 +++++
  .../protocol/packet/PlaySoundPacketsTest.java |  88 +++++++
  .../protocol/packet/SoundUpdateTest.java      |  79 ++++++
- 20 files changed, 1480 insertions(+), 68 deletions(-)
+ 22 files changed, 1526 insertions(+), 68 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SoundCaptions.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SoundListenerRange.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SoundPlaybackMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeSoundLibrary.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslations.java
@@ -89,6 +97,7 @@ caption parity still require separate verification.
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/SoundUpdate.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/NativeSoundResourceRewriter.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/SoundCaptionsTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/SoundListenerRangeTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslationsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/WaveSoundTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/PlaySoundTest.java
@@ -207,6 +216,36 @@ index 000000000..4e8fc997c
 +            return 1 - fade * fade * fade * fade;
 +        }
 +
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/SoundListenerRange.java b/src/main/java/net/raphimc/viabedrock/api/model/SoundListenerRange.java
+new file mode 100644
+index 000000000..d5704cbb6
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/SoundListenerRange.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.protocol.model.Position3f;
++
++/** Native float listener admission shared by server requests and local sound emitters. */
++public final class SoundListenerRange {
++
++    private SoundListenerRange() {
++    }
++
++    public static boolean passes(final Position3f source, final Position3f listener, final float volume) {
++        final float x = source.x() - listener.x();
++        final float y = source.y() - listener.y();
++        final float z = source.z() - listener.z();
++        final float radius = 16F * (volume > 1F ? volume : 1F);
++        return radius * radius > z * z + (y * y + x * x);
 +    }
 +
 +}
@@ -779,10 +818,10 @@ index 8ad52855f..f0d478948 100644
      ;
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/PlaySound.java b/src/main/java/net/raphimc/viabedrock/protocol/model/PlaySound.java
 new file mode 100644
-index 000000000..1750d727a
+index 000000000..2a52ef805
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/model/PlaySound.java
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,58 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -793,6 +832,7 @@ index 000000000..1750d727a
 +import com.viaversion.viaversion.api.minecraft.BlockPosition;
 +import com.viaversion.viaversion.api.type.Type;
 +import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.api.model.SoundListenerRange;
 +import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 +
 +/** PlaySound positions are signed fixed-point coordinates in eighths of a block. */
@@ -834,15 +874,9 @@ index 000000000..1750d727a
 +
 +    /** Bedrock 1.26.51.1 admits a request strictly inside its supplied-volume listener radius. */
 +    public boolean passesListenerRange(final float listenerX, final float listenerY, final float listenerZ) {
-+        if (this.bypassListenerRange) {
-+            return true;
-+        }
-+        final float x = this.positionEighths.x() / 8F - listenerX;
-+        final float y = this.positionEighths.y() / 8F - listenerY;
-+        final float z = this.positionEighths.z() / 8F - listenerZ;
-+        // Match the native float operations, including unordered volume and distance comparisons.
-+        final float radius = 16F * (this.volume > 1F ? this.volume : 1F);
-+        return radius * radius > z * z + (y * y + x * x);
++        return this.bypassListenerRange || SoundListenerRange.passes(
++                new Position3f(this.positionEighths.x() / 8F, this.positionEighths.y() / 8F, this.positionEighths.z() / 8F),
++                new Position3f(listenerX, listenerY, listenerZ), this.volume);
 +    }
 +
 +}
@@ -1269,6 +1303,39 @@ index 000000000..5fa8eadc1
 +        assertEquals(1, new SoundCaptions.Caption("", NONE, false, 1).opacity());
 +        assertEquals(.9375F, new SoundCaptions.Caption("", NONE, false, .5F).opacity());
 +        assertEquals(0, new SoundCaptions.Caption("", NONE, false, 0).opacity());
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/SoundListenerRangeTest.java b/src/test/java/net/raphimc/viabedrock/api/model/SoundListenerRangeTest.java
+new file mode 100644
+index 000000000..65b8a9ea4
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/SoundListenerRangeTest.java
+@@ -0,0 +1,27 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class SoundListenerRangeTest {
++
++    @Test
++    void retainsFloatCoordinatesAtTheLocalEmitterBoundary() {
++        final Position3f listener = new Position3f(0.0005F, 2, -3);
++        final float boundary = listener.x() + 16;
++        assertTrue(SoundListenerRange.passes(new Position3f(Math.nextDown(boundary), 2, -3), listener, 1));
++        assertFalse(SoundListenerRange.passes(new Position3f(boundary, 2, -3), listener, 1));
++        assertFalse(SoundListenerRange.passes(new Position3f(Math.nextUp(boundary), 2, -3), listener, 1));
++        assertTrue(SoundListenerRange.passes(new Position3f(boundary, 2, -3), listener, 2));
++        assertFalse(SoundListenerRange.passes(new Position3f(Float.NaN, 2, -3), listener, Float.POSITIVE_INFINITY));
 +    }
 +
 +}
