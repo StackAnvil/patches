@@ -1844,3 +1844,13 @@ The full add-on stack replays all 23 patches.
 
 Both clients reach playable spawn, load the converted packs, and complete the unchanged 75-second scene prefix.
 These checks establish transport and hand behavior for this fixture, not complete visual parity.
+
+### Native item comparison evidence
+
+The matching native client supplies dispatch evidence for 19 item identifiers.
+Shield, firework star, and filled map use separate comparison rules.
+The glow-stick and sparkler color exception also has identifier evidence from native globals.
+Unicorn executes 2,176 base and shield classifier cases with valid synthetic stacks and absent user data.
+These checks establish classifier branches, not complete NBT behavior, the shield timer's trigger, or final swap pixels.
+Production still uses the Java classifier and replacement threshold.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-item-classification-research) records the verified rules and remaining work.

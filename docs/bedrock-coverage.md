@@ -1552,6 +1552,68 @@ Both clients reach playable spawn, load the converted packs, and complete the un
 These checks establish transport and hand behavior for this fixture, not complete visual parity.
 
 
+### Native item classification research
+
+**Verified research:** A private inventory probe uses Bedrock 1.26.51.1, build 51061372, and protocol 2193.
+The probe records live item dispatch for 19 identifiers.
+The native functions select three results: retain, update immediately, or animate replacement.
+
+| Native item | Classifier | Relevant data comparison |
+| --- | --- | --- |
+| Shield | Separate shield classifier | Full item data and a player timer |
+| Firework star | Base classifier | Selected fields in `FireworksItem` |
+| Filled map | Base classifier | Long tag `map_uuid` |
+| Other 16 sampled identifiers | Base classifier | Default comparison accepts the relevant data |
+
+The other identifiers cover stone, bow, crossbow, fishing rod, firework rocket, banner, bed, and ink sac.
+They also cover compass, bundle, apple, diamond sword, oak boat, spyglass, trident, and goat horn.
+This sample does not establish dispatch for the entire native item catalog or custom items.
+The filled-map override also shows that the earlier static vtable scan misses some item families.
+
+The base classifier animates a replacement when the selected hotbar slot changes.
+Otherwise, equal counts and full stack equality retain the previous stack.
+The remaining cases compare item identity, auxiliary data, and the item's relevant data.
+An equal comparison updates the retained stack immediately.
+An unequal comparison animates its replacement.
+Full equality also reads block identity, restriction hashes, blocking ticks, and a nested charged item.
+Java component equality cannot reproduce these rules without the original Bedrock context.
+
+The filled-map comparison uses `map_uuid` only when its tag type is Long.
+Missing tags and other tag types compare as `-1`.
+The firework-star comparison reads `FireworkType`, `FireworkTrail`, and `FireworkFlicker` as nonzero byte flags.
+Thus, its relevant-data comparison accepts different nonzero values for `FireworkType`.
+It also compares `FireworkColor` and `FireworkFade` by length and contents.
+Missing and present outer or nested compounds have separate branches.
+These are instruction findings, not live coverage of every NBT combination.
+
+The shield classifier checks item identity, effective auxiliary data, full item data, and the selected slot.
+Its timer branch animates replacement for elapsed values zero through three.
+At elapsed values of four or more, changed blocking ticks request an immediate update.
+Equal blocking ticks retain the stack.
+The native code uses unsigned subtraction for elapsed time.
+The timer's trigger remains unidentified.
+The private crouch probe records only a zero timer and does not establish that trigger.
+
+Native global names identify the color exception as `minecraft:glow_stick` and `minecraft:sparkler`.
+The helper masks effective auxiliary data with `31` and maps values of `16` or more to `5`.
+It copies the new stack and suppresses replacement when the resulting colors match.
+Other items do not enter this exception through these two identifier checks.
+
+**Instruction validation:** Unicorn executes 1,152 base-classifier cases and 1,024 shield-classifier cases without mismatches.
+The fixtures cover count changes, auxiliary data, restriction hashes, blocking ticks, item identity, selected slots, and both hands.
+They use valid synthetic stacks with absent user data and no charged item.
+The shield fixtures supply a level-tick getter and timer values.
+They do not emulate the timer's lifecycle.
+The native comparison functions run directly, with a trampoline for indirect-call dispatch.
+The private client reaches playable spawn and completes the inventory capture.
+Owned lab processes stop normally, and the existing shared lab processes remain running.
+
+**Incomplete:** Production still uses the Java classifier, busy-hand branch, and replacement threshold.
+The original Bedrock comparison context, shield timer lifecycle, complete item dispatch, and final swap pixels need implementation and verification.
+The native replacement threshold and selected-slot cache also need complete lifecycle comparisons.
+Executable exports, synthetic inputs, memory probes, and packet captures remain private.
+
+
 ## Resource conversion: shared Java parent models
 
 **Implemented:** Core exports each compiled entity or attachable geometry once as a content-addressed Java parent model.
