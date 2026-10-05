@@ -1981,3 +1981,56 @@ The matching core emits one archive, and new converted packs require this matchi
 The derived effect library also keys its snapshot by the shared decoded layers.
 Actor-cache invalidation and resource-manager replacement therefore refresh effects without a separate sound reset.
 A targeted regression test covers retained data before invalidation and refreshed texture bytes after both transitions.
+
+
+### Native color exceptions, copies, and selected-slot state
+
+**Verified research:** The matching Bedrock 1.26.51.1 executable, build 51061372, supplies the color predicate and its complete hand-tick caller.
+Static initializers bind the two native identifiers to `minecraft:glow_stick` and `minecraft:sparkler`.
+Both initializer constants match the identifiers' FNV-1 hashes.
+The predicate checks the hash and name bytes, with a mutual-pointer cache fast path for the first identifier.
+These identifiers cover the Education color exception, not banners or shields.
+
+The caller skips color handling after a retain result or when both stack counts are zero.
+For an update or animated replacement, the helper requires equal native item IDs and a recognized current item.
+It uses the block-derived auxiliary value when a block exists, except for raw wildcard value `32767`.
+Otherwise, it uses the raw auxiliary value.
+The helper masks the value with `31` and replaces results of `16` or more with `5`.
+
+Both equal and unequal normalized colors copy the current stack into the retained stack.
+Equal colors force retention, including after a selected-slot change.
+Unequal colors leave the original update or animation result in place.
+The color copy does not update the cached selected slot.
+Only the ordinary main-hand copy updates that cache, after an immediate update or the existing height threshold.
+The offhand receives no selected-slot change argument and never updates the main-hand slot cache.
+
+The owner constructor prefix initializes the cached slot and all four height fields to zero.
+It calls both native empty-stack constructors and retains the supplied client bridge.
+Six sentinel cases execute those constructors and verify empty stacks, valid flags, auxiliary values, counts, restrictions, and variant tags.
+The probe supplies the later owner allocation and stops before the remaining constructor body.
+This proves initialization for that prefix, not world changes, appearance transitions, or the owner's complete lifetime.
+
+| Native instruction probe | Cases | Scope |
+| --- | --- | --- |
+| Identifier predicate | 120 | Name and hash checks, storage, missing pointers, and cache branches |
+| Color postprocessor | 26,136 | Raw/block auxiliary values, wildcard values, normalization, and observed copy calls |
+| Base copy construction and destruction | 30 | Actual field writes and balanced weak-reference counts |
+| Color helper with native copies | 1,728 | Actual construction, destruction, assignment, and empty variants |
+| Complete hand-tick caller with native copies | 64,800 | Both hands, supplied classifications, heights, selected slots, cache writes, and retained fields |
+| Owner constructor prefix | 6 | Actual empty-stack constructors, initial slot, heights, and bridge |
+
+The larger caller probe executes actual native copy and empty-variant instructions instead of skipping them.
+It verifies retained auxiliary values and counts as well as height results and selected-slot state.
+The fixtures use synthetic stacks without user data, restrictions, or a charged item.
+Virtual classifications, inventory getters, global string allocations, and CRT boundaries remain supplied.
+The predicate fixtures also exercise synthetic cache states that do not establish valid live object construction.
+These checks do not establish every item's virtual dispatch or final rendered pixels.
+
+The private PE loader now zero-fills virtual section tails instead of reading adjacent raw-file bytes for uninitialized globals.
+The two identifier globals occupy that zero-filled region before their initializers run.
+All 2,176 earlier base and shield classifier cases still pass with the corrected loader.
+Executable bytes, exports, synthetic fixtures, and emulator programs remain private.
+
+**Incomplete:** Production still uses Java item classification.
+Complete native NBT comparison, resolved restriction hashes, charged-item construction, item dispatch, and renderer lifetime transitions require further verification and implementation.
+The color and selected-slot rules above are verified instruction behavior, not a claim that their production integration is complete.
