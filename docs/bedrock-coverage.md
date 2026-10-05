@@ -554,7 +554,7 @@ Actor/local captions, broader caption comparisons, and native stream policies re
 ### Server closed captions
 
 **Implemented:** Core supplies caption admission, float direction calculations, localized duplicate refresh, elapsed-time state, and fade values.
-A separate bounded archive transports `texts/*.lang` in pack order through the converted resource pack.
+The shared bounded native archive transports `texts/*.lang` in pack order through the converted resource pack.
 Existing native audio archives retain their format.
 An independent resource-format revision invalidates converted packs made before this additional archive existed.
 
@@ -653,7 +653,7 @@ An unchanged captured session passes transport checks through direct and ViaProx
 
 ### Shared server effect resources
 
-**Implemented:** Core exports a separate, bounded particle archive alongside sound and caption archives. It retains JSON particle definitions, render controllers, PNG/TGA images, and every source pack index. Texture-only overlays can override lower definitions, including already licensed built-in effects. Conversion does not require built-in assets to discover these images. Converted-pack format 3 invalidates caches that lack this archive.
+**Implemented:** Core exports particle dependencies in the shared bounded native archive with sounds, captions, and actor resources. It retains JSON particle definitions, render controllers, PNG/TGA images, and every source pack index. Texture-only overlays can override lower definitions, including already licensed built-in effects. Conversion does not require built-in assets to discover these images. The cache resource format invalidates conversions that lack these dependencies.
 
 The add-on merges the accepted server archives by pack index. Direct actor effects use the same core selectors without a ZIP roundtrip. Shared snapshots follow world and resource reload lifecycles. They use already loaded licensed assets when available and do not start Store sign-in. Missing built-in assets remain absent.
 
@@ -811,7 +811,7 @@ Remote-player changes, removal, ID reuse, world transitions, disconnect timing, 
 
 ### Accepted native actor resources and equipped item bindings
 
-**Implemented:** Core exports a separate native actor archive in converted-resource format 4. It preserves resolved pack order and server provenance across definitions, geometry, controllers, animations, materials, images, translations, samples, and item bindings. Existing sound, caption, and particle archive formats remain compatible. The frontend reconstructs the same core loaders from an accepted server resource pack. Resource reload and disconnect clear its cached snapshot.
+**Implemented:** Core exports native actors and effects in one shared archive with cache resource format 5. It preserves resolved pack order and server provenance across definitions, geometry, controllers, animations, materials, images, translations, samples, and item bindings. The shared effect view preserves the former sound, caption, and particle resource sets. The frontend reconstructs the same core loaders from an accepted server resource pack. Resource reload and disconnect clear its cached snapshot.
 
 This resource path works without a frontend Store session or local Bedrock installation. Player costumes and equipped models use it on direct and ViaProxy connections. Custom entity renderers now receive core-evaluated model selections through the negotiated actor channel on both routes.
 
@@ -1938,3 +1938,66 @@ Fresh disk-cache replays pass complete transport and rendering checks on direct 
 Both routes load two newly converted packs and preserve the complete recorded scene hash.
 All 216 recorded skin updates remain unchanged, with no unresolved model or block errors.
 These checks establish loading and rendering regressions, not complete native visual parity or faster joining.
+
+
+## Resource conversion: one shared native archive
+
+**Implemented:** Core emits one native archive for actors, sounds, captions, and particles.
+The actor archive already contains every resource from the three former effect archives.
+Removing those overlapping archives avoids duplicate compression, packaging, transfer, and resource decoding.
+All ordinary Java models, textures, and converter metadata remain in the outer pack.
+
+Core supplies the same bounded resource selection to local consumers without archive compression.
+Its effect view preserves the previous resource admission rules and every resolved layer index, including empty layers.
+PNG/TGA overlays still replace lower textures without requiring licensed definitions during conversion.
+Actor-only definitions and JPEG textures remain outside that effect view.
+
+The add-on shares decoded layers between actor and effect consumers for the current resource generation.
+It reads only the highest accepted server archive and ignores local packs with the same identifier.
+Reload and disconnect clear the shared cache.
+A different resource manager replaces it automatically.
+Derived effect libraries also refresh after actor-cache invalidation.
+Decode errors remain cached until invalidation, then the loader retries.
+
+The archive decoder, protocol, resource bounds, and provenance bytes retain their formats.
+Cache resource format 5 rebuilds previous disk conversions.
+New converted packs require the matching add-on because their separate effect archives no longer exist.
+Reading accepted assets requires no Microsoft Store sign-in or direct Bedrock connection.
+
+**Measured:** The private fixture contains five CubeCraft server packs and 42 licensed image layers from Bedrock 1.26.51.1.
+Java 25 uses four processors and a 2 GiB heap on Linux.
+Eight conversions exclude two warm-ups in separate baseline and candidate processes.
+The complete converted pack decreases from 78.2 MB to 49.5 MB, about 37 percent.
+The small conversion timing change does not establish a general CPU speedup.
+
+| Measured stage | Baseline | Shared archive |
+| --- | --- | --- |
+| Rewrite plus memory ZIP median | 1116 ms | 1072 ms |
+| Memory ZIP allocation on its calling thread | 308.0 MiB | 217.1 MiB |
+| Two simultaneous conversions per pair | 1393 ms | 1283 ms |
+
+The memory ZIP writer allocates about 30 percent fewer bytes on its calling thread.
+The pair measurement uses eight trials and excludes two warm-ups, with about 8 percent lower median completion time.
+Allocation totals exclude compression workers and do not measure peak heap usage.
+Disk-cache output already streams to a file, so its allocation gains differ.
+
+
+**Verified:** Every former sound, caption, and particle archive entry matches the shared archive at the same layer index.
+Their headers retain the same layer counts and target protocol.
+Tests cover effect admission, empty layers, texture overlays, locale fallback, shared decoding, reload, resource-manager replacement, and decode-error retry.
+Existing archive tests retain malformed metadata, traversal, deterministic output, and defensive reconstruction.
+Archive bounds and duplicate checks remain unchanged.
+The complete stacks replay and all four projects build.
+The final suites pass 1,033 Java tests, with 115 optional skips and no failures or errors.
+
+**Remaining:** Complete joining times, larger stacks, macOS, and Windows require further measurements.
+The outer ZIP writer still compresses the largest remaining native archive.
+Transport liveness remains necessary during acquisition, prompts, downloads, and client reloads.
+This change does not establish final native pixels or prevent every timeout.
+
+
+Fresh disk-cache replays pass complete transport and rendering checks on direct and ViaProxy connections with the final artifacts.
+Both routes load two newly converted packs and preserve the complete recorded scene and all 216 skin updates.
+Neither route reports unresolved model, block, or accepted-archive decode errors.
+The reload regression test also verifies refreshed effect bytes after actor-cache invalidation and resource-manager replacement.
+These checks establish loading regressions, not complete native visual parity or faster joining.

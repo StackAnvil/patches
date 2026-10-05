@@ -171,3 +171,17 @@ A ViaProxy connection can use a Java UUID different from the original Bedrock ac
 The previous entity-based fallback installed early fragments under the Bedrock UUID.
 Connection checks still reject updates from a different or disconnected source.
 The runtime replay results are recorded in the coverage ledger.
+
+
+## Share accepted native archive decoding
+
+Actor and effect consumers use one decoded archive for each resource generation.
+The cache selects the highest accepted server resource and ignores local files with the same identifier.
+It replaces cached layers when the resource manager changes.
+Explicit reload and disconnect cleanup also invalidate it.
+Decode errors remain cached until invalidation, then the loader retries.
+
+Four targeted tests cover shared consumers, provenance, empty layers, accepted-source selection, resource-manager replacement, invalidation, and retry after reload.
+The complete add-on suite passes with the matching core and converter dependencies.
+No Store sign-in or direct Bedrock connection is necessary to read accepted assets.
+New converted packs require this matching add-on.

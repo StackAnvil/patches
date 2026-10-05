@@ -1,4 +1,4 @@
-From 9fe36b50a510a9553af8b43f440923e7dac29250 Mon Sep 17 00:00:00 2001
+From f516394ed1709f8b2b00d0635c0c1b2247e4d909 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1565,6 +1565,12 @@ identity and animation markers. The incoming and retained stacks keep
 complete native comparison data; only the fallback comparison views omit
 it. Context-only updates must not create extra swap animations before the
 native item classifiers replace the fallback rules.
+
+Use the accepted actor archive's shared effect view for sounds, captions and
+particles. The separate libraries duplicated the same texture overlays.
+Share decoded layers with actor rendering and preserve empty layer indexes,
+effect admission, caption locales and already licensed built-in fallback.
+Invalidate the shared archive during resource reload and disconnect cleanup.
 ---
  .gitignore                                    |    4 +-
  .../kotlin/base.settings.settings.gradle.kts  |    3 +
@@ -1645,7 +1651,7 @@ native item classifiers replace the fallback rules.
  .../appearance/BedrockPlayerControllers.java  |  164 +
  .../appearance/BedrockResourceLibrary.java    |  385 ++
  .../appearance/BedrockServerParticles.java    |   98 +
- .../appearance/BedrockServerResources.java    |   92 +
+ .../appearance/BedrockServerResources.java    |   47 +
  .../appearance/BedrockServerSounds.java       |   69 +
  .../bedrock/appearance/BedrockSoundBank.java  |  137 +
  .../appearance/BedrockSoundCaptions.java      |  142 +
@@ -1778,7 +1784,7 @@ native item classifiers replace the fallback rules.
  .../appearance/BedrockPersonaTintTest.java    |  280 +
  .../BedrockResourceLibraryTest.java           |  375 ++
  .../BedrockServerParticlesTest.java           |   70 +
- .../BedrockServerResourcesTest.java           |   41 +
+ .../BedrockServerResourcesTest.java           |   72 +
  .../appearance/BedrockSoundBankTest.java      |  122 +
  .../appearance/BedrockSoundEnvelopeTest.java  |   30 +
  .../appearance/BedrockSoundEventTest.java     |  268 +
@@ -1799,7 +1805,7 @@ native item classifiers replace the fallback rules.
  .../render/BedrockPlayerModelTest.java        |  100 +
  .../render/BedrockViewBobbingTest.java        |   93 +
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 233 files changed, 42107 insertions(+), 110 deletions(-)
+ 233 files changed, 42093 insertions(+), 110 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -23899,10 +23905,10 @@ index 0000000..ceb82a0
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResources.java
 new file mode 100644
-index 0000000..cb6d1bd
+index 0000000..f68d8d0
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResources.java
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,47 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -23911,17 +23917,12 @@ index 0000000..cb6d1bd
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
++import com.viaversion.viafabricplus.bedrock.render.BedrockAcceptedResources;
++import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
 +import net.minecraft.client.Minecraft;
-+import net.minecraft.resources.Identifier;
-+import net.minecraft.server.packs.repository.PackSource;
 +import net.minecraft.server.packs.resources.ResourceManager;
-+import net.raphimc.viabedrock.api.resourcepack.NativeParticleLibrary;
-+import net.raphimc.viabedrock.api.resourcepack.NativeSoundLibrary;
 +
 +import java.io.IOException;
-+import java.io.InputStream;
-+import java.util.ArrayList;
-+import java.util.LinkedHashMap;
 +import java.util.List;
 +import java.util.Map;
 +import java.util.concurrent.atomic.AtomicLong;
@@ -23933,66 +23934,26 @@ index 0000000..cb6d1bd
 +
 +    private BedrockServerResources() {}
 +
-+    static void clear() { GENERATION.incrementAndGet(); snapshot = null; }
++    static void clear() { GENERATION.incrementAndGet(); snapshot = null; BedrockAcceptedResources.clear(); }
 +
-+    static synchronized BedrockResourceLibrary library() throws IOException {
++    static BedrockResourceLibrary library() throws IOException {
++        return library(Minecraft.getInstance().getResourceManager(), BedrockBuiltinAssets.loaded(ViaFabricPlusBedrock.impl().account().get()));
++    }
++
++    static synchronized BedrockResourceLibrary library(final ResourceManager resources, final BedrockBuiltinAssets.Contents builtin) throws IOException {
 +        final long generation = GENERATION.get();
++        final var layers = BedrockAcceptedResources.layers(resources);
 +        final var cached = snapshot;
-+        final var builtin = BedrockBuiltinAssets.loaded(ViaFabricPlusBedrock.impl().account().get());
-+        if (cached != null && cached.generation == generation && cached.builtin == builtin) return cached.library;
++        if (cached != null && cached.generation == generation && cached.layers == layers && cached.builtin == builtin) return cached.library;
 +        final List<Map<String, byte[]>> packs;
-+        if (cached != null && cached.generation == generation) packs = cached.packs;
-+        else {
-+            final ResourceManager resources = Minecraft.getInstance().getResourceManager();
-+            final List<List<Map<String, byte[]>>> archives = new ArrayList<>();
-+            read(resources, "sound_library.zip", NativeSoundLibrary::decode, archives);
-+            read(resources, "sound_translations.zip", NativeSoundLibrary::decodeTranslations, archives);
-+            read(resources, "particle_library.zip", NativeParticleLibrary::decode, archives);
-+            packs = mergeLibraries(archives);
-+        }
++        if (cached != null && cached.generation == generation && cached.layers == layers) packs = cached.packs;
++        else packs = NativeActorLibrary.effects(layers);
 +        final var library = BedrockResourceLibrary.withServerPacks(builtin == null ? null : builtin.library(), packs);
-+        if (GENERATION.get() == generation) snapshot = new Snapshot(generation, builtin, packs, library);
++        if (GENERATION.get() == generation) snapshot = new Snapshot(generation, layers, builtin, packs, library);
 +        return library;
 +    }
 +
-+    private static void read(final ResourceManager resources, final String path, final Decoder decoder,
-+                             final List<List<Map<String, byte[]>>> archives) throws IOException {
-+        final var stack = resources.getResourceStack(Identifier.fromNamespaceAndPath("viabedrock", path));
-+        for (int index = stack.size() - 1; index >= 0; index--) {
-+            final var resource = stack.get(index);
-+            if (resource.source().location().source() != PackSource.SERVER) continue;
-+            try (var input = resource.open()) { archives.add(decoder.read(input)); }
-+            return;
-+        }
-+    }
-+
-+    static List<Map<String, byte[]>> mergeLibraries(final List<List<Map<String, byte[]>>> archives) throws IOException {
-+        if (archives.isEmpty()) return List.of();
-+        final int count = archives.getFirst().size();
-+        final List<Map<String, byte[]>> merged = new ArrayList<>();
-+        for (int index = 0; index < count; index++) merged.add(new LinkedHashMap<>());
-+        long total = 0;
-+        int files = 0;
-+        for (final var archive : archives) {
-+            if (archive.size() != count) throw new IOException("Mismatched native resource pack indexes");
-+            for (int index = 0; index < count; index++) {
-+                for (final var entry : archive.get(index).entrySet()) {
-+                    total += entry.getValue().length;
-+                    if (++files > 32768 || entry.getValue().length > BedrockBuiltinAssets.MAX_FILE_BYTES
-+                            || total > BedrockBuiltinAssets.MAX_TOTAL_BYTES)
-+                        throw new IOException("Native server resources exceed limits");
-+                    if (merged.get(index).putIfAbsent(entry.getKey(), entry.getValue()) != null)
-+                        throw new IOException("Duplicate native resource across archives");
-+                }
-+            }
-+        }
-+        return merged.stream().map(Map::copyOf).toList();
-+    }
-+
-+    @FunctionalInterface
-+    private interface Decoder { List<Map<String, byte[]>> read(InputStream input) throws IOException; }
-+
-+    private record Snapshot(long generation, BedrockBuiltinAssets.Contents builtin,
++    private record Snapshot(long generation, List<NativeActorLibrary.Layer> layers, BedrockBuiltinAssets.Contents builtin,
 +                            List<Map<String, byte[]>> packs, BedrockResourceLibrary library) {}
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerSounds.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerSounds.java
@@ -44160,10 +44121,10 @@ index 0000000..56b5beb
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResourcesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResourcesTest.java
 new file mode 100644
-index 0000000..154b02c
+index 0000000..9a364b5
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResourcesTest.java
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,72 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -44171,38 +44132,69 @@ index 0000000..154b02c
 + */
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
++import com.viaversion.viafabricplus.bedrock.render.BedrockAcceptedResources;
++import net.minecraft.network.chat.Component;
++import net.minecraft.server.packs.PackLocationInfo;
++import net.minecraft.server.packs.PackResources;
++import net.minecraft.server.packs.repository.PackSource;
++import net.minecraft.server.packs.resources.Resource;
++import net.minecraft.server.packs.resources.ResourceManager;
++import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import org.junit.jupiter.api.AfterEach;
 +import org.junit.jupiter.api.Test;
 +
++import java.io.ByteArrayInputStream;
 +import java.io.IOException;
++import java.lang.reflect.Proxy;
 +import java.util.List;
-+import java.util.Map;
++import java.util.Optional;
++import java.util.UUID;
++import java.util.concurrent.atomic.AtomicReference;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class BedrockServerResourcesTest {
-+    @Test
-+    void combinesIndependentArchiveKindsWithoutShiftingTextureOnlyOverlays() throws Exception {
-+        final var sound = List.of(Map.<String, byte[]>of(), Map.of("sounds/root.wav", new byte[]{1}), Map.<String, byte[]>of());
-+        final var texts = List.of(Map.<String, byte[]>of(), Map.of("texts/en_US.lang", new byte[]{2}), Map.<String, byte[]>of());
-+        final var particles = List.of(Map.<String, byte[]>of(), Map.of("particles/root.json", new byte[]{3}),
-+                Map.of("textures/particle/root.png", new byte[]{4}));
-+        final var packs = BedrockServerResources.mergeLibraries(List.of(sound, texts, particles));
-+        assertEquals(3, packs.size());
-+        assertTrue(packs.getFirst().isEmpty());
-+        assertEquals(3, packs.get(1).size());
-+        assertArrayEquals(new byte[]{1}, packs.get(1).get("sounds/root.wav"));
-+        assertArrayEquals(new byte[]{3}, packs.get(1).get("particles/root.json"));
-+        assertArrayEquals(new byte[]{4}, packs.get(2).get("textures/particle/root.png"));
-+        assertThrows(UnsupportedOperationException.class, () -> packs.get(1).clear());
++
++    @AfterEach
++    void clear() {
++        BedrockServerResources.clear();
 +    }
 +
 +    @Test
-+    void acceptsMissingArchivesButRejectsInconsistentIndexesAndDuplicates() throws Exception {
-+        assertTrue(BedrockServerResources.mergeLibraries(List.of()).isEmpty());
-+        final var particles = List.of(Map.of("particles/root.json", new byte[]{3}));
-+        assertEquals(1, BedrockServerResources.mergeLibraries(List.of(particles)).size());
-+        assertThrows(IOException.class, () -> BedrockServerResources.mergeLibraries(List.of(particles, List.of())));
-+        assertThrows(IOException.class, () -> BedrockServerResources.mergeLibraries(List.of(particles, particles)));
++    void refreshesDerivedEffectsAfterActorInvalidationAndResourceManagerReplacement() throws Exception {
++        final var bytes = new AtomicReference<>(archive((byte) 1));
++        final var manager = resources(bytes);
++        final var first = BedrockServerResources.library(manager, null);
++        assertArrayEquals(new byte[]{1}, first.file("textures/shared.png"));
++        bytes.set(archive((byte) 2));
++        assertSame(first, BedrockServerResources.library(manager, null));
++        BedrockAcceptedResources.clear();
++        final var refreshed = BedrockServerResources.library(manager, null);
++        assertNotSame(first, refreshed);
++        assertArrayEquals(new byte[]{2}, refreshed.file("textures/shared.png"));
++        bytes.set(archive((byte) 3));
++        final var replaced = BedrockServerResources.library(resources(bytes), null);
++        assertNotSame(refreshed, replaced);
++        assertArrayEquals(new byte[]{3}, replaced.file("textures/shared.png"));
++    }
++
++    private static byte[] archive(final byte texture) throws IOException {
++        final var content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"name\":\"test\",\"uuid\":\""
++                + UUID.randomUUID() + "\",\"version\":[1,0,0]}}");
++        content.put("textures/shared.png", new byte[]{texture});
++        return NativeActorLibrary.encode(List.of(new ResourcePack(content)), ignored -> true);
++    }
++
++    private static ResourceManager resources(final AtomicReference<byte[]> bytes) {
++        final var location = new PackLocationInfo("test", Component.empty(), PackSource.SERVER, Optional.empty());
++        final var pack = (PackResources) Proxy.newProxyInstance(PackResources.class.getClassLoader(), new Class[]{PackResources.class},
++                (proxy, method, arguments) -> method.getName().equals("location") ? location : null);
++        final var resource = new Resource(pack, () -> new ByteArrayInputStream(bytes.get()));
++        return (ResourceManager) Proxy.newProxyInstance(ResourceManager.class.getClassLoader(), new Class[]{ResourceManager.class},
++                (proxy, method, arguments) -> method.getName().equals("getResourceStack") ? List.of(resource) : null);
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundBankTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockSoundBankTest.java

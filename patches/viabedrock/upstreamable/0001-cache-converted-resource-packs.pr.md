@@ -16,7 +16,7 @@ Cache hit regressions also compare typed converter metadata across disk and shar
 
 ## Shared resource formats
 
-A separate resource-format revision participates in every cache fingerprint, including conversion profiles selected by later features. It invalidates older conversions when emitted resource files or formats change. The caption translation archive requires this refresh; unchanged input files must not preserve a conversion that lacks the archive.
+A separate resource-format revision participates in every cache fingerprint, including conversion profiles selected by later features. It invalidates older conversions when emitted resource files or formats change. Resource format 5 requires this refresh after native actor and effect archives merge; unchanged inputs must not retain obsolete output.
 
 ## Native effect archive format
 

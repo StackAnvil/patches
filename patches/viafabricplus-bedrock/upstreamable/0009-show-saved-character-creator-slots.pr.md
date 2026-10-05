@@ -1518,7 +1518,7 @@ Validation: the Java comparison matches 1,188 native packet-domain cases. The fu
 
 ## Server closed captions
 
-The client snapshots player/listener pose after native sound range admission and resolves caption metadata independently of sample decoding and channel allocation. Core owns admission, direction, duplicate refresh, time, and fade state. The client supplies persisted controls and HUD drawing. Server translations arrive through a separate core resource archive on direct and ViaProxy routes. Already licensed catalogs remain available without initiating Store sign-in.
+The client snapshots player/listener pose after native sound range admission and resolves caption metadata independently of sample decoding and channel allocation. Core owns admission, direction, duplicate refresh, time, and fade state. The client supplies persisted controls and HUD drawing. Server translations arrive through the shared core native archive on direct and ViaProxy routes. Already licensed catalogs remain available without initiating Store sign-in.
 
 The pinned native factory and duration-vector initializer establish disabled caption/filter defaults, top-right placement, a 1,500 millisecond default, and half-second duration steps from 1,000 to 4,000 milliseconds. The HUD uses the native 30% area, 50-unit inset, arrows, centered text, chat background, and final one-second quartic fade.
 
@@ -1964,3 +1964,20 @@ All 23 add-on patches replay successfully.
 Item selection still uses Java fallback rules.
 Native item-specific comparison, restriction hashing, derived auxiliary data, charged items, selected-slot timing, and final visible parity remain incomplete or unverified.
 The [coverage ledger](../../../docs/bedrock-coverage.md#original-bedrock-item-comparison-data) records the contract and limits.
+
+
+## Reuse the accepted archive for effects
+
+Sound, caption, and particle loaders use the core actor archive's shared effect view.
+The view preserves previous file admission, layer order, empty layers, texture overlays, and caption locales.
+Accepted resources share their decoded bytes with actor loaders.
+Already licensed built-in assets retain their existing fallback order.
+Reload and disconnect invalidate the shared archive cache.
+
+The separate effect archives and their merge helper no longer serve production paths, so remove them.
+The existing resource-library tests retain sound, caption, particle, and overlay behavior.
+The matching core emits one archive, and new converted packs require this matching add-on.
+
+The derived effect library also keys its snapshot by the shared decoded layers.
+Actor-cache invalidation and resource-manager replacement therefore refresh effects without a separate sound reset.
+A targeted regression test covers retained data before invalidation and refreshed texture bytes after both transitions.

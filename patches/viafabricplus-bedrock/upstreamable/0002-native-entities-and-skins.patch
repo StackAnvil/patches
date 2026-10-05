@@ -1,4 +1,4 @@
-From 11aba93586f70e5d5aa7720757e41a1b8d09c42b Mon Sep 17 00:00:00 2001
+From 24b2af8bf879f7bd941939e98474fda954a1fb0e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:07 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -315,6 +315,14 @@ Resolve transported local skins from the current play listener's profile,
 which exists before the player entity. A proxy can use a Java UUID that
 is different from the Bedrock account UUID. Do not install early local
 skin fragments under the Bedrock UUID while waiting for that entity.
+
+Share accepted native archive decoding between actor and effect consumers.
+Cache layers and decode errors for the current resource manager until reload
+or disconnect invalidates them. Select only the highest accepted server
+resource, ignoring local files with the same identifier. Reading accepted
+assets requires no Store sign-in and works through direct and ViaProxy routes.
+Targeted tests cover both consumers, provenance, empty layers, resource-manager
+replacement, explicit invalidation, ignored local packs and retry after reload.
 ---
  build.gradle.kts                              |   6 +
  .../bedrock/ViaFabricPlusBedrock.java         |  17 ++
@@ -330,10 +338,11 @@ skin fragments under the Bedrock UUID while waiting for that entity.
  .../render/MixinEntityRenderDispatcher.java   |  93 ++++++
  .../render/MixinMinecraftSkinLifecycle.java   |  41 +++
  .../render/MixinPlayerSkinWidget.java         |  28 ++
+ .../render/BedrockAcceptedResources.java      |  53 ++++
  .../BedrockActorMaterialDefinitions.java      | 136 +++++++++
  .../bedrock/render/BedrockActorMaterials.java |  56 ++++
  .../render/BedrockActorRenderTypes.java       |  78 ++++++
- .../bedrock/render/BedrockActorResources.java |  50 ++++
+ .../bedrock/render/BedrockActorResources.java |  42 +++
  .../render/BedrockActorUvTransform.java       |  18 ++
  .../bedrock/render/BedrockEntityRenderer.java | 185 ++++++++++++
  .../bedrock/render/BedrockGeometry.java       | 215 ++++++++++++++
@@ -350,6 +359,7 @@ skin fragments under the Bedrock UUID while waiting for that entity.
  .../shaders/core/bedrock_actor.vsh            |  47 ++++
  .../viafabricplus-bedrock.accesswidener       |   3 +
  .../viafabricplus-bedrock.mixins.json         |  11 +
+ .../render/BedrockAcceptedResourcesTest.java  | 118 ++++++++
  .../BedrockActorMaterialDefinitionsTest.java  | 147 ++++++++++
  .../render/BedrockActorMaterialsTest.java     |  48 ++++
  .../render/BedrockActorUvTransformTest.java   |  27 ++
@@ -360,7 +370,7 @@ skin fragments under the Bedrock UUID while waiting for that entity.
  .../render/BedrockPlayerMaterialsTest.java    |  42 +++
  .../render/BedrockRidingAnchorsTest.java      | 130 +++++++++
  .../render/CustomEntityRenderStoreTest.java   |  62 ++++
- 44 files changed, 2914 insertions(+), 1 deletion(-)
+ 46 files changed, 3077 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractClientPlayer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockActorPipelines.java
@@ -373,6 +383,7 @@ skin fragments under the Bedrock UUID while waiting for that entity.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinEntityRenderDispatcher.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftSkinLifecycle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinPlayerSkinWidget.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterials.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorRenderTypes.java
@@ -390,6 +401,7 @@ skin fragments under the Bedrock UUID while waiting for that entity.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeSkinPayload.java
  create mode 100644 src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.fsh
  create mode 100644 src/main/resources/assets/viafabricplus-bedrock/shaders/core/bedrock_actor.vsh
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResourcesTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorUvTransformTest.java
@@ -1030,6 +1042,65 @@ index 0000000..582c708
 +        original.call(graphics, custom == null ? model : custom, texture, scale, rotationX, rotationY, pivotY, left, top, right, bottom);
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java
+new file mode 100644
+index 0000000..76f93d2
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResources.java
+@@ -0,0 +1,53 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import net.minecraft.resources.Identifier;
++import net.minecraft.server.packs.repository.PackSource;
++import net.minecraft.server.packs.resources.ResourceManager;
++import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
++
++import java.io.IOException;
++import java.util.List;
++
++/** Actor and effect loaders share one decoded accepted archive during each resource generation. */
++public final class BedrockAcceptedResources {
++
++    private static Snapshot snapshot;
++
++    private BedrockAcceptedResources() {}
++
++    /** Decoding accepted assets never requests authentication or a direct Bedrock connection. */
++    public static synchronized List<NativeActorLibrary.Layer> layers(final ResourceManager resources) throws IOException {
++        if (snapshot == null || snapshot.resources != resources) {
++            try {
++                snapshot = new Snapshot(resources, read(resources), null);
++            } catch (IOException | RuntimeException invalid) {
++                snapshot = new Snapshot(resources, List.of(), new IOException("Could not read accepted native resources", invalid));
++            }
++        }
++        if (snapshot.error != null) throw snapshot.error;
++        return snapshot.layers;
++    }
++
++    private static List<NativeActorLibrary.Layer> read(final ResourceManager resources) throws IOException {
++        final var stack = resources.getResourceStack(Identifier.fromNamespaceAndPath("viabedrock", "actor_library.bin"));
++        for (int index = stack.size() - 1; index >= 0; index--) {
++            final var resource = stack.get(index);
++            if (resource.source().location().source() != PackSource.SERVER) continue;
++            try (var input = resource.open()) {
++                return NativeActorLibrary.decode(input);
++            }
++        }
++        return List.of();
++    }
++
++    public static synchronized void clear() {
++        snapshot = null;
++    }
++
++    private record Snapshot(ResourceManager resources, List<NativeActorLibrary.Layer> layers, IOException error) {}
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitions.java
 new file mode 100644
 index 0000000..ad94dd0
@@ -1320,10 +1391,10 @@ index 0000000..243a5bc
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java
 new file mode 100644
-index 0000000..a2fa3db
+index 0000000..e151c22
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorResources.java
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,42 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1333,9 +1404,6 @@ index 0000000..a2fa3db
 +
 +import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
 +import net.minecraft.client.Minecraft;
-+import net.minecraft.resources.Identifier;
-+import net.minecraft.server.packs.repository.PackSource;
-+import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 +
 +import java.io.IOException;
@@ -1353,22 +1421,17 @@ index 0000000..a2fa3db
 +    public static ResourcePackStorage get() {
 +        if (loaded) return packs;
 +        loaded = true;
-+        final var resources = Minecraft.getInstance().getResourceManager();
-+        final var stack = resources.getResourceStack(Identifier.fromNamespaceAndPath("viabedrock", "actor_library.bin"));
-+        for (int index = stack.size() - 1; index >= 0; index--) {
-+            final var resource = stack.get(index);
-+            if (resource.source().location().source() != PackSource.SERVER) continue;
-+            try (var input = resource.open()) {
-+                packs = ResourcePackStorage.nativeActors(NativeActorLibrary.decode(input));
-+            } catch (IOException | RuntimeException invalid) {
-+                ViaFabricPlusBedrock.impl().logger().warn("Could not read accepted native actor resources", invalid);
-+            }
-+            break;
++        try {
++            final var layers = BedrockAcceptedResources.layers(Minecraft.getInstance().getResourceManager());
++            if (!layers.isEmpty()) packs = ResourcePackStorage.nativeActors(layers);
++        } catch (IOException | RuntimeException invalid) {
++            ViaFabricPlusBedrock.impl().logger().warn("Could not read accepted native actor resources", invalid);
 +        }
 +        return packs;
 +    }
 +
 +    public static void clear() {
++        BedrockAcceptedResources.clear();
 +        loaded = false;
 +        packs = null;
 +    }
@@ -2645,6 +2708,130 @@ index 17da109..792c730 100644
      "features.movement.MixinEntity",
      "features.movement.MixinEntityFluidInteraction",
      "features.movement.MixinEntityFluidInteraction_CurrentAccumulator",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResourcesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResourcesTest.java
+new file mode 100644
+index 0000000..ac26125
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAcceptedResourcesTest.java
+@@ -0,0 +1,118 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import net.minecraft.network.chat.Component;
++import net.minecraft.server.packs.PackLocationInfo;
++import net.minecraft.server.packs.PackResources;
++import net.minecraft.server.packs.repository.PackSource;
++import net.minecraft.server.packs.resources.Resource;
++import net.minecraft.server.packs.resources.ResourceManager;
++import net.raphimc.viabedrock.api.resourcepack.NativeActorLibrary;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.Test;
++
++import java.io.ByteArrayInputStream;
++import java.io.IOException;
++import java.lang.reflect.Proxy;
++import java.util.List;
++import java.util.Optional;
++import java.util.UUID;
++import java.util.concurrent.atomic.AtomicInteger;
++import java.util.concurrent.atomic.AtomicReference;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockAcceptedResourcesTest {
++
++    @AfterEach
++    void clear() {
++        BedrockAcceptedResources.clear();
++    }
++
++    @Test
++    void sharesTheHighestAcceptedArchiveBetweenActorAndEffectConsumers() throws Exception {
++        final var lowerOpens = new AtomicInteger();
++        final var upperOpens = new AtomicInteger();
++        final var localOpens = new AtomicInteger();
++        final var manager = resources(List.of(resource(PackSource.SERVER, archive((byte) 1), lowerOpens),
++                resource(PackSource.SERVER, archive((byte) 2), upperOpens),
++                resource(PackSource.DEFAULT, archive((byte) 3), localOpens)));
++        final var actors = BedrockAcceptedResources.layers(manager);
++        final var effects = NativeActorLibrary.effects(BedrockAcceptedResources.layers(manager));
++        assertSame(actors, BedrockAcceptedResources.layers(manager));
++        assertEquals(List.of(false, true), actors.stream().map(NativeActorLibrary.Layer::server).toList());
++        assertTrue(effects.getFirst().isEmpty());
++        assertArrayEquals(new byte[]{2}, effects.getLast().get("textures/shared.png"));
++        assertEquals(0, lowerOpens.get());
++        assertEquals(1, upperOpens.get());
++        assertEquals(0, localOpens.get());
++    }
++
++    @Test
++    void reloadAndResourceManagerReplacementDiscardDecodedLayers() throws Exception {
++        final var opens = new AtomicInteger();
++        final var manager = resources(List.of(resource(PackSource.SERVER, archive((byte) 1), opens)));
++        final var first = BedrockAcceptedResources.layers(manager);
++        BedrockAcceptedResources.clear();
++        assertNotSame(first, BedrockAcceptedResources.layers(manager));
++        assertEquals(2, opens.get());
++        final var replacement = resources(List.of(resource(PackSource.SERVER, archive((byte) 2), opens)));
++        assertArrayEquals(new byte[]{2}, BedrockAcceptedResources.layers(replacement).getLast().resources().get("textures/shared.png"));
++        assertEquals(3, opens.get());
++    }
++
++    @Test
++    void retainsDecodeErrorsUntilReloadAndThenRetriesTheAcceptedArchive() throws Exception {
++        final var opens = new AtomicInteger();
++        final var bytes = new AtomicReference<>(new byte[]{1, 2});
++        final var manager = resources(List.of(resource(PackSource.SERVER, bytes, opens)));
++        assertThrows(IOException.class, () -> BedrockAcceptedResources.layers(manager));
++        bytes.set(archive((byte) 4).get());
++        assertThrows(IOException.class, () -> BedrockAcceptedResources.layers(manager));
++        assertEquals(1, opens.get());
++        BedrockAcceptedResources.clear();
++        assertEquals(2, BedrockAcceptedResources.layers(manager).size());
++        assertEquals(2, opens.get());
++    }
++
++    @Test
++    void ignoresLocalResourcesAndAllowsNoAcceptedArchive() throws Exception {
++        final var opens = new AtomicInteger();
++        assertTrue(BedrockAcceptedResources.layers(resources(List.of())).isEmpty());
++        assertTrue(BedrockAcceptedResources.layers(resources(List.of(resource(PackSource.DEFAULT, new AtomicReference<>(new byte[]{1}), opens)))).isEmpty());
++        assertEquals(0, opens.get());
++    }
++
++    private static AtomicReference<byte[]> archive(final byte texture) throws IOException {
++        final InMemoryContent lower = new InMemoryContent();
++        final InMemoryContent upper = new InMemoryContent();
++        for (final var content : List.of(lower, upper)) {
++            content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"name\":\"test\",\"uuid\":\""
++                    + UUID.randomUUID() + "\",\"version\":[1,0,0]}}");
++        }
++        upper.put("textures/shared.png", new byte[]{texture});
++        final var packs = List.of(new ResourcePack(lower), new ResourcePack(upper));
++        return new AtomicReference<>(NativeActorLibrary.encode(packs, pack -> pack == packs.getLast()));
++    }
++
++    private static Resource resource(final PackSource source, final AtomicReference<byte[]> bytes, final AtomicInteger opens) {
++        final var location = new PackLocationInfo("test", Component.empty(), source, Optional.empty());
++        final var pack = (PackResources) Proxy.newProxyInstance(PackResources.class.getClassLoader(), new Class[]{PackResources.class},
++                (proxy, method, arguments) -> method.getName().equals("location") ? location : null);
++        return new Resource(pack, () -> {
++            opens.incrementAndGet();
++            return new ByteArrayInputStream(bytes.get());
++        });
++    }
++
++    private static ResourceManager resources(final List<Resource> stack) {
++        return (ResourceManager) Proxy.newProxyInstance(ResourceManager.class.getClassLoader(), new Class[]{ResourceManager.class},
++                (proxy, method, arguments) -> method.getName().equals("getResourceStack") ? stack : null);
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorMaterialDefinitionsTest.java
 new file mode 100644
 index 0000000..16a6ab3

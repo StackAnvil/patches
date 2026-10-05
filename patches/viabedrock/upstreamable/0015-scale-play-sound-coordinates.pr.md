@@ -95,7 +95,7 @@ A private synthetic fixture over a native recording passes through direct and Vi
 
 ## Server closed captions
 
-Core now supplies native caption admission and float direction calculations, localized duplicate refresh, elapsed-time state, and quartic fade values. A separate bounded, pack-ordered translation archive keeps the existing audio archive compatible with older readers. The add-on supplies player/listener pose, controls, and HUD drawing.
+Core now supplies native caption admission and float direction calculations, localized duplicate refresh, elapsed-time state, and quartic fade values. The shared bounded native archive retains translations in pack order. The add-on supplies player/listener pose, controls, and HUD drawing.
 
 Pinned native dispatch comparisons match 587 cases. A further 105 native executable cases verify the wall-clock float countdown at explicit performance-counter boundaries. The standalone patch passes 23 tests and both Checkstyle tasks. Direct and ViaProxy sessions load the recorded server translations without Store credentials, show five positive-volume cues in HUD state, reject the zero-volume cue, and expire them. HUD screenshots confirm rendered text and arrows on both routes; the proxy image shows all five rows with Java's tutorial disabled in the lab. Both transport-only replays retain separate skin/actor rendering failures. These observations do not establish complete native layout or audible parity.
 
@@ -111,7 +111,7 @@ Validation: the complete build passes 926 Java tests with 110 optional asset ski
 
 ## Shared particle resource transport
 
-Export particle definitions, render controllers, and PNG/TGA images in a separate native archive. Preserve empty pack indexes and texture-only overlays. Include images without discovering references through licensed built-in assets. The shared bounded codec keeps existing sound and caption archive bytes unchanged in 100 private comparison cases.
+Export particle definitions, render controllers, and PNG/TGA images in the shared native archive. Preserve empty pack indexes and texture-only overlays. Include images without discovering references through licensed built-in assets. The earlier independent archives passed 100 private byte comparisons. The current shared archive preserves their decoded resources.
 
 The core selectors also support direct consumers without compression. Targeted tests verify ordering, child definitions, overlay images, protocol validation, and rejected paths. This patch builds alone with 26 passing tests and both Checkstyle tasks. The full stack passes 933 Java tests, with 110 optional asset tests skipped.
 
@@ -132,7 +132,7 @@ An isolated target-build server supplies 2,712 section snapshots on each connect
 
 ## Native actor resources on both connection routes
 
-The converted pack now includes a separate actor archive. It retains manifests, actor and attachable definitions, geometry, animation graphs, controllers, materials, images, samples, translations, and item bindings. Existing sound, caption, and particle archive formats remain compatible.
+The converted pack includes one shared native archive for actor and effect dependencies. It retains manifests, actor and attachable definitions, geometry, animation graphs, controllers, materials, images, samples, translations, and item bindings. The matching add-on reads the shared effect view. Separate effect archives no longer appear in new packs.
 
 Archive layers preserve resolved pack order and server or built-in provenance. The frontend reconstructs the same core definition loaders without adding local vanilla layers again. It reads only an accepted server resource pack. This path needs no frontend Store session or local Bedrock installation.
 
@@ -145,7 +145,7 @@ This supplies resources for client rendering. It does not supply missing custom 
 
 ## Parallel native archives
 
-Sound, caption, particle, and actor archives now use separate tasks in the existing conversion pool.
+The earlier implementation used separate tasks for sound, caption, particle, and actor archives. The shared archive below supersedes those tasks.
 The encoders retain their pack order, provenance, and format.
 The first optimization used only the existing conversion pool.
 
@@ -258,3 +258,52 @@ Fresh disk-cache replays pass complete transport and rendering checks on direct 
 Both routes load two newly converted packs and preserve the complete recorded scene hash.
 All 216 recorded skin updates remain unchanged, with no unresolved model or block errors.
 These checks establish loading and rendering regressions, not complete native visual parity or faster joining.
+
+
+## Share native actor and effect dependencies
+
+The existing actor archive contains every file from the sound, caption, and particle archives.
+Emit that archive once and preserve its decoder format, resolved layer order, provenance, resource bounds, and deterministic bytes.
+The effect view retains the original admission rules, including texture-only overlays and empty indexes.
+Local consumers use the same bounded selection without compression.
+
+The matching add-on shares decoded layers across actor and effect loaders.
+The separate archive encoders and readers no longer serve production paths, so remove them.
+Keep caption locale tests on the shared archive and retain the common codec's validation tests.
+Cache resource format 5 rebuilds older disk output.
+New conversions require the matching add-on.
+
+A private five-pack CubeCraft fixture includes 42 licensed image layers from the matching 1.26.51.1 package.
+Java 25 uses four processors and a 2 GiB heap on Linux.
+Eight conversions exclude two warm-ups in separate baseline and candidate processes.
+Output decreases from 78.2 MB to 49.5 MB, about 37 percent.
+The small conversion timing improvement does not establish a general CPU speedup.
+
+| Measured stage | Baseline | Shared archive |
+| --- | --- | --- |
+| Rewrite plus memory ZIP median | 1116 ms | 1072 ms |
+| Memory ZIP allocation on its calling thread | 308.0 MiB | 217.1 MiB |
+| Two simultaneous conversions per pair | 1393 ms | 1283 ms |
+
+The memory ZIP writer allocates about 30 percent fewer bytes on its calling thread.
+The pair measurement uses eight trials and excludes two warm-ups, with about 8 percent lower median completion time.
+Allocation totals exclude compression workers and do not measure peak heap usage.
+Disk-cache output already streams to a file, so its allocation gains differ.
+
+
+Every removed archive entry matches its shared counterpart at the same layer index.
+Headers retain the same protocol and layer counts.
+The complete output retains ordinary Java resources after the existing model-identity and JSON-order normalization.
+Targeted tests retain effect sets, locale fallback, texture overrides, deterministic encoding, malformed archive rejection, and shared loader lifetime.
+The full stacks build with 1,033 passing Java tests, 115 optional skips, and no failures or errors.
+
+Complete joining times, larger stacks, macOS, and Windows remain unverified for this change.
+Keep transport liveness during acquisition and reload waits.
+Private input packs, licensed images, and profiler output remain outside the repository.
+
+
+Fresh disk-cache replays pass complete transport and rendering checks on direct and ViaProxy connections with the final artifacts.
+Both routes load two newly converted packs and preserve the complete recorded scene and all 216 skin updates.
+Neither route reports unresolved model, block, or accepted-archive decode errors.
+The reload regression test also verifies refreshed effect bytes after actor-cache invalidation and resource-manager replacement.
+These checks establish loading regressions, not complete native visual parity or faster joining.
