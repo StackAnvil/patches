@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { root } from "../model.ts";
 import { artifact, bundlePrism } from "../prism.ts";
 import { displayEnv } from "./display.ts";
-import { keyEvents, pointerEvents, withNamedQmp, type QmpCommand } from "./qmp.ts";
+import { clickPointer, keyEvents, withNamedQmp, type QmpCommand } from "./qmp.ts";
 
 const execute = promisify(execFile);
 const vmRoot = join(root, ".stackanvil", "lab", "vms");
@@ -305,11 +305,7 @@ export async function vmMain(args: string[]): Promise<void> {
   if (action === "click") {
     if (rest.length < 2 || rest.length > 3) throw new Error("Usage: bun run lab vm click <guest> <x> <y> [left|right|middle]");
     const button = rest[2] ?? "left";
-    const events = pointerEvents(Number(rest[0]), Number(rest[1]), button);
-    await control(spec, async (command) => {
-      await command("input-send-event", { events });
-      await command("input-send-event", { events: [{ type: "btn", data: { button, down: false } }] });
-    });
+    await control(spec, (command) => clickPointer(command, Number(rest[0]), Number(rest[1]), button));
     return;
   }
   throw new Error("Usage: bun run lab vm <doctor|prepare|start|status|stop|view|screenshot|key|click|artifacts|serve> [windows|macos] [arguments]");

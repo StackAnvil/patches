@@ -97,6 +97,7 @@ A prepared directory retains its release. Changing the release does not replace 
 Guests start with SPICE on a local Unix socket and no viewer.
 The lab sends input directly to the guest's QMP socket after checking its unique VM identity.
 A screenshot contains the guest display, even when no viewer is open.
+The click command holds the button for 100 milliseconds so guests can sample the press before release.
 
 ```bash
 bun run lab vm status windows

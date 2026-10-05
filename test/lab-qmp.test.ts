@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { withNamedQmp, withQmp } from "../src/lab/qmp.ts";
+import { clickPointer, withNamedQmp, withQmp } from "../src/lab/qmp.ts";
 
 async function fixture(reply: (socket: Socket, request: { execute: string; id: number }) => void, operation: (path: string) => Promise<void>) {
   const directory = await mkdtemp(join(tmpdir(), "sa-qmp-"));
@@ -70,4 +70,19 @@ test("guest identity mismatch blocks the operation before input or shutdown", as
     expect(commands).toBe(2);
     expect(actions).toBe(0);
   });
+});
+
+test("guest clicks keep the button pressed across input sampling frames", async () => {
+  const events: { down: boolean; time: number }[] = [];
+  await fixture((socket, request) => {
+    const args = (request as { arguments?: { events?: { type: string; data: { down?: boolean } }[] } }).arguments;
+    for (const event of args?.events ?? []) {
+      if (event.type === "btn") events.push({ down: event.data.down!, time: performance.now() });
+    }
+    socket.write(JSON.stringify({ id: request.id, return: {} }) + "\n");
+  }, async (path) => {
+    await withQmp(path, (command) => clickPointer(command, 0.5, 0.5, "left"));
+  });
+  expect(events.map((event) => event.down)).toEqual([true, false]);
+  expect(events[1]!.time - events[0]!.time).toBeGreaterThanOrEqual(90);
 });

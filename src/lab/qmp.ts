@@ -84,3 +84,13 @@ export function pointerEvents(x: number, y: number, button: string): Record<stri
     { type: "btn", data: { button, down: true } },
   ];
 }
+
+export async function clickPointer(command: QmpCommand, x: number, y: number, button: string): Promise<void> {
+  await command("input-send-event", { events: pointerEvents(x, y, button) });
+  try {
+    // Guests can sample input once per frame and miss an immediate press/release.
+    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+  } finally {
+    await command("input-send-event", { events: [{ type: "btn", data: { button, down: false } }] });
+  }
+}
