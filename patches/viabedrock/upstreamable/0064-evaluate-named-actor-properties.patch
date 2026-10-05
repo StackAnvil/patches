@@ -1,4 +1,4 @@
-From e65ef45f276dfd39c44617aecff99be099d3b776 Mon Sep 17 00:00:00 2001
+From 1e133357dca2a8a6614fc161ae68cf0cfff0fd35 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:22:35 +0200
 Subject: [PATCH] feat(entities): evaluate named actor properties and
@@ -136,13 +136,29 @@ Preserve NAME metadata formatting and case for native global transforms.
 Use wire version two and a new negotiated channel so older frontends do
 not read the changed snapshot layout. Native player gamertag initialization
 and death-counter lifecycle remain separate verification work.
+
+Retain native player blocking timestamps in the client-thread actor
+registry. Sample flags once per active simulation tick, preserve rising
+edges outside the timer guards, and reset timers on actor replacement,
+runtime identity reuse, removal, and connection cleanup. The same core
+state model serves direct and ViaProxy client integrations without
+changing the actor snapshot transport.
+
+Bedrock 1.26.51.1 build 51061372 starts the local player's blocking clock
+on a TRANSITION_BLOCKING rising edge while BLOCKING is set. Its shield
+bob callback checks that start clock but subtracts the damaged-shield
+clock. Preserve unsigned elapsed conversion and the native float clamp.
+A licensed native watchpoint confirms the start write and reset. Private
+instruction fixtures cover 120 start branches, 1728 block/damage branches,
+and 2700 bob callback cases. Keep proprietary inputs outside the patch.
 ---
  build.gradle                                  |  11 +-
  .../main/groovy/viabedrock.checkstyle.gradle  |   8 +-
  gradle.properties                             |   2 +-
  .../api/model/NativeActorMessage.java         | 172 ++++++++++++
- .../api/model/NativeActorStates.java          |  51 ++++
+ .../api/model/NativeActorStates.java          |  81 ++++++
  .../api/model/NativeCustomEntityMessage.java  | 142 ++++++++++
+ .../api/model/NativeShieldBlockingState.java  |  45 ++++
  .../api/model/entity/CustomEntity.java        | 101 ++++++-
  .../viabedrock/api/model/entity/Entity.java   |  75 ++++++
  .../api/util/BedrockTrigonometry.java         |  33 +++
@@ -155,17 +171,19 @@ and death-counter lifecycle remain separate verification work.
  .../META-INF/licenses/mochafloats.txt         |  24 ++
  .../api/model/NativeActorEntityTest.java      |  60 +++++
  .../api/model/NativeActorMessageTest.java     | 126 +++++++++
- .../api/model/NativeActorStatesTest.java      |  73 ++++++
+ .../api/model/NativeActorStatesTest.java      | 110 ++++++++
  .../model/NativeCustomEntityMessageTest.java  | 159 +++++++++++
+ .../model/NativeShieldBlockingStateTest.java  |  91 +++++++
  .../CustomEntityMaterialSelectionTest.java    |  65 +++++
  .../CustomEntityModelSelectionTest.java       |   2 +-
  .../api/model/entity/EntityScaleTest.java     | 157 +++++++++++
  .../viabedrock/api/util/MoLangEngineTest.java |  94 +++++++
  .../viabedrock/api/util/MoLangMathTest.java   | 115 ++++++++
- 25 files changed, 1937 insertions(+), 28 deletions(-)
+ 27 files changed, 2140 insertions(+), 28 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeCustomEntityMessage.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeShieldBlockingState.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/util/BedrockTrigonometry.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/util/MoLangMath.java
  create mode 100644 src/main/resources/META-INF/licenses/mochafloats.txt
@@ -173,6 +191,7 @@ and death-counter lifecycle remain separate verification work.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeActorMessageTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeActorStatesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeCustomEntityMessageTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeShieldBlockingStateTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityMaterialSelectionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/EntityScaleTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
@@ -432,16 +451,18 @@ index 000000000..dc4553d23
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
 new file mode 100644
-index 000000000..f33b953a6
+index 000000000..f34ac1dfd
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,81 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
 + * SPDX-License-Identifier: GPL-3.0-or-later
 + */
 +package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
 +
 +import java.util.HashMap;
 +import java.util.Map;
@@ -452,6 +473,8 @@ index 000000000..f33b953a6
 +
 +    private final Map<UUID, NativeActorMessage.Snapshot> actors = new HashMap<>();
 +    private final Map<Long, UUID> runtimeIds = new HashMap<>();
++    private final Map<UUID, NativeShieldBlockingState> blocking = new HashMap<>();
++    private long tick;
 +
 +    public void apply(final NativeActorMessage message, final UUID localPlayer) {
 +        final UUID uuid = message.localPlayer() ? java.util.Objects.requireNonNull(localPlayer) : message.uuid();
@@ -459,15 +482,25 @@ index 000000000..f33b953a6
 +            final var previous = this.actors.put(uuid, snapshot);
 +            if (previous != null) {
 +                this.runtimeIds.remove(previous.runtimeId(), uuid);
++                if (!previous.lifetime().equals(snapshot.lifetime()) || previous.localPlayer() != snapshot.localPlayer()) {
++                    this.blocking.remove(uuid);
++                }
++            }
++            if ("minecraft:player".equals(snapshot.identifier())) {
++                this.blocking.putIfAbsent(uuid, NativeShieldBlockingState.EMPTY);
++            } else {
++                this.blocking.remove(uuid);
 +            }
 +            final UUID previousUuid = this.runtimeIds.put(snapshot.runtimeId(), uuid);
 +            if (previousUuid != null && !previousUuid.equals(uuid)) {
 +                this.actors.remove(previousUuid);
++                this.blocking.remove(previousUuid);
 +            }
 +        } else if (message instanceof NativeActorMessage.Remove remove) {
 +            final var current = this.actors.get(uuid);
 +            if (current != null && current.lifetime().equals(remove.lifetime())) {
 +                this.actors.remove(uuid);
++                this.blocking.remove(uuid);
 +                this.runtimeIds.remove(current.runtimeId(), uuid);
 +            }
 +        }
@@ -481,9 +514,25 @@ index 000000000..f33b953a6
 +        return this.actors.get(this.runtimeIds.get(runtimeId));
 +    }
 +
++    public void tick() {
++        this.tick++;
++        for (var entry : this.blocking.entrySet()) {
++            final var actor = this.actors.get(entry.getKey());
++            entry.setValue(entry.getValue().advance(actor.flags(), this.tick, actor.localPlayer()));
++        }
++    }
++
++    public float shieldBlockingBob(final UUID uuid, final float frameAlpha) {
++        final var state = this.blocking.get(uuid);
++        final var actor = this.actors.get(uuid);
++        return state == null || actor == null ? 0F : state.bob(actor.flags().contains(ActorFlags.BLOCKING), this.tick, frameAlpha);
++    }
++
 +    public void clear() {
 +        this.actors.clear();
 +        this.runtimeIds.clear();
++        this.blocking.clear();
++        this.tick = 0;
 +    }
 +
 +}
@@ -632,6 +681,57 @@ index 000000000..e99bbbd44
 +    }
 +
 +    record Remove(UUID uuid) implements NativeCustomEntityMessage {
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeShieldBlockingState.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeShieldBlockingState.java
+new file mode 100644
+index 000000000..cd839b67a
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeShieldBlockingState.java
+@@ -0,0 +1,45 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
++
++import java.util.Set;
++
++/** Player blocking timestamps sampled once per simulation tick. */
++public record NativeShieldBlockingState(long startedTick, long blockedTick, long damagedTick,
++                                       boolean transitioningLastTick, boolean blockedLastTick, boolean damagedLastTick) {
++
++    public static final NativeShieldBlockingState EMPTY = new NativeShieldBlockingState(0, 0, 0, false, false, false);
++
++    public NativeShieldBlockingState advance(final Set<ActorFlags> flags, final long tick, final boolean localPlayer) {
++        final boolean blocking = flags.contains(ActorFlags.BLOCKING);
++        final boolean transitioning = flags.contains(ActorFlags.TRANSITION_BLOCKING);
++        final boolean blocked = flags.contains(ActorFlags.BLOCKED_USING_SHIELD);
++        final boolean damaged = flags.contains(ActorFlags.BLOCKED_USING_DAMAGED_SHIELD);
++        final long startedTick = !localPlayer || !blocking ? 0
++                : transitioning && !this.transitioningLastTick ? tick : this.startedTick;
++        final long blockedTick = !blocking || transitioning ? 0
++                : blocked && !this.blockedLastTick ? tick : this.blockedTick;
++        final long damagedTick = !blocking || transitioning ? 0
++                : damaged && !this.damagedLastTick ? tick : this.damagedTick;
++        if (startedTick == this.startedTick && blockedTick == this.blockedTick && damagedTick == this.damagedTick
++                && transitioning == this.transitioningLastTick && blocked == this.blockedLastTick && damaged == this.damagedLastTick) {
++            return this;
++        }
++        return new NativeShieldBlockingState(startedTick, blockedTick, damagedTick, transitioning, blocked, damaged);
++    }
++
++    public float bob(final boolean blocking, final long tick, final float frameAlpha) {
++        if (!blocking || this.startedTick <= 0) {
++            return 0F;
++        }
++        final long elapsed = tick - this.damagedTick;
++        final float unsignedElapsed = elapsed >= 0 ? (float) elapsed : (float) ((elapsed >>> 1) | (elapsed & 1)) * 2F;
++        return Math.max(0F, Math.min(1F, (frameAlpha + unsignedElapsed) * 0.5F)) * 4F;
 +    }
 +
 +}
@@ -1851,10 +1951,10 @@ index 000000000..6f5f63a51
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeActorStatesTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorStatesTest.java
 new file mode 100644
-index 000000000..84dce59e4
+index 000000000..9f4a17412
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeActorStatesTest.java
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,110 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1872,6 +1972,43 @@ index 000000000..84dce59e4
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class NativeActorStatesTest {
++
++    @Test
++    void samplesBlockingOnSimulationTicksAndDiscardsReplacedPlayerTimers() {
++        final var registry = new NativeActorStates();
++        final UUID player = UUID.randomUUID();
++        final UUID remote = UUID.randomUUID();
++        final UUID lifetime = UUID.randomUUID();
++        final var flags = Set.of(ActorFlags.BLOCKING, ActorFlags.TRANSITION_BLOCKING);
++        registry.apply(blockingSnapshot(player, lifetime, true, 1, flags), player);
++        registry.apply(blockingSnapshot(remote, UUID.randomUUID(), false, 2, flags), player);
++        assertEquals(0F, registry.shieldBlockingBob(player, 0.5F));
++        registry.tick();
++        assertEquals(3F, registry.shieldBlockingBob(player, 0.5F));
++        assertEquals(0F, registry.shieldBlockingBob(remote, 0.5F));
++        registry.apply(blockingSnapshot(player, lifetime, true, 1, Set.of(ActorFlags.BLOCKING, ActorFlags.BLOCKED_USING_DAMAGED_SHIELD)), player);
++        registry.tick();
++        assertEquals(1F, registry.shieldBlockingBob(player, 0.5F));
++        registry.tick();
++        assertEquals(3F, registry.shieldBlockingBob(player, 0.5F));
++        final UUID replacement = UUID.randomUUID();
++        registry.apply(blockingSnapshot(player, replacement, true, 1, Set.of(ActorFlags.BLOCKING)), player);
++        registry.apply(new NativeActorMessage.Remove(player, lifetime, true), player);
++        registry.tick();
++        assertEquals(0F, registry.shieldBlockingBob(player, 0.5F));
++        registry.apply(blockingSnapshot(player, replacement, true, 1, flags), player);
++        registry.tick();
++        assertEquals(4F, registry.shieldBlockingBob(player, 0.5F));
++        registry.apply(new NativeActorMessage.Remove(player, replacement, true), player);
++        assertEquals(0F, registry.shieldBlockingBob(player, 0.5F));
++        registry.clear();
++        assertEquals(0F, registry.shieldBlockingBob(remote, 0.5F));
++    }
++
++    private static NativeActorMessage.Snapshot blockingSnapshot(final UUID uuid, final UUID lifetime, final boolean local,
++                                                               final long runtimeId, final Set<ActorFlags> flags) {
++        return new NativeActorMessage.Snapshot(uuid, lifetime, local, runtimeId, "minecraft:player", "", 1F, flags, 0, 0, null, Map.of());
++    }
 +
 +    @Test
 +    void resolvesTheLocalJavaIdentityAndRetainsItsNativeRuntimeIdentity() {
@@ -2090,6 +2227,103 @@ index 000000000..3dc6f9c3c
 +        } finally {
 +            buffer.release();
 +        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeShieldBlockingStateTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeShieldBlockingStateTest.java
+new file mode 100644
+index 000000000..5b33c7f37
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeShieldBlockingStateTest.java
+@@ -0,0 +1,91 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.EnumSet;
++import java.util.Set;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeShieldBlockingStateTest {
++
++    @Test
++    void retainsRisingEdgesOutsideTheTimerGuardAndSeparatesTheDamageClock() {
++        var state = NativeShieldBlockingState.EMPTY.advance(Set.of(ActorFlags.TRANSITION_BLOCKING), 1, true);
++        state = state.advance(Set.of(ActorFlags.BLOCKING, ActorFlags.TRANSITION_BLOCKING), 2, true);
++        assertEquals(0, state.startedTick());
++        state = state.advance(Set.of(ActorFlags.BLOCKING), 3, true);
++        state = state.advance(Set.of(ActorFlags.BLOCKING, ActorFlags.TRANSITION_BLOCKING), 4, true);
++        assertEquals(4, state.startedTick());
++        assertEquals(4F, state.bob(true, 4, 0));
++        state = state.advance(Set.of(ActorFlags.BLOCKING, ActorFlags.BLOCKED_USING_DAMAGED_SHIELD), 5, true);
++        assertEquals(5, state.damagedTick());
++        assertEquals(1F, state.bob(true, 5, 0.5F));
++        assertSame(state, state.advance(Set.of(ActorFlags.BLOCKING, ActorFlags.BLOCKED_USING_DAMAGED_SHIELD), 6, true));
++        assertEquals(3F, state.bob(true, 6, 0.5F));
++        state = state.advance(Set.of(ActorFlags.BLOCKING, ActorFlags.TRANSITION_BLOCKING, ActorFlags.BLOCKED_USING_DAMAGED_SHIELD), 7, true);
++        assertEquals(0, state.damagedTick());
++        state = state.advance(Set.of(ActorFlags.BLOCKING, ActorFlags.BLOCKED_USING_DAMAGED_SHIELD), 8, true);
++        assertEquals(0, state.damagedTick());
++        state = state.advance(Set.of(), 9, true);
++        assertEquals(NativeShieldBlockingState.EMPTY, state);
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_SHIELD_BOB_REFERENCE", matches = ".+")
++    void matchesNativeTimestampBranchesAndShieldBobInstructions() throws Exception {
++        final var fixture = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_SHIELD_BOB_REFERENCE"), "native-shield-bob.json"))).getAsJsonObject();
++        for (final var element : fixture.getAsJsonArray("start_cases")) {
++            final var row = element.getAsJsonObject();
++            final var flags = EnumSet.noneOf(ActorFlags.class);
++            if (row.get("blocking").getAsBoolean()) {
++                flags.add(ActorFlags.BLOCKING);
++            }
++            if (row.get("transition").getAsBoolean()) {
++                flags.add(ActorFlags.TRANSITION_BLOCKING);
++            }
++            final var initial = new NativeShieldBlockingState(Long.parseUnsignedLong(row.get("started").getAsString()), 0, 0,
++                    row.get("previous_transition").getAsBoolean(), false, false);
++            final var actual = initial.advance(flags, Long.parseUnsignedLong(row.get("tick").getAsString()), true);
++            assertEquals(Long.parseUnsignedLong(row.get("result").getAsString()), actual.startedTick());
++            assertEquals(row.get("next_transition").getAsBoolean(), actual.transitioningLastTick());
++        }
++        for (final var element : fixture.getAsJsonArray("damage_cases")) {
++            final var row = element.getAsJsonObject();
++            final var flags = EnumSet.noneOf(ActorFlags.class);
++            for (final var flag : row.getAsJsonArray("flags")) {
++                flags.add(ActorFlags.getByValue(flag.getAsInt()));
++            }
++            final var initial = new NativeShieldBlockingState(0, Long.parseUnsignedLong(row.get("blocked").getAsString()),
++                    Long.parseUnsignedLong(row.get("damaged").getAsString()), false,
++                    row.get("previous_blocked").getAsBoolean(), row.get("previous_damaged").getAsBoolean());
++            final var actual = initial.advance(flags, Long.parseUnsignedLong(row.get("tick").getAsString()), true);
++            assertEquals(Long.parseUnsignedLong(row.get("blocked_result").getAsString()), actual.blockedTick());
++            assertEquals(Long.parseUnsignedLong(row.get("damaged_result").getAsString()), actual.damagedTick());
++            assertEquals(flags.contains(ActorFlags.BLOCKED_USING_SHIELD), actual.blockedLastTick());
++            assertEquals(flags.contains(ActorFlags.BLOCKED_USING_DAMAGED_SHIELD), actual.damagedLastTick());
++        }
++        for (final var element : fixture.getAsJsonArray("bob_cases")) {
++            final var row = element.getAsJsonObject();
++            final long damagedTick = Long.parseUnsignedLong(row.get("damaged").getAsString());
++            final var state = new NativeShieldBlockingState(Long.parseUnsignedLong(row.get("started").getAsString()), 0, damagedTick, false, false, false);
++            final float actual = state.bob(row.get("blocking").getAsBoolean(),
++                    damagedTick + Long.parseUnsignedLong(row.get("elapsed").getAsString()), Float.intBitsToFloat(row.get("alpha_bits").getAsInt()));
++            assertEquals(row.get("result_bits").getAsInt(), Float.floatToRawIntBits(actual));
++        }
++        assertEquals(120, fixture.getAsJsonArray("start_cases").size());
++        assertEquals(1728, fixture.getAsJsonArray("damage_cases").size());
++        assertEquals(2700, fixture.getAsJsonArray("bob_cases").size());
 +    }
 +
 +}

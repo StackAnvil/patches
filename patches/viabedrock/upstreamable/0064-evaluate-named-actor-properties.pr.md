@@ -121,3 +121,33 @@ Both actual Minecraft hand entries submit the expected matrix for combined death
 They suppress duplicate Java hands and restore the pose and appearance scopes.
 The fixture then clears the name, and both final screenshots show the native arm.
 These supplied packet and graph inputs verify transport and draw-time composition, not native lifecycle or pixel parity.
+
+
+### Native shield blocking timeline
+
+The shared actor registry now retains blocking-start, successful-block, and damaged-block timestamps per player lifetime.
+The local-player update records a rising transition flag while blocking remains active.
+Successful-block and damaged-block updates require blocking without a transition.
+Each update preserves its previous flag outside its guard, matching the target executable.
+Replacement, runtime identity reuse, removal, and cleanup release the timer state.
+
+`NativeShieldBlockingState` supplies the immutable updates and `query.shield_blocking_bob` arithmetic.
+The callback requires blocking and a positive blocking-start timestamp but measures elapsed time from the damaged-block timestamp.
+It preserves unsigned subtraction, float conversion, clamping, and exceptional float values.
+The add-on only supplies the simulation tick and animation query binding.
+The existing actor channel retains direct and ViaProxy flag transport.
+
+The matching Bedrock 1.26.51.1 build 51061372 supplies instruction and live capture evidence.
+Native instruction execution covers 120 start cases, 1,728 block/damage cases, and 2,700 bob cases.
+Private fixtures supply flag and level-tick getters rather than emulate the complete actor system.
+Unconditional tests cover guard transitions, separate damage timing, immutable retention, player replacement, stale removal, and registry cleanup.
+
+The dependency build and final Java suites pass 1,019 tests, with 115 optional skips and no failures or errors.
+The final core suite includes the complete private timestamp and bob fixture.
+All 90 core patches replay successfully.
+
+Direct and ViaProxy clients each match all 2,700 bob cases through the actual player animation query method.
+Both observe one registry increment for each of 20 active Minecraft ticks and retain the existing hand checks.
+Their private probes supply snapshots and timestamps and restore the registry afterward.
+Complete network timing, client prediction, remote-player lifecycle, pause behavior, shield item classification, and final shield pixels remain separate requirements.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-shield-blocking-timeline) records the implementation and runtime limits.

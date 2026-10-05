@@ -1853,7 +1853,8 @@ The glow-stick and sparkler color exception also has identifier evidence from na
 Unicorn executes 2,176 base and shield classifier cases with valid synthetic stacks and absent user data.
 These checks establish classifier branches, not complete NBT behavior or final swap pixels.
 A later live watchpoint identifies the successful-block timer, its guard, and its rising-edge behavior.
-The separate blocking-start timestamp still needs complete lifecycle evidence.
+The local blocking-start branch and live timestamp write now have matching executable evidence.
+Complete network timing and remote-player lifecycle remain unverified.
 Production still uses the Java classifier and replacement threshold.
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-item-classification-research) records the verified rules and remaining work.
 
@@ -1881,5 +1882,32 @@ The direct CLI reports that audit failure.
 The ViaProxy CLI retains the audit report with its transport-only option.
 The hand-specific probes provide separate evidence.
 
-Shield bob, blocking-start timing, and complete visible shield parity remain incomplete or unverified.
+Complete network timing and visible shield parity remain incomplete or unverified.
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-player-blocking-query) records the native evidence and runtime checks.
+
+
+### Native shield timeline binding
+
+Player graphs now bind `query.shield_blocking_bob` to the core actor registry.
+The add-on supplies one clock increment per active Minecraft tick and clears the registry when the world unloads.
+Core owns the three timestamp updates, native arithmetic, and lifetime cleanup.
+The existing snapshot channel supplies native flags through direct connections and ViaProxy.
+
+Bedrock 1.26.51.1 build 51061372 supplies the matching instruction evidence.
+The callback requires blocking and a positive blocking-start timestamp, but measures elapsed time from the damaged-block timestamp.
+The [official Molang reference](https://mojang.github.io/bedrock-samples/Molang.html) describes shield movement after a hit.
+
+Direct and ViaProxy clients each match 2,700 native callback cases through the actual animation query method.
+They also observe one core clock increment for each of 20 active Minecraft ticks.
+The private probe supplies snapshots and timestamps and restores the registry afterward.
+Both routes retain the existing hand checks and preserve the complete 75-second scene prefix.
+
+The dependency build and final Java suites pass 1,019 tests, with 115 optional skips and no failures or errors.
+The final suites include the private native timestamp, bob, and blocking fixtures.
+All 23 add-on patches replay successfully.
+
+The generic third-person audit still reports no avatar submission for the fixture's first-person-only controllers.
+Both runs retain that report through the transport-only option.
+Unlicensed built-in asset requests log unavailable-account warnings without preventing the accepted server graphs or hand probes from completing.
+Complete network timing, remote-player behavior, pause behavior, shield item classification, and final shield pixels remain incomplete or unverified.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-shield-blocking-timeline) records the implementation and limits.

@@ -1601,7 +1601,10 @@ A rising `BLOCKED_USING_SHIELD` (74) flag writes the timestamp.
 A rising `BLOCKED_USING_DAMAGED_SHIELD` (75) flag writes a separate timestamp at `0xbb8`.
 The update clears both timestamps when its guard fails.
 It retains the previous values of flags 74 and 75 outside that guard.
-The separate `StartedBlockingTimeStamp` at `0xba8` still needs complete lifecycle evidence.
+The local-player update writes `StartedBlockingTimeStamp` at `0xba8` on a rising flag 73 while flag 72 remains set.
+It clears that timestamp when flag 72 clears and retains the previous transition flag outside the guard.
+A matching live watchpoint observes the timestamp write and reset.
+The [shield timeline implementation](#native-shield-blocking-timeline) now retains these three clocks in core.
 
 Native global names identify the color exception as `minecraft:glow_stick` and `minecraft:sparkler`.
 The helper masks effective auxiliary data with `31` and maps values of `16` or more to `5`.
@@ -1618,7 +1621,7 @@ The private client reaches playable spawn and completes the inventory capture.
 Owned lab processes stop normally, and the existing shared lab processes remain running.
 
 **Incomplete:** Production still uses the Java classifier, busy-hand branch, and replacement threshold.
-The original Bedrock comparison context, shield timer integration, complete item dispatch, and final swap pixels need implementation and verification.
+The original Bedrock comparison context, shield classifier integration, complete item dispatch, and final swap pixels need implementation and verification.
 The native replacement threshold and selected-slot cache also need complete lifecycle comparisons.
 Executable exports, synthetic inputs, memory probes, and packet captures remain private.
 
@@ -1688,5 +1691,53 @@ The direct CLI reports that audit failure.
 The ViaProxy CLI retains the audit report with its transport-only option.
 The separate hand probes establish the query binding and hand regressions, not final shield pixels or complete network flag lifecycle behavior.
 
-**Remaining:** Shield bob, blocking-start timing, item replacement rules, held-item transforms, and complete visible shield parity remain incomplete or unverified.
-The successful-block timestamp research does not yet provide a production timer implementation.
+**Remaining:** Item replacement rules, held-item transforms, complete network timing, and visible shield parity remain incomplete or unverified.
+The following section records the implemented timers and shield bob query.
+
+
+## Native shield blocking timeline
+
+**Implemented:** Core retains blocking-start, successful-block, and damaged-block timestamps for each native player lifetime.
+The local-player timer records a rising transition flag while blocking remains active.
+The other timers require blocking without a transition and record rising successful-block or damaged-block flags.
+All three updates preserve their previous flags outside their guards.
+Actor replacement, removal, runtime identity reuse, and registry cleanup release the relevant timer state.
+
+The add-on advances the core registry once per active Minecraft simulation tick.
+Player animation graphs read `query.shield_blocking_bob` through the shared actor query method.
+The existing native flag transport supplies inputs through direct connections and ViaProxy.
+The production asset loader does not require a local Bedrock installation for this feature.
+
+**Native evidence:** The matching Bedrock 1.26.51.1 executable, build 51061372, supplies both timestamp updates and the query callback.
+The callback requires blocking and a positive blocking-start timestamp.
+It computes elapsed time from the damaged-block timestamp, not the blocking-start timestamp.
+It preserves unsigned subtraction, float conversion, frame interpolation, clamping, and NaN propagation.
+The [official Molang reference](https://mojang.github.io/bedrock-samples/Molang.html) describes shield movement after a hit.
+
+Native instruction execution supplies 120 blocking-start cases, 1,728 block/damage cases, and 2,700 shield bob cases.
+These fixtures cover rising edges, rejected guards, retained flags, unsigned wrap, and exceptional float values.
+The probes supply flag and level-tick getters rather than emulate the complete actor component system.
+A private native capture confirms the local blocking-start write and reset.
+Its wire trace also confirms that flags 72 and 73 reach the connection.
+
+**Runtime evidence:** Direct and ViaProxy clients each match all 2,700 bob results through the actual player animation query method.
+Each private probe supplies snapshots and timestamps, then restores the registry.
+Both clients also observe exactly one registry increment for each of 20 active Minecraft ticks.
+The existing 64 blocking-query cases, 900 hand-height cases, and four fallback cases still pass on each route.
+Selected hand models, layered poses, retained item queries, and scope restoration retain their existing results.
+
+Both routes reach playable spawn, load the converted packs, and preserve the complete recorded 75-second scene prefix.
+The generic third-person audit still reports no avatar submission for this fixture's first-person-only controllers.
+Both CLI runs retain that report through the transport-only option.
+The clients log unavailable built-in assets without an account, but their accepted server graphs load and the probes complete.
+
+**Validation:** The dependency build and final Java suites pass 1,019 tests, with 115 optional skips and no failures or errors.
+The final core suite includes the complete native timestamp and bob fixture.
+The final add-on suite includes the 64-case native blocking fixture.
+The full stacks replay all 90 core patches and 23 add-on patches.
+
+**Remaining:** Supplied snapshots and clocks do not establish complete network timing, client prediction, remote-player lifecycle, or pause behavior.
+The shield item classifier still uses Java replacement rules.
+Held-item transforms and final shield pixels need native comparisons.
+This implementation closes the timer arithmetic and query binding gaps, not complete shield or first-person parity.
+Executable exports, instruction fixtures, memory probes, captures, and runtime diagnostics remain private.
