@@ -3,6 +3,7 @@ export interface SceneFeatures {
   geometrySkinUpdates: number;
   localGeometrySkinUpdates: number;
   skinTextures: string[];
+  fullSkinRecords: Record<string, number>;
   customActorIdentifiers: string[];
   unregisteredActorIdentifiers?: string[];
 }
@@ -20,6 +21,7 @@ export interface RenderAudit {
   nativeCustomActorResolvedModels: number;
   nativeCustomActorRenderFrames: number;
   skinTextures: string[];
+  fullSkinRecords: Record<string, number>;
 }
 
 /** Compare packet-derived expectations with actual client installation and evaluation. */
@@ -32,6 +34,9 @@ export function verifyRendering(expected: SceneFeatures, actual: RenderAudit | u
     if (actual.installedGeometrySkins !== expected.geometrySkinUpdates) failures.push("The client did not install every recorded skin geometry.");
     const installed = new Set(actual.skinTextures);
     if (expected.skinTextures.some((texture) => !installed.has(texture)) || installed.size !== expected.skinTextures.length) failures.push("Installed skin dimensions or pixels differ from the recording.");
+    const records = actual.fullSkinRecords ?? {};
+    if (Object.entries(expected.fullSkinRecords).some(([hash, count]) => records[hash] !== count)
+      || Object.keys(records).length !== Object.keys(expected.fullSkinRecords).length) failures.push("Installed skin records differ from the recording.");
     if (hasOtherPlayers && !actual.nativePlayerRendererSelections) failures.push("The client did not select the native player renderer.");
     if (expected.localGeometrySkinUpdates && (!actual.thirdPersonScene || !actual.nativePlayerRenderFrames)) failures.push("The client did not render the recorded local avatar in the third-person scene.");
     if (hasOtherPlayers && expected.geometrySkinUpdates > expected.localGeometrySkinUpdates && !actual.nativeOtherPlayerRenderFrames) failures.push("The client did not submit recorded remote-player geometry to the native renderer.");

@@ -17,6 +17,7 @@ public final class ReplayCamera {
     private ReplayCamera() { }
 
     public static void tick(Object minecraft) {
+        RenderAudit.tick();
         ReplayResourcePacks.tick(minecraft);
         try {
             if (!checked) {

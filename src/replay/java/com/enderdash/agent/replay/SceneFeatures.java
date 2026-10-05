@@ -6,6 +6,7 @@ import com.viaversion.viaversion.libs.gson.Gson;
 import com.viaversion.viaversion.util.Key;
 import io.netty.buffer.*;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+import net.raphimc.viabedrock.api.model.NativeSkinFragment;
 import net.raphimc.viabedrock.protocol.model.SkinData;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 import net.raphimc.viabedrock.protocol.types.primitive.ImageType;
@@ -31,6 +32,7 @@ public final class SceneFeatures {
 
     static Map<String, Object> features(List<PacketJournal.Entry> entries) throws Exception {
         Set<String> textures = new TreeSet<>(), actors = new TreeSet<>(), registered = new HashSet<>();
+        Map<String, Integer> fullSkinRecords = new TreeMap<>();
         Optional<UUID> local = selfIdentity(entries);
         int skins = 0, geometrySkins = 0, localGeometrySkins = 0;
         boolean started = false, hasRegistry = false;
@@ -55,7 +57,7 @@ public final class SceneFeatures {
                     if (!identifier.startsWith("minecraft:")) actors.add(identifier);
                 } else if (id == 93) {
                     UUID uuid = BedrockTypes.UUID.read(input);
-                    int geometry = skin(textures, BedrockTypes.SKIN.read(input));
+                    int geometry = skin(textures, fullSkinRecords, BedrockTypes.SKIN.read(input));
                     geometrySkins += geometry; skins++;
                     if (local.filter(uuid::equals).isPresent()) localGeometrySkins += geometry;
                 } else {
@@ -67,7 +69,7 @@ public final class SceneFeatures {
                         if (action != 1) continue;
                         BedrockTypes.VAR_LONG.readPrimitive(input);
                         for (int field = 0; field < 3; field++) BedrockTypes.STRING.read(input);
-                        input.readIntLE(); int geometry = skin(textures, BedrockTypes.SKIN.read(input));
+                        input.readIntLE(); int geometry = skin(textures, fullSkinRecords, BedrockTypes.SKIN.read(input));
                         geometrySkins += geometry; skins++;
                         if (local.filter(uuid::equals).isPresent()) localGeometrySkins += geometry;
                         input.skipBytes(7); // teacher, host, subclient, ARGB color
@@ -79,7 +81,7 @@ public final class SceneFeatures {
         if (hasRegistry) for (String actor : actors) if (!registered.contains(actor)) unregistered.add(actor);
         actors.removeAll(unregistered);
         return Map.of("skinUpdates", skins, "geometrySkinUpdates", geometrySkins, "localGeometrySkinUpdates", localGeometrySkins, "skinTextures", textures,
-                "customActorIdentifiers", actors, "unregisteredActorIdentifiers", unregistered);
+                "fullSkinRecords", fullSkinRecords, "customActorIdentifiers", actors, "unregisteredActorIdentifiers", unregistered);
     }
 
     static Optional<UUID> selfIdentity(List<PacketJournal.Entry> entries) {
@@ -112,10 +114,11 @@ public final class SceneFeatures {
         return matches.stream().findFirst();
     }
 
-    private static int skin(Set<String> textures, SkinData skin) throws Exception {
+    private static int skin(Set<String> textures, Map<String, Integer> records, SkinData skin) throws Exception {
         if (skin.skinData() == null) throw new IllegalArgumentException("Missing recorded skin image");
         String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(ImageType.getImageData(skin.skinData())));
         textures.add(skin.skinData().getWidth() + "x" + skin.skinData().getHeight() + ":" + hash);
+        records.merge(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(NativeSkinFragment.encode(skin))), 1, Integer::sum);
         return skin.geometryData() != null && !skin.geometryData().isBlank() && !skin.geometryData().equals("null") ? 1 : 0;
     }
 }

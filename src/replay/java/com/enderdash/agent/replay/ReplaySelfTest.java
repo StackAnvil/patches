@@ -230,6 +230,12 @@ public final class ReplaySelfTest {
         // for the same UUID and later removal do not make that identity ambiguous.
         require(SceneFeatures.selfIdentity(present).orElseThrow().equals(local));
         appearanceCounts(present, 5, 4, 3);
+        Map<String, Object> completeRecords = SceneFeatures.features(present);
+        require(((Set<?>) completeRecords.get("skinTextures")).size() == 1);
+        // Geometry changes with identical pixels must remain distinct complete records.
+        Map<?, ?> records = (Map<?, ?>) completeRecords.get("fullSkinRecords");
+        require(records.size() == 2);
+        require(new HashSet<>(records.values()).equals(Set.of(1, 4)));
         PacketJournal.Entry unrelated = playerList(UUID.randomUUID(), 999, true);
         present.add(new PacketJournal.Entry(false, 0, unrelated.payload()));
         appearanceCounts(present, 5, 4, 3);

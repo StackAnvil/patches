@@ -2,6 +2,7 @@ package com.enderdash.agent.replay.fabric;
 
 import com.viaversion.viaversion.libs.gson.Gson;
 import net.raphimc.viabedrock.api.model.entity.CustomEntity;
+import net.raphimc.viabedrock.api.model.NativeSkinFragment;
 import net.raphimc.viabedrock.protocol.model.SkinData;
 import net.raphimc.viabedrock.protocol.types.primitive.ImageType;
 import java.nio.file.*;
@@ -12,11 +13,13 @@ import java.util.*;
 /** Counts actual native skin installation and model evaluation without exporting identities. */
 public final class RenderAudit {
     private static long lastSave;
+    private static boolean pending;
     private static int installedSkins, installedGeometrySkins, rejectedSkins, playerSelections, modelUpdates, emptyModels;
     private static int playerFrames, otherPlayerFrames;
     private static int nativeActorFrames, nativeActorModels;
     private static boolean thirdPerson;
     private static final Set<String> skins = new TreeSet<>(), models = new TreeSet<>(), actors = new TreeSet<>();
+    private static final Map<String, Integer> fullSkinRecords = new TreeMap<>();
 
     private static final Map<String, Set<Float>> actorScales = new TreeMap<>();
 
@@ -30,23 +33,24 @@ public final class RenderAudit {
             if (geometry.get(appearance) != null) installedGeometrySkins++;
             String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(ImageType.getImageData(data.skinData())));
             skins.add(data.skinData().getWidth() + "x" + data.skinData().getHeight() + ":" + hash);
+            fullSkinRecords.merge(HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(NativeSkinFragment.encode(data))), 1, Integer::sum);
         } catch (Exception error) { throw new IllegalStateException("Could not audit installed skin", error); }
         save();
     }
 
     public static synchronized void thirdPersonScene() { thirdPerson = true; save(); }
-    public static synchronized void playerFrame() { playerFrames++; if (playerFrames == 1) save(); }
+    public static synchronized void playerFrame() { playerFrames++; save(); }
 
-    public static synchronized void otherPlayerFrame() { otherPlayerFrames++; if (otherPlayerFrames == 1) save(); }
+    public static synchronized void otherPlayerFrame() { otherPlayerFrames++; save(); }
 
     public static synchronized void nativeActorModels(int resolved) {
         nativeActorModels += resolved;
         if (resolved > 0) save();
     }
 
-    public static synchronized void nativeActorFrame() { nativeActorFrames++; if (nativeActorFrames == 1) save(); }
+    public static synchronized void nativeActorFrame() { nativeActorFrames++; save(); }
 
-    public static synchronized void playerRenderer() { playerSelections++; if (playerSelections == 1) save(); }
+    public static synchronized void playerRenderer() { playerSelections++; save(); }
 
     public static synchronized void actor(String identifier) {
         if (actors.add(identifier)) save();
@@ -61,11 +65,18 @@ public final class RenderAudit {
         save();
     }
 
-    public static synchronized void flush() { lastSave = 0; save(); }
+    /** Publish pending changes even when the connection has no local Bedrock recorder. */
+    public static synchronized void tick() { publish(false); }
+
+    public static synchronized void flush() { publish(true); }
 
     private static void save() {
-        if (System.nanoTime() - lastSave < 200_000_000L) return;
-        lastSave = System.nanoTime();
+        pending = true;
+        publish(false);
+    }
+
+    private static void publish(boolean force) {
+        if (!pending || !force && System.nanoTime() - lastSave < 200_000_000L) return;
         try {
             Path directory = Path.of(Files.readString(Path.of("stackanvil-replay-directory.txt")).trim());
             Path file = directory.resolve("render-audit.json");
@@ -76,11 +87,14 @@ public final class RenderAudit {
             stats.put("nativeCustomActorResolvedModels", nativeActorModels);
             stats.put("nativePlayerRendererSelections", playerSelections); stats.put("modelUpdates", modelUpdates);
             stats.put("emptyModelUpdates", emptyModels); stats.put("skinTextures", skins);
+            stats.put("fullSkinRecords", fullSkinRecords);
             stats.put("actorIdentifiers", actors); stats.put("evaluatedModels", models); stats.put("actorScales", actorScales);
             Path temporary = directory.resolve("render-audit.json.tmp");
             Files.writeString(temporary, new Gson().toJson(stats));
             Files.setPosixFilePermissions(temporary, PosixFilePermissions.fromString("rw-------"));
             Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            lastSave = System.nanoTime();
+            pending = false;
         } catch (Exception error) { throw new IllegalStateException("Could not save render audit", error); }
     }
 }

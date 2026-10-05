@@ -3092,12 +3092,48 @@ Each receives both FOV sets and both camera clears without camera errors.
 Reviewed screenshots show the narrowed views and restored local view.
 
 The direct supplemental replay also passes its broader rendering checks.
-The ViaProxy supplemental client lacks the private built-in asset cache supplied to the direct replay.
-Its skin installation and geometry checks fail, and its recorded avatar does not enter the audited third-person scene.
-Those failures remain recorded; the camera checks do not establish avatar parity for that configuration.
+The initial ViaProxy report records only one of two skin installations and no audited third-person scene.
+A follow-up identifies stale audit publication and an omitted private avatar marker.
+The missing asset cache does not explain that report.
+The original failures remain recorded, with corrected replay evidence in the audit section below.
 The complete CubeCraft fixture passes its rendering checks through both routes.
 These observations retain the unavailable-asset and broader skin requirements.
 
 **Remaining:** Presets, transforms, target tracking, splines, attachments, shake, fog, and aim assistance remain incomplete.
 Native local FOV modifiers, first-person integration, pauses, transfers, late subscription, and broader lifecycle behavior need further comparisons.
 The full protocol, gameplay, editor, account, skin, persona, audio, UI, and platform requirements remain active.
+
+## Replay skin audit publication, October 5, 2026
+
+**Corrected:** The appearance audit could retain an old report when two skin installations occurred within its 200 ms save interval.
+Direct recordings refreshed that report through a local Bedrock recorder.
+ViaProxy clients had no equivalent refresh when the scene stopped producing audited changes.
+Client ticks now publish pending changes on both routes.
+Unchanged reports do not trigger further disk writes.
+Frame and renderer counters also mark their changes for publication.
+
+The verifier now compares SHA-256 hashes and occurrence counts for each complete serialized skin record.
+This covers geometry, animation metadata, persona fields, and flags alongside the existing image checks.
+Repeated identical records retain their individual counts.
+A replaced update cannot pass by preserving only the total installation count and distinct image hashes.
+The audit stores hashes, not skin payloads or account identities.
+
+The earlier private FOV replay also omitted its local-avatar marker on the proxy route.
+Restoring that marker exercises the local Java avatar through the production native renderer.
+The missing animation asset cache was a separate observation, not the cause of the stale installation report.
+
+**Test evidence:** All 94 tooling tests pass, and `bun run check` passes.
+The Java replay self-test distinguishes geometry changes with identical pixels and verifies repeated record counts.
+A Java publication regression test covers pending updates without a direct recorder, explicit flush, and unchanged-report writes.
+
+**Corrected runtime evidence:** Complete 65-second replays pass transport and rendering checks through both routes.
+ViaProxy session `2026-10-05T20-44-10.416Z-replay-scene` records 850 local native-avatar submissions and 435 FOV samples.
+Direct session `2026-10-05T20-45-35.916Z-replay-scene` records 830 submissions and 436 samples.
+Both preserve the two complete skin records, their geometry, and the recorded image pixels without rejected skins.
+Each receives the FOV snapshot and four commands, reaches both narrowed targets, and restores 70 degrees after each ordinary clear.
+The scene hash remains `d5e37208ada41438748b6ba2a80544396f655b5cfc202d51c7c82f4a942491ca`.
+Reviewed final screenshots show the local avatar on both routes.
+
+**Remaining:** Complete-record delivery and renderer submission do not establish native animation or visual parity.
+Both offline clients still report unavailable built-in animation assets.
+Account-independent cached asset use, animation playback, remote players, lifecycle behavior, and the full coverage goal remain incomplete.

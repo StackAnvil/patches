@@ -1,12 +1,17 @@
 import { expect, test } from "bun:test";
 import { verifyRendering, type RenderAudit, type SceneFeatures } from "../src/replay/verification.ts";
 
-const expected: SceneFeatures = { skinUpdates: 3, geometrySkinUpdates: 3, localGeometrySkinUpdates: 1, skinTextures: ["64x64:abc", "128x128:def"], customActorIdentifiers: ["probe:dragon"] };
-const actual: RenderAudit = { installedSkins: 3, installedGeometrySkins: 3, rejectedSkins: 0, nativePlayerRendererSelections: 2, nativePlayerRenderFrames: 4, nativeOtherPlayerRenderFrames: 5, thirdPersonScene: true, skinTextures: [...expected.skinTextures], actorIdentifiers: ["probe:dragon"], evaluatedModels: ["geometry.dragon:dragon"], nativeCustomActorResolvedModels: 2, nativeCustomActorRenderFrames: 3 };
+const expected: SceneFeatures = { skinUpdates: 3, geometrySkinUpdates: 3, localGeometrySkinUpdates: 1, skinTextures: ["64x64:abc", "128x128:def"], fullSkinRecords: { abc: 2, def: 1 }, customActorIdentifiers: ["probe:dragon"] };
+const actual: RenderAudit = { installedSkins: 3, installedGeometrySkins: 3, rejectedSkins: 0, nativePlayerRendererSelections: 2, nativePlayerRenderFrames: 4, nativeOtherPlayerRenderFrames: 5, thirdPersonScene: true, skinTextures: [...expected.skinTextures], fullSkinRecords: { ...expected.fullSkinRecords }, actorIdentifiers: ["probe:dragon"], evaluatedModels: ["geometry.dragon:dragon"], nativeCustomActorResolvedModels: 2, nativeCustomActorRenderFrames: 3 };
 test("validates native installation independently of transport and ignores duplicate identical skins", () => {
   expect(verifyRendering(expected, actual, "", true)).toEqual([]);
   expect(verifyRendering(expected, { ...actual, skinTextures: ["64x64:abc", "128x128:changed"] }, "", true)).toHaveLength(1);
   expect(verifyRendering(expected, { ...actual, installedSkins: 2 }, "", true)).toHaveLength(1);
+});
+test("detects changed skin metadata with identical pixels and installation counts", () => {
+  expect(verifyRendering(expected, { ...actual, fullSkinRecords: { abc: 2, changed: 1 } }, "", true)).toHaveLength(1);
+  expect(verifyRendering(expected, { ...actual, fullSkinRecords: { ...actual.fullSkinRecords, extra: 1 } }, "", true)).toHaveLength(1);
+  expect(verifyRendering(expected, { ...actual, fullSkinRecords: { abc: 1, def: 2 } }, "", true)).toHaveLength(1);
 });
 test("detects dropped actors, generic player rendering, and malformed assets", () => {
   expect(verifyRendering(expected, { ...actual, actorIdentifiers: [], evaluatedModels: [], nativePlayerRendererSelections: 0 }, "", true)).toHaveLength(3);
