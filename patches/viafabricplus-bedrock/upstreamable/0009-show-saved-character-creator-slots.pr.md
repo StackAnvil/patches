@@ -2359,3 +2359,48 @@ These checks establish graph loading and lifecycle behavior, without proving com
 **Remaining:** Additive particles, other material families, missing textures on visible effects, complete fog, and lighting still need implementation or native comparisons.
 Native opaque shader selection, complete effect timing, actor-event behavior, and visible parity remain unverified.
 All other skin, account, inventory, gameplay, protocol, UI, and platform requirements remain active.
+
+
+## Authored custom particle directions
+
+**Evidence:** The next live CubeCraft capture exposed a witch arrow-trail definition with `direction.mode` set to `custom`.
+The add-on rejected it before loading the texture or creating particles.
+The target 1.26.51 schema lists `derive_from_velocity` and `custom` as the direction modes.
+The matching 1.26.51.1 executable reader compares the six-character `custom` value before reading its `custom_direction` vector.
+The vector field keeps its existing name.
+The older [public billboard reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftparticle_appearance_billboard?view=minecraft-bedrock-stable) uses `custom_direction` for both names.
+That reference does not describe the target reader accurately.
+
+**Implemented:** The add-on decodes the target mode name and retains the existing component and render stages.
+Custom vector expressions run in order on each visual sample.
+The component retains their raw magnitude, and the render stage normalizes the transformed direction.
+The core's existing archive and request channels carry this behavior through direct connections and ViaProxy.
+Production contains no server-specific identifiers or alternate spelling shim.
+
+**Verified tests:** A synthetic test covers repeated expressions, ordered variable writes, raw magnitude, and age-dependent direction changes during emitter playback.
+An existing locator test now uses the target mode name.
+The full build passes 1,041 Java tests with 118 optional skips and no failures or errors.
+The targeted effect and facing suites pass all 16 tests with private native references enabled.
+These include 200 motion, 492 billboard, 286 facing, 32 emitter-plane, 144 direction-normalization, and 440 spin cases.
+The fixtures verify sampled calculations, without establishing complete native visible parity.
+
+
+**Verified runtime:** Complete direct and ViaProxy replays preserve the fresh CubeCraft scene hash `ede0e43b2874418cbb6b62135898efe0553009307d33fecd0f258383643d5d83`.
+Both pass transport and rendering checks and retain all 311 recorded skin updates unchanged.
+Both load the witch burst and silhouette definitions with render resources.
+The burst creates eight particles with both authored directions, and the steady silhouette reaches seven particles.
+Neither reports particle loading or initialization errors.
+A private observer reads raw direction and population fields without sampling visuals or advancing scripts.
+These checks verify graph loading and simulation, without proving native visible orientation, timing, or blending.
+
+**Remaining:** Complete reader defaults, invalid-input behavior, interpolation, and visible native comparisons remain open.
+Additive materials, complete fog, lighting, and the other coverage requirements remain active.
+
+The additive investigation identifies separate alpha-factor inheritance in the target material parser.
+Omitted alpha factors inherit color factors only when the corresponding color factor is explicitly supplied.
+Explicit alpha factors take precedence, while absent color factors preserve existing values.
+A private executable probe passes 192 presence, override, inheritance, and write-mask cases.
+Its factor reader supplies declared bytes and presence flags.
+Native field selection, inheritance, and write-mask calculations execute unchanged.
+Constructor defaults, factor-name decoding, material inheritance, and final GPU state remain outside that probe.
+This evidence guides the next material implementation and does not establish additive rendering parity.
