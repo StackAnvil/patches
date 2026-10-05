@@ -1060,7 +1060,7 @@ Both screenshots show custom NPCs and banners.
 These counts establish model delivery and draw submission, without proving native animation timing or complete visual parity.
 
 **Incomplete and unverified:** Native dynamic transition, weighted-pose, and effect-timing comparisons remain necessary for custom actors.
-The CubeCraft scene exposes an unsupported opaque particle effect with texture `_`.
+The captured opaque particle chain is addressed in [the particle carrier update](#invisible-particle-carriers-and-opaque-descendants).
 Other material families, dynamic geometry selection, additional queries, and named actor events remain incomplete.
 Server animation commands also remain part of the full coverage goal.
 See [the owning patch notes](../patches/viafabricplus-bedrock/upstreamable/0014-animate-numeric-looping-bedrock-bones.pr.md) for target evidence and scope.
@@ -2375,3 +2375,58 @@ Both routes load two new conversions with stored native archive entries.
 The complete recorded scene hash remains unchanged, and all 216 skin updates retain their recorded bytes.
 Neither route reports unresolved model, block, or accepted-archive decode errors.
 These checks establish loading regressions, not complete native visual parity or faster joining.
+
+
+### Invisible particle carriers and opaque descendants
+
+**Evidence:** The October 5 CubeCraft capture uses Bedrock protocol 2193 and five accepted server packs.
+Its zombie-hands graph includes an invisible opaque carrier, a dirt effect, and a visible opaque rubble effect.
+The carrier declares a zero-size billboard, an unused texture path, block expiration, and a child event at 0.13 seconds.
+The previous loader rejected its texture path before admitting the graph.
+Fixing that admission exposed the visible rubble material as a separate failure in the same chain.
+
+The matching licensed Bedrock 1.26.5101.0 package defines opaque particles without alpha testing or blending.
+Opaque and alpha-test materials retain culling and depth writes, and disable alpha writes.
+The target Particle AlphaTest fragment tests texture alpha against 0.5 before applying vertex color.
+Its comparison and output instructions confirm that tint alpha does not change the cutoff.
+The existing native billboard fixture confirms size clamping, including zero and negative dimensions.
+Licensed assets, executable bytes, shader disassembly, captures, and probe outputs remain private.
+
+**Implemented:** The add-on separates emitter simulation from optional GPU resources.
+A constant nonpositive billboard dimension proves that its area remains zero after clamping.
+Those particles retain scripts, motion, block expiration, counts, timelines, and child dispatch without decoding or allocating a texture.
+Per-render scripts and other visual expressions still run.
+Dynamic sizes still require render resources, even when their initial value is zero.
+Path validation remains active for unused textures.
+
+Visible opaque particles use a separate render pipeline with culling, depth writes, and RGB-only writes.
+They do not apply Java's particle alpha cutoff.
+Alpha-test particles use the target texture-only cutoff of 0.5.
+Both pipelines preload with the client's required pipelines.
+The core's existing shared archive transports these definitions and textures through direct connections and ViaProxy.
+No server-specific identifiers or fallback textures enter production code.
+
+**Verified tests:** Synthetic tests exercise the production texture-loading decision, per-render script effects, child-event boundaries, and block expiration.
+They also cover dynamic-size admission and invalid paths.
+The targeted suite passes all nine tests with the private native motion and billboard fixtures enabled.
+Those fixtures contain 200 motion cases and 492 billboard cases.
+All four projects build, with 1,040 passing Java tests, 118 optional skips, and no failures or errors.
+
+A private GPU probe compiles the production fragment shader with the matching Java includes.
+All 120 cases pass on the NVIDIA GPU.
+Cases cover texture alpha around 0.5, independent tint and modulator alpha, winding, and destination-alpha preservation.
+The probe supplies vertex inputs, fog values, and raster state.
+It verifies shader output against the inspected alpha-test instructions and declared opaque material state, without establishing complete native image parity.
+
+**Verified runtime:** Complete direct and ViaProxy replays preserve the captured scene hash `925a9e0873059dee3a1556f3ccf3e5bf4ac951a79a0d447171c51fd9b648e5b3`.
+Both pass transport and rendering checks and retain all 154 recorded skin updates unchanged.
+Both load all four zombie-hands definitions and admit the carrier without GPU resources.
+Their emitter chains reach depth three and create six rubble particles.
+Neither reports particle loading or initialization errors.
+A private observer reads existing emitter and asset state without sampling visuals or advancing scripts.
+ViaProxy's live opaque and alpha pipelines confirm culling, depth writes, disabled blending, and disabled alpha writes.
+These checks establish graph loading and lifecycle behavior, without proving complete native draw timing or visible parity.
+
+**Remaining:** Additive particles, other material families, missing textures on visible effects, complete fog, and lighting still need implementation or native comparisons.
+Native opaque shader selection, complete effect timing, actor-event behavior, and visible parity remain unverified.
+All other skin, account, inventory, gameplay, protocol, UI, and platform requirements remain active.
