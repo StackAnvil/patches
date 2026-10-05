@@ -88,3 +88,20 @@ Use `bun run lab jvm list` to find a running Java process. `bun run lab jvm thre
 The UI command can send input to both Bedrock and Java clients without taking focus from your desktop. This lets you compare the same menu or connection step without hardcoding account tokens or packet contents in tests. Gameplay packets over UDP need separate protocol logs or packet capture. The HTTPS proxy covers only traffic that the launched process routes through it.
 
 For skin behavior, see [the Bedrock skin flow](skin-flow.md). It explains what HTTPS captures show, what gameplay packets carry, and why Character Creator skins still need renderer work.
+
+## Validate recorded joins
+
+Use `server-replay record local --target 127.0.0.1:port --client proxy` for a local RakNet server.
+For an owned BDS with NetherNet, use `--target nethernet://127.0.0.1:port`.
+Named server recordings use their configured address and reject `--target`.
+The native recorder currently supports RakNet targets only.
+
+A server spawn packet alone does not prove a successful join.
+Recordings require local-player initialization and movement acknowledgments.
+They also reject an early client exit, cancellation, or a logged disconnect or packet failure.
+Inspect the private screenshot and server logs before reporting a live playable session.
+Gameplay acknowledgments can arrive after a transport timeout while the client drains queued packets.
+
+Camera preset observations wait until core finishes its custom-block resource-pack gate.
+Both direct and ViaProxy recorders retain the latest preset table until its decoder runs.
+This prevents the observer from treating an intentionally queued packet as an unhandled packet.

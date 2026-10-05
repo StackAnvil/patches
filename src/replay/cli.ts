@@ -14,7 +14,7 @@ import { inspectJournal } from "./journal.ts";
 import { requireNativeOfflineReplay, requireNativeReplayProcessNamespaces, type NativeOfflineProof } from "./native-offline.ts";
 import { prepareNativeReplayPrefix } from "./native-prefix.ts";
 import { prepareNativeProfile } from "./native-profile.ts";
-import { verifyRendering, type SceneFeatures, type RenderAudit } from "./verification.ts";
+import { hasGameplayAcknowledgments, verifyRendering, type SceneFeatures, type RenderAudit } from "./verification.ts";
 
 const execute = promisify(execFile);
 const privateRoot = join(root, ".stackanvil", "replay");
@@ -269,9 +269,11 @@ async function main(): Promise<void> {
   if (!Number.isInteger(seconds) || seconds < 20 || seconds > 300) throw new Error("--seconds must be between 20 and 300.");
   if (mode === "record" && input === "hive" && client !== "native" && !args.includes("--allow-hive")) throw new Error("ViaBedrock blacklists The Hive because translated clients can be banned. Use an official client capture, or explicitly pass --allow-hive for this diagnostic join.");
   let target = servers[input as keyof typeof servers];
+  if (mode === "record" && input !== "local" && option("--target")) throw new Error("--target requires record local. Named servers use their configured address.");
   if (mode === "record" && input === "local") {
     target = option("--target")!;
-    if (!/^127\.0\.0\.1:\d+$/.test(target ?? "")) throw new Error("Local recordings require --target 127.0.0.1:port.");
+    if (!/^(?:nethernet:\/\/)?127\.0\.0\.1:\d+$/.test(target ?? "")) throw new Error("Local recordings require --target 127.0.0.1:port or nethernet://127.0.0.1:port.");
+    if (target.startsWith("nethernet://") && client !== "proxy") throw new Error("Local NetherNet recording requires --client proxy.");
   } else if (mode === "record" && !target) throw new Error("Unknown server.");
   const jar = await artifact("viaproxy");
   await mkdir(privateRoot, { recursive: true, mode: 0o700 });
@@ -374,8 +376,12 @@ async function main(): Promise<void> {
   if (client === "native" && /Native connection failed:|Native capture failed:/.test(await logText(join(directory, "proxy.log")))) throw new Error("The native recorder failed. Read its private proxy log; this capture is incomplete.");
   if (client === "native" && /Native pack observation failed:/.test(await logText(join(directory, "proxy.log")))) throw new Error("Native pack reconstruction failed. The raw recording is preserved for offline repair; read its private proxy log.");
   if (client === "native" && !/StackAnvil native pack observation complete/.test(await logText(join(directory, "proxy.log")))) throw new Error("Native pack reconstruction did not finish before shutdown. The raw recording is preserved; read its private proxy log.");
-  if (mode === "replay" && (unexpectedClientExit || stopped)) throw new Error("The replay client exited or the run was cancelled before normal cleanup. Read its private client log.");
-  if (!summary.reachedStartGame || !summary.reachedSpawn) throw new Error("The session did not reach a playable scene. Read its private logs and screenshot.");
+  if (unexpectedClientExit || stopped) throw new Error("The client exited or the run was cancelled before normal cleanup. Read its private client log.");
+  if (/Client disconnected with reason:|Failed to handle packet|ReadTimeoutException|(?:Unreported|Reported) exception thrown!|A fatal error has been detected by the Java Runtime Environment|Mixin transformation .* failed|handlerAdded\(\) has thrown/.test(await logText(join(directory, "client.log")))) {
+    throw new Error("The client disconnected or failed during the captured session. Read its private client log.");
+  }
+  if (!summary.reachedStartGame || !summary.reachedSpawn) throw new Error("The server did not announce initialization and spawn. Read its private logs and screenshot.");
+  if (!hasGameplayAcknowledgments(summary.serverboundIds)) throw new Error("The server announced spawn, but the client did not initialize its player and begin gameplay movement. Read its private logs and screenshot.");
   if (mode === "replay" && !/StackAnvil replay scene complete/.test(await logText(join(directory, "replay.log")))) throw new Error("The replay stopped before the complete scene was sent.");
   if (mode === "replay") {
     const original = await inspectJournal(join(resolve(input), "packets.sbr"));

@@ -33,13 +33,21 @@ public final class FabricRecorder {
         PacketJournal journal = new PacketJournal(directory.resolve("packets.sbr"), ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
         context.pipeline().addAfter(PacketCodec.NAME, "stackanvil-recording", new ChannelDuplexHandler() {
             private boolean packsSaved;
+            private byte[] pendingPresets;
             private io.netty.util.concurrent.ScheduledFuture<?> export;
 
             @Override public void handlerAdded(ChannelHandlerContext ctx) {
                 export = ctx.executor().scheduleAtFixedRate(() -> {
-                    try { savePacks(ctx); RenderAudit.flush(); }
+                    try { savePacks(ctx); auditPresets(ctx); RenderAudit.flush(); }
                     catch (Exception error) { ctx.fireExceptionCaught(error); ctx.close(); }
                 }, 200, 200, TimeUnit.MILLISECONDS);
+            }
+
+            private void auditPresets(ChannelHandlerContext ctx) throws IOException {
+                if (pendingPresets == null) return;
+                ViaDecodeHandler decoder = ctx.pipeline().get(ViaDecodeHandler.class);
+                if (decoder == null) throw new IOException("Replay connection has no ViaVersion decoder for camera observation");
+                if (CameraPresetAudit.afterPacket(decoder.connection(), pendingPresets, directory)) pendingPresets = null;
             }
 
             private void savePacks(ChannelHandlerContext ctx) throws IOException {
@@ -88,11 +96,8 @@ public final class FabricRecorder {
                 }
                 catch (Exception error) { ReferenceCountUtil.release(message); ctx.close(); throw error; }
                 super.channelRead(ctx, message);
-                if (presets != null) {
-                    ViaDecodeHandler decoder = ctx.pipeline().get(ViaDecodeHandler.class);
-                    if (decoder == null) throw new IOException("Replay connection has no ViaVersion decoder for camera observation");
-                    CameraPresetAudit.afterPacket(decoder.connection(), presets, directory);
-                }
+                if (presets != null) pendingPresets = presets;
+                auditPresets(ctx);
             }
 
             @Override public void write(ChannelHandlerContext ctx, Object message, ChannelPromise promise) throws Exception {

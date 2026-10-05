@@ -7,6 +7,7 @@ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.model.CameraPreset;
 import net.raphimc.viabedrock.protocol.model.CameraPresetRegistry;
 import net.raphimc.viabedrock.protocol.storage.CameraEffectsStorage;
+import net.raphimc.viabedrock.protocol.storage.CustomBlockPackStorage;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 
 import java.io.IOException;
@@ -47,10 +48,17 @@ public final class CameraPresetAuditSelfTest {
         require(rejected);
         require(!Files.exists(directory.resolve("camera-presets-core.json")));
 
+        // A received table can be queued while custom block models load.
+        stored.put(CustomBlockPackStorage.class, new CustomBlockPackStorage(loaded -> { }));
+        require(!CameraPresetAudit.afterPacket(user, captured, directory));
+        require(!Files.exists(directory.resolve("camera-presets-core.json")));
+
         var input = Unpooled.wrappedBuffer(captured);
         try { storage.setPresets(new CameraPresetRegistry(CameraPreset.LIST_TYPE.read(input))); }
         finally { input.release(); }
-        CameraPresetAudit.afterPacket(user, captured, directory);
+        require(!CameraPresetAudit.afterPacket(user, captured, directory));
+        stored.remove(CustomBlockPackStorage.class);
+        require(CameraPresetAudit.afterPacket(user, captured, directory));
         require(Files.isRegularFile(directory.resolve("camera-presets-core.json")));
 
         var other = Unpooled.buffer();

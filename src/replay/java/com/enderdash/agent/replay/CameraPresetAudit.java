@@ -9,6 +9,7 @@ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
 import net.raphimc.viabedrock.protocol.model.CameraPreset;
 import net.raphimc.viabedrock.protocol.model.CameraPresetRegistry;
 import net.raphimc.viabedrock.protocol.storage.CameraEffectsStorage;
+import net.raphimc.viabedrock.protocol.storage.CustomBlockPackStorage;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -34,8 +35,10 @@ public final class CameraPresetAudit {
         return received;
     }
 
-    public static void afterPacket(UserConnection user, byte[] received, Path directory) throws IOException {
-        if (received == null) return;
+    public static boolean afterPacket(UserConnection user, byte[] received, Path directory) throws IOException {
+        if (received == null) return true;
+        // Core owns decoding after the Java client acknowledges the custom-block pack.
+        if (user.get(CustomBlockPackStorage.class) != null) return false;
         CameraEffectsStorage storage = user.get(CameraEffectsStorage.class);
         if (storage == null) throw new IOException("Core camera storage is unavailable after the preset packet");
         CameraPresetRegistry registry = storage.presets();
@@ -56,5 +59,6 @@ public final class CameraPresetAudit {
         Files.writeString(output, new Gson().toJson(new Snapshot(hash, registry.presets().size(), registry.unresolved().size(), resolved)));
         Files.setPosixFilePermissions(output, PosixFilePermissions.fromString("rw-------"));
         System.out.println("StackAnvil core retained " + registry.presets().size() + " camera presets; unresolved=" + registry.unresolved().size());
+        return true;
     }
 }

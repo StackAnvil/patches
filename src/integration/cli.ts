@@ -202,7 +202,7 @@ async function viaProxy(dir: string, bedrockPort: number, version: string, trans
   const home = join(dir, homeName);
   await mkdir(home, { recursive: true, mode: 0o700 });
   const child = service(Bun.which("java") ?? "java", ["-DskipUpdateCheck", "-jar", jar, "cli",
-    "--bind-address", `127.0.0.1:${port}`, "--target-address", transport === "nethernet" ? "nethernet://127.0.0.1" : `127.0.0.1:${bedrockPort}`,
+    "--bind-address", `127.0.0.1:${port}`, "--target-address", transport === "nethernet" ? `nethernet://127.0.0.1:${bedrockPort}` : `127.0.0.1:${bedrockPort}`,
     "--target-version", `Bedrock ${version}`, "--auth-method", "NONE", "--log-ips", "false"], home, log);
   await waitForLog(log, /Binding proxy server/, child);
   return { child, log, port };

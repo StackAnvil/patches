@@ -37,11 +37,15 @@ public final class RecordingPlugin extends ViaProxyPlugin {
         event.getChannel().pipeline().addAfter(PacketCodec.NAME, "stackanvil-recording", new ChannelDuplexHandler() {
             private boolean packsSaved;
             private ScheduledFuture<?> packExport;
+            private byte[] pendingPresets;
             @Override public void handlerAdded(ChannelHandlerContext ctx) {
                 packExport = ctx.executor().scheduleAtFixedRate(() -> {
-                    try { savePacks(); if (packsSaved) packExport.cancel(false); }
+                    try { savePacks(); auditPresets(); }
                     catch (IOException error) { ctx.fireExceptionCaught(error); ctx.close(); }
                 }, 200, 200, TimeUnit.MILLISECONDS);
+            }
+            private void auditPresets() throws IOException {
+                if (CameraPresetAudit.afterPacket(connection.getUserConnection(), pendingPresets, directory)) pendingPresets = null;
             }
             private void savePacks() throws IOException {
                 ResourcePackStorage storage = connection.getUserConnection().get(ResourcePackStorage.class);
@@ -69,7 +73,8 @@ public final class RecordingPlugin extends ViaProxyPlugin {
                 try { presets = CameraPresetAudit.capture(message); record(true, message); }
                 catch (Exception error) { io.netty.util.ReferenceCountUtil.release(message); ctx.close(); throw error; }
                 super.channelRead(ctx, message);
-                CameraPresetAudit.afterPacket(connection.getUserConnection(), presets, directory);
+                if (presets != null) pendingPresets = presets;
+                auditPresets();
                 savePacks();
             }
             @Override public void write(ChannelHandlerContext ctx, Object message, ChannelPromise promise) throws Exception {

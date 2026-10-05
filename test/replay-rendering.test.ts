@@ -1,5 +1,14 @@
 import { expect, test } from "bun:test";
-import { verifyRendering, type RenderAudit, type SceneFeatures } from "../src/replay/verification.ts";
+import { hasGameplayAcknowledgments, verifyRendering, type RenderAudit, type SceneFeatures } from "../src/replay/verification.ts";
+
+test("gameplay requires local initialization and either movement protocol", () => {
+  const incomplete: Record<number, number>[] = [{}, { 113: 1 }, { 144: 20 }, { 19: 20 }, { 113: 0, 144: 20 }];
+  for (const ids of incomplete) {
+    expect(hasGameplayAcknowledgments(ids)).toBeFalse();
+  }
+  expect(hasGameplayAcknowledgments({ 113: 1, 144: 20 })).toBeTrue();
+  expect(hasGameplayAcknowledgments({ 113: 1, 19: 20 })).toBeTrue();
+});
 
 const expected: SceneFeatures = { skinUpdates: 3, geometrySkinUpdates: 3, localGeometrySkinUpdates: 1, skinTextures: ["64x64:abc", "128x128:def"], fullSkinRecords: { abc: 2, def: 1 }, customActorIdentifiers: ["probe:dragon"] };
 const actual: RenderAudit = { installedSkins: 3, installedGeometrySkins: 3, rejectedSkins: 0, nativePlayerRendererSelections: 2, nativePlayerRenderFrames: 4, nativeOtherPlayerRenderFrames: 5, thirdPersonScene: true, skinTextures: [...expected.skinTextures], fullSkinRecords: { ...expected.fullSkinRecords }, actorIdentifiers: ["probe:dragon"], evaluatedModels: ["geometry.dragon:dragon"], nativeCustomActorResolvedModels: 2, nativeCustomActorRenderFrames: 3 };
