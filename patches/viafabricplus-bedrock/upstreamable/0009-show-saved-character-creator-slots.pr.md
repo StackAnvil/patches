@@ -2393,7 +2393,7 @@ Neither reports particle loading or initialization errors.
 A private observer reads raw direction and population fields without sampling visuals or advancing scripts.
 These checks verify graph loading and simulation, without proving native visible orientation, timing, or blending.
 
-**Remaining:** Complete reader defaults, invalid-input behavior, interpolation, and visible native comparisons remain open.
+**Remaining:** The direction reader behavior is verified below. Other component defaults, interpolation, and visible native comparisons remain open.
 Additive visible comparisons, complete fog, lighting, and the other coverage requirements remain active.
 
 The additive investigation identifies separate alpha-factor inheritance in the target material parser.
@@ -2449,3 +2449,48 @@ These checks establish packaged integration through both connection routes, with
 
 **Remaining:** Native fog parameter mapping, cross-texture ordering, overlapping transparency, material selection, lighting, and other material families remain unverified or incomplete.
 The other protocol, inventory, gameplay, UI, skin, account, and platform requirements remain active.
+
+
+## Particle direction reader defaults and recovery
+
+**Evidence:** A private probe executes the matching 1.26.51.1 JSON reader, billboard constructor, component reader, and billboard sampler.
+The constructor stores a squared speed threshold of `0.01` directly.
+An absent direction section preserves that field.
+An explicit empty or null section selects derived direction with a zero threshold.
+An explicit numeric threshold converts to float before squaring, including negative values and large values that overflow to infinity.
+
+The component reader retains its component after direction errors.
+A non-object section or missing custom vector stops the reader before UV parsing.
+Unknown mode strings retain the constructor direction state and continue UV parsing.
+Non-string modes use derived direction, while inactive custom-vector fields remain unread.
+
+Malformed custom vectors select custom mode with a zero vector and continue UV parsing.
+A malformed axis becomes zero independently, and valid neighboring axes survive.
+Direction numeric readers accept booleans as zero or one.
+
+The probe covers 38 declarations and 190 samples through the loaded native component.
+Cases include absent and null sections, malformed vectors, ignored fields, mode selection, numeric conversion, float boundaries, and preserved UV defaults.
+It supplies private allocation, exact CRT byte operations, decimal conversion, empty diagnostic scopes, and age/lifetime variable lookup.
+Native JSON dispatch, field reads, float squaring, component control flow, and billboard calculations execute unchanged.
+Native logging messages remain private.
+
+**Implemented:** The production reader preserves these direction defaults and recovery paths.
+It reads direction before UV settings and keeps valid effects loaded after the verified declaration errors.
+It reports warnings once through the existing cached asset-loading path.
+Custom expressions still run in order through the existing bounded Molang parser.
+No alternative mode spelling or server-specific branch is added.
+
+**Verified tests:** Three targeted tests cover speed boundaries, inactive fields, per-axis recovery, UV read order, and complete emitter initialization after errors.
+A private-reference test compares all 38 native declarations and 190 loaded-component samples exactly.
+The targeted effect and facing suites pass all 20 tests with private references enabled.
+All four projects build with 1,046 passing Java tests, 119 optional skips, and no failures or errors.
+
+**Verified runtime:** Complete direct and ViaProxy replays preserve the CubeCraft scene hash `ede0e43b2874418cbb6b62135898efe0553009307d33fecd0f258383643d5d83`.
+Both retain all 311 skin updates and pass transport and rendering checks.
+Six authored fixtures use the production resource library, asset loader, simulation, and visual extraction.
+Both routes retain the expected thresholds, UV defaults, diagnostics, and sampled directions without loading or initialization errors.
+The same runs complete forward rendering and all three improved-transparency stages for translucent and additive particles.
+These checks establish packaged behavior and complete scene transport, without proving native image parity.
+
+**Remaining:** Typed schema dispatch, malformed Molang expressions, non-finite custom axes, other component reader errors, complete interpolation, and native visible comparisons remain unverified.
+The other material, protocol, inventory, gameplay, UI, skin, account, and platform requirements remain active.
