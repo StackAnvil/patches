@@ -87,3 +87,47 @@ All 90 core patches replay successfully.
 Native item-specific classifiers, restriction hashes, derived auxiliary data, charged-item construction, and complete visible timing remain incomplete or unverified.
 Snapshot overhead remains unmeasured.
 The [coverage ledger](../../../docs/bedrock-coverage.md#original-bedrock-item-comparison-data) records the complete evidence and limits.
+
+
+### Native NBT and full-stack comparison research
+
+**Verified research:** Additional probes execute Bedrock 1.26.51.1, build 51061372, using the corrected PE loader.
+The native NBT comparators pass 3,486 cases covering all eleven value types, strings, arrays, compounds, lists, and type mismatches.
+The earlier 504 float and list cases also pass with zero-filled virtual section tails.
+
+String equality compares lengths and bytes, including embedded zero bytes.
+Small and heap-backed strings produce the same comparison result.
+Byte and integer arrays compare their byte lengths and contents.
+Compound equality compares key membership and typed child values, independently of tree shape or key storage.
+A shared compound containing NaN still compares unequal to itself.
+Signed zero compares equally, and empty lists retain their declared type distinction.
+
+Another 784 cases execute native user-data comparison, full-stack comparison, and the default item classifier together.
+For these valid ordinary stacks, absent user data and an empty compound compare equally.
+Changed user data requests an immediate update when the default relevant-data comparison accepts the items.
+Equal user data with equal counts retains the item unless the selected slot changes.
+A selected-slot change requests animation.
+These fixtures supply the default relevant-data callback and do not establish dispatch for every item.
+
+The full-stack comparator passes another 11,833 cases: 11,664 parent-field combinations and 169 charged-stack combinations.
+Raw auxiliary value `32767` acts as a wildcard on either side.
+Block comparison is asymmetric: a present left block requires the same right block, while an absent left block imposes no block check.
+The comparator requires equal restriction hashes and blocking ticks.
+For present charged stacks, it compares count and recursively compares the nested stack.
+Invalid or physically empty charged stacks follow the absent-stack branch.
+These fixtures directly construct charged fields and supply restriction hashes.
+They do not execute charged-item loading, resolve restrictions, or establish their wire-to-object construction.
+
+| Native probe | Cases | Supplied boundaries |
+| --- | --- | --- |
+| NBT value comparison | 3,486 | Synthetic tag objects, string allocation, compound trees, and CRT byte comparison |
+| Earlier float/list comparison | 504 | Synthetic values and list storage |
+| User data through default classification | 784 | Valid ordinary stacks, inventory context, and default relevant-data callback |
+| Remaining full-stack fields | 11,833 | Block identities, derived restriction hashes, and charged-stack fields |
+
+All comparison, type-check, lookup, and recursive native instructions execute in these probes.
+The CRT boundary supplies standard byte comparison; it does not replace tag equality or compound lookup.
+Raw executables, memory layouts, generated inputs, and emulator programs remain private.
+
+**Incomplete:** These results verify comparison rules, not production classifier integration or complete native object construction.
+Restriction resolution, charged-item loading, item-specific dispatch, selected-slot lifetime, and final held-item pixels still require implementation and verification.
