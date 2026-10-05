@@ -1,7 +1,7 @@
-From dd2c4d69527d3159b6137264a98e1e6008c91179 Mon Sep 17 00:00:00 2001
+From b2f8a15856fc4493cc6c5bbd0149a210d83691ac Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 21:42:35 +0200
-Subject: [PATCH] feat(camera): render core-resolved server camera effects
+Subject: [PATCH] feat(camera): render core-resolved server camera movement
 
 Subscribe to ViaBedrock's versioned camera fade channel on direct and
 ViaProxy connections. Draw the supplied color and opacity timeline while
@@ -10,8 +10,7 @@ remaining elapsed state after late registration instead of restarting it.
 
 Fade merging and protocol decoding belong to core. The add-on only owns
 the client clock and overlay extraction, and releases state at disconnect.
-Preset movement, splines and aim assistance remain separate
-requirements. Native screenshot comparison must establish overlay order.
+Splines and aim assistance remain separate requirements. Native screenshot comparison must establish overlay order.
 
 Apply server FOV to the world camera before projection and culling setup.
 Use the shared core transition rules with the previous rendered projection
@@ -25,37 +24,55 @@ pitch/yaw offsets after ordinary camera alignment and before culling.
 Keep entity aim and outbound movement unchanged. Add the native Allow
 Camera Shake preference, ignore new shakes while disabled, consume stop,
 and release all state on disconnect. Core owns queues and noise sampling.
+
+Apply core-resolved free-camera targets with the shared native blend
+updater. Supply the previous rendered frame on interrupted transitions,
+apply the pose before shake and culling, and select server perspectives
+without changing the saved user view. Clear and disconnect release the
+override. Ordinary player movement and outbound aim remain unchanged.
+
+Restore settled targets for late subscriptions instead of synthesizing a
+new transition from an unknown old frame. Built-in first/third-person
+alignment currently uses Java's camera collision and distance rules, so
+activation works but those poses do not establish Bedrock camera parity.
+Audio/effects, follow cameras, splines and attached targets remain gaps.
 ---
- .../bedrock/ViaFabricPlusBedrock.java         | 18 +++++
- .../bedrock/camera/BedrockCameraFade.java     | 40 +++++++++++
- .../bedrock/camera/BedrockCameraFov.java      | 68 +++++++++++++++++++
- .../bedrock/camera/BedrockCameraShake.java    | 49 +++++++++++++
- .../bedrock/camera/CameraFadePayload.java     | 22 ++++++
- .../bedrock/camera/CameraFovPayload.java      | 22 ++++++
- .../bedrock/camera/CameraShakePayload.java    | 26 +++++++
- .../render/MixinBedrockCameraFade.java        | 23 +++++++
- .../render/MixinBedrockCameraFov.java         | 23 +++++++
- .../render/MixinBedrockCameraShake.java       | 47 +++++++++++++
+ .../bedrock/ViaFabricPlusBedrock.java         | 24 +++++
+ .../bedrock/camera/BedrockCameraFade.java     | 40 ++++++++
+ .../bedrock/camera/BedrockCameraFov.java      | 68 ++++++++++++++
+ .../bedrock/camera/BedrockCameraPosition.java | 92 +++++++++++++++++++
+ .../bedrock/camera/BedrockCameraShake.java    | 49 ++++++++++
+ .../bedrock/camera/CameraFadePayload.java     | 22 +++++
+ .../bedrock/camera/CameraFovPayload.java      | 22 +++++
+ .../bedrock/camera/CameraPositionPayload.java | 22 +++++
+ .../bedrock/camera/CameraShakePayload.java    | 26 ++++++
+ .../render/MixinBedrockCameraFade.java        | 23 +++++
+ .../render/MixinBedrockCameraFov.java         | 23 +++++
+ .../render/MixinBedrockCameraPerspective.java | 21 +++++
+ .../render/MixinBedrockCameraShake.java       | 72 +++++++++++++++
  .../render/MixinMinecraftHudVisibility.java   |  6 ++
- .../bedrock/settings/BedrockSettings.java     |  4 ++
+ .../bedrock/settings/BedrockSettings.java     |  4 +
  .../viafabricplus-bedrock/lang/en_us.json     |  1 +
- .../viafabricplus-bedrock.mixins.json         |  5 +-
- 14 files changed, 353 insertions(+), 1 deletion(-)
+ .../viafabricplus-bedrock.mixins.json         |  6 +-
+ 17 files changed, 520 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFade.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFov.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraShake.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraFadePayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraFovPayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraPositionPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraShakePayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraFade.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraFov.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraPerspective.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraShake.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index ee55d33..e1f2792 100644
+index ee55d33..924035a 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-@@ -45,6 +45,12 @@ import com.viaversion.viafabricplus.bedrock.inventory.CartographyPayload;
+@@ -45,6 +45,14 @@ import com.viaversion.viafabricplus.bedrock.inventory.CartographyPayload;
  import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
  import com.viaversion.viafabricplus.bedrock.input.InputPermissionsPayload;
  import com.viaversion.viafabricplus.bedrock.hud.HudVisibilityPayload;
@@ -63,12 +80,14 @@ index ee55d33..e1f2792 100644
 +import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraFade;
 +import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraFov;
 +import com.viaversion.viafabricplus.bedrock.camera.CameraFovPayload;
++import com.viaversion.viafabricplus.bedrock.camera.CameraPositionPayload;
++import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraPosition;
 +import com.viaversion.viafabricplus.bedrock.camera.CameraShakePayload;
 +import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraShake;
  import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
  import com.viaversion.viafabricplus.bedrock.input.RawInputPayload;
  import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
-@@ -117,6 +123,18 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -117,6 +125,22 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
          PayloadTypeRegistry.clientboundPlay().register(HudVisibilityPayload.TYPE, HudVisibilityPayload.CODEC);
          ClientPlayNetworking.registerGlobalReceiver(HudVisibilityPayload.TYPE,
              (payload, context) -> BedrockHudVisibility.accept(payload.state()));
@@ -84,6 +103,10 @@ index ee55d33..e1f2792 100644
 +        ClientPlayNetworking.registerGlobalReceiver(CameraFovPayload.TYPE,
 +            (payload, context) -> BedrockCameraFov.accept(payload.state()));
 +        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> BedrockCameraFov.clear());
++        PayloadTypeRegistry.clientboundPlay().register(CameraPositionPayload.TYPE, CameraPositionPayload.CODEC);
++        ClientPlayNetworking.registerGlobalReceiver(CameraPositionPayload.TYPE,
++            (payload, context) -> BedrockCameraPosition.accept(payload.state()));
++        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> BedrockCameraPosition.clear());
          this.settings = new BedrockSettings();
          this.account = new BedrockAccount(ViaFabricPlus.api().path().resolve("bedrock.json"));
          this.appearances = new BedrockAppearanceStore(ViaFabricPlus.api().path().resolve("bedrock-appearances"));
@@ -207,6 +230,104 @@ index 0000000..49fab8a
 +
 +    private record Pending(CameraFovState state, long receivedAt) { }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java
+new file mode 100644
+index 0000000..e1fccd4
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraPosition.java
+@@ -0,0 +1,92 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.camera;
++
++import net.minecraft.client.CameraType;
++import net.raphimc.viabedrock.api.model.CameraPose;
++import net.raphimc.viabedrock.api.model.CameraPoseTimeline;
++import net.raphimc.viabedrock.api.model.CameraPositionState;
++import net.raphimc.viabedrock.api.model.CameraPositionState.Mode;
++
++import java.util.ArrayDeque;
++import java.util.Deque;
++
++/** Supplies rendered frame inputs to core's command and blend rules. */
++public final class BedrockCameraPosition {
++    private static final CameraPoseTimeline TIMELINE = new CameraPoseTimeline();
++    private static final Deque<CameraPositionState> PENDING = new ArrayDeque<>();
++    private static CameraPositionState state = CameraPositionState.EMPTY;
++    private static CameraPose rendered;
++    private static long acceptedSequence = -1;
++    private static long appliedSequence = -1;
++    private static long previousFrame;
++    private static boolean preparingTarget;
++
++    private BedrockCameraPosition() { }
++
++    public static void accept(final CameraPositionState snapshot) {
++        if (snapshot.sequence() <= acceptedSequence) return;
++        acceptedSequence = snapshot.sequence();
++        PENDING.addLast(snapshot);
++    }
++
++    public static void clear() {
++        PENDING.clear();
++        state = CameraPositionState.EMPTY;
++        rendered = null;
++        acceptedSequence = appliedSequence = -1;
++        previousFrame = 0;
++        preparingTarget = false;
++    }
++
++    public static void beginFrame() { preparingTarget = true; }
++
++    public static CameraType perspective(final CameraType local) {
++        final Mode mode;
++        if (preparingTarget) {
++            final CameraPositionState requested = PENDING.isEmpty() ? state : PENDING.getLast();
++            // A free target has its own pose. Normal alignment remains available as a local input.
++            mode = requested.mode() == Mode.FREE ? Mode.LOCAL : requested.mode();
++        } else {
++            mode = state.mode() == Mode.LOCAL || rendered == null ? Mode.LOCAL : Mode.values()[rendered.renderingMode()];
++        }
++        return switch (mode) {
++            case LOCAL -> local;
++            case FIRST_PERSON -> CameraType.FIRST_PERSON;
++            case THIRD_PERSON, FREE -> CameraType.THIRD_PERSON_BACK;
++            case THIRD_PERSON_FRONT -> CameraType.THIRD_PERSON_FRONT;
++        };
++    }
++
++    public static CameraPose frame(final CameraPose normal) {
++        preparingTarget = false;
++        final long now = System.nanoTime();
++        final float delta = previousFrame == 0 ? 0 : Math.max(0, (now - previousFrame) / 1_000_000_000F);
++        previousFrame = now;
++        boolean changed = false;
++        while (!PENDING.isEmpty()) {
++            final CameraPositionState snapshot = PENDING.removeFirst();
++            state = snapshot;
++            if (snapshot.mode() != Mode.LOCAL) {
++                // A snapshot lacks the old client's interrupted frame. Restore its settled target,
++                // rather than replaying an expired or newly negotiated cutscene from a guessed pose.
++                final boolean continuous = snapshot.live() && snapshot.sequence() == appliedSequence + 1;
++                TIMELINE.begin(rendered != null ? rendered : normal, continuous ? snapshot.duration() : 0, snapshot.ease());
++            }
++            appliedSequence = snapshot.sequence();
++            changed = true;
++        }
++        if (state.mode() == Mode.LOCAL) {
++            rendered = normal;
++            return null;
++        }
++        final CameraPose target = state.mode() == Mode.FREE
++                ? CameraPose.fromDegrees(state.position(), state.pitch(), state.yaw(), normal.fov(), Mode.FREE.ordinal())
++                : new CameraPose(normal.position(), normal.orientation(), normal.fov(), state.mode().ordinal());
++        rendered = TIMELINE.advance(changed ? 0 : delta, target, null);
++        return rendered;
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraShake.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraShake.java
 new file mode 100644
 index 0000000..08950fe
@@ -318,6 +439,34 @@ index 0000000..3a17da1
 +    @Override
 +    public Type<CameraFovPayload> type() { return TYPE; }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraPositionPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraPositionPayload.java
+new file mode 100644
+index 0000000..173c88c
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraPositionPayload.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.camera;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.CameraPositionState;
++
++public record CameraPositionPayload(CameraPositionState state) implements CustomPacketPayload {
++    public static final Type<CameraPositionPayload> TYPE = new Type<>(Identifier.parse(CameraPositionState.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, CameraPositionPayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> CameraPositionState.TYPE.write(buffer, payload.state),
++            buffer -> new CameraPositionPayload(CameraPositionState.TYPE.read(buffer)));
++
++    @Override
++    public Type<CameraPositionPayload> type() { return TYPE; }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraShakePayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraShakePayload.java
 new file mode 100644
 index 0000000..1538d1e
@@ -408,12 +557,39 @@ index 0000000..9c592fc
 +        return BedrockCameraFov.project(normal, this.fov);
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraPerspective.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraPerspective.java
+new file mode 100644
+index 0000000..c36c380
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraPerspective.java
+@@ -0,0 +1,21 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.llamalad7.mixinextras.injector.ModifyReturnValue;
++import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraPosition;
++import net.minecraft.client.CameraType;
++import net.minecraft.client.Options;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++@Mixin(Options.class)
++public abstract class MixinBedrockCameraPerspective {
++    @ModifyReturnValue(method = "getCameraType", at = @At("RETURN"))
++    private CameraType serverPerspective(final CameraType local) {
++        return BedrockCameraPosition.perspective(local);
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraShake.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraShake.java
 new file mode 100644
-index 0000000..80b12b1
+index 0000000..6b5c1c2
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraShake.java
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,72 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -422,6 +598,9 @@ index 0000000..80b12b1
 +package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
 +
 +import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraShake;
++import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraPosition;
++import net.raphimc.viabedrock.api.model.CameraPose;
++import net.raphimc.viabedrock.api.model.CameraPositionState;
 +
 +import net.minecraft.client.Camera;
 +import net.minecraft.world.phys.Vec3;
@@ -437,6 +616,8 @@ index 0000000..80b12b1
 +    @Shadow private float xRot;
 +    @Shadow private float yRot;
 +    @Shadow private Vec3 position;
++    @Shadow private boolean detached;
++    @Shadow private float fov;
 +
 +    @Shadow
 +    protected abstract void setRotation(float yaw, float pitch);
@@ -444,8 +625,28 @@ index 0000000..80b12b1
 +    @Shadow
 +    protected abstract void setPosition(Vec3 position);
 +
++    @Inject(method = "alignWithEntity", at = @At("HEAD"))
++    private void prepareServerPose(final float partialTick, final CallbackInfo ci) {
++        BedrockCameraPosition.beginFrame();
++    }
++
 +    @Inject(method = "alignWithEntity", at = @At("TAIL"))
 +    private void applyServerShake(final float partialTick, final CallbackInfo ci) {
++        final CameraPose normal = CameraPose.fromDegrees(new CameraPose.Vector((float) this.position.x,
++                (float) this.position.y, (float) this.position.z), this.xRot, this.yRot,
++                this.fov, net.minecraft.client.Minecraft.getInstance().options.getCameraType() == net.minecraft.client.CameraType.FIRST_PERSON
++                        ? CameraPositionState.Mode.FIRST_PERSON.ordinal()
++                        : net.minecraft.client.Minecraft.getInstance().options.getCameraType() == net.minecraft.client.CameraType.THIRD_PERSON_FRONT
++                                ? CameraPositionState.Mode.THIRD_PERSON_FRONT.ordinal() : CameraPositionState.Mode.THIRD_PERSON.ordinal());
++        final CameraPose pose = BedrockCameraPosition.frame(normal);
++        if (pose != null) {
++            final var angles = pose.orientation().angles();
++            this.setRotation(180F - angles.y() / CameraPose.DEGREES, -angles.x() / CameraPose.DEGREES);
++            this.setPosition(new Vec3(pose.position().x(), pose.position().y(), pose.position().z()));
++            this.detached = pose.renderingMode() == CameraPositionState.Mode.FREE.ordinal()
++                    || pose.renderingMode() == CameraPositionState.Mode.THIRD_PERSON.ordinal()
++                    || pose.renderingMode() == CameraPositionState.Mode.THIRD_PERSON_FRONT.ordinal();
++        }
 +        final var timeline = BedrockCameraShake.advance();
 +        if (!BedrockCameraShake.enabled()) return;
 +        final var state = timeline.snapshot();
@@ -527,19 +728,20 @@ index cafcdc5..643e3ac 100644
    "bedrock_settings.viafabricplus.hide_own_captions": "Hide captions for your sounds",
    "bedrock_settings.viafabricplus.hide_ambient_captions": "Hide ambient and weather captions",
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index e7195f1..326dae8 100644
+index e7195f1..947779f 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -93,6 +93,8 @@
+@@ -93,6 +93,9 @@
      "features.render.MixinBedrockFirstPersonVisibility",
      "features.render.MixinBedrockFirstPersonBobbing",
      "features.render.MixinBedrockFirstPersonProjection",
 +    "features.render.MixinBedrockCameraFov",
 +    "features.render.MixinBedrockCameraShake",
++    "features.render.MixinBedrockCameraPerspective",
      "features.render.MixinBedrockHandItemLifecycle",
      "features.render.MixinBedrockModelPartTransforms",
      "features.render.MixinPlayerSkinWidget",
-@@ -120,7 +122,8 @@
+@@ -120,7 +123,8 @@
      "features.particle.MixinBedrockParticlePipelines",
      "features.particle.MixinBedrockParticleRenderType",
      "features.render.MixinBedrockHudVisibility",

@@ -162,7 +162,7 @@ The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and
 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
-| U1 | Presets, instructions, splines, shake, and aim assistance | Incomplete | Core retains received presets and resolves optional-field inheritance. It also resolves fades, FOV transitions, and default camera shake, which the add-on renders. Preset activation and rendering, movement, target tracking, splines, attachments, aim assistance, custom shake parameters, local FOV modifiers, and broader lifecycle comparisons remain incomplete. |
+| U1 | Presets, instructions, splines, shake, and aim assistance | Incomplete | Core retains received presets and resolves optional-field inheritance. It also resolves fades, FOV transitions, and default camera shake, which the add-on renders. Free-camera activation, pose transport, per-preset overrides, and native blend arithmetic now have production paths. Target tracking, splines, attachments, aim assistance, native follow cameras, built-in perspective pose parity, listener/effect application, custom shake parameters, and broader lifecycle comparisons remain incomplete. |
 | U2 | Fog and HUD visibility | Incomplete | Core retains all target HUD restrictions and transports them through direct connections and ViaProxy. The add-on applies individual Java HUD restrictions and preserves local settings on reset. Fog, missing native widgets, and remaining visual comparisons are incomplete. |
 | U3 | Texture animations, toasts, credits, store requests, and inventory preferences | Incomplete | Implement target packet behavior and verify native presentation. |
 | U4 | Dynamic JSON UI and widgets | Incomplete | Extend static sidebar support with expression evaluation and applicable widgets. |
@@ -3259,3 +3259,42 @@ All original protocol, inventory, presentation, gameplay, rendering, skin, accou
 The native samples use authored permutations; they do not claim identical random trajectories across clients.
 Complete-record delivery and local-avatar rendering do not establish native animation or skin visual parity.
 The full protocol, gameplay, editor, account, skin, persona, audio, UI, asset, and platform requirements remain active.
+
+
+## Core-resolved free-camera movement, October 6, 2026
+
+U1 remains incomplete.
+Core now resolves free-camera position, rotation, facing targets, inherited defaults, and persistent overrides per received preset index.
+A `default` command clears the position and rotation overrides.
+The versioned payload carries resolved commands through direct connections and ViaProxy.
+
+The add-on supplies its interrupted frame to the shared native blend updater.
+The updater preserves easing overshoot, shortest yaw rotation, incremental moving-target behavior, and endpoint perspective fields.
+The renderer applies the camera pose before shake, projection, and culling.
+Server perspectives do not write the saved user camera setting.
+Clear and disconnect release the override.
+
+Seven targeted tests pass without skips using private target-build evidence.
+They compare 4,608 native blend samples, nine recorded camera instructions, and twelve native facing arithmetic cases.
+All four stack builds, core style checks, the replay audit regression, and `bun run check` pass.
+
+Complete direct and ViaProxy replays reach all five recorded free-camera targets with matching position and rotation.
+Frame observations also show the short yaw path, overshoot, three perspective activations, and clear restoring first person.
+Both complete scene hashes match the native capture.
+Transport and existing skin-rendering checks pass.
+
+A stationary screenshot comparison confirms the camera's direction and surrounding landmarks.
+Projection, lighting, and foliage still differ visibly.
+Numerical camera agreement does not establish identical frames.
+The screenshots and videos remain private.
+
+Late subscriptions restore settled targets because core lacks the original interrupted rendering frame.
+Exact restoration during an existing blend remains incomplete.
+The three built-in perspective commands currently use Java collision and distance rules.
+Native third-person pose parity, player effects, audio-listener choices, camera/FOV coupling, follow cameras, splines, targets, attachments, and aim assistance remain open.
+
+The first ViaProxy attempt timed out during configuration, before receiving presets or camera commands.
+Its journal contains login success and client cache status but no resource-pack info.
+The next attempt completed the scene, passed transport and skin-rendering checks, and retained the same preset report as the direct route.
+The intermittent replay handshake needs separate investigation.
+This movement work does not establish a fix for that timeout.

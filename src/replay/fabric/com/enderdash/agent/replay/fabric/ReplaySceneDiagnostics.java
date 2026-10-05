@@ -36,6 +36,7 @@ final class ReplaySceneDiagnostics {
             state.put("cameraInitialized", call(camera, "isInitialized"));
             state.put("cameraDetached", call(camera, "isDetached"));
             state.put("cameraPosition", vector(call(camera, "position")));
+            state.put("cameraRotation", List.of(call(camera, "xRot"), call(camera, "yRot")));
             state.put("cameraUsesLocalPlayer", call(minecraft, "getCameraEntity") == player);
             if (player != null) {
                 state.put("playerPosition", List.of(call(player, "getX"), call(player, "getY"), call(player, "getZ")));

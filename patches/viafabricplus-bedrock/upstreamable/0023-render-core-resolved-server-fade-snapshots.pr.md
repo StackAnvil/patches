@@ -53,3 +53,27 @@ The default player-camera path has native codec and numeric evidence.
 A complete direct replay changes the local preference during overlapping and strong shake commands.
 It verifies hidden rendering, ignored additions, retained event lifetimes, re-enable, and stop.
 Native preference-toggle screenshots, custom preset parameters, late registration, pauses, transfers, and first-person item integration need additional native comparisons.
+
+## Core-resolved camera movement
+
+The add-on subscribes to `viabedrock:camera_position` on direct and ViaProxy connections.
+It supplies the previous rendered frame to the shared core blend updater.
+Free-camera position and rotation apply before camera shake, projection, and culling.
+The camera changes without moving the player or changing outbound aim.
+
+Server perspectives override the effective camera type without changing the saved user setting.
+Clear and disconnect release the override.
+Perspective fields retain their source values during blends and switch at the endpoint.
+Snapshots restore settled targets because the original interrupted frame is unavailable.
+Exact mid-blend restoration remains incomplete.
+
+Built-in first/third-person activation currently uses Java camera alignment.
+Native third-person distance and collision still need implementation and comparison.
+The transported audio/effect fields, native follow cameras, splines, attached actors, and aim assistance remain incomplete.
+
+Complete direct and ViaProxy replays pass transport and existing skin-rendering checks.
+Both reproduce all five free-camera targets, the short yaw arc, overshoot, perspective activation, and clear.
+Their complete scene hashes match the native capture, and core preset reports match byte for byte.
+Stationary screenshots still differ in projection, lighting, and foliage.
+This verification establishes movement behavior, with visible parity still incomplete.
+One ViaProxy attempt timed out before presets; the completed retry does not establish a fix for that intermittent handshake.

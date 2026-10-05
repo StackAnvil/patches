@@ -103,7 +103,7 @@ Complete direct and ViaProxy replays retain identical eight-preset tables and re
 Their scene hashes match the native capture, and transport and existing skin-rendering checks pass.
 The replay audit regression test covers buffer ownership and detection of an unhandled table.
 This change establishes decoding and inheritance state in core.
-Preset activation, pose transport, rendering, controls, audio-listener application, and player effects remain incomplete.
+This preset-registry milestone did not implement activation or rendering. The movement section below records the subsequent production path.
 
 ## Native movement research
 
@@ -117,3 +117,40 @@ That comparison uses the observed native easing factor to isolate pose arithmeti
 It does not establish Windows CRT bit identity or production Java movement behavior.
 Nine additional native samples verify that other rendering fields remain unchanged during blending and copy from the target after completion.
 Visible native captures confirm authored custom views and eased transitions, but translated rendering still needs implementation and comparisons.
+
+## Free-camera commands and shared movement
+
+Core resolves free-camera position, rotation, facing targets, inheritance, and persistent overrides for each received preset index.
+A `default` command clears the position and rotation overrides.
+Invalid commands preserve the active camera and its previous overrides.
+The resolved payload also retains player-effects and audio-listener choices.
+Their client application remains incomplete.
+
+The renderer supplies its interrupted frame to the shared `CameraPoseTimeline`.
+Core owns quaternion conversion, the incremental blend, shortest yaw rotation, easing overshoot, and endpoint rendering fields.
+The same updater accepts moving targets and parent displacement for subsequent follow-camera integration.
+That arithmetic does not implement a follow-camera target resolver.
+
+Seven targeted tests pass without skips using the private target-build fixtures.
+They cover all 4,608 native blend samples, all nine recorded commands, and twelve native facing arithmetic cases.
+The facing probe executes the instruction kernel with authored position and previous rotation.
+It verifies cardinal directions, vertical targets, coincident targets, and the native `0.01` distance thresholds.
+Full instruction lookup and optional-field selection remain outside that kernel probe.
+
+The versioned position channel carries the same resolved commands through direct connections and ViaProxy.
+The rendering client owns only frame inputs, camera application, and perspective integration.
+Core cannot recover an unknown old rendering frame during late subscription.
+A snapshot therefore restores the settled target instead of constructing a new blend.
+Exact restoration during an existing blend remains incomplete.
+
+The three built-in first/third-person commands activate their requested perspectives.
+The add-on still uses Java collision and distance rules for those targets.
+Their activation does not establish Bedrock pose parity.
+Follow/orbit cameras, splines, attachments, tracking, aim assistance, custom controls, and pose/FOV coupling remain incomplete.
+
+Complete direct and ViaProxy replays pass transport and existing skin-rendering checks.
+Both reproduce all five free-camera targets, the short yaw arc, overshoot, perspective activation, and clear.
+Their complete scene hashes match the native capture, and core preset reports match byte for byte.
+Stationary screenshots still differ in projection, lighting, and foliage.
+This verification establishes movement behavior, with visible parity still incomplete.
+One ViaProxy attempt timed out before presets; the completed retry does not establish a fix for that intermittent handshake.
