@@ -2189,6 +2189,73 @@ Allocator, CRT, and registry boundaries remained supplied.
 The 134,423 new instruction-execution cases exclude the live dispatch inventory and selected code-range comparisons.
 
 **Incomplete:** Production still uses Java hand-item classification and decoded wire snapshots.
-Native name remapping, restriction registry resolution, other specialized loading methods, complete saved-tag construction, and renderer lifetime remain incomplete or unverified.
+Native name remapping, restriction registry resolution, complete specialized construction, complete saved-tag construction, and renderer lifetime remain incomplete or unverified.
 These results establish broader dispatch evidence and additional construction rules.
 They do not establish complete network-item normalization, visible timing, or first-person parity.
+
+
+### Specialized native item-loading research
+
+**Verified research:** Five additional probes executed specialized methods from Bedrock 1.26.51.1, build 51061372.
+They passed 77,324 cases across banners, decorated pots, leaf states, the Education gate, and legacy element dispatch.
+These probes cover the remaining specialized methods in the captured registry.
+They do not complete native registry construction or network-item normalization.
+Executable bytes, object data, emulation programs, and reference outputs remain private.
+
+| Native method | Passing cases | Verified behavior |
+| --- | --- | --- |
+| Banner loading | 192 | Absent or empty user data becomes Int `Type:0`; nonempty user data remains unchanged |
+| Decorated-pot loading | 1,682 | The first four `sherds` entries determine whether the key remains |
+| Education gate | 256 | Disabled chemistry invalidates the stack and releases its item and user data |
+| Leaf loading | 8,306 | Clear `update_bit`, then `persistent_bit`, with native state selection and fallback |
+| Legacy element dispatch | 66,888 | Effective auxiliary bits select remapping or invalidation before the Education gate |
+
+**Banners:** The method inserts Int `Type:0`, rather than a `Base` tag.
+Any nonempty compound skips insertion, even when `Type` is missing or has another tag type.
+The probe executed compound creation, Int insertion, ownership transfer, and typed comparison.
+It covered absent and empty compounds, all eleven existing tag types, and auxiliary boundaries.
+
+**Decorated pots:** A typed list supplies up to four string entries.
+Missing entries and entries with another tag type act as empty strings.
+If all four strings are empty or exactly `minecraft:brick`, native tree removal deletes the `sherds` key.
+Later list entries do not affect this decision.
+A non-list `sherds` value remains unchanged.
+Other keys, the allocated compound, and auxiliary bits remain unchanged.
+
+The pot probe executed the native list reader, predicate, tree removal, and child destruction.
+A selected native initializer fragment supplied the `minecraft:brick` string.
+Fixtures used valid small trees and covered list lengths, types, string boundaries, storage forms, and preservation of other data.
+
+**Education gate:** The actual context acquisition, gate, invalidation, and release methods balanced the tested references.
+Bit zero of the supplied chemistry flag controls admission.
+Enabled chemistry preserves the complete stack in these cases.
+Disabled chemistry clears the item reference, user data, count, and auxiliary value.
+Context objects and mutex operations remained supplied.
+
+**Leaves:** Native initializer fragments identify the first property as `update_bit` and the second as `persistent_bit`.
+An enabled static property clears its mask from the block's auxiliary value before lookup in the state vector.
+An absent or invalid vector entry retains the current block.
+A missing static property can use a dynamic resolver, then the legacy default when its fallback flag permits it.
+A disabled static property retains the current block without that fallback.
+The second pass uses the block and legacy definition selected by the first.
+
+The leaf probe covered both passes, their composition, masks, bounds, empty candidates, duplicate dynamic entries, and absent blocks.
+Only the block pointer changed in the tested stack snapshots.
+Property names and IDs came from native initializer fragments.
+Registry definitions, state vectors, and dynamic resolver answers remained supplied.
+
+**Elements:** The method selects block-derived auxiliary bits except for the raw wildcard value or an absent block.
+For a matching legacy identity and nonzero effective value, the low byte must be below 119.
+The low seven bits then select a nonempty element-table entry.
+Valid entries dispatch the selected block and original count to the stack constructor; invalid entries invalidate the stack.
+The Education gate follows either path.
+
+The element probe covered all 65,536 raw auxiliary values and 1,352 additional block, identity, count, and chemistry combinations.
+It executed dispatch, the chemistry gate, invalidation, context release, and item-reference cleanup.
+Legacy identities, element definitions, and the block-construction callback remained supplied.
+It did not execute complete block-to-item construction.
+
+**Incomplete:** Production still uses Java hand-item classification and decoded wire snapshots.
+Complete network construction, block-to-item construction, native name remapping, restriction registry resolution, and renderer lifetime remain incomplete or unverified.
+Allocator, CRT, TLS, and registry boundaries remained supplied where the probes required them.
+These results establish construction rules at specific boundaries, not complete first-person behavior or visible parity.
