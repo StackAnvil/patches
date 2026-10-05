@@ -1851,6 +1851,35 @@ The matching native client supplies dispatch evidence for 19 item identifiers.
 Shield, firework star, and filled map use separate comparison rules.
 The glow-stick and sparkler color exception also has identifier evidence from native globals.
 Unicorn executes 2,176 base and shield classifier cases with valid synthetic stacks and absent user data.
-These checks establish classifier branches, not complete NBT behavior, the shield timer's trigger, or final swap pixels.
+These checks establish classifier branches, not complete NBT behavior or final swap pixels.
+A later live watchpoint identifies the successful-block timer, its guard, and its rising-edge behavior.
+The separate blocking-start timestamp still needs complete lifecycle evidence.
 Production still uses the Java classifier and replacement threshold.
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-item-classification-research) records the verified rules and remaining work.
+
+
+### Native player blocking query
+
+Player animation graphs now bind `query.blocking` to the actor flag supplied by core.
+The matching Bedrock 1.26.51.1 build 51061372 callback reads `BLOCKING` (72), including during `TRANSITION_BLOCKING`.
+A missing native actor snapshot retains Java's existing result.
+The existing core snapshot format already carries the flag on direct connections and ViaProxy.
+
+Unit tests cover actor replacement, stale removal, matching removal, cleanup, and native-state precedence.
+A private instruction fixture matches all 64 callback cases.
+The dependency build and complete add-on suite pass 1,016 Java tests, with 115 optional skips and no failures or errors.
+All 23 add-on patches replay successfully.
+
+Direct and ViaProxy clients each match all 64 cases through the actual player animation query method.
+Both retain the 900 native hand-height cases, four Java fallback cases, selected hand models, and retained item queries.
+Both preserve the complete recorded 75-second scene prefix and reach playable spawn.
+The probe supplies snapshots and restores the registry afterward.
+It does not establish final shield pixels or complete network flag lifecycle behavior.
+
+The generic third-person audit still reports no local avatar submission for this fixture's first-person-only controllers.
+The direct CLI reports that audit failure.
+The ViaProxy CLI retains the audit report with its transport-only option.
+The hand-specific probes provide separate evidence.
+
+Shield bob, blocking-start timing, and complete visible shield parity remain incomplete or unverified.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-player-blocking-query) records the native evidence and runtime checks.

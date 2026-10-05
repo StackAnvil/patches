@@ -1,4 +1,4 @@
-From e034f3be8ddfa3d353ed596835df46e9d581cca7 Mon Sep 17 00:00:00 2001
+From b21dea6cb1e8168246ce40db5110286b956fb229 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1524,6 +1524,15 @@ Resolve licensed player descriptions with the core inheritance merger too. Keep 
 Bind first-person item queries to the stacks retained by the hand renderer during item swaps. Keep equipped hands and active-use durations separate from rendered hands. Minecraft 26.3 supplies the retained stacks in FirstPersonHandsAndItemsRenderState; target Bedrock 1.26.51.1 item-name callback execution and the official query contract distinguish these sources. Test expression-driven arm poses over retained, replaced, and empty rendered stacks without modifying the actor frame.
 
 The target hand tick raises matching hands toward height one and lowers animated replacements toward zero with a 0.4 step. Native instruction execution covers 900 independent two-hand cases. Remove the Java attack-cooldown multiplier only while a loaded native graph matches the local skin texture; retain ordinary Java fallback and the existing swap classifier. Native item identity classification, busy-hand behavior, replacement thresholds, and full visible timing still need separate comparison.
+
+Bind query.blocking to the core actor BLOCKING flag instead of Java's
+item-use state. The licensed Bedrock 1.26.51.1 build 51061372 callback
+reads flag 72 directly, including during TRANSITION_BLOCKING. Preserve
+Java's fallback only when no native actor snapshot exists. Existing core
+state transport supplies the flag on direct and ViaProxy connections.
+
+Cover actor replacement, stale removal, and registry cleanup. An optional
+private fixture compares all 64 native callback cases against the binding.
 ---
  .gitignore                                    |    4 +-
  .../kotlin/base.settings.settings.gradle.kts  |    3 +
@@ -1641,7 +1650,7 @@ The target hand tick raises matching hands toward height one and lowers animated
  .../sound/MixinBedrockSoundEngine.java        |   50 +
  .../sound/MixinBedrockSoundManager.java       |   16 +
  .../sound/MixinMinecraftServerSounds.java     |   22 +
- .../bedrock/render/BedrockActorState.java     |   67 +
+ .../bedrock/render/BedrockActorState.java     |   72 +
  .../bedrock/render/BedrockAnimatedModel.java  |  174 +
  .../bedrock/render/BedrockBoneTransform.java  |   27 +
  .../render/BedrockFirstPersonActor.java       |   35 +
@@ -1745,7 +1754,7 @@ The target hand tick raises matching hands toward height one and lowers animated
  .../appearance/BedrockStoreBrowserTest.java   |   43 +
  .../appearance/BedrockStoreSignInTest.java    |   90 +
  .../appearance/BedrockStoreTokensTest.java    |   45 +
- .../bedrock/render/BedrockActorStateTest.java |  134 +
+ .../bedrock/render/BedrockActorStateTest.java |  178 +
  .../render/BedrockAnimatedModelTest.java      |   87 +
  .../render/BedrockBoneTransformTest.java      |   69 +
  .../render/BedrockFirstPersonActorTest.java   |  117 +
@@ -1758,7 +1767,7 @@ The target hand tick raises matching hands toward height one and lowers animated
  .../render/BedrockPlayerModelTest.java        |  100 +
  .../render/BedrockViewBobbingTest.java        |   93 +
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 233 files changed, 41981 insertions(+), 110 deletions(-)
+ 233 files changed, 42030 insertions(+), 110 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -26314,10 +26323,10 @@ index 0000000..9433e74
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java
 new file mode 100644
-index 0000000..4283321
+index 0000000..39eeaf6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorState.java
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,72 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -26372,6 +26381,11 @@ index 0000000..4283321
 +    public static boolean isCharging(final UUID uuid) {
 +        final var state = state(uuid);
 +        return state != null && state.flags().contains(ActorFlags.CHARGING);
++    }
++
++    public static boolean isBlocking(final UUID uuid, final boolean javaBlocking) {
++        final var state = state(uuid);
++        return state == null ? javaBlocking : state.flags().contains(ActorFlags.BLOCKING);
 +    }
 +
 +    public static BedrockMolangColor spellColor(final UUID uuid, final UUID lifetime) {
@@ -27180,7 +27194,7 @@ index f00c62a..5ddf747 100644
      }
  
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 87aa8e4..89ce3a5 100644
+index 87aa8e4..75ca289 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -19,37 +19,64 @@
@@ -27655,7 +27669,7 @@ index 87aa8e4..89ce3a5 100644
 +        queries.put(
 +                "is_charging",
 +                BedrockActorState.isCharging(entity.getUUID()));
-+        queries.put("blocking", entity.isBlocking());
++        queries.put("blocking", BedrockActorState.isBlocking(entity.getUUID(), entity.isBlocking()));
 +        queries.put("target_x_rotation", state.xRot);
 +        queries.put("target_y_rotation", state.yRot);
 +        queries.put("body_y_rotation", state.bodyRot);
@@ -44853,10 +44867,10 @@ index 0000000..94c5588
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorStateTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorStateTest.java
 new file mode 100644
-index 0000000..e55684d
+index 0000000..70d9bac
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockActorStateTest.java
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,178 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -44885,6 +44899,46 @@ index 0000000..e55684d
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +final class BedrockActorStateTest {
++    @Test
++    void usesNativeBlockingFlagsAcrossActorReplacementAndRemoval() {
++        final UUID player = UUID.randomUUID(), lifetime = UUID.randomUUID(), replacement = UUID.randomUUID();
++        try {
++            assertTrue(BedrockActorState.isBlocking(player, true));
++            assertFalse(BedrockActorState.isBlocking(player, false));
++            BedrockActorState.apply(snapshot(player, lifetime, Set.of(ActorFlags.BLOCKING, ActorFlags.TRANSITION_BLOCKING), null), null);
++            assertTrue(BedrockActorState.isBlocking(player, false));
++            BedrockActorState.apply(snapshot(player, replacement, Set.of(ActorFlags.BLOCKED_USING_SHIELD), null), null);
++            BedrockActorState.apply(new NativeActorMessage.Remove(player, lifetime, false), null);
++            assertFalse(BedrockActorState.isBlocking(player, true));
++            BedrockActorState.apply(new NativeActorMessage.Remove(player, replacement, false), null);
++            assertTrue(BedrockActorState.isBlocking(player, true));
++            BedrockActorState.clear();
++            assertFalse(BedrockActorState.isBlocking(player, false));
++        } finally {
++            BedrockActorState.clear();
++        }
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_BLOCKING_REFERENCE", matches = ".+")
++    void matchesNativeBlockingQueryInstructions() throws Exception {
++        final var fixture = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_BLOCKING_REFERENCE"), "native-blocking-query.json"))).getAsJsonObject();
++        final UUID player = UUID.randomUUID(), lifetime = UUID.randomUUID();
++        try {
++            for (final var entry : fixture.getAsJsonArray("cases")) {
++                final var row = entry.getAsJsonObject();
++                final var flags = java.util.EnumSet.noneOf(ActorFlags.class);
++                for (final var flag : row.getAsJsonArray("flags")) flags.add(ActorFlags.getByValue(flag.getAsInt()));
++                BedrockActorState.clear();
++                if (row.get("actor").getAsBoolean()) BedrockActorState.apply(snapshot(player, lifetime, flags, null), null);
++                assertEquals(row.get("blocking").getAsBoolean(), BedrockActorState.isBlocking(player, false));
++            }
++            assertEquals(64, fixture.getAsJsonArray("cases").size());
++        } finally {
++            BedrockActorState.clear();
++        }
++    }
++
 +    @Test
 +    void updatesFlagsAndColorWithoutRetainingAProtocolPlayerObject() {
 +        final UUID player = UUID.randomUUID(), lifetime = UUID.randomUUID();
@@ -44987,8 +45041,12 @@ index 0000000..e55684d
 +    }
 +
 +    private static NativeActorMessage.Snapshot snapshot(final UUID player, final UUID lifetime, final boolean charging, final Integer color) {
++        return snapshot(player, lifetime, charging ? Set.of(ActorFlags.CHARGING) : Set.of(), color);
++    }
++
++    private static NativeActorMessage.Snapshot snapshot(final UUID player, final UUID lifetime, final Set<ActorFlags> flags, final Integer color) {
 +        return new NativeActorMessage.Snapshot(player, lifetime, false, 17, "minecraft:player", "Dinnerbone", 1F,
-+                charging ? Set.of(ActorFlags.CHARGING) : Set.of(), 0, 0, color, Map.of());
++                flags, 0, 0, color, Map.of());
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModelTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModelTest.java

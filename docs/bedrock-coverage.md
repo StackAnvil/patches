@@ -1591,8 +1591,17 @@ Its timer branch animates replacement for elapsed values zero through three.
 At elapsed values of four or more, changed blocking ticks request an immediate update.
 Equal blocking ticks retain the stack.
 The native code uses unsigned subtraction for elapsed time.
-The timer's trigger remains unidentified.
-The private crouch probe records only a zero timer and does not establish that trigger.
+A private live watchpoint identifies the timer as `BlockedUsingShieldTimeStamp` at player offset `0xbb0`.
+Two controlled attacks update it to the current level tick after successful shield blocking.
+Crouching without an attack does not update it.
+The matching player update function supplies its guard and rising-edge behavior.
+
+The update requires `BLOCKING` (72) and rejects `TRANSITION_BLOCKING` (73).
+A rising `BLOCKED_USING_SHIELD` (74) flag writes the timestamp.
+A rising `BLOCKED_USING_DAMAGED_SHIELD` (75) flag writes a separate timestamp at `0xbb8`.
+The update clears both timestamps when its guard fails.
+It retains the previous values of flags 74 and 75 outside that guard.
+The separate `StartedBlockingTimeStamp` at `0xba8` still needs complete lifecycle evidence.
 
 Native global names identify the color exception as `minecraft:glow_stick` and `minecraft:sparkler`.
 The helper masks effective auxiliary data with `31` and maps values of `16` or more to `5`.
@@ -1609,7 +1618,7 @@ The private client reaches playable spawn and completes the inventory capture.
 Owned lab processes stop normally, and the existing shared lab processes remain running.
 
 **Incomplete:** Production still uses the Java classifier, busy-hand branch, and replacement threshold.
-The original Bedrock comparison context, shield timer lifecycle, complete item dispatch, and final swap pixels need implementation and verification.
+The original Bedrock comparison context, shield timer integration, complete item dispatch, and final swap pixels need implementation and verification.
 The native replacement threshold and selected-slot cache also need complete lifecycle comparisons.
 Executable exports, synthetic inputs, memory probes, and packet captures remain private.
 
@@ -1647,3 +1656,37 @@ Both converted archives load without unresolved model or block errors.
 ViaProxy exports 16,383 and 16,741 entries, with 782 shared parents in each archive.
 The direct route also loads both newly converted archives.
 These checks establish conversion and loading regressions. They do not establish complete native visual parity or faster end-to-end joins.
+
+
+## Native player blocking query
+
+**Implemented:** Player animation graphs read `query.blocking` from the core actor `BLOCKING` flag (72).
+A missing actor snapshot retains Java's existing blocking result.
+Core already transports the complete flag set through direct connections and ViaProxy.
+The add-on only binds that state to the rendering query.
+
+**Native evidence:** The matching Bedrock 1.26.51.1 build 51061372 callback reads flag 72 directly.
+It does not reject `TRANSITION_BLOCKING` or substitute the successful-block flags.
+An instruction probe covers 64 combinations of actor presence and flags 72, 73, 74, 75, and 41.
+The probe supplies the flag getter and compares the callback's canonical Boolean return values.
+It does not emulate the complete actor component system.
+
+**Verified:** Unit tests cover native-state precedence, actor replacement, stale removal, matching removal, and registry cleanup.
+The private unit fixture matches all 64 instruction results.
+The dependency build and complete add-on suite pass 1,016 Java tests, with 115 optional skips and no failures or errors.
+All 23 add-on patches replay successfully.
+
+**Runtime evidence:** Direct and ViaProxy clients match all 64 cases through the actual player animation query method.
+The private probe supplies actor snapshots, including absent actors, while Java's blocking result remains false.
+It restores the registry after the probe.
+Both routes also pass the existing 900 native hand-height cases and four Java fallback cases.
+Selected hand models, layered poses, retained item queries, and scope restoration retain their existing results.
+Both clients reach playable spawn, load the converted packs, and preserve the complete recorded 75-second scene prefix.
+
+The generic third-person audit reports no local avatar submission because the fixture defines only first-person controllers.
+The direct CLI reports that audit failure.
+The ViaProxy CLI retains the audit report with its transport-only option.
+The separate hand probes establish the query binding and hand regressions, not final shield pixels or complete network flag lifecycle behavior.
+
+**Remaining:** Shield bob, blocking-start timing, item replacement rules, held-item transforms, and complete visible shield parity remain incomplete or unverified.
+The successful-block timestamp research does not yet provide a production timer implementation.
