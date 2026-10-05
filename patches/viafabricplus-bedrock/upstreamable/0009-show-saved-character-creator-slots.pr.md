@@ -2078,3 +2078,61 @@ Raw executables, memory layouts, generated inputs, and emulator programs remain 
 
 **Incomplete:** These results verify comparison rules, not production classifier integration or complete native object construction.
 Restriction resolution, charged-item loading, item-specific dispatch, selected-slot lifetime, and final held-item pixels still require implementation and verification.
+
+
+### Native restriction and charged-item construction research
+
+**Verified research:** New probes execute the matching Bedrock 1.26.51.1 executable, build 51061372.
+They retain the corrected PE loader and actual native tag comparison routines.
+Together, 1,371 cases cover restriction processing, charged-item loading, and the selected default method after loading.
+
+The restriction helper adds `minecraft:` only when the input contains no colon.
+It preserves the supplied bytes otherwise.
+Its hashed-string constructor retains the string length but hashes bytes only before the first zero byte.
+
+The append helper deduplicates resolved block pointers.
+An expansion stops at its first unresolved member and retains the earlier appended members.
+The surrounding caller can continue with later restriction entries.
+These probes supply registry membership, expansion, and block lookup answers.
+They do not establish the registry's real tag, alias, or case rules.
+
+The native sort orders block pointers by unsigned name hash, then name bytes and length.
+It does not order them by pointer address.
+The hash helper then combines hashes of the pointer bytes in that order.
+It preserves duplicate inputs supplied directly to that helper.
+The earlier append helper removes repeated resolved pointers before this stage.
+Tests cover independent restriction vectors, permutations, equal hashes, duplicate inputs, and vectors of up to 512 entries.
+
+The charged-item setter transfers the outer user-data compound and reads its `chargedItem` compound.
+The saved-tag loader reads `Damage` as Short and `Count` as Byte.
+Other tested numeric tag types produce the missing-field defaults.
+Negative saved auxiliary values clamp to zero.
+Count preserves all eight bits.
+
+For the selected non-durable path, wildcard auxiliary value `32767` becomes zero after the item method runs.
+An unresolved saved name produces an empty charged stack in these registry fixtures.
+Native copies and destructors balance the tested item and registry reference counts.
+
+The selected default item method reads maximum damage as a signed short.
+For a positive result and an absent `Damage` key, it creates an Int tag from the signed effective auxiliary value.
+It preserves other user-data keys and clears raw auxiliary data.
+An existing `Damage` key prevents that migration, including each of the eleven tested value types.
+The charged-stack probe also executes the migration, native compound copies, and destruction with the resulting user data.
+These synthetic definitions do not establish maximum damage or method dispatch for the real item catalog.
+
+| Native probe | Cases | Supplied boundaries |
+| --- | --- | --- |
+| Restriction sort and hash | 668 | Synthetic block names, pointers, and CRT byte operations |
+| Restriction processing caller | 252 | Registry answers, allocations, and CRT operations |
+| Charged saved-tag loader and copies | 144 | Item registry, maximum-damage field, allocations, TLS, and CRT operations |
+| Default method after loading | 307 | Maximum-damage field, allocations, registry context, and CRT operations |
+
+Native instruction execution includes normalization, pointer deduplication, expansion control, tag lookup, compound allocation, Int-tag insertion, copies, and tested destructor paths.
+Registry answers and allocator behavior remain supplied rather than reconstructed from the native game catalog.
+The probes retain raw executable bytes, object layouts, generated fixtures, and emulator programs privately.
+
+**Incomplete:** Production still transports decoded wire snapshots and uses Java hand-item classification.
+Real registry resolution, legacy saved IDs, full saved-tag construction, item-specific loading methods, dispatch, renderer lifetime, and final pixels remain incomplete or unverified.
+The saved-tag findings do not establish normalization for every inbound network item.
+These results narrow the production design.
+They do not claim a completed native classifier.
