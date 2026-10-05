@@ -8,6 +8,7 @@ import { Effect } from "effect";
 import { root } from "../model.ts";
 import { artifact, installPrism } from "../prism.ts";
 import { activeDisplay, displayEnv, ensureDisplay, stopDisplay } from "./display.ts";
+import { vmMain } from "./vm.ts";
 
 const execute = promisify(execFile);
 const privateRoot = join(root, ".stackanvil", "lab");
@@ -215,6 +216,7 @@ async function doctor(): Promise<void> {
 
 async function main(): Promise<void> {
   const [command, action, ...rest] = Bun.argv.slice(2);
+  if (command === "vm") return vmMain(action ? [action, ...rest] : []);
   if (command === "doctor") return doctor();
   if (command === "status") return status();
   if (command === "display" && action === "start") { console.log(await ensureDisplay()); return; }
@@ -235,7 +237,7 @@ async function main(): Promise<void> {
     if (process.env.STACKANVIL_USE_DESKTOP !== "1") await stopDisplay();
     return;
   }
-  throw new Error("Usage: bun run lab <doctor|status|credentials snapshot|server start|viaproxy start|java start|up|down|jvm ...>");
+  throw new Error("Usage: bun run lab <doctor|status|credentials snapshot|server start|viaproxy start|java start|up|down|jvm ...|vm ...>");
 }
 
 Effect.runPromise(Effect.tryPromise({ try: main, catch: (cause) => cause instanceof Error ? cause : new Error(String(cause)) }))

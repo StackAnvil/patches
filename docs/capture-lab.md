@@ -2,6 +2,8 @@
 
 The capture lab helps reproduce Bedrock menus and compare their HTTPS requests with a patched Java client. It keeps raw traffic, account files, screenshots, and JVM dumps under the ignored `.stackanvil/` directory. Use a test account and review every redacted report before sharing it.
 
+For Windows and macOS guests, use the [Quickemu platform guide](platform-testing.md). Its QMP input and screenshots target the guest directly. The existing `capture ui` commands target host clients on the lab display.
+
 ## Prepare the clients
 
 Build the stack and install its PrismLauncher instance:

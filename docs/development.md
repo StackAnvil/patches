@@ -36,6 +36,8 @@ PrismLauncher must be installed as a Flatpak for `bun run lab java start`. You c
 
 For HTTPS capture, client control, credentials, and JVM diagnostics, see the [capture lab guide](capture-lab.md). Bedrock gameplay packets use UDP and are outside the HTTPS proxy capture.
 
+For Windows and macOS launcher tests on a Linux host, use the [manual platform testing guide](platform-testing.md). Run `bun run lab vm doctor` to inspect Quickemu and KVM support. The guide covers private guest installation, input, screenshots, artifact transfer, and graphics limits.
+
 ## Run join integration tests
 
 The local join suite starts fresh servers on temporary ports. It launches the Java and Bedrock clients on a private Xvfb display with silent audio. Each case waits for a player spawn in the server log. Then it checks that the client stays connected for 20 seconds. Each Java route runs with plain StackAnvil and with the full Fabulously Optimized modpack. The Java server case also summons a vanilla interaction entity near the player. The suite downloads the Minecraft 26.3 server from Mojang and checks its published hash.

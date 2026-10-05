@@ -76,6 +76,8 @@ Run `bun run bundle` after `bun run build all` to make the optional Prism Launch
 
 Use `bun run stack status <project>` to see its pinned upstream commit and patch order. Run `bun run build viaproxy` to build the patched proxy and its dependencies. Use `bun run dev:setup` to prepare mitmproxy and check your Bedrock server and client paths. The [development guide](docs/development.md) explains traffic capture and manual tests.
 
+Use the [Quickemu platform guide](docs/platform-testing.md) for manual Windows and macOS launcher tests from Linux. Start with `bun run lab vm doctor`. The VM commands provide private installation media, guest input, screenshots, artifact transfer, and graceful shutdown.
+
 ## Contribute a patch
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and the [patch workflow](docs/patch-workflow.md) for the edit and conflict workflow. The patch workflow also explains what StackAnvil takes from Paper's old scripts and current paperweight tooling. The common path is:
