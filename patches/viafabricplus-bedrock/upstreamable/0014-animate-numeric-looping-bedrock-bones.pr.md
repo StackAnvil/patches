@@ -115,3 +115,7 @@ A higher right-arm alias overrides that pose while the lower left alias and root
 The licensed appearance reader and attachable reader still need separate inheritance checks.
 Direct and ViaProxy hand-entry probes reproduce the target native scale and both bone translations.
 The core resolver is independently reviewable in `0087-inherit-client-entity-descriptions-across-layers.patch`.
+
+The actor visibility fixture now initializes its offset before comparing it with zero.
+The shared core evaluator distinguishes missing members from zero, so this regression supplies its intended initial state explicitly.
+The complete build passes with the updated fixture.

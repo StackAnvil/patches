@@ -2666,3 +2666,31 @@ All four projects build with 1,065 passing Java tests and 120 optional skips.
 Complete 240-second CubeCraft replays pass through direct and ViaProxy routes.
 Each preserves 311 skin updates and verifies 77 authored direction cases plus two material controls.
 No active capacity rejection or observer error occurs; native image and timing parity remain unverified.
+
+## Shared missing-value semantics
+
+Client numeric, string, animation, and particle programs now receive missing-member fault behavior from ViaBedrock core.
+Null coalescing retains zero and empty strings, and failed reads preserve earlier writes.
+Rejected assignment chains recover through the existing particle expression boundary.
+The regression verifies that neighboring fields and the emitter remain available after recovery.
+
+The [coverage ledger](../../../docs/bedrock-coverage.md#missing-molang-values-and-fault-propagation) records target-build comparisons and the remaining embedded-assignment gap.
+
+Source syntax and compiled runtime expressions now have separate boundaries.
+The client validates source length, node count, and depth before core generates helper calls.
+Generated instructions therefore cannot consume a valid script's source budget.
+The existing aggregate-script regressions cover this boundary without increasing any limit.
+Counter fixtures now initialize their variables or use explicit null coalescing before increments.
+
+Validation: all four builds pass with 1,071 Java tests, 120 optional skips, and no failures or errors.
+Core Checkstyle passes.
+Core matches 67 validity declarations and the previous 57 control-flow cases.
+Particle components match 133 combined native declarations and 665 samples.
+
+Complete 240-second direct and ViaProxy CubeCraft replays pass with the unchanged scene payload and all 311 skin updates.
+Each verifies 87 authored direction fixtures plus two material controls through production loading, simulation, and visual extraction.
+All reader states and sampled directions match, with no active capacity rejection or observer error.
+Each route records one expected start cancellation during resource reload.
+Both controls submit forward draws; improved transparency remains unverified in this run.
+Screenshots retain custom lobby models, the hanging cube, hotbar icons, overlapping labels, and the Java tutorial toast.
+These saved-scene checks do not establish a fresh live-server join or native image and timing parity.

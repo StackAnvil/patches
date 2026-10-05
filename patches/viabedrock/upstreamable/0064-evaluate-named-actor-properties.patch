@@ -1,4 +1,4 @@
-From 667cc44bac73087e86a1feeb5e0c1d34b7ed2c72 Mon Sep 17 00:00:00 2001
+From 53884bbfb9df27899ab89d54ab62cc2191907aa5 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:22:35 +0200
 Subject: [PATCH] feat(entities): evaluate named actor properties and
@@ -12,8 +12,8 @@ property or time-driven controller can change the visible model.
 Correct Mocha parser and evaluator boundaries for string equality,
 assignment/ternary precedence and unary calls. CubeCraft controllers use
 all three behaviors, and Geyser mushroom permutations negate property
-queries. Shared semantic tests cover enum comparison, chained and nested
-assignments, conditional branches and negated calls.
+queries. Shared semantic tests cover enum comparison, assignment targets,
+conditional branches and negated calls.
 
 The Bedrock Molang reference documents string comparison and operator
 precedence: https://mojang.github.io/bedrock-samples/Molang.html . Typed
@@ -203,22 +203,42 @@ and undefined temporary reads remain separate verification work.
 
 Tests cover temporary aliasing, numeric and string values, early returns,
 changing current values, persistent bindings and independent groups.
+
+Distinguish missing variable members from valid zero and empty strings.
+Native 1.26.51.1 VM faults abort the expression before later statements,
+retain completed writes, and let null coalescing catch an invalid left
+operand without catching return, break or continue. Lower variable member
+reads and coalescing into private runtime functions while preserving
+assignment and array-loop targets. Query access remains with its consumer.
+
+Private native probes cover 67 declarations and 335 component samples,
+including a supplied empty native actor-variable map, temporary members,
+strings, short-circuit branches, loops, arithmetic and nested jump handling.
+The matching registry, compiler, VM and billboard functions execute
+unchanged. Allocation, CRT operations, TLS, locks and diagnostics are host
+boundaries; complete actor/world context remains unverified.
+
+Reject unparenthesized assignment chains before evaluation, as the target
+compiler does. Parenthesized assignments remain admitted. Native embedded
+assignment results depend on accumulator state and compiler optimizations;
+that broader behavior remains separate work. This change does not claim
+assignment-result parity, complete frame scope or all runtime diagnostics.
 ---
  build.gradle                                  |   4 +-
  .../main/groovy/viabedrock.checkstyle.gradle  |   8 +-
  gradle.properties                             |   2 +-
- .../api/model/NativeActorMessage.java         | 172 ++++++++++
+ .../api/model/NativeActorMessage.java         | 172 +++++++++
  .../api/model/NativeActorStates.java          |  81 +++++
  .../api/model/NativeCustomEntityMessage.java  | 142 ++++++++
  .../api/model/NativeHandItemState.java        |  29 ++
  .../api/model/NativeShieldBlockingState.java  |  45 +++
  .../api/model/entity/CustomEntity.java        | 101 +++++-
- .../viabedrock/api/model/entity/Entity.java   |  75 +++++
+ .../viabedrock/api/model/entity/Entity.java   |  75 ++++
  .../api/util/BedrockTrigonometry.java         |  33 ++
- .../api/util/MoLangControlFlow.java           | 191 +++++++++++
- .../viabedrock/api/util/MoLangEngine.java     | 100 ++++--
- .../viabedrock/api/util/MoLangMath.java       | 248 ++++++++++++++
- .../viabedrock/api/util/MoLangParser.java     | 318 ++++++++++++++++++
+ .../api/util/MoLangControlFlow.java           | 256 ++++++++++++++
+ .../viabedrock/api/util/MoLangEngine.java     | 105 ++++--
+ .../viabedrock/api/util/MoLangMath.java       | 248 +++++++++++++
+ .../viabedrock/api/util/MoLangParser.java     | 314 +++++++++++++++++
  .../protocol/packet/JoinPackets.java          |   2 +
  .../protocol/packet/MultiStatePackets.java    |  10 +
  .../protocol/packet/WorldPackets.java         |   1 +
@@ -233,9 +253,9 @@ changing current values, persistent bindings and independent groups.
  .../CustomEntityMaterialSelectionTest.java    |  65 ++++
  .../CustomEntityModelSelectionTest.java       |   2 +-
  .../api/model/entity/EntityScaleTest.java     | 157 +++++++++
- .../viabedrock/api/util/MoLangEngineTest.java | 241 +++++++++++++
+ .../viabedrock/api/util/MoLangEngineTest.java | 325 ++++++++++++++++++
  .../viabedrock/api/util/MoLangMathTest.java   | 115 +++++++
- 31 files changed, 2757 insertions(+), 51 deletions(-)
+ 31 files changed, 2907 insertions(+), 51 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeCustomEntityMessage.java
@@ -1194,10 +1214,10 @@ index 000000000..db96764c2
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MoLangControlFlow.java b/src/main/java/net/raphimc/viabedrock/api/util/MoLangControlFlow.java
 new file mode 100644
-index 000000000..2683497f6
+index 000000000..e6db915e2
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/MoLangControlFlow.java
-@@ -0,0 +1,191 @@
+@@ -0,0 +1,256 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1213,6 +1233,7 @@ index 000000000..2683497f6
 +import org.redlance.mocha.parser.ast.Expression;
 +import org.redlance.mocha.parser.ast.IdentifierExpression;
 +import org.redlance.mocha.parser.ast.StatementExpression;
++import org.redlance.mocha.parser.ast.StringExpression;
 +import org.redlance.mocha.parser.ast.TernaryConditionalExpression;
 +import org.redlance.mocha.parser.ast.UnaryExpression;
 +import org.redlance.mocha.runtime.ExecutionContext;
@@ -1222,15 +1243,19 @@ index 000000000..2683497f6
 +import org.redlance.mocha.runtime.value.Function;
 +import org.redlance.mocha.runtime.value.MutableObjectBinding;
 +import org.redlance.mocha.runtime.value.NumberValue;
++import org.redlance.mocha.runtime.value.ObjectValue;
 +import org.redlance.mocha.runtime.value.Value;
 +
 +import java.io.IOException;
 +import java.util.ArrayList;
 +import java.util.List;
++import java.util.Locale;
 +
 +/** Compiles Molang jumps into host functions that unwind every nested expression frame. */
 +final class MoLangControlFlow {
 +
++    private static final String READ = "\0viabedrock_read";
++    private static final String COALESCE = "\0viabedrock_coalesce";
 +    static final String EQUAL = "\0viabedrock_equal";
 +    static final String LOOP = "\0viabedrock_loop";
 +    static final String FOR_EACH = "\0viabedrock_for_each";
@@ -1261,7 +1286,13 @@ index 000000000..2683497f6
 +        } else if (expression instanceof StatementExpression statement) {
 +            return call(statement.op() == StatementExpression.Op.BREAK ? BREAK : CONTINUE, List.of());
 +        } else if (expression instanceof CallExpression function) {
-+            final List<Expression> arguments = lower(function.arguments(), depth + 1);
++            final List<Expression> arguments = new ArrayList<>();
++            for (int index = 0; index < function.arguments().size(); index++) {
++                final Expression argument = function.arguments().get(index);
++                final boolean assignmentTarget = index == 0 && function.function() instanceof IdentifierExpression identifier
++                    && identifier.name().equalsIgnoreCase("for_each");
++                arguments.add(assignmentTarget ? target(argument, depth + 1) : lower(argument, depth + 1));
++            }
 +            if (function.function() instanceof IdentifierExpression identifier) {
 +                if (identifier.name().equalsIgnoreCase("loop")) {
 +                    return call(LOOP, arguments);
@@ -1269,10 +1300,14 @@ index 000000000..2683497f6
 +                    return call(FOR_EACH, arguments);
 +                }
 +            }
-+            return new CallExpression(lower(function.function(), depth + 1), arguments);
++            return new CallExpression(lower(function.function(), depth + 1), List.copyOf(arguments));
 +        } else if (expression instanceof BinaryExpression binary) {
-+            final Expression left = lower(binary.left(), depth + 1);
++            final Expression left = binary.op() == BinaryExpression.Op.ASSIGN
++                ? target(binary.left(), depth + 1) : lower(binary.left(), depth + 1);
 +            final Expression right = lower(binary.right(), depth + 1);
++            if (binary.op() == BinaryExpression.Op.NULL_COALESCE) {
++                return call(COALESCE, List.of(left, right));
++            }
 +            if (binary.op() == BinaryExpression.Op.EQ || binary.op() == BinaryExpression.Op.NEQ) {
 +                final Expression equality = call(EQUAL, List.of(left, right));
 +                return binary.op() == BinaryExpression.Op.EQ ? equality : new UnaryExpression(UnaryExpression.Op.LOGICAL_NEGATION, equality);
@@ -1283,11 +1318,32 @@ index 000000000..2683497f6
 +        } else if (expression instanceof ExecutionScopeExpression scope) {
 +            return new ExecutionScopeExpression(lower(scope.expressions(), depth + 1));
 +        } else if (expression instanceof AccessExpression access) {
-+            return new AccessExpression(lower(access.object(), depth + 1), access.property());
++            final Expression object = lower(access.object(), depth + 1);
++            return variable(access.object()) ? call(READ, List.of(object, new StringExpression(access.property())))
++                : new AccessExpression(object, access.property());
 +        } else if (expression instanceof ArrayAccessExpression array) {
 +            return new ArrayAccessExpression(lower(array.array(), depth + 1), lower(array.index(), depth + 1));
 +        }
 +        return expression;
++    }
++
++    private static Expression target(final Expression expression, final int depth) throws IOException {
++        return expression instanceof AccessExpression access
++            ? new AccessExpression(lower(access.object(), depth + 1), access.property()) : lower(expression, depth);
++    }
++
++    private static boolean variable(final Expression expression) {
++        if (expression instanceof IdentifierExpression identifier) {
++            return switch (identifier.name().toLowerCase(Locale.ROOT)) {
++                case "variable", "v", "temp", "t", "context", "c" -> true;
++                default -> false;
++            };
++        } else if (expression instanceof AccessExpression access) {
++            return variable(access.object());
++        } else if (expression instanceof ArrayAccessExpression array) {
++            return variable(array.array());
++        }
++        return false;
 +    }
 +
 +    private static CallExpression call(final String name, final List<Expression> arguments) {
@@ -1296,6 +1352,26 @@ index 000000000..2683497f6
 +
 +    static Value evaluate(final Scope scope, final List<Expression> expressions) {
 +        final MoLangControlFlow runtime = new MoLangControlFlow();
++        scope.set(READ, (Function<Object>) (_, arguments) -> {
++            final Value object = arguments.next().eval();
++            final String name = arguments.next().eval().getAsString();
++            if (!(object instanceof ObjectValue binding)) {
++                throw FlowSignal.UNDEFINED;
++            }
++            return requireProperty(binding, name);
++        });
++        scope.set(COALESCE, (Function<Object>) (_, arguments) -> {
++            final Function.Argument left = arguments.next();
++            final Function.Argument right = arguments.next();
++            try {
++                return left.eval();
++            } catch (final FlowSignal signal) {
++                if (signal.kind != FlowKind.UNDEFINED) {
++                    throw signal;
++                }
++                return right.eval();
++            }
++        });
 +        scope.set(RETURN, (Function<Object>) (_, arguments) -> {
 +            throw new FlowSignal(FlowKind.RETURN, arguments.next().eval());
 +        });
@@ -1347,6 +1423,14 @@ index 000000000..2683497f6
 +        }
 +    }
 +
++    private static Value requireProperty(final ObjectValue object, final String name) {
++        final var property = object.getProperty(name);
++        if (property == null) {
++            throw FlowSignal.UNDEFINED;
++        }
++        return property.value();
++    }
++
 +    @SuppressWarnings("unchecked")
 +    private boolean iteration(final ExecutionContext<Object> context, final Value body) {
 +        // Preserve the host budget across all nested loops and entity contexts.
@@ -1369,13 +1453,14 @@ index 000000000..2683497f6
 +    }
 +
 +    private enum FlowKind {
-+        RETURN, BREAK, CONTINUE, LIMIT
++        RETURN, BREAK, CONTINUE, LIMIT, UNDEFINED
 +    }
 +
 +    private static final class FlowSignal extends RuntimeException {
 +
 +        private static final FlowSignal BREAK = new FlowSignal(FlowKind.BREAK, NumberValue.zero());
 +        private static final FlowSignal CONTINUE = new FlowSignal(FlowKind.CONTINUE, NumberValue.zero());
++        private static final FlowSignal UNDEFINED = new FlowSignal(FlowKind.UNDEFINED, NumberValue.zero());
 +        private static final FlowSignal LIMIT = new FlowSignal(FlowKind.LIMIT, NumberValue.zero());
 +        private final FlowKind kind;
 +        private final Value value;
@@ -1390,10 +1475,10 @@ index 000000000..2683497f6
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java b/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
-index 8f4c4f894..231ac8e29 100644
+index 8f4c4f894..6d168e1fb 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
-@@ -17,60 +17,98 @@
+@@ -17,60 +17,103 @@
   */
  package net.raphimc.viabedrock.api.util;
  
@@ -1468,7 +1553,12 @@ index 8f4c4f894..231ac8e29 100644
 -        try (StringReader reader = new StringReader(expression)) {
 -            return parse(reader);
 -        }
-+        return MoLangParser.parse(expression);
++        return compile(MoLangParser.parse(expression));
++    }
++
++    /** Compiles parsed source after consumer-specific validation and query binding. */
++    public static List<Expression> compile(final List<Expression> expressions) throws IOException {
++        return MoLangControlFlow.lower(expressions);
      }
  
      public static List<Expression> parse(final Reader reader) throws IOException {
@@ -1779,10 +1869,10 @@ index 000000000..875d51eca
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MoLangParser.java b/src/main/java/net/raphimc/viabedrock/api/util/MoLangParser.java
 new file mode 100644
-index 000000000..0f5898f82
+index 000000000..30f5d3090
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/MoLangParser.java
-@@ -0,0 +1,318 @@
+@@ -0,0 +1,314 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1847,9 +1937,9 @@ index 000000000..0f5898f82
 +            if (parser.complex) {
 +                final List<Expression> body = new ArrayList<>(expressions);
 +                body.add(FloatExpression.ZERO);
-+                return MoLangControlFlow.lower(body);
++                return List.copyOf(body);
 +            }
-+            return MoLangControlFlow.lower(expressions);
++            return expressions;
 +        }
 +    }
 +
@@ -1966,15 +2056,11 @@ index 000000000..0f5898f82
 +                    if (minimum >= precedence) {
 +                        return left;
 +                    }
++                    if (operation == BinaryExpression.Op.ASSIGN && !(left instanceof AccessExpression)) {
++                        throw this.error("An assignment requires a variable member on its left side");
++                    }
 +                    this.next();
-+                    left =
-+                            new BinaryExpression(
-+                                    operation,
-+                                    left,
-+                                    this.expression(
-+                                            operation == BinaryExpression.Op.ASSIGN
-+                                                    ? precedence - 1
-+                                                    : precedence));
++                    left = new BinaryExpression(operation, left, this.expression(precedence));
 +                }
 +            }
 +        } finally {
@@ -3144,10 +3230,10 @@ index 000000000..8fb58f5e0
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java b/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
 new file mode 100644
-index 000000000..fa908c70c
+index 000000000..6558fae75
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
-@@ -0,0 +1,241 @@
+@@ -0,0 +1,325 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -3174,6 +3260,90 @@ index 000000000..fa908c70c
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class MoLangEngineTest {
++
++    @Test
++    void abortsUnsetTemporaryReadsWithoutUndoingEarlierWrites() throws Exception {
++        final var group = MoLangEngine.createEvaluation(scope());
++        assertEquals(0, group.eval("t.a=2;t.b=t.missing+1;t.a=9;return t.a;").getAsNumber());
++        assertEquals(2, group.eval("t.a").getAsNumber());
++        assertEquals(7, group.eval("t.b??7").getAsNumber());
++        assertEquals(0, group.eval("return t.missing+(t.a=3);").getAsNumber());
++        assertEquals(2, group.eval("t.a").getAsNumber());
++        assertEquals(0, group.eval("return (t.a=3)+t.missing;").getAsNumber());
++        assertEquals(3, group.eval("t.a").getAsNumber());
++        assertEquals(0, group.eval("t.a=t.missing;return t.a;").getAsNumber());
++        assertEquals(3, group.eval("t.a").getAsNumber());
++        assertEquals(0, group.eval("t.missing?{t.a=9;};return t.a;").getAsNumber());
++        assertEquals(3, group.eval("t.a").getAsNumber());
++    }
++
++    @Test
++    void coalescesUndefinedValuesWhileRetainingZeroAndEmptyStrings() throws Exception {
++        final var group = MoLangEngine.createEvaluation(scope());
++        assertEquals(3, group.eval("(t.missing+1)??3").getAsNumber());
++        assertEquals(0, group.eval("t.a=0;return t.a??3;").getAsNumber());
++        assertEquals("", group.eval("t.label='';return t.label??'fallback';").getAsString());
++        assertEquals(0, group.eval("return t.a??(t.a=9);").getAsNumber());
++        assertEquals(0, group.eval("t.a").getAsNumber());
++        assertEquals(4, group.eval("t.missing??t.other??4").getAsNumber());
++        assertEquals(1, group.eval("t.b=(t.b??0)+1;return t.b;").getAsNumber());
++        assertEquals(1, group.eval("t.b").getAsNumber());
++        assertEquals(2, group.eval("1?{return 2;}??3;return 4;").getAsNumber());
++    }
++
++    @Test
++    void skipsUndefinedReadsInInactiveLogicalBranches() throws Exception {
++        final var group = MoLangEngine.createEvaluation(scope());
++        assertEquals(0, group.eval("0&&t.missing").getAsNumber());
++        assertEquals(1, group.eval("1||t.missing").getAsNumber());
++        assertEquals(0, group.eval("t.missing||1").getAsNumber());
++        assertEquals(0, group.eval("!t.missing").getAsNumber());
++        assertEquals(0, group.eval("t.missing!=0").getAsNumber());
++        assertEquals(0, group.eval("loop(t.missing,{t.a=3;});return 2;").getAsNumber());
++        assertEquals(7, group.eval("t.a??7").getAsNumber());
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_MOLANG_TEMPORARY_REFERENCE", matches = ".+")
++    void matchesNativeTemporaryProgramResultsAndRetainedWrites() throws Exception {
++        final var fixture = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_MOLANG_TEMPORARY_REFERENCE")))).getAsJsonObject();
++        for (final var element : fixture.getAsJsonArray("cases")) {
++            final var row = element.getAsJsonObject();
++            final var expressions = row.getAsJsonObject("input").getAsJsonObject("direction").getAsJsonArray("custom_direction");
++            for (final var sample : row.getAsJsonArray("samples")) {
++                final Scope nativeScope = org.redlance.mocha.runtime.MolangInterpreter.standard().scope();
++                final var variables = new MutableObjectBinding();
++                nativeScope.set("variable", variables);
++                nativeScope.set("v", variables);
++                final var group = MoLangEngine.createEvaluation(nativeScope);
++                final var expected = sample.getAsJsonObject().getAsJsonArray("direction");
++                for (int axis = 0; axis < 3; axis++) {
++                    assertEquals(expected.get(axis).getAsFloat(), group.eval(expressions.get(axis).getAsString()).getAsNumber(), expressions.toString());
++                }
++            }
++        }
++        assertFalse(fixture.getAsJsonArray("cases").isEmpty());
++    }
++
++    @Test
++    void compilesValidatedSyntaxWithTheSameFaultAndJumpSemantics() throws Exception {
++        final var group = MoLangEngine.createEvaluation(scope());
++        final var syntax = MoLangParser.parse("t.a=2;1?{return (t.missing+1)??t.a;};t.a=9;return t.a;");
++        assertEquals(2, group.eval(MoLangEngine.compile(syntax)).getAsNumber());
++        assertEquals(2, group.eval("t.a").getAsNumber());
++    }
++
++    @Test
++    void rejectsUnparenthesizedAssignmentChainsBeforeMutatingVariables() throws Exception {
++        final Scope scope = scope();
++        MoLangEngine.eval(scope, "v.a=7;v.b=9;");
++        for (final String expression : List.of("v.a=v.b=3;return v.a;", "v.a=0;v.b=0;return (v.a=v.b=3)+1;", "v.a=v.b=0?2:3;return v.a+v.b-3;")) {
++            assertThrows(ParseException.class, () -> MoLangEngine.eval(scope, expression));
++        }
++        assertEquals(7, MoLangEngine.eval(scope, "v.a").getAsNumber());
++        assertEquals(9, MoLangEngine.eval(scope, "v.b").getAsNumber());
++        assertDoesNotThrow(() -> MoLangEngine.parse("return v.a=(v.b=2);"));
++    }
 +
 +    @Test
 +    void sharesTemporaryValuesAcrossAnExplicitEvaluationGroup() throws Exception {
@@ -3228,7 +3398,7 @@ index 000000000..fa908c70c
 +        assertEquals(2D, MoLangEngine.eval(scope, "v.frames = 1 && 1 ? 2 : 1; return v.frames;").getAsNumber());
 +        assertEquals(1D, MoLangEngine.eval(scope, "v.frames = 1 && 0 ? 2 : 1; return v.frames;").getAsNumber());
 +        assertEquals(2D, MoLangEngine.eval(scope, "v.animated = 1 && 1; v.frames = v.animated ? 2 : 1; return v.frames;").getAsNumber());
-+        assertEquals(3D, MoLangEngine.eval(scope, "v.a = v.b = 0 ? 2 : 3; return v.a + v.b - 3;").getAsNumber());
++        assertEquals(3D, MoLangEngine.eval(scope, "v.b = 0 ? 2 : 3; v.a = v.b; return v.a + v.b - 3;").getAsNumber());
 +        assertEquals(4D, MoLangEngine.eval(scope, "v.a = 0 ? 2 : 0 ? 3 : 4; return v.a;").getAsNumber());
 +    }
 +

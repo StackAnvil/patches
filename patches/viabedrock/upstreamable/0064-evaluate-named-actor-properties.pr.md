@@ -354,3 +354,40 @@ Core Checkstyle passes.
 Complete 240-second CubeCraft replays pass through direct and ViaProxy routes.
 Each preserves 311 skin updates and verifies 77 authored direction cases plus two material controls.
 No active capacity rejection or observer error occurs; native image and timing parity remain unverified.
+
+## Missing Molang members and null coalescing
+
+Core now distinguishes a missing variable member from a valid zero or empty string.
+A missing read stops later operations while preserving earlier writes.
+Null coalescing catches that fault in its left operand without intercepting control-flow jumps.
+Assignment and array-loop targets keep their mutable bindings, and query access stays with its consumer.
+
+The pinned Bedrock 1.26.51.1 compiler, VM, and billboard functions supply 67 declarations and 335 samples.
+Twenty-seven cases use a supplied empty native variable map.
+The remaining cases cover temporaries, strings, branches, loops, arithmetic, and nested jumps.
+Native registry initialization and store cleanup execute unchanged.
+Host allocation, CRT operations, TLS, locks, and diagnostic boundaries remain supplied.
+
+The parser rejects unparenthesized assignment chains before evaluation, matching all three tested native rejections.
+Parenthesized nested assignments remain admitted.
+Embedded assignment results remain incomplete because native store instructions retain accumulator state and some arithmetic instructions fuse constant results.
+The [coverage ledger](../../../docs/bedrock-coverage.md#missing-molang-values-and-fault-propagation) records this separate gap and the full verification boundary.
+
+Source syntax and compiled runtime expressions now have separate boundaries.
+The client validates source length, node count, and depth before core generates helper calls.
+Generated instructions therefore cannot consume a valid script's source budget.
+The existing aggregate-script regressions cover this boundary without increasing any limit.
+Counter fixtures now initialize their variables or use explicit null coalescing before increments.
+
+Validation: all four builds pass with 1,071 Java tests, 120 optional skips, and no failures or errors.
+Core Checkstyle passes.
+Core matches 67 validity declarations and the previous 57 control-flow cases.
+Particle components match 133 combined native declarations and 665 samples.
+
+Complete 240-second direct and ViaProxy CubeCraft replays pass with the unchanged scene payload and all 311 skin updates.
+Each verifies 87 authored direction fixtures plus two material controls through production loading, simulation, and visual extraction.
+All reader states and sampled directions match, with no active capacity rejection or observer error.
+Each route records one expected start cancellation during resource reload.
+Both controls submit forward draws; improved transparency remains unverified in this run.
+Screenshots retain custom lobby models, the hanging cube, hotbar icons, overlapping labels, and the Java tutorial toast.
+These saved-scene checks do not establish a fresh live-server join or native image and timing parity.

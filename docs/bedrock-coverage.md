@@ -2803,10 +2803,66 @@ Screenshots show the custom lobby models and hotbar icons, alongside overlapping
 These are complete saved-scene replays, not a new live-server join or a native image/timing comparison.
 
 **Remaining:** Native reset boundaries across animation and particle components, complete actor/world contexts, and flipbook evaluation order need further comparisons.
-Five additional native probes distinguish unset temporary reads from numeric zero.
-For example, an unset `t.a+1` returns zero, and `t.a=t.a+1;return t.a;` leaves the variable unset.
-Explicit `t.a=(t.a??0)+1;return t.a;` returns one and stores it.
-Our evaluator instead produces and stores one for the unset increment.
-Missing-value arithmetic still needs the native error-propagation behavior.
-These probes use the same isolated component boundary and do not establish all missing-variable diagnostics.
+The missing-variable arithmetic discrepancy is corrected in the next section.
+All other coverage requirements remain active.
+
+## Missing Molang values and fault propagation
+
+**Evidence:** The pinned Bedrock 1.26.51.1 VM distinguishes missing variable members from valid numeric zero and empty strings.
+A missing read stops the current program before later operations or statements.
+Completed writes remain visible, but a failed assignment does not overwrite its target.
+Inactive logical branches skip the read.
+Null coalescing catches a missing value from its left operand, including arithmetic and function arguments.
+It preserves valid zero and empty strings and does not catch `return`, `break`, or `continue`.
+Division by zero returns valid numeric zero in the two tested programs.
+
+Private probes cover 67 declarations and 335 billboard samples.
+Twenty-seven cases use a supplied empty native variable map through the context's variable-store pointer.
+The other cases cover temporaries, strings, arithmetic, branches, loops, and nested jumps.
+Registry initialization, the compiler, VM instructions, component update, and store cleanup execute unchanged.
+Host allocation, CRT operations, TLS, locks, diagnostic boundaries, and the compiler service marker remain supplied.
+This supplied map does not establish complete actor or world context.
+
+**Implemented:** Core lowers variable member reads and coalescing into private runtime functions.
+Missing reads unwind the program with zero, while coalescing handles only the missing-value signal.
+Assignment and array-loop targets retain their mutable bindings.
+Query access remains at the consumer boundary.
+Both client animation and particle consumers receive these semantics through the shared core evaluator.
+
+The client validates source syntax before core compiles private runtime functions.
+Source length, node, and depth limits remain unchanged.
+Generated helper calls no longer consume a valid source script's node budget.
+Existing long-script regressions cover this separation.
+Counter and visibility fixtures now initialize their variables or explicitly coalesce before increments.
+
+The parser also rejects unparenthesized assignment chains before any variable mutation.
+The target compiler rejects all three tested chain forms and admits a parenthesized nested assignment.
+The client recovers a rejected particle expression without discarding neighboring fields or the emitter.
+
+**Verified tests:** All four projects build with 1,071 passing Java tests, 120 optional skips, and no failures or errors.
+Core Checkstyle passes.
+Core matches the 67 validity declarations and retains the earlier 57 control-flow comparisons.
+Particle components match all 133 combined native declarations and 665 direction, size, and UV samples.
+Regressions preserve mutation order, short-circuit branches, coalescing, nested jumps, source limits, and rejected-expression recovery.
+
+**Verified runtime:** Complete 240-second direct and ViaProxy replays preserve the CubeCraft scene hash `ede0e43b2874418cbb6b62135898efe0553009307d33fecd0f258383643d5d83`.
+Both retain all 311 skin updates and pass transport and rendering checks.
+Each route loads 87 authored direction definitions, including all 67 validity cases and nine earlier sharing cases.
+Two material controls also start, giving 89 effects through production resource loading, simulation, and visual extraction.
+Every reader state and sampled direction matches the expected result.
+Neither route reports an active capacity rejection or observer error.
+Each observer records one expected start cancellation during resource reload.
+Both material controls submit forward draws; improved-transparency stages remain unverified in this run.
+Saved screenshots show custom lobby models, the hanging cube, and hotbar icons.
+Overlapping labels and the Java tutorial toast remain visible.
+These complete saved-scene replays do not establish a fresh live-server join or native image and timing parity.
+
+**Remaining:** Embedded assignment results still need native accumulator lifecycle and compiler optimization behavior.
+Native ordinary store instructions retain the current result pointer, while a fused constant-arithmetic instruction writes a separate result.
+A controlled accumulator probe changes the returned result without changing the assigned value.
+Current Java evaluation returns the assigned value, so broader assignment-result parity is incomplete.
+The private contradictory assignment fixtures remain available for this work and are excluded from the verified validity comparison.
+An unsupported diagnostic boundary interrupted a `sqrt(-1)` reader probe, so that interruption does not establish its native result.
+
+Complete frame reset boundaries, actor/world contexts, arrays, runtime diagnostics, flipbook order, and native image and timing parity remain open.
 All other coverage requirements remain active.
