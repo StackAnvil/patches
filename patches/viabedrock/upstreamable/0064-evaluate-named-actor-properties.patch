@@ -1,4 +1,4 @@
-From a0c3305a1091aecda11706a56dfaefe9cdbadc9c Mon Sep 17 00:00:00 2001
+From 667cc44bac73087e86a1feeb5e0c1d34b7ed2c72 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:22:35 +0200
 Subject: [PATCH] feat(entities): evaluate named actor properties and
@@ -185,6 +185,24 @@ budget retains the client's existing bound across nested and successive
 loops. It is our untrusted-work policy, not a proven native engine limit.
 Tests preserve nearest-loop jumps, returns, mutation order, array bindings,
 syntax recovery and the shared budget. Native array context remains unverified.
+
+Offer caller-owned evaluation groups in core so related expressions can
+share a temporary binding without mutating the caller's scope. Single
+expression calls retain fresh temporary storage. Persistent actor bindings
+remain shared. Each expression has its own control-flow frames, current
+value and host work budget, including nested evaluations.
+
+Target Bedrock 1.26.51.1 build 51061372 billboard updater 1462b1d70 reads
+size, ordinary UV coordinates and extents, then custom direction axes in
+one native temporary store. Nine declarations and 45 native samples
+preserve writes across those expression calls. Native 1421fcb60 clears
+that store before each isolated sample. The registry, parser, compiler,
+VM, component updater and store cleanup execute unchanged; host allocation,
+CRT operations and locks are supplied. Full particle/frame reset boundaries
+and undefined temporary reads remain separate verification work.
+
+Tests cover temporary aliasing, numeric and string values, early returns,
+changing current values, persistent bindings and independent groups.
 ---
  build.gradle                                  |   4 +-
  .../main/groovy/viabedrock.checkstyle.gradle  |   8 +-
@@ -198,7 +216,7 @@ syntax recovery and the shared budget. Native array context remains unverified.
  .../viabedrock/api/model/entity/Entity.java   |  75 +++++
  .../api/util/BedrockTrigonometry.java         |  33 ++
  .../api/util/MoLangControlFlow.java           | 191 +++++++++++
- .../viabedrock/api/util/MoLangEngine.java     |  67 ++--
+ .../viabedrock/api/util/MoLangEngine.java     | 100 ++++--
  .../viabedrock/api/util/MoLangMath.java       | 248 ++++++++++++++
  .../viabedrock/api/util/MoLangParser.java     | 318 ++++++++++++++++++
  .../protocol/packet/JoinPackets.java          |   2 +
@@ -215,9 +233,9 @@ syntax recovery and the shared budget. Native array context remains unverified.
  .../CustomEntityMaterialSelectionTest.java    |  65 ++++
  .../CustomEntityModelSelectionTest.java       |   2 +-
  .../api/model/entity/EntityScaleTest.java     | 157 +++++++++
- .../viabedrock/api/util/MoLangEngineTest.java | 209 ++++++++++++
+ .../viabedrock/api/util/MoLangEngineTest.java | 241 +++++++++++++
  .../viabedrock/api/util/MoLangMathTest.java   | 115 +++++++
- 31 files changed, 2695 insertions(+), 48 deletions(-)
+ 31 files changed, 2757 insertions(+), 51 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeCustomEntityMessage.java
@@ -1372,10 +1390,10 @@ index 000000000..2683497f6
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java b/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
-index 8f4c4f894..ebca82021 100644
+index 8f4c4f894..231ac8e29 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
-@@ -17,57 +17,68 @@
+@@ -17,60 +17,98 @@
   */
  package net.raphimc.viabedrock.api.util;
  
@@ -1419,13 +1437,10 @@ index 8f4c4f894..ebca82021 100644
      }
  
      public static Value eval(final Scope scope, final List<Expression> expressions) {
-         final Scope localScope = scope.copy();
-+        if (localScope.get("math") instanceof ObjectValue math) {
-+            localScope.set("math", MoLangMath.extend(math));
-+        }
-         final MutableObjectBinding tempBinding = new MutableObjectBinding();
-         localScope.set("temp", tempBinding);
-         localScope.set("t", tempBinding);
+-        final Scope localScope = scope.copy();
+-        final MutableObjectBinding tempBinding = new MutableObjectBinding();
+-        localScope.set("temp", tempBinding);
+-        localScope.set("t", tempBinding);
 -        localScope.readOnly(true);
 -
 -        final ExpressionInterpreter<Void> evaluator = new ExpressionInterpreter<>(null, localScope);
@@ -1440,17 +1455,13 @@ index 8f4c4f894..ebca82021 100644
 -                break;
 -            }
 -        }
--
++        return createEvaluation(scope).eval(expressions);
++    }
+ 
 -        return lastResult;
-+        localScope.set(MoLangControlFlow.EQUAL, (Function<Object>) (context, arguments) -> {
-+            final Value left = arguments.next().eval();
-+            final Value right = arguments.next().eval();
-+            final boolean equal = left != null && right != null && (left.isString() || right.isString()
-+                ? left.isString() && right.isString() && left.getAsString().equals(right.getAsString())
-+                : left.getAsNumber() == right.getAsNumber());
-+            return Value.of(equal);
-+        });
-+        return MoLangControlFlow.evaluate(localScope, expressions);
++    /** Creates a caller-owned evaluation group whose expressions share temporary variables. */
++    public static Evaluation createEvaluation(final Scope scope) {
++        return new Evaluation(scope);
      }
  
      public static List<Expression> parse(final String expression) throws IOException {
@@ -1472,6 +1483,46 @@ index 8f4c4f894..ebca82021 100644
      }
  
      private MoLangEngine() {
+     }
+ 
++    public static final class Evaluation {
++
++        private final Scope scope;
++
++        private Evaluation(final Scope scope) {
++            this.scope = scope.copy();
++            if (this.scope.get("math") instanceof ObjectValue math) {
++                this.scope.set("math", MoLangMath.extend(math));
++            }
++            final MutableObjectBinding tempBinding = new MutableObjectBinding();
++            this.scope.set("temp", tempBinding);
++            this.scope.set("t", tempBinding);
++            this.scope.set(MoLangControlFlow.EQUAL, (Function<Object>) (context, arguments) -> {
++                final Value left = arguments.next().eval();
++                final Value right = arguments.next().eval();
++                final boolean equal = left != null && right != null && (left.isString() || right.isString()
++                    ? left.isString() && right.isString() && left.getAsString().equals(right.getAsString())
++                    : left.getAsNumber() == right.getAsNumber());
++                return Value.of(equal);
++            });
++        }
++
++        public Value eval(final String expression) throws IOException {
++            return this.eval(parse(expression));
++        }
++
++        public Value eval(final List<Expression> expressions) {
++            return MoLangControlFlow.evaluate(this.scope.copy(), expressions);
++        }
++
++        public Value eval(final List<Expression> expressions, final float current) {
++            this.scope.set("this", NumberValue.of(current));
++            return this.eval(expressions);
++        }
++
++    }
++
+ }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MoLangMath.java b/src/main/java/net/raphimc/viabedrock/api/util/MoLangMath.java
 new file mode 100644
 index 000000000..875d51eca
@@ -3093,10 +3144,10 @@ index 000000000..8fb58f5e0
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java b/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
 new file mode 100644
-index 000000000..248f54762
+index 000000000..fa908c70c
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
-@@ -0,0 +1,209 @@
+@@ -0,0 +1,241 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -3123,6 +3174,38 @@ index 000000000..248f54762
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class MoLangEngineTest {
++
++    @Test
++    void sharesTemporaryValuesAcrossAnExplicitEvaluationGroup() throws Exception {
++        final Scope scope = scope();
++        final var evaluation = MoLangEngine.createEvaluation(scope);
++        assertEquals(2, evaluation.eval("t.a=2;return t.a;").getAsNumber());
++        assertEquals(3, evaluation.eval("temp.a=temp.a+1;return t.a;").getAsNumber());
++        assertEquals("Top", evaluation.eval("t.label='Top';return t.label;").getAsString());
++        assertTrue(evaluation.eval("temp.label=='Top'").getAsBoolean());
++        assertEquals(3, evaluation.eval("1?{return t.a;};temp.a=99;return temp.a;").getAsNumber());
++        assertEquals(3, evaluation.eval("t.a").getAsNumber());
++        assertEquals(6, evaluation.eval(MoLangEngine.parse("this+t.a"), 3).getAsNumber());
++        assertEquals(7, evaluation.eval(MoLangEngine.parse("this+t.a"), 4).getAsNumber());
++        assertEquals(0, MoLangEngine.eval(scope, "t.a??0").getAsNumber());
++        assertEquals(0, MoLangEngine.createEvaluation(scope).eval("temp.a??0").getAsNumber());
++        assertNull(scope.getProperty("temp"));
++        assertNull(scope.getProperty("this"));
++    }
++
++    @Test
++    void keepsPersistentBindingsWhileIsolatingEvaluationGroups() throws Exception {
++        final Scope scope = scope();
++        final var first = MoLangEngine.createEvaluation(scope);
++        final var second = MoLangEngine.createEvaluation(scope);
++        first.eval("v.count=4;t.count=2;");
++        assertEquals(4, second.eval("v.count").getAsNumber());
++        assertEquals(0, second.eval("t.count??0").getAsNumber());
++        second.eval("v.count=5;t.count=9;");
++        assertEquals(5, first.eval("v.count").getAsNumber());
++        assertEquals(2, first.eval("t.count").getAsNumber());
++        assertEquals(9, second.eval("t.count").getAsNumber());
++    }
 +
 +    @Test
 +    void comparesEnumPropertiesWithoutNumericCoercion() throws Exception {

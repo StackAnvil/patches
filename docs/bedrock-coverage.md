@@ -2767,3 +2767,46 @@ These saved-scene checks do not establish a new live-server join, native image p
 **Remaining:** Complete grammar admission, actor and world contexts, native array iteration, pack-version gates, and visible animation timing remain unverified or incomplete.
 Runtime diagnostic text also needs comparison.
 All other coverage requirements remain active.
+
+## Shared temporary variables in billboard expressions
+
+**Evidence:** The pinned Bedrock 1.26.51.1 billboard updater preserves temporary writes across scalar expression calls.
+It evaluates size, ordinary UV coordinates and extents, then custom direction axes in that order.
+Nine private declarations and 45 native samples cover aliases, overwrites, nested writes, and successive increments across those fields.
+The native registry, compiler, VM, component updater, and temporary-store cleanup execute unchanged.
+Each isolated sample starts after native store cleanup.
+Host allocation, CRT operations, locks, diagnostics, and SDK service boundaries remain supplied.
+This comparison does not establish reset boundaries across components or a complete particle frame.
+
+**Implemented:** ViaBedrock core supplies an explicit evaluation group with shared temporary storage.
+Separate groups and ordinary single-expression calls keep independent temporary values.
+Persistent actor bindings remain shared.
+Each expression retains its own control-flow frames, current value, and host execution budget.
+The add-on uses one group for a billboard sample and releases it after completion or failure.
+Nested groups use the active storage; copied actor environments do not inherit it.
+
+**Verified tests:** All four projects build with 1,065 passing Java tests, 120 optional skips, and no failures or errors.
+Core Checkstyle passes.
+Particle component evaluation matches 66 native declarations and 330 samples, including the nine new sharing cases.
+Core retains the previous 57 native expression comparisons.
+New regressions cover sharing order, numeric and string values, early returns, changing current values, persistent actor bindings, repeated samples, nested groups, copied actors, and failure cleanup.
+
+**Verified runtime:** Complete 240-second direct and ViaProxy replays retain the unchanged CubeCraft scene hash `ede0e43b2874418cbb6b62135898efe0553009307d33fecd0f258383643d5d83`.
+Both preserve all 311 skin updates and pass transport and rendering checks.
+Each route loads 77 authored direction definitions, including all nine temporary-sharing cases, plus translucent and additive controls.
+All 79 effects start through production loading, simulation, and visual extraction.
+Reader states and sampled directions match the expected results.
+Neither route reports an active capacity rejection or observer error.
+ViaProxy records one expected start cancellation during resource reload.
+Both material controls submit forward draws; improved-transparency stages remain unverified in this run.
+Screenshots show the custom lobby models and hotbar icons, alongside overlapping labels and the Java tutorial toast.
+These are complete saved-scene replays, not a new live-server join or a native image/timing comparison.
+
+**Remaining:** Native reset boundaries across animation and particle components, complete actor/world contexts, and flipbook evaluation order need further comparisons.
+Five additional native probes distinguish unset temporary reads from numeric zero.
+For example, an unset `t.a+1` returns zero, and `t.a=t.a+1;return t.a;` leaves the variable unset.
+Explicit `t.a=(t.a??0)+1;return t.a;` returns one and stores it.
+Our evaluator instead produces and stores one for the unset increment.
+Missing-value arithmetic still needs the native error-propagation behavior.
+These probes use the same isolated component boundary and do not establish all missing-variable diagnostics.
+All other coverage requirements remain active.

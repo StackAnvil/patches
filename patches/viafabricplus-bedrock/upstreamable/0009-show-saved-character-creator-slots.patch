@@ -1,4 +1,4 @@
-From fa9c1b6384846840a21944e052c0e8a41d422ae1 Mon Sep 17 00:00:00 2001
+From ad7eb0a5720d801d28ff4bf231a7d5abd6049e26 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1634,6 +1634,23 @@ another cached effect must see the completed task's capacity released.
 Separate the pending-start counter from rendering and test nested cached
 starts alongside a nearly full queue, rejected starts and runtime failures.
 Keep the existing 32 pending, 128 cached-graph and 512 emitter limits.
+
+Use an explicit core Molang evaluation group for billboard sampling so
+temporary writes survive the size, ordinary UV and custom direction
+expression sequence. Release the group after the sample, including on
+failure; nested groups share the active binding and copied actor contexts
+do not inherit it. Retain independent persistent actor variables.
+
+Native Bedrock 1.26.51.1 build 51061372 component updater 1462b1d70 and
+VM 141cedc50 preserve those writes across scalar calls. Nine admitted
+component declarations and 45 native samples exercise aliasing, nested
+writes, overwrites and successive increments through size, UV and axes.
+Native store cleanup 1421fcb60 executes unchanged between isolated samples.
+Host allocation, CRT and lock boundaries remain supplied; this does not
+establish native frame or cross-component temporary reset boundaries.
+
+Tests exercise production billboard order, repeat-sample isolation, nested
+groups, copied actors, current values and cleanup after exceptions.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   57 +
@@ -1670,7 +1687,7 @@ Keep the existing 32 pending, 128 cached-graph and 512 emitter limits.
  .../bedrock/appearance/BedrockLimbSide.java   |   67 +
  .../appearance/BedrockMarketplaceAssets.java  |  330 ++
  .../BedrockMarketplaceTransactions.java       |  253 +
- .../bedrock/appearance/BedrockMolang.java     |  308 +
+ .../bedrock/appearance/BedrockMolang.java     |  323 ++
  .../appearance/BedrockMolangColor.java        |   40 +
  .../appearance/BedrockMolangVariables.java    |   95 +
  .../appearance/BedrockNativeBlocks.java       |   46 +
@@ -1682,7 +1699,7 @@ Keep the existing 32 pending, 128 cached-graph and 512 emitter limits.
  .../appearance/BedrockParticleCounts.java     |   58 +
  .../appearance/BedrockParticleCurves.java     |  173 +
  .../appearance/BedrockParticleDefinition.java |  261 +
- .../appearance/BedrockParticleEffect.java     |  710 +++
+ .../appearance/BedrockParticleEffect.java     |  712 +++
  .../appearance/BedrockParticleEvents.java     |  170 +
  .../appearance/BedrockParticleFacing.java     |  151 +
  .../appearance/BedrockParticleFrames.java     |   49 +
@@ -1813,7 +1830,7 @@ Keep the existing 32 pending, 128 cached-graph and 512 emitter limits.
  .../appearance/BedrockLimbSideTest.java       |   89 +
  .../BedrockMarketplaceTransactionsTest.java   |  235 +
  .../appearance/BedrockMolangColorTest.java    |  110 +
- .../bedrock/appearance/BedrockMolangTest.java |  205 +
+ .../bedrock/appearance/BedrockMolangTest.java |  228 +
  .../BedrockMolangVariablesTest.java           |   61 +
  .../appearance/BedrockOwnedSkinPacksTest.java |  181 +
  .../appearance/BedrockPackageHelperTest.java  |  139 +
@@ -1825,7 +1842,7 @@ Keep the existing 32 pending, 128 cached-graph and 512 emitter limits.
  .../appearance/BedrockParticleCurvesTest.java |  119 +
  .../BedrockParticleDefinitionTest.java        |  190 +
  .../BedrockParticleDispatchTest.java          |  101 +
- .../appearance/BedrockParticleEffectTest.java |  473 ++
+ .../appearance/BedrockParticleEffectTest.java |  502 ++
  .../appearance/BedrockParticleEventsTest.java |  299 +
  .../appearance/BedrockParticleFacingTest.java |  153 +
  .../appearance/BedrockParticleFramesTest.java |  112 +
@@ -1872,7 +1889,7 @@ Keep the existing 32 pending, 128 cached-graph and 512 emitter limits.
  .../render/BedrockPlayerModelTest.java        |  100 +
  .../render/BedrockViewBobbingTest.java        |   93 +
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 237 files changed, 42484 insertions(+), 110 deletions(-)
+ 237 files changed, 42553 insertions(+), 110 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -15829,10 +15846,10 @@ index 0000000..3512d35
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java
 new file mode 100644
-index 0000000..a60088f
+index 0000000..62a4481
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolang.java
-@@ -0,0 +1,308 @@
+@@ -0,0 +1,323 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -15873,6 +15890,7 @@ index 0000000..a60088f
 +import java.util.List;
 +import java.util.Map;
 +import java.util.Set;
++import java.util.function.Supplier;
 +
 +/** Actor-local variables and frame queries for parsed Molang expressions. */
 +final class BedrockMolang {
@@ -15880,6 +15898,7 @@ index 0000000..a60088f
 +    private Map<String, ?> queries = Map.of();
 +    private final BedrockMolangVariables variables = new BedrockMolangVariables();
 +    private float time, elapsed, delta;
++    private MoLangEngine.Evaluation evaluation;
 +
 +    BedrockMolang() {
 +        this.engine
@@ -15988,10 +16007,21 @@ index 0000000..a60088f
 +        this.engine.scope().set("c", this.engine.scope().get("context"));
 +    }
 +
++    <T> T evaluateGroup(final Supplier<T> expressions) {
++        if (this.evaluation != null) return expressions.get();
++        this.evaluation = MoLangEngine.createEvaluation(this.engine.scope());
++        try {
++            return expressions.get();
++        } finally {
++            this.evaluation = null;
++        }
++    }
++
 +    Value value(final Program program) {
 +        return program.expressions() == null
 +                ? NumberValue.of(program.constant())
-+                : MoLangEngine.eval(this.engine.scope(), program.expressions());
++                : this.evaluation == null ? MoLangEngine.eval(this.engine.scope(), program.expressions())
++                : this.evaluation.eval(program.expressions());
 +    }
 +
 +    Map<String, Value> saveVariables(final Set<String> names) {
@@ -16011,7 +16041,9 @@ index 0000000..a60088f
 +        if (program == null) return current;
 +        if (program.expressions() == null) return program.constant();
 +        this.engine.scope().set("this", NumberValue.of(current));
-+        final float value = MoLangEngine.eval(this.engine.scope(), program.expressions()).getAsNumber();
++        final float value = (this.evaluation == null
++                ? MoLangEngine.eval(this.engine.scope(), program.expressions())
++                : this.evaluation.eval(program.expressions(), current)).getAsNumber();
 +        // Native Molang converts bad arithmetic results to zero.
 +        return Float.isFinite(value) ? value : 0;
 +    }
@@ -17665,10 +17697,10 @@ index 0000000..bebb9e5
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffect.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffect.java
 new file mode 100644
-index 0000000..ba294d1
+index 0000000..4877179
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffect.java
-@@ -0,0 +1,710 @@
+@@ -0,0 +1,712 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -18197,25 +18229,27 @@ index 0000000..ba294d1
 +
 +        View sample(final BedrockMolang environment, final float age, final float lifetime,
 +                    final Vector3f velocity, final Vector3f previousDirection) {
-+            final float width = Math.max(0, environment.evaluate(this.size.get(0), 1));
-+            final float height = Math.max(0, environment.evaluate(this.size.get(1), 1));
-+            float u = environment.evaluate((this.flipbook ? this.base : this.uv).get(0), 0);
-+            float v = environment.evaluate((this.flipbook ? this.base : this.uv).get(1), 0);
-+            if (this.flipbook) {
-+                final float frames = environment.evaluate(this.frames, 1);
-+                final float rate = this.stretch ? 1F / (lifetime / frames) : this.fps;
-+                final float clock = rate * age;
-+                float frame = (float) Math.copySign(Math.floor(Math.abs(clock) + .5D), clock);
-+                frame = this.loop ? frame % frames : frame >= frames ? frames - 1 : frame;
-+                u += environment.evaluate(this.step.get(0), 0) * frame;
-+                v += environment.evaluate(this.step.get(1), 0) * frame;
-+            }
-+            final float u1 = this.flipbook ? (environment.evaluate(this.uvSize.get(0), 1) + u) * this.inverseWidth
-+                    : environment.evaluate(this.uvSize.get(0), 1) * this.inverseWidth + u * this.inverseWidth;
-+            final float v1 = this.flipbook ? (environment.evaluate(this.uvSize.get(1), 1) + v) * this.inverseHeight
-+                    : environment.evaluate(this.uvSize.get(1), 1) * this.inverseHeight + v * this.inverseHeight;
-+            this.direction.sample(environment, velocity, previousDirection);
-+            return new View(width, height, u * this.inverseWidth, v * this.inverseHeight, u1, v1);
++            return environment.evaluateGroup(() -> {
++                final float width = Math.max(0, environment.evaluate(this.size.get(0), 1));
++                final float height = Math.max(0, environment.evaluate(this.size.get(1), 1));
++                float u = environment.evaluate((this.flipbook ? this.base : this.uv).get(0), 0);
++                float v = environment.evaluate((this.flipbook ? this.base : this.uv).get(1), 0);
++                if (this.flipbook) {
++                    final float frames = environment.evaluate(this.frames, 1);
++                    final float rate = this.stretch ? 1F / (lifetime / frames) : this.fps;
++                    final float clock = rate * age;
++                    float frame = (float) Math.copySign(Math.floor(Math.abs(clock) + .5D), clock);
++                    frame = this.loop ? frame % frames : frame >= frames ? frames - 1 : frame;
++                    u += environment.evaluate(this.step.get(0), 0) * frame;
++                    v += environment.evaluate(this.step.get(1), 0) * frame;
++                }
++                final float u1 = this.flipbook ? (environment.evaluate(this.uvSize.get(0), 1) + u) * this.inverseWidth
++                        : environment.evaluate(this.uvSize.get(0), 1) * this.inverseWidth + u * this.inverseWidth;
++                final float v1 = this.flipbook ? (environment.evaluate(this.uvSize.get(1), 1) + v) * this.inverseHeight
++                        : environment.evaluate(this.uvSize.get(1), 1) * this.inverseHeight + v * this.inverseHeight;
++                this.direction.sample(environment, velocity, previousDirection);
++                return new View(width, height, u * this.inverseWidth, v * this.inverseHeight, u1, v1);
++            });
 +        }
 +    }
 +
@@ -37541,10 +37575,10 @@ index 0000000..85ad97f
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangTest.java
 new file mode 100644
-index 0000000..9690f36
+index 0000000..9055e2f
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangTest.java
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,228 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -37566,6 +37600,29 @@ index 0000000..9690f36
 +    private static float evaluate(final BedrockMolang context, final String expression)
 +            throws IOException {
 +        return context.evaluate(BedrockMolang.Program.parse(new JsonPrimitive(expression), 0), 0);
++    }
++
++    @Test
++    void sharesGroupedTemporaryValuesAndRestoresIsolationAfterFailure() throws Exception {
++        final var environment = new BedrockMolang();
++        final var assign = BedrockMolang.Program.parse(new com.google.gson.JsonPrimitive("t.a=2;return t.a;"), 0);
++        final var increment = BedrockMolang.Program.parse(new com.google.gson.JsonPrimitive("t.a=t.a+1;return t.a;"), 0);
++        final var read = BedrockMolang.Program.parse(new com.google.gson.JsonPrimitive("t.a??0"), 0);
++        final var current = BedrockMolang.Program.parse(new com.google.gson.JsonPrimitive("this+t.a"), 0);
++        assertEquals(7, environment.evaluateGroup(() -> {
++            assertEquals(2, environment.evaluate(assign, 0));
++            assertEquals(3, environment.evaluateGroup(() -> environment.evaluate(increment, 0)));
++            assertEquals(3, environment.value(read).getAsNumber());
++            assertEquals(0, environment.copy().evaluate(read, 0));
++            return environment.evaluate(current, 4);
++        }));
++        assertEquals(0, environment.evaluate(read, 0));
++        assertThrows(IllegalStateException.class, () -> environment.evaluateGroup(() -> {
++            environment.evaluate(assign, 0);
++            throw new IllegalStateException();
++        }));
++        assertEquals(0, environment.evaluate(read, 0));
++        assertEquals(0, environment.evaluateGroup(() -> environment.evaluate(read, 0)));
 +    }
 +
 +    @Test
@@ -39352,10 +39409,10 @@ index 0000000..16d23e6
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffectTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffectTest.java
 new file mode 100644
-index 0000000..ec49e23
+index 0000000..0995a4d
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffectTest.java
-@@ -0,0 +1,473 @@
+@@ -0,0 +1,502 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -39375,6 +39432,35 @@ index 0000000..ec49e23
 +import java.util.Random;
 +
 +final class BedrockParticleEffectTest {
++    @Test
++    void sharesBillboardTemporariesInNativeOrderWithoutLeakingAcrossSamples() throws Exception {
++        final var declaration = new JsonObject();
++        declaration.add("size", JsonParser.parseString("[\"t.a=(t.a??0)+2;return t.a;\",\"t.a=t.a+1;return t.a;\"]"));
++        final var uv = new JsonObject();
++        uv.addProperty("texture_width", 8);
++        uv.addProperty("texture_height", 16);
++        for (final String field : List.of("uv", "uv_size"))
++            uv.add(field, JsonParser.parseString("[\"t.a=t.a+1;return t.a;\",\"t.a=t.a+1;return t.a;\"]"));
++        declaration.add("uv", uv);
++        final var direction = new JsonObject();
++        direction.addProperty("mode", "custom");
++        direction.add("custom_direction", JsonParser.parseString("[\"t.a=t.a+1;return t.a;\",\"t.a=t.a+1;return t.a;\",\"t.a\"]"));
++        declaration.add("direction", direction);
++        final var billboard = BedrockParticleEffect.Billboard.read(declaration);
++        final var environment = new BedrockMolang();
++        final var facing = new Vector3f(0, 1, 0);
++        for (int sample = 0; sample < 2; sample++) {
++            final var view = billboard.sample(environment, 0, 1, new Vector3f(), facing);
++            assertEquals(2, view.width());
++            assertEquals(3, view.height());
++            assertEquals(.5F, view.u0());
++            assertEquals(.3125F, view.v0());
++            assertEquals(1.25F, view.u1());
++            assertEquals(.75F, view.v1());
++            assertEquals(new Vector3f(8, 9, 9), facing);
++        }
++    }
++
 +    @Test
 +    void simulatesInvisibleCarriersWithoutTexturesAndDispatchesTheirChildren() throws Exception {
 +        final var document = burst();

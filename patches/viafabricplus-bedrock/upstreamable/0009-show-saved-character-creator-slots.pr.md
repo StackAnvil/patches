@@ -2653,3 +2653,16 @@ The final ViaProxy observer records one expected start cancellation during a res
 Both routes submit forward draws; improved-transparency stages remain unverified in this run.
 Screenshots show the custom lobby models and hotbar icons, alongside overlapping labels and the Java tutorial toast.
 These saved-scene checks do not establish a new live-server join, native image parity, or animation timing parity.
+
+## Shared billboard temporaries
+
+Billboard size, ordinary UV fields, and custom direction expressions now share a core evaluation group.
+Nested evaluation uses the active group, and completion or failure releases it.
+Copied actor environments retain persistent variables without inheriting temporary storage.
+Tests cover native field order, repeated samples, nested groups, current values, copied actors, and failure cleanup.
+Particle component tests match 66 native declarations and 330 samples.
+The [coverage ledger](../../../docs/bedrock-coverage.md#shared-temporary-variables-in-billboard-expressions) records the native boundaries and remaining scope, flipbook, and missing-value gaps.
+All four projects build with 1,065 passing Java tests and 120 optional skips.
+Complete 240-second CubeCraft replays pass through direct and ViaProxy routes.
+Each preserves 311 skin updates and verifies 77 authored direction cases plus two material controls.
+No active capacity rejection or observer error occurs; native image and timing parity remain unverified.

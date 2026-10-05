@@ -341,3 +341,16 @@ These saved-scene checks do not establish a new live-server join, native image p
 **Remaining:** Complete grammar admission, actor and world contexts, native array iteration, pack-version gates, and visible animation timing remain unverified or incomplete.
 Runtime diagnostic text also needs comparison.
 All other coverage requirements remain active.
+
+## Explicit temporary evaluation groups
+
+Core supplies caller-owned groups for related expressions that share temporary values.
+Single-expression calls retain fresh storage, and persistent actor bindings remain shared.
+Expression frames and current values stay independent.
+The add-on uses this API for billboard sampling.
+The [coverage ledger](../../../docs/bedrock-coverage.md#shared-temporary-variables-in-billboard-expressions) records 45 new native samples, supplied boundaries, regression coverage, and remaining scope and missing-value gaps.
+All four projects build with 1,065 passing Java tests and 120 optional skips.
+Core Checkstyle passes.
+Complete 240-second CubeCraft replays pass through direct and ViaProxy routes.
+Each preserves 311 skin updates and verifies 77 authored direction cases plus two material controls.
+No active capacity rejection or observer error occurs; native image and timing parity remain unverified.
