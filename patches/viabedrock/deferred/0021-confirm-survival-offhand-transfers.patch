@@ -1,4 +1,4 @@
-From 4b46f88c7b682d54af332072117028db98bc1753 Mon Sep 17 00:00:00 2001
+From ecac88bad02857228b99927f42f2fed182667207 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 11:49:41 +0200
 Subject: [PATCH] fix(inventory): confirm survival offhand transfers from
@@ -7,12 +7,17 @@ Subject: [PATCH] fix(inventory): confirm survival offhand transfers from
 Retain normal offhand and cursor transactions for client-authoritative inventory sessions. Wait for the authoritative offhand or inventory update before changing the Java cursor, and reopen inventory for recovery when confirmation times out. Keep unsupported clicks on the synthetic cursor from sending requests the server cannot validate.
 
 Use the general request translation from the inventory owner when START_GAME negotiates server-authoritative inventory. Earlier native experiments mixed request slot zero with the offhand content index and tried slot one without a bound player inventory, so their validation errors do not establish that modern offhand requests are unsupported. Native validation of the corrected bound-inventory flow remains pending.
+
+Request full inventory snapshots after a legacy transfer times out.
+Reopening the player inventory does not guarantee the cursor and equipment
+updates needed to finish recovery. Share the native InventoryMismatch
+refresh used by server-authoritative inventory recovery.
 ---
  .../protocol/packet/InventoryPackets.java     | 143 ++++++++++++++++-
- .../storage/InventoryRequestTracker.java      | 147 +++++++++++++++++-
+ .../storage/InventoryRequestTracker.java      | 148 +++++++++++++++++-
  .../protocol/packet/InventoryPacketsTest.java |  66 ++++++++
  .../storage/InventoryRequestTrackerTest.java  |  48 ++++++
- 4 files changed, 389 insertions(+), 15 deletions(-)
+ 4 files changed, 390 insertions(+), 15 deletions(-)
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 index 63710c4f3..1c851fa69 100644
@@ -225,7 +230,7 @@ index 63710c4f3..1c851fa69 100644
              throws InformativeException {
          return readCreativeItem(wrapper, itemRewriter.getItems().getOrDefault("minecraft:shield", 0));
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
-index 5b757b68f..424c6248b 100644
+index ef63f0e30..0939259e8 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
 @@ -43,6 +43,7 @@ import net.raphimc.viabedrock.protocol.model.BedrockItem;
@@ -354,7 +359,7 @@ index 5b757b68f..424c6248b 100644
                  PacketFactory.sendJavaContainerSetContent(this.user(), container);
              }
          }
-@@ -215,6 +292,27 @@ public class InventoryRequestTracker extends StoredObject {
+@@ -215,6 +292,28 @@ public class InventoryRequestTracker extends StoredObject {
      }
  
      public void tick() {
@@ -378,11 +383,12 @@ index 5b757b68f..424c6248b 100644
 +                    this.user().get(EntityTracker.class).getClientPlayer().runtimeId());
 +            interact.write(BedrockTypes.OPTIONAL_POSITION_3F, null);
 +            interact.sendToServer(BedrockProtocol.class);
++            this.requestInventoryRefresh();
 +        }
          if (this.pendingInventoryOpenClicks.expire(
                  System.nanoTime(), RESPONSE_TIMEOUT_NANOS)) {
              this.clearQueuedInteractions();
-@@ -227,6 +325,11 @@ public class InventoryRequestTracker extends StoredObject {
+@@ -227,6 +326,11 @@ public class InventoryRequestTracker extends StoredObject {
              this.mineBlockRequest = null;
          }
          if (!this.hasPending()) {
@@ -394,7 +400,7 @@ index 5b757b68f..424c6248b 100644
              return;
          }
          final long now = System.nanoTime();
-@@ -281,13 +384,15 @@ public class InventoryRequestTracker extends StoredObject {
+@@ -282,13 +386,15 @@ public class InventoryRequestTracker extends StoredObject {
                  this.closeTemporaryInventoryIfIdle();
              }
          }
@@ -411,7 +417,7 @@ index 5b757b68f..424c6248b 100644
              this.resetRecovery();
              tracker.getInventoryContainer().updateCraftingOutput();
              PacketFactory.sendJavaContainerSetContent(this.user(), tracker.getInventoryContainer());
-@@ -494,7 +599,8 @@ public class InventoryRequestTracker extends StoredObject {
+@@ -499,7 +605,8 @@ public class InventoryRequestTracker extends StoredObject {
  
      void drainQueuedInteractions() {
          final InventoryTracker tracker = this.user().get(InventoryTracker.class);
@@ -421,7 +427,7 @@ index 5b757b68f..424c6248b 100644
                  && !this.isWaitingForInventoryOpen()
                  && !this.queuedInteractions.isEmpty()) {
              final QueuedInteraction interaction = this.queuedInteractions.removeFirst();
-@@ -511,6 +617,29 @@ public class InventoryRequestTracker extends StoredObject {
+@@ -516,6 +623,29 @@ public class InventoryRequestTracker extends StoredObject {
      private record MineBlockRequest(int requestId, int hotbarSlot, int stackNetworkId,
                                      long sentAtNanos) { }
  
@@ -451,7 +457,7 @@ index 5b757b68f..424c6248b 100644
      static final class PendingInventoryOpenClicks {
  
          private final ArrayDeque<InventoryOpenClick> clicks = new ArrayDeque<>();
-@@ -586,12 +715,14 @@ public class InventoryRequestTracker extends StoredObject {
+@@ -591,12 +721,14 @@ public class InventoryRequestTracker extends StoredObject {
          boolean apply();
      }
  

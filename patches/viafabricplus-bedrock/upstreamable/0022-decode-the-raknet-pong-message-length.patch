@@ -1,0 +1,163 @@
+From 8c3c4e6ff9fbbd01f22125afdd0581f18a1ed43d Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 11:33:50 +0200
+Subject: [PATCH] fix(status): decode the RakNet pong message length
+
+Read the unsigned message length before decoding Bedrock status fields. The encapsulation codec writes this prefix, and interpreting it as UTF-8 can inject a semicolon into the edition field and shift the MOTD, version, and player counts. Preserve empty trailing fields and reject truncated payloads.
+---
+ .../network/BedrockRakNetPong.java            | 32 +++++++++
+ .../network/BedrockRakNetStatusProtocol.java  | 11 +--
+ .../network/BedrockRakNetPongTest.java        | 67 +++++++++++++++++++
+ 3 files changed, 100 insertions(+), 10 deletions(-)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/BedrockRakNetPong.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/BedrockRakNetPongTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/BedrockRakNetPong.java b/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/BedrockRakNetPong.java
+new file mode 100644
+index 0000000..073978c
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/BedrockRakNetPong.java
+@@ -0,0 +1,32 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.protocoltranslator.network;
++
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.api.type.types.FixedByteArrayType;
++import java.nio.charset.StandardCharsets;
++import java.util.Arrays;
++import org.cloudburstmc.netty.channel.raknet.RakConstants;
++
++final class BedrockRakNetPong {
++
++    private static final FixedByteArrayType MAGIC_TYPE = new FixedByteArrayType(RakConstants.DEFAULT_UNCONNECTED_MAGIC.length);
++
++    private BedrockRakNetPong() {
++    }
++
++    static String[] read(final PacketWrapper wrapper) {
++        wrapper.read(Types.LONG); // Time echoed by the server.
++        wrapper.read(Types.LONG); // Server GUID.
++        if (!Arrays.equals(wrapper.read(MAGIC_TYPE), RakConstants.DEFAULT_UNCONNECTED_MAGIC)) {
++            throw new IllegalStateException("Invalid offline message data id");
++        }
++        final int length = wrapper.read(Types.UNSIGNED_SHORT);
++        final byte[] message = wrapper.read(new FixedByteArrayType(length));
++        return new String(message, StandardCharsets.UTF_8).split(";", -1);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/BedrockRakNetStatusProtocol.java b/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/BedrockRakNetStatusProtocol.java
+index 6f10369..14ace0e 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/BedrockRakNetStatusProtocol.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/BedrockRakNetStatusProtocol.java
+@@ -29,8 +29,6 @@ import com.viaversion.viaversion.protocol.AbstractSimpleProtocol;
+ import com.viaversion.viaversion.protocols.base.ClientboundStatusPackets;
+ import com.viaversion.viaversion.protocols.base.ServerboundStatusPackets;
+ 
+-import java.nio.charset.StandardCharsets;
+-import java.util.Arrays;
+ import java.util.concurrent.ThreadLocalRandom;
+ 
+ public class BedrockRakNetStatusProtocol extends AbstractSimpleProtocol {
+@@ -51,13 +49,7 @@ public class BedrockRakNetStatusProtocol extends AbstractSimpleProtocol {
+     protected void registerPackets() {
+         this.registerClientbound(State.STATUS, ID_UNCONNECTED_PONG, ClientboundStatusPackets.STATUS_RESPONSE.getId(), wrapper -> {
+             final long ping = (System.nanoTime() - wrapper.user().get(PingInfoStorage.class).pingStartTime) / 1_000_000L;
+-            wrapper.read(Types.LONG); // time (system uptime)
+-            wrapper.read(Types.LONG); // guid
+-            final byte[] offlineMessageDataId = wrapper.read(OFFLINE_MESSAGE_DATA_ID_TYPE); // offline message data id
+-            if (!Arrays.equals(offlineMessageDataId, OFFLINE_MESSAGE_DATA_ID)) {
+-                throw new IllegalStateException("Invalid offline message data id");
+-            }
+-            final byte[] data = wrapper.read(Types.REMAINING_BYTES); // ping response data TODO: More testing needed
++            final String[] splitData = BedrockRakNetPong.read(wrapper);
+ 
+             final JsonObject statusResponse = new JsonObject();
+             statusResponse.addProperty("description", "");
+@@ -76,7 +68,6 @@ public class BedrockRakNetStatusProtocol extends AbstractSimpleProtocol {
+             players.add("sample", samples);
+             statusResponse.add("players", players);
+ 
+-            final String[] splitData = new String(data, StandardCharsets.UTF_8).split(";");
+             switch (splitData.length) {
+                 default:
+                 case 12: // IPv6 Port
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/BedrockRakNetPongTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/BedrockRakNetPongTest.java
+new file mode 100644
+index 0000000..f2b2c05
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/protocoltranslator/network/BedrockRakNetPongTest.java
+@@ -0,0 +1,67 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.protocoltranslator.network;
++
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.version.ProtocolVersion;
++import com.viaversion.viaversion.exception.InformativeException;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import java.lang.reflect.Proxy;
++import java.nio.charset.StandardCharsets;
++import org.cloudburstmc.netty.channel.raknet.RakConstants;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++
++class BedrockRakNetPongTest {
++
++    @Test
++    void binaryLengthCannotShiftMotdOrPlayerCounts() throws Exception {
++        for (final int length : new int[]{0x013B, 0x3B01}) {
++            final String suffix = ";2193;1.26.51;4;20;1;World;Survival;1;19132;19133;";
++            final String motd = "x".repeat(length - "MCPE;".length() - suffix.length());
++            final byte[] message = ("MCPE;" + motd + suffix).getBytes(StandardCharsets.UTF_8);
++            final ByteBuf input = pong(message.length, message);
++            try {
++                final String[] fields = BedrockRakNetPong.read(new PacketWrapperImpl(28, input, null));
++                assertEquals(motd, fields[1]);
++                assertEquals(4, Integer.parseInt(fields[4]));
++                assertEquals(20, Integer.parseInt(fields[5]));
++                assertEquals(13, fields.length);
++                assertEquals(0, fields[12].length());
++                assertEquals(0, input.readableBytes());
++            } finally {
++                input.release();
++            }
++        }
++    }
++
++    @Test
++    void rejectsTruncatedStatusPayload() throws Exception {
++        final ProtocolInfo info = (ProtocolInfo) Proxy.newProxyInstance(ProtocolInfo.class.getClassLoader(),
++            new Class<?>[]{ProtocolInfo.class}, (proxy, method, args) -> ProtocolVersion.v1_21_4);
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++            new Class<?>[]{UserConnection.class}, (proxy, method, args) -> info);
++        final ByteBuf input = pong(50, new byte[4]);
++        try {
++            assertThrows(InformativeException.class,
++                () -> BedrockRakNetPong.read(new PacketWrapperImpl(28, input, user)));
++            assertEquals(34, input.readerIndex());
++            assertEquals(4, input.readableBytes());
++        } finally {
++            input.release();
++        }
++    }
++
++    private static ByteBuf pong(final int length, final byte[] message) {
++        return Unpooled.buffer().writeLong(0).writeLong(1)
++            .writeBytes(RakConstants.DEFAULT_UNCONNECTED_MAGIC).writeShort(length).writeBytes(message);
++    }
++}
+-- 
+2.55.0

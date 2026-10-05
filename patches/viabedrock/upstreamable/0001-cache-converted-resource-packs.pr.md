@@ -218,3 +218,13 @@ Both routes load two new conversions with stored native archive entries.
 The complete recorded scene hash remains unchanged, and all 216 skin updates retain their recorded bytes.
 Neither route reports unresolved model, block, or accepted-archive decode errors.
 These checks establish loading regressions, not complete native visual parity or faster joining.
+
+## Numeric entity scales
+
+The reported custom-actor disconnect contains `Double cannot be cast to Float` in `CustomEntity.spawn`.
+The fallback renderer now reads converted scales through `Number.floatValue()`.
+This accepts float and double metadata without changing the model scale.
+The cache schema still restores finite scales as floats.
+The feature-only tests and both Checkstyle tasks pass.
+The cache patch applies alone to the pinned upstream base and passes all 22 tests and both Checkstyle tasks.
+The complete core and add-on builds also pass after replaying the stacks.

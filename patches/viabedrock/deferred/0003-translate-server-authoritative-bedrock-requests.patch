@@ -1,4 +1,4 @@
-From 3252e969df02672e3b04c44b34e4ed1fd3217f06 Mon Sep 17 00:00:00 2001
+From 88de9e1b601bb42414b4ffc32ee37f24e111a574 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 12:56:10 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -100,6 +100,12 @@ identity, stale IDs and amounts, multiple destinations, inventory aliases,
 and a later snapshot invalidating an earlier slot update. Raw probes stay
 private. The target packet schema is documented at
 https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/inventory-transaction-packet/
+
+Request an InventoryMismatch refresh when timed-out requests enter recovery.
+Reopening the inventory alone does not guarantee fresh cursor and equipment
+snapshots. Use the same refresh transaction already verified against native
+Bedrock 1.26.51.1 for crafted metadata, and retain the authoritative recovery
+barrier before allowing more predictions.
 ---
  build.gradle                                  |    3 +-
  .../api/model/container/ChestContainer.java   |   52 +-
@@ -141,7 +147,7 @@ https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/inventory-transac
  .../protocol/storage/CraftingDataTracker.java |  206 ++
  .../storage/InventoryRequestRecovery.java     |   80 +
  .../storage/InventoryRequestStorage.java      |  100 +
- .../storage/InventoryRequestTracker.java      |  523 +++++
+ .../storage/InventoryRequestTracker.java      |  528 +++++
  .../protocol/storage/InventoryTracker.java    |  166 +-
  .../protocol/types/item/BedrockItemType.java  |   12 +-
  .../data/bedrock/item_stack_sizes.json        |  267 +++
@@ -161,7 +167,7 @@ https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/inventory-transac
  .../storage/InventoryRequestTrackerTest.java  |  330 ++++
  .../storage/InventoryTrackerTest.java         |  124 ++
  .../storage/StonecutterRecipePacketTest.java  |   53 +
- 60 files changed, 8780 insertions(+), 838 deletions(-)
+ 60 files changed, 8785 insertions(+), 838 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/AnvilContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/BeaconContainer.java
@@ -8930,10 +8936,10 @@ index 000000000..293affa78
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
 new file mode 100644
-index 000000000..a3731d43c
+index 000000000..af5be0dc8
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTracker.java
-@@ -0,0 +1,523 @@
+@@ -0,0 +1,528 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2025 RK_01/RaphiMC and contributors
@@ -9175,6 +9181,7 @@ index 000000000..a3731d43c
 +                this.user().get(EntityTracker.class).getClientPlayer().runtimeId());
 +        interact.write(BedrockTypes.OPTIONAL_POSITION_3F, null);
 +        interact.sendToServer(BedrockProtocol.class);
++        this.requestInventoryRefresh();
 +    }
 +
 +    public void handleAuthoritativeContent(final Container container) {
@@ -9256,13 +9263,7 @@ index 000000000..a3731d43c
 +        } else {
 +            changed.addAll(this.applySuccessfulResponse(response, request));
 +            if (this.synchronizeCraftedItems(request, response)) {
-+                final PacketWrapper refresh = PacketWrapper.create(
-+                        ServerboundBedrockPackets.INVENTORY_TRANSACTION, this.user());
-+                refresh.write(this.user().get(InventoryTransactionRewriter.class).getInventoryTransactionType(),
-+                        new BedrockInventoryTransaction(0, List.of(), List.of(),
-+                                ComplexInventoryTransaction_Type.InventoryMismatch,
-+                                new InventoryTransactionData.MismatchTransactionData()));
-+                refresh.sendToServer(BedrockProtocol.class);
++                this.requestInventoryRefresh();
 +            }
 +        }
 +
@@ -9275,6 +9276,16 @@ index 000000000..a3731d43c
 +        }
 +        PacketFactory.sendJavaContainerSetContent(this.user(), tracker.getInventoryContainer());
 +        this.closeTemporaryInventoryIfIdle();
++    }
++
++    private void requestInventoryRefresh() {
++        final PacketWrapper refresh = PacketWrapper.create(
++                ServerboundBedrockPackets.INVENTORY_TRANSACTION, this.user());
++        refresh.write(this.user().get(InventoryTransactionRewriter.class).getInventoryTransactionType(),
++                new BedrockInventoryTransaction(0, List.of(), List.of(),
++                        ComplexInventoryTransaction_Type.InventoryMismatch,
++                        new InventoryTransactionData.MismatchTransactionData()));
++        refresh.sendToServer(BedrockProtocol.class);
 +    }
 +
 +    boolean synchronizeCraftedItems(final InventoryRequestStorage request,

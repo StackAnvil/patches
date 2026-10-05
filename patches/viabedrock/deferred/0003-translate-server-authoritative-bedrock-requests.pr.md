@@ -33,3 +33,14 @@ Raw captures and account data remain private.
 This native comparison establishes the refresh mechanism.
 Java UI integration, other server implementations, and direct and ViaProxy crafting comparisons remain unverified.
 Cartography's Java screen and request generation remain incomplete.
+
+## Recovery refresh
+
+A request timeout now sends `InventoryMismatch` after reopening the player inventory.
+The old recovery path reopened the inventory without requesting the cursor and equipment snapshots that its barrier requires.
+It now shares the refresh transaction used for crafted metadata.
+The native comparison above establishes that this transaction returns all required containers on Bedrock 1.26.51.1.
+The barrier and disconnect timeout remain active if the server cannot supply fresh state.
+The report lacks the original server and request log.
+This change fixes a recovery defect, but the original timeout trigger remains unknown.
+The complete core build passes with 557 passing tests and five optional skips, including the inventory recovery and crafted-item synchronization tests.
