@@ -1,4 +1,4 @@
-From 53884bbfb9df27899ab89d54ab62cc2191907aa5 Mon Sep 17 00:00:00 2001
+From bdfcd2151be0e98b877a4c3de32eee75d12e6541 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:22:35 +0200
 Subject: [PATCH] feat(entities): evaluate named actor properties and
@@ -223,6 +223,12 @@ compiler does. Parenthesized assignments remain admitted. Native embedded
 assignment results depend on accumulator state and compiler optimizations;
 that broader behavior remains separate work. This change does not claim
 assignment-result parity, complete frame scope or all runtime diagnostics.
+
+Cache compiled custom actor expressions for the actor lifetime. Windows
+CubeCraft thread samples show repeated parser work in network-thread
+controller ticks. Keep only syntax in the cache and reevaluate current
+queries, variables, and fresh temporary bindings on every call. This avoids
+sharing mutable state between actors or retaining pack source globally.
 ---
  build.gradle                                  |   4 +-
  .../main/groovy/viabedrock.checkstyle.gradle  |   8 +-
@@ -232,13 +238,13 @@ assignment-result parity, complete frame scope or all runtime diagnostics.
  .../api/model/NativeCustomEntityMessage.java  | 142 ++++++++
  .../api/model/NativeHandItemState.java        |  29 ++
  .../api/model/NativeShieldBlockingState.java  |  45 +++
- .../api/model/entity/CustomEntity.java        | 101 +++++-
+ .../api/model/entity/CustomEntity.java        | 112 +++++-
  .../viabedrock/api/model/entity/Entity.java   |  75 ++++
  .../api/util/BedrockTrigonometry.java         |  33 ++
- .../api/util/MoLangControlFlow.java           | 256 ++++++++++++++
- .../viabedrock/api/util/MoLangEngine.java     | 105 ++++--
+ .../api/util/MoLangControlFlow.java           | 256 +++++++++++++
+ .../viabedrock/api/util/MoLangEngine.java     | 128 +++++--
  .../viabedrock/api/util/MoLangMath.java       | 248 +++++++++++++
- .../viabedrock/api/util/MoLangParser.java     | 314 +++++++++++++++++
+ .../viabedrock/api/util/MoLangParser.java     | 314 ++++++++++++++++
  .../protocol/packet/JoinPackets.java          |   2 +
  .../protocol/packet/MultiStatePackets.java    |  10 +
  .../protocol/packet/WorldPackets.java         |   1 +
@@ -247,15 +253,15 @@ assignment-result parity, complete frame scope or all runtime diagnostics.
  .../api/model/NativeActorEntityTest.java      |  60 ++++
  .../api/model/NativeActorMessageTest.java     | 126 +++++++
  .../api/model/NativeActorStatesTest.java      | 110 ++++++
- .../model/NativeCustomEntityMessageTest.java  | 159 +++++++++
+ .../model/NativeCustomEntityMessageTest.java  | 159 ++++++++
  .../api/model/NativeHandItemStateTest.java    |  71 ++++
  .../model/NativeShieldBlockingStateTest.java  |  91 +++++
- .../CustomEntityMaterialSelectionTest.java    |  65 ++++
+ .../CustomEntityMaterialSelectionTest.java    |  70 ++++
  .../CustomEntityModelSelectionTest.java       |   2 +-
- .../api/model/entity/EntityScaleTest.java     | 157 +++++++++
- .../viabedrock/api/util/MoLangEngineTest.java | 325 ++++++++++++++++++
- .../viabedrock/api/util/MoLangMathTest.java   | 115 +++++++
- 31 files changed, 2907 insertions(+), 51 deletions(-)
+ .../api/model/entity/EntityScaleTest.java     | 157 ++++++++
+ .../viabedrock/api/util/MoLangEngineTest.java | 338 ++++++++++++++++++
+ .../viabedrock/api/util/MoLangMathTest.java   | 115 ++++++
+ 31 files changed, 2954 insertions(+), 56 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeCustomEntityMessage.java
@@ -837,7 +843,7 @@ index 000000000..cd839b67a
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
-index 6aea129ad..0ae68792e 100644
+index 6aea129ad..1431bc51d 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/CustomEntity.java
 @@ -26,11 +26,13 @@ import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
@@ -871,7 +877,11 @@ index 6aea129ad..0ae68792e 100644
  
  import java.io.IOException;
  import java.util.*;
-@@ -73,6 +75,7 @@ public class CustomEntity extends Entity {
+@@ -70,9 +72,11 @@ public class CustomEntity extends Entity {
+     private final Map<String, String> inverseGeometryMap = new HashMap<>();
+     private final Map<String, String> inverseTextureMap = new HashMap<>();
+     private final Scope entityScope = BASE_SCOPE.copy();
++    private final MoLangEngine.CompiledExpressions expressions = new MoLangEngine.CompiledExpressions();
      private final List<EvaluatedModel> models = new ArrayList<>();
      private final List<ItemDisplayEntity> partEntities = new ArrayList<>();
      private boolean spawned;
@@ -879,7 +889,16 @@ index 6aea129ad..0ae68792e 100644
  
      public CustomEntity(final UserConnection user, final long uniqueId, final long runtimeId, final String type, final int javaId, final EntityDefinitions.EntityDefinition entityDefinition) {
          super(user, uniqueId, runtimeId, type, javaId, UUID.randomUUID(), EntityTypes26_3.INTERACTION);
-@@ -106,12 +109,24 @@ public class CustomEntity extends Entity {
+@@ -83,7 +87,7 @@ public class CustomEntity extends Entity {
+         this.entityScope.set("v", variableBinding);
+         try {
+             for (String initExpression : this.entityDefinition.entityData().getScripts().initialize()) {
+-                MoLangEngine.eval(this.entityScope, initExpression);
++                this.expressions.eval(this.entityScope, initExpression);
+             }
+         } catch (final Throwable e) {
+             ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to initialize custom entity variables", e);
+@@ -106,12 +110,24 @@ public class CustomEntity extends Entity {
          this.entityScope.set("texture", textureBinding);
  
          final MutableObjectBinding materialBinding = new MutableObjectBinding();
@@ -904,7 +923,7 @@ index 6aea129ad..0ae68792e 100644
      @Override
      public void setPosition(final Position3f position) {
          super.setPosition(position);
-@@ -136,6 +151,9 @@ public class CustomEntity extends Entity {
+@@ -136,6 +152,9 @@ public class CustomEntity extends Entity {
      @Override
      public void remove() {
          super.remove();
@@ -914,7 +933,7 @@ index 6aea129ad..0ae68792e 100644
          this.despawn();
      }
  
-@@ -149,8 +167,31 @@ public class CustomEntity extends Entity {
+@@ -149,8 +168,31 @@ public class CustomEntity extends Entity {
          }
      }
  
@@ -946,7 +965,7 @@ index 6aea129ad..0ae68792e 100644
          if (this.models.isEmpty()) {
              return;
          }
-@@ -179,7 +220,7 @@ public class CustomEntity extends Entity {
+@@ -179,7 +221,7 @@ public class CustomEntity extends Entity {
              final StructuredItem item = new StructuredItem(BedrockProtocol.MAPPINGS.getJavaItems().get("minecraft:paper"), 1, data);
              javaEntityData.add(new EntityData(partEntity.getJavaEntityDataIndex(EntityDataFields.ITEM_STACK), VersionedTypes.V26_3.entityDataTypes.itemType, item));
  
@@ -955,7 +974,7 @@ index 6aea129ad..0ae68792e 100644
              javaEntityData.add(new EntityData(partEntity.getJavaEntityDataIndex(EntityDataFields.SCALE), VersionedTypes.V26_3.entityDataTypes.vector3FType, new Vector3f(scale, scale, scale)));
              javaEntityData.add(new EntityData(partEntity.getJavaEntityDataIndex(EntityDataFields.TRANSLATION), VersionedTypes.V26_3.entityDataTypes.vector3FType, new Vector3f(0F, scale * 0.5F, 0F)));
  
-@@ -211,14 +252,24 @@ public class CustomEntity extends Entity {
+@@ -211,14 +253,24 @@ public class CustomEntity extends Entity {
              entityIds[i] = this.partEntities.get(i).javaId();
          }
          this.partEntities.clear();
@@ -980,12 +999,12 @@ index 6aea129ad..0ae68792e 100644
          if (this.entityData.containsKey(ActorDataIds.VARIANT)) {
              queryBinding.set("variant", Value.of(this.entityData.get(ActorDataIds.VARIANT).<Integer>value()));
          }
-@@ -240,6 +291,13 @@ public class CustomEntity extends Entity {
+@@ -240,6 +292,13 @@ public class CustomEntity extends Entity {
          executionScope.set("query", queryBinding);
          executionScope.set("q", queryBinding);
  
 +        try {
-+            MoLangEngine.runPreAnimation(executionScope, this.entityDefinition.entityData().getScripts().pre_animation());
++            this.expressions.runPreAnimation(executionScope, this.entityDefinition.entityData().getScripts().pre_animation());
 +        } catch (final Throwable e) {
 +            ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to evaluate entity pre_animation", e);
 +            return replaceModels(this.models, List.of()) || scaleChanged;
@@ -994,22 +1013,33 @@ index 6aea129ad..0ae68792e 100644
          final List<EvaluatedModel> newModels = new ArrayList<>();
          final ResourcePackStorage resourcePackStorage = user.get(ResourcePackStorage.class);
          for (BedrockEntityData.RenderController entityRenderController : this.entityDefinition.entityData().getControllers()) {
-@@ -261,9 +319,11 @@ public class CustomEntity extends Entity {
+@@ -249,7 +308,7 @@ public class CustomEntity extends Entity {
+             }
+             if (!entityRenderController.condition().isBlank()) {
+                 try {
+-                    final Value conditionResult = MoLangEngine.eval(executionScope, entityRenderController.condition());
++                    final Value conditionResult = this.expressions.eval(executionScope, entityRenderController.condition());
+                     if (!conditionResult.getAsBoolean()) {
+                         continue;
+                     }
+@@ -261,26 +320,28 @@ public class CustomEntity extends Entity {
  
              try {
                  final Scope renderControllerGeometryScope = executionScope.copy();
 -                renderControllerGeometryScope.set("array", this.getArrayBinding(executionScope, renderController.geometries()));
-+                renderControllerGeometryScope.set("array", getArrayBinding(executionScope, renderController.geometries()));
++                renderControllerGeometryScope.set("array", getArrayBinding(this.expressions, executionScope, renderController.geometries()));
                  final Scope renderControllerTextureScope = executionScope.copy();
 -                renderControllerTextureScope.set("array", this.getArrayBinding(executionScope, renderController.textures()));
-+                renderControllerTextureScope.set("array", getArrayBinding(executionScope, renderController.textures()));
-+                final Map<String, String> materials = evaluateMaterials(executionScope, renderController);
-+                final float lightColorMultiplier = (float) MoLangEngine.eval(executionScope, renderController.lightColorMultiplierExpression()).getAsNumber();
++                renderControllerTextureScope.set("array", getArrayBinding(this.expressions, executionScope, renderController.textures()));
++                final Map<String, String> materials = evaluateMaterials(this.expressions, executionScope, renderController);
++                final float lightColorMultiplier = (float) this.expressions.eval(executionScope, renderController.lightColorMultiplierExpression()).getAsNumber();
  
-                 final String geometryValue = MoLangEngine.eval(renderControllerGeometryScope, renderController.geometryExpression()).getAsString();
+-                final String geometryValue = MoLangEngine.eval(renderControllerGeometryScope, renderController.geometryExpression()).getAsString();
++                final String geometryValue = this.expressions.eval(renderControllerGeometryScope, renderController.geometryExpression()).getAsString();
                  final String geometryName = this.inverseGeometryMap.get(geometryValue);
-@@ -271,16 +331,16 @@ public class CustomEntity extends Entity {
-                     final String textureValue = MoLangEngine.eval(renderControllerTextureScope, textureExpression).getAsString();
+                 for (String textureExpression : renderController.textureExpressions()) {
+-                    final String textureValue = MoLangEngine.eval(renderControllerTextureScope, textureExpression).getAsString();
++                    final String textureValue = this.expressions.eval(renderControllerTextureScope, textureExpression).getAsString();
                      final String textureName = this.inverseTextureMap.get(textureValue);
                      if (geometryName != null && textureName != null) {
 -                        newModels.add(new EvaluatedModel(geometryName + "_" + textureName, geometryValue, textureValue));
@@ -1028,26 +1058,33 @@ index 6aea129ad..0ae68792e 100644
      }
  
      static boolean replaceModels(final List<EvaluatedModel> current, final List<EvaluatedModel> next) {
-@@ -292,7 +352,7 @@ public class CustomEntity extends Entity {
+@@ -292,13 +353,13 @@ public class CustomEntity extends Entity {
          return true;
      }
  
 -    private MutableObjectBinding getArrayBinding(final Scope executionScope, final List<BedrockRenderController.Array> arrays) throws IOException {
-+    private static MutableObjectBinding getArrayBinding(final Scope executionScope, final List<BedrockRenderController.Array> arrays) throws IOException {
++    private static MutableObjectBinding getArrayBinding(final MoLangEngine.CompiledExpressions expressions, final Scope executionScope, final List<BedrockRenderController.Array> arrays) throws IOException {
          final MutableObjectBinding arrayBinding = new MutableObjectBinding();
          for (BedrockRenderController.Array array : arrays) {
              if (array.name().toLowerCase(Locale.ROOT).startsWith("array.")) {
-@@ -307,7 +367,22 @@ public class CustomEntity extends Entity {
+                 final String[] resolvedExpressions = new String[array.values().size()];
+                 for (int i = 0; i < array.values().size(); i++) {
+-                    resolvedExpressions[i] = MoLangEngine.eval(executionScope, array.values().get(i)).getAsString();
++                    resolvedExpressions[i] = expressions.eval(executionScope, array.values().get(i)).getAsString();
+                 }
+                 arrayBinding.set(array.name().substring(6), Value.of(resolvedExpressions));
+             }
+@@ -307,7 +368,22 @@ public class CustomEntity extends Entity {
          return arrayBinding;
      }
  
 -    public record EvaluatedModel(String key, String geometryValue, String textureValue) {
-+    static Map<String, String> evaluateMaterials(final Scope executionScope, final BedrockRenderController controller) throws IOException {
++    static Map<String, String> evaluateMaterials(final MoLangEngine.CompiledExpressions expressions, final Scope executionScope, final BedrockRenderController controller) throws IOException {
 +        final Scope materialScope = executionScope.copy();
-+        materialScope.set("array", getArrayBinding(executionScope, controller.materials()));
++        materialScope.set("array", getArrayBinding(expressions, executionScope, controller.materials()));
 +        final Map<String, String> materials = new LinkedHashMap<>();
 +        for (Map.Entry<String, String> entry : controller.materialsMap().entrySet()) {
-+            materials.put(entry.getKey(), MoLangEngine.eval(materialScope, entry.getValue()).getAsString());
++            materials.put(entry.getKey(), expressions.eval(materialScope, entry.getValue()).getAsString());
 +        }
 +        return Collections.unmodifiableMap(materials);
 +    }
@@ -1475,10 +1512,10 @@ index 000000000..e6db915e2
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java b/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
-index 8f4c4f894..6d168e1fb 100644
+index 8f4c4f894..94300a4c2 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/MoLangEngine.java
-@@ -17,60 +17,103 @@
+@@ -17,60 +17,126 @@
   */
  package net.raphimc.viabedrock.api.util;
  
@@ -1501,6 +1538,7 @@ index 8f4c4f894..6d168e1fb 100644
  import java.io.Reader;
 -import java.io.StringReader;
  import java.util.List;
++import java.util.HashMap;
 +import java.util.Map;
  
  @SuppressWarnings("UnstableApiUsage")
@@ -1575,6 +1613,28 @@ index 8f4c4f894..6d168e1fb 100644
      private MoLangEngine() {
      }
  
++    /** Caller-owned compiled source. Evaluation state always belongs to the supplied scope. */
++    public static final class CompiledExpressions {
++
++        private final Map<String, List<Expression>> expressions = new HashMap<>();
++
++        public Value eval(final Scope scope, final String source) throws IOException {
++            List<Expression> compiled = this.expressions.get(source);
++            if (compiled == null) {
++                compiled = List.copyOf(parse(source));
++                this.expressions.put(source, compiled);
++            }
++            return MoLangEngine.eval(scope, compiled);
++        }
++
++        public void runPreAnimation(final Scope scope, final List<String> sources) throws IOException {
++            for (String source : sources) {
++                this.eval(scope, source);
++            }
++        }
++
++    }
++
 +    public static final class Evaluation {
 +
 +        private final Scope scope;
@@ -2983,10 +3043,10 @@ index 000000000..5b33c7f37
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityMaterialSelectionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityMaterialSelectionTest.java
 new file mode 100644
-index 000000000..3264732fa
+index 000000000..77afe1192
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityMaterialSelectionTest.java
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,70 @@
 +package net.raphimc.viabedrock.api.model.entity;
 +
 +import java.util.ArrayList;
@@ -3017,10 +3077,15 @@ index 000000000..3264732fa
 +                "arrays":{"materials":{"Array.materials":["Material.base","Material.glow"]}}
 +            }}}
 +            """).get(0);
-+        final var selected = CustomEntity.evaluateMaterials(scope, controller);
++        final var expressions = new net.raphimc.viabedrock.api.util.MoLangEngine.CompiledExpressions();
++        final var selected = CustomEntity.evaluateMaterials(expressions, scope, controller);
 +        assertEquals(List.of("*", "Light*"), List.copyOf(selected.keySet()));
 +        assertEquals("entity_alphatest", selected.get("*"));
 +        assertEquals("entity_emissive_alpha", selected.get("Light*"));
++        query.set("variant", Value.of(0));
++        final var updated = CustomEntity.evaluateMaterials(expressions, scope, controller);
++        assertEquals(selected.get("*"), updated.get("Light*"));
++        assertNotEquals(selected.get("Light*"), updated.get("Light*"));
 +        assertThrows(UnsupportedOperationException.class, () -> selected.put("other", "entity"));
 +        final var model = new CustomEntity.EvaluatedModel("actor", "geometry", "texture", selected, true, 0.7F, controller.uvAnimation());
 +        assertTrue(model.ignoreLighting());
@@ -3230,10 +3295,10 @@ index 000000000..8fb58f5e0
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java b/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
 new file mode 100644
-index 000000000..6558fae75
+index 000000000..6759ef095
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
-@@ -0,0 +1,325 @@
+@@ -0,0 +1,338 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -3548,6 +3613,19 @@ index 000000000..6558fae75
 +        assertEquals(6F, MoLangEngine.eval(scope, "v.sum=0;for_each(v.item,array.values,{v.sum=v.sum+v.item;});return v.sum;").getAsNumber());
 +        assertEquals(2F, MoLangEngine.eval(scope, "for_each(v.item,array.values,{v.item==2?{return v.item;};});return 4;").getAsNumber());
 +        assertEquals(4F, MoLangEngine.eval(scope, "v.sum=0;for_each(v.item,array.values,{v.item==2?{continue;};v.sum=v.sum+v.item;v.item==3?{break;};});return v.sum;").getAsNumber());
++    }
++
++    @Test
++    void reusedProgramsKeepVariablesInTheirCallerAndResetTemporaryState() throws Exception {
++        final var expressions = new MoLangEngine.CompiledExpressions();
++        final Scope first = scope();
++        final Scope second = scope();
++        final String source = "v.n=(v.n??0)+1;t.n=(t.n??0)+1;return v.n+t.n;";
++        assertEquals(2F, expressions.eval(first, source).getAsNumber());
++        assertEquals(3F, expressions.eval(first, source).getAsNumber());
++        assertEquals(2F, expressions.eval(second, source).getAsNumber());
++        assertEquals(4F, expressions.eval(first, source).getAsNumber());
++        assertEquals(0F, expressions.eval(first, "t.n??0").getAsNumber());
 +    }
 +
 +    private static Scope scope() {

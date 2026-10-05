@@ -3435,3 +3435,32 @@ This establishes the tested authenticated HTTP joining route.
 Direct add-on joining, offline HTTP identities, and full movement parity remain open.
 The BDS scene also exposes unsupported falling-block variants and secondary block-layer warnings that need separate investigation.
 Raw traffic, identities, logs, and screenshots remain private.
+
+## Windows and macOS CubeCraft guests, October 6, 2026
+
+**Verified guest joins:** Windows 11 build 26100 and macOS Sonoma 14.8.9 launch Java 26.3 with the add-on through Prism 11.1.1.
+Both use Temurin 25.0.4.1+1 and a ViaProxy process inside the guest.
+Both accept the converted CubeCraft pack and reach a visible lobby with custom NPCs, banners, item icons, and sidebar.
+Windows retains server traffic for more than five minutes after its successful retry.
+macOS screenshots show changing players, lobby state, and walking input.
+
+Observed conversion intervals are 1,198 milliseconds on Windows and 1,278 milliseconds on macOS.
+Those timings exclude custom-block preparation, approval, resource reload, and world loading.
+The first Windows world-loading attempt disconnects. Its successful retry does not explain or close that failure.
+The first macOS connection fails because the local proxy is absent; starting the proxy resolves that setup failure.
+
+Windows needs an application-local Mesa llvmpipe deployment after its default graphics route aborts before the menu.
+macOS uses OpenGL 4.1 through Apple Software Renderer.
+These tests establish functional guest behavior without hardware performance claims.
+Slow guest rendering can miss short input holds; the lab now supports validated hold times up to two seconds.
+
+**Implemented:** Custom actor ticks now reuse compiled Molang syntax throughout scripts and render controller evaluation.
+Windows network-thread samples exposed repeated parsing during controller ticks before this change.
+The actor owns its cache. Every evaluation retains current query bindings, persistent actor variables, and fresh temporary state.
+Targeted semantic tests, core Checkstyle, and complete ViaProxy and add-on builds pass.
+The full patch stack replays after folding the change into the actor property patch.
+
+Fresh Store authentication, passkeys, Modrinth, the official launcher with Fabric, direct guest connections, and full movement parity remain open.
+CubeCraft also reports unmapped particle effects, player attributes, sub-client headers, and an unsupported dragon variant that need separate investigation.
+Official BDS and the native client remain the primary movement references; experimental Boar flags need independent classification.
+Raw logs, packet journals, identities, thread dumps, and screenshots remain private.

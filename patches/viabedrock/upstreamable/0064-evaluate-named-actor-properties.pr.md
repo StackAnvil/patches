@@ -391,3 +391,13 @@ Each route records one expected start cancellation during resource reload.
 Both controls submit forward draws; improved transparency remains unverified in this run.
 Screenshots retain custom lobby models, the hanging cube, hotbar icons, overlapping labels, and the Java tutorial toast.
 These saved-scene checks do not establish a fresh live-server join or native image and timing parity.
+
+## Compile custom actor expressions once
+
+A Windows CubeCraft join captured repeated parser work on the Netty client thread during custom actor ticks.
+Core now keeps compiled expressions in each custom actor and reuses them for controller selection, arrays, materials, lighting, and scripts.
+The cache stores syntax only. Each evaluation reads the current scope and creates fresh temporary variables.
+The actor owns its cache, so removal releases cached source without a process-wide retention policy.
+
+Targeted tests verify changed material queries, independent caller variables, persistent actor variables, and reset temporary variables.
+The complete patch stack replays successfully. Live joining and visible parity remain separate checks.
