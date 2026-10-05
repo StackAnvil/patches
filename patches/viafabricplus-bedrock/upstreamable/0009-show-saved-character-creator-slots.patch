@@ -1,4 +1,4 @@
-From 8658bf7411861e156ce70d254c7d4eee5be3b3d0 Mon Sep 17 00:00:00 2001
+From a37265a1a28f55d74aedbf247059c7097b177201 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1603,6 +1603,13 @@ stage bindings and targets, evaluate fog before accumulation, and avoid
 Java's low-alpha depth-bounds cutoff for native particles. Full native
 pixel comparisons, fog parameter mapping, cross-texture ordering, and
 RenderDragon material selection remain unverified.
+
+The target 1.26.51.1 Molang parser rejects leading semicolons and requires
+a final semicolon after an assignment or statement separator. Track tokens
+so comparisons and quoted punctuation do not trigger that rule. Parse
+leading decimal fractions without changing property access or AST bounds.
+Private compiler observations verify 41 admission cases and 130 constant
+billboard samples; compiled statement evaluation remains separate work.
 ---
  .gitignore                                    |    4 +-
  build.gradle.kts                              |   57 +
@@ -1641,7 +1648,7 @@ RenderDragon material selection remain unverified.
  .../BedrockMarketplaceTransactions.java       |  253 +
  .../bedrock/appearance/BedrockMolang.java     |  438 ++
  .../appearance/BedrockMolangColor.java        |   40 +
- .../appearance/BedrockMolangParser.java       |  193 +
+ .../appearance/BedrockMolangParser.java       |  215 +
  .../appearance/BedrockMolangVariables.java    |   95 +
  .../appearance/BedrockNativeBlocks.java       |   46 +
  .../appearance/BedrockOwnedSkinPacks.java     |  162 +
@@ -1782,7 +1789,7 @@ RenderDragon material selection remain unverified.
  .../appearance/BedrockLimbSideTest.java       |   89 +
  .../BedrockMarketplaceTransactionsTest.java   |  235 +
  .../appearance/BedrockMolangColorTest.java    |  110 +
- .../bedrock/appearance/BedrockMolangTest.java |  160 +
+ .../bedrock/appearance/BedrockMolangTest.java |  192 +
  .../BedrockMolangVariablesTest.java           |   61 +
  .../appearance/BedrockOwnedSkinPacksTest.java |  181 +
  .../appearance/BedrockPackageHelperTest.java  |  139 +
@@ -1840,7 +1847,7 @@ RenderDragon material selection remain unverified.
  .../render/BedrockPlayerModelTest.java        |  100 +
  .../render/BedrockViewBobbingTest.java        |   93 +
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 236 files changed, 42657 insertions(+), 110 deletions(-)
+ 236 files changed, 42711 insertions(+), 110 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -16286,10 +16293,10 @@ index 0000000..8fcf8d1
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangParser.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangParser.java
 new file mode 100644
-index 0000000..2533aed
+index 0000000..dbdadd1
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangParser.java
-@@ -0,0 +1,193 @@
+@@ -0,0 +1,215 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -16322,6 +16329,8 @@ index 0000000..2533aed
 +    private static final int ASSIGNMENT = 1, CONDITIONAL = 2, COALESCE = 3, UNARY = 1100;
 +    private final MolangLexer lexer;
 +    private int depth;
++    private boolean complex;
++    private TokenKind previous;
 +
 +    private BedrockMolangParser(final MolangLexer lexer) {
 +        this.lexer = lexer;
@@ -16330,8 +16339,20 @@ index 0000000..2533aed
 +    static List<Expression> parse(final String source) throws IOException {
 +        try (final MolangLexer lexer = MolangLexer.lexer(source)) {
 +            lexer.next();
-+            return new BedrockMolangParser(lexer).statements(TokenKind.EOF);
++            final BedrockMolangParser parser = new BedrockMolangParser(lexer);
++            if (parser.kind() == TokenKind.SEMICOLON)
++                throw parser.error("An expression cannot begin with a semicolon");
++            final List<Expression> expressions = parser.statements(TokenKind.EOF);
++            if (parser.complex && parser.previous != TokenKind.SEMICOLON)
++                throw parser.error("An expression with assignments or statements must end with a semicolon");
++            return expressions;
 +        }
++    }
++
++    private void next() throws IOException {
++        this.previous = this.kind();
++        this.complex |= this.previous == TokenKind.EQ || this.previous == TokenKind.SEMICOLON;
++        this.lexer.next();
 +    }
 +
 +    private TokenKind kind() {
@@ -16340,7 +16361,7 @@ index 0000000..2533aed
 +
 +    private void expect(final TokenKind kind) throws IOException {
 +        if (this.kind() != kind) throw this.error("Expected " + kind);
-+        this.lexer.next();
++        this.next();
 +    }
 +
 +    private ParseException error(final String message) {
@@ -16351,7 +16372,7 @@ index 0000000..2533aed
 +        final List<Expression> expressions = new ArrayList<>();
 +        while (this.kind() != end) {
 +            if (this.kind() == TokenKind.SEMICOLON) {
-+                this.lexer.next();
++                this.next();
 +                continue;
 +            }
 +            expressions.add(this.expression(0));
@@ -16366,33 +16387,33 @@ index 0000000..2533aed
 +            Expression left = this.prefix();
 +            while (true) {
 +                if (this.kind() == TokenKind.DOT) {
-+                    this.lexer.next();
++                    this.next();
 +                    final String property = this.lexer.current().value();
 +                    this.expect(TokenKind.IDENTIFIER);
 +                    left = new AccessExpression(left, property);
 +                } else if (this.kind() == TokenKind.LPAREN) {
-+                    this.lexer.next();
++                    this.next();
 +                    final List<Expression> arguments = new ArrayList<>();
 +                    if (this.kind() != TokenKind.RPAREN) {
 +                        do {
 +                            arguments.add(this.expression(0));
 +                            if (this.kind() != TokenKind.COMMA) break;
-+                            this.lexer.next();
++                            this.next();
 +                        } while (true);
 +                    }
 +                    this.expect(TokenKind.RPAREN);
 +                    left = new CallExpression(left, List.copyOf(arguments));
 +                } else if (this.kind() == TokenKind.LBRACKET) {
-+                    this.lexer.next();
++                    this.next();
 +                    final Expression index = this.expression(0);
 +                    this.expect(TokenKind.RBRACKET);
 +                    left = new ArrayAccessExpression(left, index);
 +                } else if (this.kind() == TokenKind.QUES) {
 +                    if (minimum >= CONDITIONAL) return left;
-+                    this.lexer.next();
++                    this.next();
 +                    final Expression selected = this.expression(0);
 +                    if (this.kind() == TokenKind.COLON) {
-+                        this.lexer.next();
++                        this.next();
 +                        left =
 +                                new TernaryConditionalExpression(
 +                                        left, selected, this.expression(CONDITIONAL - 1));
@@ -16412,7 +16433,7 @@ index 0000000..2533aed
 +                                default -> operation.precedence();
 +                            };
 +                    if (minimum >= precedence) return left;
-+                    this.lexer.next();
++                    this.next();
 +                    left =
 +                            new BinaryExpression(
 +                                    operation,
@@ -16430,9 +16451,17 @@ index 0000000..2533aed
 +
 +    private Expression prefix() throws IOException {
 +        final var token = this.lexer.current();
-+        this.lexer.next();
++        this.next();
 +        return switch (token.kind()) {
 +            case FLOAT -> FloatExpression.of(Float.parseFloat(token.value()));
++            case DOT -> {
++                if (this.kind() != TokenKind.FLOAT
++                        || !this.lexer.current().value().chars().allMatch(value -> value >= '0' && value <= '9'))
++                    throw this.error("Expected decimal digits after the decimal point");
++                final Expression value = FloatExpression.of(Float.parseFloat("." + this.lexer.current().value()));
++                this.next();
++                yield value;
++            }
 +            case STRING -> new StringExpression(token.value());
 +            case TRUE -> FloatExpression.ONE;
 +            case FALSE -> FloatExpression.ZERO;
@@ -33166,7 +33195,7 @@ index 0000000..bd0c515
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationParticleTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationParticleTest.java
 new file mode 100644
-index 0000000..1af61da
+index 0000000..99acae1
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAnimationParticleTest.java
 @@ -0,0 +1,104 @@
@@ -33187,7 +33216,7 @@ index 0000000..1af61da
 +    @Test
 +    void capturesStandaloneTrackVariablesAndOrdersEffects() throws Exception {
 +        final var definition = json("""
-+                {"animation_length":1,"bones":{"head":{"position":["v.seed=7",0,0]}},
++                {"animation_length":1,"bones":{"head":{"position":["v.seed=7;return v.seed;",0,0]}},
 +                 "particle_effects":{"0":[{"effect":"a","pre_effect_script":"v.seed=v.seed+1;"},{"effect":"b"}]},
 +                 "sound_effects":{"0":{"effect":"c"}},"timeline":{"0":"v.seed=99;"}}
 +                """);
@@ -37792,10 +37821,10 @@ index 0000000..85ad97f
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangTest.java
 new file mode 100644
-index 0000000..4923a0f
+index 0000000..cfe04e1
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockMolangTest.java
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,192 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -37805,6 +37834,7 @@ index 0000000..4923a0f
 +
 +import org.junit.jupiter.api.Test;
 +import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++import org.redlance.mocha.parser.ParseException;
 +
 +import java.io.IOException;
 +import java.nio.file.Files;
@@ -37824,6 +37854,9 @@ index 0000000..4923a0f
 +        assertEquals(0F, evaluate(context, "16777216 + 1 - 16777216"));
 +        assertEquals(1F, evaluate(context, "(0.1 + 0.2) == 0.3"));
 +        assertEquals(1F, evaluate(context, "16777217 == 16777216"));
++        assertEquals(.75F, evaluate(context, ".5+.25F"));
++        assertEquals(-.5F, evaluate(context, "-.5"));
++        assertEquals(1F, evaluate(context, "1."));
 +        assertEquals(0F, evaluate(context, "v.a=16777216; v.a=v.a+1; return v.a-16777216;"));
 +        context.queries(Map.of("number", 16777217), 0, 0, 0);
 +        assertEquals(0F, evaluate(context, "q.number-16777216"));
@@ -37903,7 +37936,7 @@ index 0000000..4923a0f
 +        context.queries(Map.of("max", 1000F, "remaining", 988.5F), 0, 0, 0);
 +        assertEquals(10.5F, evaluate(context, "v.a=q.max>0 ?q.max-(q.remaining+1):0; return v.a;"));
 +        assertEquals(0, evaluate(context, "v.a=false?5:0; return v.a;"));
-+        assertEquals(3, evaluate(context, "(v.a=false)?2:3"));
++        assertEquals(3, evaluate(context, "return (v.a=false)?2:3;"));
 +        assertEquals(0, evaluate(context, "v.a"));
 +        assertEquals(2, evaluate(context, "v.a=true?2:false?3:4; return v.a;"));
 +        assertEquals(3, evaluate(context, "v.a=false?2:true?3:4; return v.a;"));
@@ -37915,6 +37948,34 @@ index 0000000..4923a0f
 +                () ->
 +                        BedrockMolang.Program.parse(
 +                                new JsonPrimitive("(".repeat(100) + "1" + ")".repeat(100)), 0));
++    }
++
++    @Test
++    void rejectsUnfinishedStatementsBeforeTheyCanChangeVariables() throws IOException {
++        final var context = new BedrockMolang();
++        context.variable("a", 7);
++        for (final String expression : java.util.List.of(";", " ;2", "1;2", "v.a=2", "(v.a=2)?1:0"))
++            assertThrows(ParseException.class, () -> evaluate(context, expression));
++        assertEquals(7, evaluate(context, "v.a"));
++        assertEquals(1, evaluate(context, "1==1"));
++        assertEquals(1, evaluate(context, "1!=2"));
++        assertEquals(1, evaluate(context, "1<=2"));
++        assertEquals("a=b;c", context.value(BedrockMolang.Program.parse(new JsonPrimitive("'a=b;c'"), 0)).getAsString());
++        assertEquals(2, evaluate(context, "v.a=2;return v.a; \n\t"));
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_MOLANG_STATEMENT_REFERENCE", matches = ".+")
++    void matchesNativeStatementAdmissionAndQuotedTokens() throws IOException {
++        final var fixture = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_MOLANG_STATEMENT_REFERENCE")))).getAsJsonObject();
++        for (final var element : fixture.getAsJsonArray("cases")) {
++            final var row = element.getAsJsonObject();
++            final var expression = row.getAsJsonObject("input").getAsJsonObject("direction").getAsJsonArray("custom_direction").get(1);
++            final boolean rejected = row.getAsJsonArray("rejected").get(0).getAsInt() != 0;
++            if (rejected) assertThrows(ParseException.class, () -> BedrockMolang.Program.parse(expression, 0), expression.toString());
++            else assertDoesNotThrow(() -> BedrockMolang.Program.parse(expression, 0), expression.toString());
++        }
++        assertFalse(fixture.getAsJsonArray("cases").isEmpty());
 +    }
 +
 +    @Test
@@ -39558,7 +39619,7 @@ index 0000000..16d23e6
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffectTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffectTest.java
 new file mode 100644
-index 0000000..992f358
+index 0000000..ad14206
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockParticleEffectTest.java
 @@ -0,0 +1,469 @@
@@ -39629,7 +39690,7 @@ index 0000000..992f358
 +    void onlyOmitsTextureLoadingForAStaticallyZeroArea() throws Exception {
 +        final var document = burst();
 +        final var resources = BedrockResourceLibrary.read(Map.of());
-+        for (final String size : List.of("[0,1]", "[1,-1]", "[0,\"v.size=v.size+1\"]")) {
++        for (final String size : List.of("[0,1]", "[1,-1]", "[0,\"v.size=v.size+1;\"]")) {
 +            components(document).add("minecraft:particle_appearance_billboard", json("{\"size\":" + size + "}"));
 +            final var effect = BedrockParticleEffect.read(document);
 +            assertFalse(effect.renderable());
@@ -39756,7 +39817,7 @@ index 0000000..992f358
 +
 +    @Test
 +    void recoversRejectedCustomExpressionsWithoutDiscardingTheirNeighborsOrEmitter() throws Exception {
-+        for (final String expression : List.of("(", "1+")) {
++        for (final String expression : List.of("(", "1+", "1;2", ";")) {
 +            final var direction = json("{\"mode\":\"custom\",\"custom_direction\":[2,0,4]}");
 +            direction.getAsJsonArray("custom_direction").set(1, new com.google.gson.JsonPrimitive(expression));
 +            final var document = burst();

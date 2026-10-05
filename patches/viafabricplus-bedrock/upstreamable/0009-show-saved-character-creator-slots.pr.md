@@ -2540,3 +2540,46 @@ These checks establish packaged behavior through both routes, without proving na
 
 **Remaining:** Complete expression admission, lexer error recovery, SDK runtime context, typed schema dispatch, interpolation, and native visible comparisons remain unverified.
 All other coverage requirements remain active.
+
+
+## Molang statement admission and decimal fractions
+
+**Evidence:** The matching 1.26.51.1 parser rejects expressions that start with a semicolon after whitespace.
+Expressions containing assignment or statement-separator tokens must end with a semicolon.
+Comparisons and punctuation inside single-quoted strings do not activate that requirement.
+The native token table and parser branches identify assignment and separator tokens separately from comparisons.
+The target also accepts decimal fractions such as `.5` and numeric suffixes such as `2F`.
+The suffix case retains the existing normalization path; the new executable controls verify `.5`, `1.`, `2f`, and `2F`.
+
+A private probe observes 41 native compilation results and 130 billboard samples for constant or rejected expressions.
+It executes the native JSON reader, component reader, Molang compiler, parser, and applicable billboard calculations unchanged.
+The harness supplies allocation, CRT operations, decimal conversion, single-thread locks, and an absent optional SDK observer.
+PE virtual section tails contain zeros rather than unrelated file bytes.
+A supplied service-availability marker satisfies the compiler's null assertion without replacing parsing or admission decisions.
+Compiled statement evaluation and variable registration remain outside this completed probe.
+
+**Implemented:** The shared client parser tracks tokens and enforces the verified statement boundaries before evaluation.
+Unfinished assignments cannot alter runtime variables.
+Leading decimal fractions now produce float expressions while property access retains its existing parsing path.
+Custom particle direction axes use the existing syntax recovery path for rejected statement declarations.
+Their neighboring axes, UV settings, and emitter resources survive.
+Expression length, nesting, node, and execution limits remain enforced.
+
+**Verified tests:** A targeted test verifies rejected statements, preserved variables, comparisons, quoted punctuation, and trailing whitespace.
+Existing float tests now exercise leading fractions, negative fractions, and trailing decimal points.
+The native-reference test matches all 41 compilation admission results.
+Emitter tests retain valid particles after unfinished or leading-semicolon direction expressions.
+All four projects build with 1,049 passing Java tests, 121 optional skips, and no failures or errors.
+The selected Molang and effect suites pass 22 tests with four unrelated optional references skipped.
+
+**Verified runtime:** Complete direct and ViaProxy replays preserve the CubeCraft scene hash `ede0e43b2874418cbb6b62135898efe0553009307d33fecd0f258383643d5d83`.
+Both retain all 311 skin updates and pass transport and rendering checks.
+Eleven authored direction fixtures use production resource loading, simulation, and visual extraction.
+The new controls preserve malformed-statement recovery and expose the expected `.5` direction value.
+Both routes also complete forward rendering and all three improved-transparency stages for translucent and additive particles.
+No particle loading, initialization, or observer errors occur.
+These checks verify packaged integration without establishing native image or timing parity.
+
+**Remaining:** Complete lexical admission, complex-expression results, SDK runtime context, typed schema dispatch, interpolation, and native visible comparisons remain unverified or incomplete.
+Core Molang processing still uses a separate parser and needs the same admission review.
+All other coverage requirements remain active.
