@@ -1,4 +1,4 @@
-From 1ff79a5dac7f16dcfb8edfcdd41d7fe7eff93c0e Mon Sep 17 00:00:00 2001
+From 8d6fb396821f3784efb797e61e4ee137257fb1c5 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 01:46:10 +0200
 Subject: [PATCH] fix(resource-packs): inherit client entity descriptions
@@ -7,11 +7,13 @@ Subject: [PATCH] fix(resource-packs): inherit client entity descriptions
 Resolve each client entity by identifier across the ordered pack stack. Merge alias dictionaries and script fields before parsing converter data, so a higher layer can override one alias or its scale without discarding lower animation roots. Return independent raw description snapshots for fields outside the converter model.
 
 Live probes of Bedrock 1.26.51.1 build 51061372 confirm that a higher scale overrides the lower scale, omitted animate roots survive, and overriding the right-arm alias retains the lower left-arm alias and its pose. Arrays and scalar values replace their lower values. Parsed data and raw snapshots publish together after validation.
+
+Expose the same immutable description merger for licensed appearance readers. This keeps server and account graphs on one core inheritance algorithm while the add-on bridges its separate Gson types. Test nested list and object ownership at the public boundary.
 ---
  build.gradle                                  |  11 ++
- .../definition/EntityDefinitions.java         |  34 +++++-
- .../definition/EntityDefinitionsTest.java     | 104 ++++++++++++++++++
- 3 files changed, 147 insertions(+), 2 deletions(-)
+ .../definition/EntityDefinitions.java         |  35 ++++-
+ .../definition/EntityDefinitionsTest.java     | 125 ++++++++++++++++++
+ 3 files changed, 169 insertions(+), 2 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/EntityDefinitionsTest.java
 
 diff --git a/build.gradle b/build.gradle
@@ -44,7 +46,7 @@ index bdd488c83..46c6b480a 100644
      "Generates the java edition data enums from the vanilla client jar. Options: --version, --client-jar")
  registerToolTask("generateBedrockDataEnums", "net.raphimc.viabedrock.tool.generator.BedrockDataEnumGenerator",
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/EntityDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/EntityDefinitions.java
-index 97452fb10..013bca88b 100644
+index 97452fb10..836f8a3e1 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/EntityDefinitions.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/EntityDefinitions.java
 @@ -17,6 +17,8 @@
@@ -75,7 +77,7 @@ index 97452fb10..013bca88b 100644
 +                    }
 +                    final JsonObject description = entity.getAsJsonObject("description");
 +                    final String identifier = Key.namespaced(description.get("identifier").getAsString());
-+                    final JsonObject merged = merge(this.descriptions.get(identifier), description);
++                    final JsonObject merged = mergeDescriptions(this.descriptions.get(identifier), description);
 +                    entity.add("description", merged);
 +                    final BedrockEntityData entityData = BedrockEntityParser.parse(document.toString());
                      this.entities.put(identifier, new EntityDefinition(identifier, entityData));
@@ -83,7 +85,7 @@ index 97452fb10..013bca88b 100644
                  } catch (final Throwable e) {
                      ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse entity definition " + entityPath + " in pack " + pack.key(), e);
                  }
-@@ -52,6 +64,24 @@ public class EntityDefinitions {
+@@ -52,6 +64,25 @@ public class EntityDefinitions {
          return this.entities.get(identifier);
      }
  
@@ -93,14 +95,15 @@ index 97452fb10..013bca88b 100644
 +        return description == null ? null : description.deepCopy();
 +    }
 +
-+    private static JsonObject merge(final JsonObject lower, final JsonObject higher) {
++    /** Combines descriptions without modifying either input; a null lower value starts a new stack. */
++    public static JsonObject mergeDescriptions(final JsonObject lower, final JsonObject higher) {
 +        final JsonObject merged = lower == null ? new JsonObject() : lower.deepCopy();
 +        for (final var entry : higher.entrySet()) {
 +            final var inherited = merged.get(entry.getKey());
 +            final var replacement = entry.getValue();
 +            // Aliases and script fields inherit by key. Authored lists and scalar values replace the lower value.
 +            merged.add(entry.getKey(), inherited != null && inherited.isJsonObject() && replacement.isJsonObject()
-+                    ? merge(inherited.getAsJsonObject(), replacement.getAsJsonObject()) : replacement.deepCopy());
++                    ? mergeDescriptions(inherited.getAsJsonObject(), replacement.getAsJsonObject()) : replacement.deepCopy());
 +        }
 +        return merged;
 +    }
@@ -110,10 +113,10 @@ index 97452fb10..013bca88b 100644
      }
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/EntityDefinitionsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/EntityDefinitionsTest.java
 new file mode 100644
-index 000000000..41846ada1
+index 000000000..ff64c8b57
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/EntityDefinitionsTest.java
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,125 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -197,6 +200,27 @@ index 000000000..41846ada1
 +        final var scripts = entities.getDescription("test:actor").getAsJsonObject("scripts");
 +        assertTrue(scripts.getAsJsonArray("animate").isEmpty());
 +        assertEquals(.5, scripts.get("scale").getAsDouble());
++    }
++
++    @Test
++    void sharedMergerReturnsIndependentNestedObjectsAndLists() {
++        final JsonObject lower = description();
++        final JsonObject inherited = new JsonObject();
++        final JsonArray roots = new JsonArray();
++        roots.add("pose");
++        inherited.add("animate", roots);
++        lower.add("scripts", inherited);
++        final JsonObject higher = description();
++        final JsonObject override = new JsonObject();
++        override.addProperty("scale", .875);
++        higher.add("scripts", override);
++        final JsonObject merged = EntityDefinitions.mergeDescriptions(lower, higher);
++        merged.getAsJsonObject("scripts").getAsJsonArray("animate").add("another");
++        merged.getAsJsonObject("scripts").addProperty("scale", 0);
++        assertEquals(1, roots.size());
++        assertEquals(.875, override.get("scale").getAsDouble());
++        assertFalse(inherited.has("scale"));
++        assertFalse(override.has("animate"));
 +    }
 +
 +    private static JsonObject description() {

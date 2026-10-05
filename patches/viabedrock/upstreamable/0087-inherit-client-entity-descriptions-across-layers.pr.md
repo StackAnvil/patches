@@ -10,7 +10,7 @@ Publish its raw snapshot only after the converter parser succeeds.
 Callers receive independent copies, including fields outside the converter data model.
 
 The core owns this resolution for direct and ViaProxy connections.
-The add-on reads the effective core description for its animation graph.
+The add-on reads the effective core description for server graphs. Its licensed reader shares the public core merger across its Gson boundary.
 Attachable descriptions retain their existing reader; their layer semantics need separate native evidence.
 
 ## Target evidence
@@ -30,13 +30,13 @@ It does not establish every description field, duplicate identifiers within one 
 
 ## Testing
 
-Two regression tests cover partial overrides, inherited roots, explicit empty lists, parsed aliases, and independent snapshots.
+Three regression tests cover partial overrides, inherited roots, explicit empty lists, parsed aliases, and independent snapshots.
 The patch supplies the dependencies needed to execute these tests on clean upstream.
-Clean upstream on Java 17 passes both regression tests and Checkstyle.
-The complete dependency build passes 1,010 tests with 115 optional skips and no failures or errors.
+Clean upstream on Java 17 passes all three regression tests and Checkstyle.
+The complete dependency build passes 1,012 tests with 115 optional skips and no failures or errors.
 The shared server actor reader and hand coordinate tests also run in the full stack.
 Direct and ViaProxy replays retain the complete selected 75-second native packet prefix.
 Their Minecraft hand-entry probes select two independent surfaces and reproduce both native bone translations and scale.
 The fixture defines only first-person controllers, so the generic third-person avatar check reports no avatar draw.
 That result is recorded separately from the passing hand probe and transport checks.
-Projection, final raster placement, equipped items, and full visible parity remain unfinished.
+Matched native and Java viewport masks place the standing fixture within one pixel on both routes. Lighting, movement, equipped items, and full visible parity remain unfinished.

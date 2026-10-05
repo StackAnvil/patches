@@ -1339,7 +1339,10 @@ The packets and selected pack layers are identical between routes.
 These checks establish pose selection, actor scale, hand submission, and scope restoration.
 They do not establish matching raster output.
 
-**Incomplete or unverified:** Projection and final visible placement still differ between native and Java captures.
+**Verified for the standing fixture:** At matched 1280 by 694 viewports, native and both Java routes place both cube silhouettes within one pixel.
+The earlier smaller Java viewport let the hotbar hide most of the cyan cube.
+
+**Incomplete or unverified:** Lighting, movement, equipped items, and general visual parity still require matching native comparisons.
 Native render-offset changes across poses and dimensions remain unverified.
 Java eye height differs from the captured standing value by about `0.00001` blocks.
 Held items, equipment, persona overlap, and native timing remain open.
@@ -1443,9 +1446,39 @@ The fixture intentionally has no third-person controller.
 The generic avatar audit therefore reports no third-person draw; the hand probe and transport checks pass separately.
 The prefix preserves selected payload bytes and times, not the full longer recording.
 
-**Incomplete or unverified:** The separate licensed appearance reader still replaces complete entity descriptions.
+**Implemented:** The licensed appearance reader now shares the public core merger.
+It preserves duplicate identifier checks and returns independent snapshots.
+Matching licensed files retain four earlier aliases beyond the latest player file's 68 declarations.
+Fixture-enabled checks verify those mappings and sample the real graph for 120 frames.
 Other description fields, duplicate identifiers within a pack, and attachable inheritance need native checks.
-Final projection and visible placement, empty-graph fallback, held items, and complete first-person parity remain open.
+The matched standing fixture now has raster evidence below. Other poses, empty-graph fallback, held items, and complete first-person parity remain open.
 The complete build passes 1,010 tests with 115 optional skips and no failures or errors.
 The new core patch also passes its two tests and Checkstyle on clean upstream with Java 17.
 The original full-coverage goal remains active.
+
+## Licensed inheritance and matched hand silhouettes
+
+**Implemented:** Account appearance graphs use the same core description inheritance as server actor graphs.
+The add-on retains per-pack duplicate identifier checks and independent result snapshots across its separate Gson types.
+Nested lists and objects remain independent of caller data.
+
+**Resource evidence:** The matching package's latest player file declares 68 aliases; the merged stack resolves 72.
+The four retained aliases cover item attack rotation, crossbow hold, breathing bob, and fishing-rod animation.
+The optional asset test verifies their mappings and samples the real licensed graph for 120 frames.
+A synthetic layered graph verifies the upper right-arm pose, inherited left-arm pose, scale, and explicit empty-list replacement.
+
+**Raster evidence:** The native, direct, and ViaProxy standing fixtures use 1280 by 694 viewports and a 70-degree hand camera.
+The stable ViaProxy hand projection records near plane 0.025.
+The native orange silhouette spans `(640,488)-(715,584)`; both Java routes span `(640,487)-(715,584)`.
+The native cyan silhouette spans `(771,647)-(910,693)`; both Java routes span `(770,647)-(910,693)`.
+These masks establish placement within one pixel for the tested standing cubes.
+The earlier smaller Java viewport let its hotbar hide most of the cyan cube.
+Raw screenshots, masks, licensed assets, and runtime probes remain private.
+
+**Incomplete or unverified:** Lighting, scene timing, rotation, movement, equipment, persona overlap, and other dimensions need native comparisons.
+The recovered aliases still need native item and movement checks in the complete licensed appearance path.
+The full Bedrock coverage goal remains active.
+
+**Validation:** The complete build passes 1,012 tests with 115 optional skips and no failures or errors.
+The focused licensed graph suite passes all 26 tests with assets enabled.
+The independent core patch passes three tests and Checkstyle on Java 17.

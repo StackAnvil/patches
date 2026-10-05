@@ -274,9 +274,9 @@ Sources: [Xodus package extraction](https://github.com/xodus-gaming/xodus/blob/a
 
 The official package supplies 57 stable vanilla layers through `vanilla_1.26.51`. The helper selects `vanilla`, `vanilla_base`, and numeric version directories. Older names such as `vanilla_1.14` imply patch version zero. The cache validates pack identities and overlay versions before publication.
 
-The loader applies layers in numeric version order after `vanilla` and `vanilla_base`. Model, animation, controller, and client-entity definitions override earlier definitions by identifier. Each controller retains its own format version. Conflicting identifiers within one pack remain errors. Sound catalogs combine entries across both older and newer catalog formats. Sound banks, particle files, and atlases resolve by pack order.
+The loader applies layers in numeric version order after `vanilla` and `vanilla_base`. Model, animation, and controller definitions override earlier definitions by identifier. Client-entity description objects merge by key. Higher lists and scalar values replace lower values. Each controller retains its own format version. Conflicting identifiers within one pack remain errors. Sound catalogs combine entries across both older and newer catalog formats. Sound banks, particle files, and atlases resolve by pack order.
 
-The matching player definition comes from `vanilla_1.21.130` and declares 68 aliases. The root controller still references removed first-person aliases. Those undeclared references contribute no track. Declared aliases with unavailable resources retain incomplete tracks. The loader compiles script arrays as one bounded Molang program, so blocks can span JSON strings and retain early returns.
+The matching player file comes from `vanilla_1.21.130` and declares 68 aliases. The effective description retains four aliases from lower layers. These include item attack rotation, crossbow hold, breathing bob, and fishing-rod animation. Only references absent from the complete merged dictionary contribute no track. Declared aliases with unavailable resources retain incomplete tracks. The loader compiles script arrays as one bounded Molang program, so blocks can span JSON strings and retain early returns.
 
 A fresh bundled-helper run acquired all 57 layers, compiled the player graph, and reused the checksummed cache. Fixture tests sample the graph for 120 frames. These checks establish acquisition and graph loading. They do not establish first-person, item-pose, or native motion parity.
 
@@ -540,3 +540,15 @@ The default-browser fallback is implemented after 0.3.2. A private Linux game te
 The replayed full stack builds, and all 396 fixture-enabled add-on tests pass with no failures or skips. The rebuilt client also passes 13,578 native curve comparisons and a conditional-assignment check. Earlier Java runtime probes passed 1,324 checks across previously implemented paths. The new overlay probe passes 722 checks for the updated graph and renderer paths. These counts cover specific implemented paths and do not establish full skin or Dressing Room parity. Research details and verification limits are in the [Classic Skin patch notes](../patches/viafabricplus-bedrock/upstreamable/0003-classic-dressing-room.pr.md) and [Character Creator patch notes](../patches/viafabricplus-bedrock/upstreamable/0009-show-saved-character-creator-slots.pr.md).
 
 Keep login JWTs, receipts, content keys, raw flows, screenshots, player textures, and account data private under `.stackanvil/`.
+
+## Licensed client-entity inheritance
+
+The licensed appearance reader shares ViaBedrock core's description merger with server actor graphs.
+It preserves per-pack duplicate identifier checks and independent result snapshots.
+Partial overlays keep lower aliases and omitted script fields.
+Explicit empty root lists clear inherited roots.
+
+The matching official package resolves 72 aliases from a top player file with 68 declarations.
+The fixture-enabled test checks the four inherited mappings and samples the real licensed graph for 120 frames.
+Synthetic layered playback checks the upper right-arm pose, retained left-arm pose, script scale, and empty-list replacement.
+These checks establish resource resolution and sampled playback, not complete item or first-person visual parity.

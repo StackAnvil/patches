@@ -372,9 +372,9 @@ The newest overlay player definition has 68 animation aliases; the extracted bas
 
 Acquire `vanilla`, `vanilla_base`, and numeric vanilla directories from the pinned official package. The matching build supplies 57 layers. Older names such as `vanilla_1.14` imply patch version zero. Keep their paths and manifests separate. Cache format 5 refreshes base-only caches and validates pack UUIDs and overlay versions. Missing layers or mismatched manifests preserve the old cache.
 
-Resolve models, animations, controllers, and client entities by identifier in pack order. Equal duplicates within a pack share a definition. Conflicting definitions remain errors. Preserve each controller's format version so a higher pack cannot change another controller's first-frame behavior. Merge sound catalog entries across both catalog formats. Resolve sound banks, particle files, and textures by pack order. Namespaced block models no longer prevent library loading.
+Resolve models, animations, and controllers by identifier in pack order. Merge client-entity description objects by key; higher lists and scalar values replace lower values. Equal duplicates within a pack share a definition. Conflicting definitions remain errors. Preserve each controller's format version so a higher pack cannot change another controller's first-frame behavior. Merge sound catalog entries across both catalog formats. Resolve sound banks, particle files, and textures by pack order. Namespaced block models no longer prevent library loading.
 
-The matching player definition has 68 aliases and comes from `vanilla_1.21.130`. Its root controller retains references to removed first-person aliases. Skip those undeclared references during compilation, consistent with playback allocation. Declared resources that cannot resolve still contribute incomplete tracks. Compile script arrays as one bounded program. The matching 8,141-character pre-animation script spans conditional blocks across JSON strings. Preserve temporary scope and early returns. Bone expressions retain their smaller limits.
+The matching player file declares 68 aliases and comes from `vanilla_1.21.130`. The effective description retains four aliases from lower layers. Only references absent from the merged dictionary are undeclared during compilation and playback allocation. Declared resources that cannot resolve still contribute incomplete tracks. Compile script arrays as one bounded program. The matching 8,141-character pre-animation script spans conditional blocks across JSON strings. Preserve temporary scope and early returns. Bone expressions retain their smaller limits.
 
 A fresh production-helper acquisition loads all 57 layers and reuses the checksummed cache. Licensed fixtures compile the full player graph and sample 120 frames. Tests cover numeric ordering, overrides across filenames, controller format behavior, both sound catalogs, opaque files, archive roots, split scripts, and rollback. Rust tests and Clippy pass. Item query bindings, newer easing functions, first-person rendering, and effects remain incomplete. These tests do not establish native visible motion parity.
 
@@ -1747,7 +1747,30 @@ Direct and ViaProxy hand-entry probes select two distinct model submissions, pre
 With layered server definitions, their right `[8, 15, 10]` and left `[1, 18, -1]` bone translations match native.
 The shared server graph obtains its effective description from the core layer resolver.
 
-Projection and final raster placement still need comparison with matched view settings.
+At matched 1280 by 694 viewports, both fixture silhouettes agree with native within one pixel. The earlier smaller Java viewport let the hotbar hide most of the cyan cube. Lighting, movement, equipped items, and general raster parity still need comparisons.
 Native render-offset changes across poses and dimensions remain unverified.
 Java eye height differs from the captured standing value by about `0.00001` blocks.
 Fixture assets, native runtime records, and screenshots remain private.
+
+### Licensed descriptions use the core merger
+
+The licensed library now merges description objects through the same core implementation as server graphs.
+The reader retains duplicate identifier rejection within each pack and returns independent merged snapshots.
+The latest matching player file declares 68 aliases; the full stack resolves 72.
+Four earlier aliases cover item attack rotation, crossbow hold, breathing bob, and fishing-rod animation.
+The optional licensed test verifies those mappings and samples the real graph for 120 frames.
+A synthetic partial overlay verifies both arm poses, script scale, retained roots, and explicit empty-list replacement.
+Production still acquires assets independently and requires no local Bedrock installation.
+
+### Matched standing hand raster comparison
+
+The native and Java viewports both use 1280 by 694 pixels.
+The ordinary hand camera uses 70 degrees, and the stable Java hand projection records near plane 0.025.
+Both Java routes reproduce the selected scene prefix, scale, posed bones, and cube submissions.
+Orange bounds are native `(640,488)-(715,584)` and Java `(640,487)-(715,584)`.
+Cyan bounds are native `(771,647)-(910,693)` and Java `(770,647)-(910,693)`.
+The same Java bounds occur through direct connections and ViaProxy.
+The isolated color masks establish placement within one pixel for this standing fixture.
+World lighting and HUD timing differ, so this comparison does not establish full color or scene parity.
+Rotations, movement, death, equipment, persona overlap, and other dimensions still require native comparisons.
+Captures and probe data remain private.
