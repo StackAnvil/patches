@@ -1550,3 +1550,38 @@ The full add-on stack replays all 23 patches.
 
 Both clients reach playable spawn, load the converted packs, and complete the unchanged 75-second scene prefix.
 These checks establish transport and hand behavior for this fixture, not complete visual parity.
+
+
+## Resource conversion: shared Java parent models
+
+**Implemented:** Core exports each compiled entity or attachable geometry once as a content-addressed Java parent model.
+Texture variants retain separate sprite bindings, model selectors, scale metadata, and display transforms.
+The standard Java format serves direct connections and ViaProxy.
+
+**Measured:** The existing five-pack CubeCraft fixture targets Bedrock 1.26.51.1, build 51061372, and protocol 2193.
+Java 25 uses four processors and a 2 GiB heap on Linux.
+All 15,823 original entries remain, with 786 shared parents.
+Resolving the parents preserves all 12,789 changed model variants.
+Model JSON falls from 87.5 MB to 15.9 MB, and the archive falls from 91.8 MB to 78.2 MB.
+
+Eight conversions exclude two warm-ups.
+Entity model CPU falls from 712 ms to 167 ms, and allocation falls from 1136 MiB to 350 MiB.
+Median rewrite plus ZIP time falls from 1739 ms to 1632 ms, about 6 percent.
+A separate Java 26.3 parsing benchmark falls from 1274 ms to 254 ms, with about 84 percent fewer allocated bytes.
+It excludes model baking, texture stitching, full reloads, and joining times.
+
+**Verified:** The actual Java 26.3 parser and resolver preserve geometry, textures, lighting, ambient occlusion, and display transforms for every changed child.
+Core tests cover shared and distinct parents, concurrent variants, source immutability, selectors, scale metadata, and attachable transforms.
+The full stack build passes 1014 Java tests, with no failures or errors and 115 optional skips.
+See the [parent model notes](../patches/viabedrock/upstreamable/0066-export-empty-item-models.pr.md#export-shared-geometry-as-java-parents).
+
+**Remaining:** macOS, Windows, concurrent conversions, larger stacks, full reload timing, and end-to-end joining gains remain unverified.
+These improvements do not prevent every timeout. Transport liveness remains necessary while acquisition or other phases wait.
+
+
+**Runtime evidence:** Fresh disk-cache replays pass complete transport and rendering checks through direct connections and ViaProxy.
+Both routes preserve the complete recorded scene hash and all 216 skin updates.
+Both converted archives load without unresolved model or block errors.
+ViaProxy exports 16,383 and 16,741 entries, with 782 shared parents in each archive.
+The direct route also loads both newly converted archives.
+These checks establish conversion and loading regressions. They do not establish complete native visual parity or faster end-to-end joins.

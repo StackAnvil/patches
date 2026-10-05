@@ -65,3 +65,49 @@ The shorter first replay reached spawn but ended before the full scene, so it do
 The fresh-cache direct add-on replay also preserves the complete scene hash and all 216 skin updates.
 Both converted packs load, and the same rendering checks pass without unresolved model or block errors.
 These checks establish conversion, loading, and rendering regressions on both routes, without establishing full visual parity or joining-time gains.
+
+
+## Export shared geometry as Java parents
+
+Core now serializes each compiled geometry once and exports it as a Java parent model.
+Each child retains its own texture bindings and attachable display transforms.
+A SHA-256 digest of the serialized geometry identifies the parent.
+Distinct geometries cannot collide through sanitized Bedrock names.
+The parent contains no texture bindings, so Java resolves each child's sprites independently.
+Existing converted archives remain valid because the resolved model contents do not change.
+
+The private fixture contains five captured CubeCraft packs and 42 licensed image layers.
+It targets Bedrock 1.26.51.1, build 51061372, protocol 2193, and Java 26.3.
+Java 25 uses four processors and a 2 GiB heap on Linux.
+Resolving all parent chains reproduces every original model after normalization of existing object-hash names and equivalent particle aliases.
+The comparison retains all 15,823 original entries and adds 786 shared parents.
+Model JSON falls from 87.5 MB to 15.9 MB.
+The complete archive falls from 91.8 MB to 78.2 MB, about 15 percent.
+
+Eight complete conversions exclude the first two iterations.
+Entity model CPU falls from 712 ms to 167 ms, and allocations fall from 1136 MiB to 350 MiB.
+Median rewrite plus ZIP time falls from 1739 ms to 1632 ms, about 6 percent.
+Native archive encoding remains a separate cost.
+These figures exclude licensed acquisition, downloads, prompts, and client reloads.
+
+A separate benchmark uses the actual Java 26.3 model parser on every exported model file.
+Nine iterations exclude the first two iterations.
+Median parsing time falls from 1274 ms to 254 ms, about 80 percent.
+Allocated bytes fall from 4949 MiB to 786 MiB, about 84 percent.
+The Java resolver also preserves geometry, texture materials, display transforms, lighting, and ambient occlusion for all 12,789 changed children.
+This benchmark measures model parsing alone. It does not measure texture stitching, baking, full reloads, or joining times.
+
+Core tests cover shared parents, distinct geometry, source immutability, concurrent texture bindings, retained selectors, scale metadata, and attachable display transforms.
+The owning patch passes its targeted tests and both Checkstyle tasks before the remaining stack applies.
+The full stack build passes 1014 Java tests, with no failures or errors and 115 optional skips.
+
+macOS, Windows, simultaneous conversions, larger stacks, and end-to-end joining gains remain unverified.
+Transport liveness remains necessary while other phases wait.
+
+
+**Runtime evidence:** Fresh disk-cache replays pass complete transport and rendering checks through direct connections and ViaProxy.
+Both routes preserve the complete recorded scene hash and all 216 skin updates.
+Both converted archives load without unresolved model or block errors.
+ViaProxy exports 16,383 and 16,741 entries, with 782 shared parents in each archive.
+The direct route also loads both newly converted archives.
+These checks establish conversion and loading regressions. They do not establish complete native visual parity or faster end-to-end joins.
