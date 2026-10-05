@@ -2991,3 +2991,41 @@ These are saved-scene replays, not fresh live CubeCraft joins.
 **Remaining:** Presets, transforms, target tracking, FOV, splines, attachments, shake, fog, and aim assistance remain incomplete.
 Partial-opacity image comparisons, gamma and HDR behavior, exact frame timing, hidden HUD, pauses, late registration, and disconnect transitions remain unverified.
 The full protocol, gameplay, editor, account, skin, persona, audio, UI, and platform requirements remain active.
+
+## Camera preset and FOV research, October 5, 2026
+
+**Verified wire evidence:** The matching local server sends six presets in 337 bytes.
+The existing CubeCraft recording sends four presets in 231 bytes.
+The pinned Gophertunnel codec consumes every byte and reproduces both payloads exactly.
+The local list includes fixed-boom and follow-orbit presets that the CubeCraft list omits.
+Third-person indexes differ between those lists.
+Camera instructions must resolve indexes through the connection's received preset table.
+A fixed built-in index table would select the wrong camera on one route.
+
+**Verified numeric evidence:** The private probe executes 288 linear sequences through the target FOV updater at `1466ee500`.
+The probe supplies component memory, frame deltas, and empty storage for override removal.
+It executes the actual updater without replacing its interpolation branch.
+Durations no greater than the float epsilon `0.00000011920928955078125` use the immediate branch.
+A transition that reaches its endpoint sets its duration to zero.
+A clear transition enters the override removal branch on the next update.
+These findings describe component updates, not visible frame timing or the complete clear flow.
+
+The target instruction application at `1466f1230` clamps FOV targets to 30–110 degrees and stores radians.
+A new eased instruction records the current rendered FOV as its starting value.
+The clear setup at `1466ef450` queries the native local FOV and creates a transition toward that value.
+The renderer therefore needs the current client FOV and the correct units.
+The remaining local FOV lookup and projection behavior still need runtime comparisons.
+
+The private probe executes 1,920 samples through the actual 32 easing functions, across three endpoint pairs.
+The native initializer at `142647070` builds the sine table used by applicable easing modes.
+The probe supplies imported math functions, stack probing, and memory copying.
+The target code selects table indexes, applies its arithmetic, and combines endpoints.
+Host math results are rounded to floats; these samples do not establish bit-identical Windows CRT behavior.
+Spring, back, and elastic samples overshoot their endpoints.
+The implementation must preserve that behavior rather than clamp easing progress results to zero through one.
+
+**Remaining:** FOV overrides and preset application remain unimplemented.
+The next implementation needs a received preset registry, current FOV state, native easing, client projection, and lifecycle handling.
+Repeated set and clear commands, local settings, player effects, movement schemes, audio listeners, and both connection routes need visible comparisons.
+No native binaries, lookup tables, or raw captures enter the production patch stack.
+All original coverage requirements remain active.
