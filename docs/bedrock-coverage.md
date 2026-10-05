@@ -40,7 +40,7 @@ These comparisons establish the tested Linux routes; other transports and platfo
 ## Protocol inventory
 
 The complete applied source defines 169 inbound packet types.
-There are 108 explicit registrations, 19 explicit cancellations, and 42 automatic fallback cancellations.
+There are 110 explicit registrations, 18 explicit cancellations, and 41 automatic fallback cancellations.
 These counts describe source registration, not feature completion.
 The inventory excludes commented enum entries and includes transition registrations.
 One declared packet, `STONECUTTER_SET_RECIPE` (355), is absent from the matching protocol 2193 schema.
@@ -162,7 +162,7 @@ The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and
 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
-| U1 | Presets, instructions, splines, shake, and aim assistance | Incomplete | Implement packet state, client behavior, lifecycle, and ViaProxy transport. |
+| U1 | Presets, instructions, splines, shake, and aim assistance | Incomplete | Core decodes target camera instructions and resolves fade timelines. The add-on draws fades through direct connections and ViaProxy. Transforms, presets, FOV, target tracking, splines, attachments, shake, aim assistance, and broader lifecycle comparisons remain incomplete. |
 | U2 | Fog and HUD visibility | Incomplete | Core retains all target HUD restrictions and transports them through direct connections and ViaProxy. The add-on applies individual Java HUD restrictions and preserves local settings on reset. Fog, missing native widgets, and remaining visual comparisons are incomplete. |
 | U3 | Texture animations, toasts, credits, store requests, and inventory preferences | Incomplete | Implement target packet behavior and verify native presentation. |
 | U4 | Dynamic JSON UI and widgets | Incomplete | Extend static sidebar support with expression evaluation and applicable widgets. |
@@ -187,6 +187,13 @@ Air, horse health, contextual jump bars, and spectator behavior also need compar
 Paper doll, touch controls, and native control hints still lack renderers.
 Ordinary Java has no standard packet for individual HUD restrictions.
 These results do not complete U2.
+
+The [camera instruction patch](../patches/viabedrock/upstreamable/0089-decode-camera-instructions-and-transport-native-fades.pr.md) decodes all instruction fields for protocol 2193.
+Core applies fade behavior and transports its resolved timeline with elapsed time.
+The [fade renderer](../patches/viafabricplus-bedrock/upstreamable/0023-render-core-resolved-server-fade-snapshots.pr.md) draws that timeline before the Java HUD.
+Native timelines and opaque overlays have comparison evidence below.
+Other instruction fields remain decoded but unapplied.
+These results do not complete U1.
 
 ## Gameplay and entities
 
@@ -2932,4 +2939,55 @@ Overlapping labels and the Java tutorial toast remain visible.
 These are complete saved-scene replays, not fresh live-server joins or native image and timing comparisons.
 
 **Remaining:** Other billboard fields and reader errors, complete frame reset boundaries, embedded assignment results, actor/world contexts, and visible particle parity need further work.
+The full protocol, gameplay, editor, account, skin, persona, audio, UI, and platform requirements remain active.
+
+## Server camera fades, October 5, 2026
+
+**Implemented:** Core decodes the complete protocol 2193 camera instruction layout.
+Optional fields preserve absent values, false booleans, and signed actor IDs.
+The handler applies fade instructions and retains other decoded fields for future integrations.
+Those other fields do not yet control the camera.
+
+Core resolves overlapping fades, active color retention, defaults, minimum duration, and point tolerance.
+A versioned payload transports the timeline and elapsed time through direct connections and ViaProxy.
+Late channel registration receives the current elapsed state without restarting the fade.
+The add-on advances that timeline and draws an overlay before the HUD.
+Rendering needs no Store session or local Bedrock installation.
+
+**Target evidence:** The matching server emitted seven instructions for Bedrock 1.26.51.1, build 51061372.
+Both codecs consumed every byte of default, zero-duration, colored, FOV set, FOV clear, free-camera, and clear instructions.
+FOV easing uses a string on the wire.
+The target schema also includes spline identifiers and JSON loading flags.
+The [pinned Gophertunnel codec](https://github.com/Sandertv/gophertunnel/blob/80c811b6186016b3860c358368cfa47e507f26e9/minecraft/protocol/camera.go) supplies an independent implementation.
+
+Private probes execute the actual target functions for fade application, point insertion, and timeline updates.
+The comparisons cover 42 independent fades and 105 overlapping sequences, including 735 samples of merged timelines.
+Core matches the reference points and opacity within a tolerance of 0.000001.
+Invalid fade values leave the active timeline unchanged.
+An owned local native-client session shows opaque red and blue overlays with the crosshair and hotbar visible.
+
+**Build evidence:** All four projects pass the complete build with routed StackAnvil dependencies and verified VFP artifacts.
+The run reports 1,079 passing tests, 124 optional skips, and no failures or errors.
+The private camera comparisons run in this build.
+Earlier particle probes remain covered by their previous verification runs.
+
+**Verified runtime:** Complete 240-second CubeCraft replays pass transport and rendering checks through both routes.
+The fixture preserves the original scene packets and adds five authored camera instructions.
+Its augmented scene hash is `cb9b01d0178c957405e9af846952bb9bf75b70285f1b81a76ef3cd231a4f8d97`.
+Direct session `2026-10-05T19-52-30.600Z-replay-scene` and ViaProxy session `2026-10-05T19-48-13.237Z-replay-scene` retain all 311 skin updates.
+Each receives four nonempty fade snapshots and reports no camera errors.
+The overlapping green instruction retains red and preserves current opacity.
+Camera clear leaves the fade active, and every fade expires to transparent.
+The zero-duration white instruction lasts the native minimum of half a second.
+
+Reviewed screenshots show opaque red, blue, and white worlds beneath visible HUD elements on both routes.
+The owned native session establishes the same opaque overlay order.
+Final screenshots return to the lobby with custom models, banners, the hanging cube, and hotbar icons.
+The runtime audit records 1,358 direct opacity samples and 1,342 ViaProxy samples.
+These samples verify transported playback; the independent executable comparisons establish numeric native behavior.
+The authored commands do not establish camera usage by CubeCraft itself.
+These are saved-scene replays, not fresh live CubeCraft joins.
+
+**Remaining:** Presets, transforms, target tracking, FOV, splines, attachments, shake, fog, and aim assistance remain incomplete.
+Partial-opacity image comparisons, gamma and HDR behavior, exact frame timing, hidden HUD, pauses, late registration, and disconnect transitions remain unverified.
 The full protocol, gameplay, editor, account, skin, persona, audio, UI, and platform requirements remain active.

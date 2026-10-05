@@ -1,0 +1,824 @@
+From 2c937f9146fd2a0fc9484d2e7466a92d8d1a412f Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 21:41:41 +0200
+Subject: [PATCH] feat(camera): decode instructions and transport native fade
+ timelines
+
+Protocol 2193 carries independent optional camera fields, including named
+spline references, little-endian signed actor IDs and string-encoded FOV
+and keyframe easing. Decode every instruction field before applying the
+fade, retain the decoded instruction for integrations, and bound spline
+allocations. Other camera behavior remains a separate implementation gap.
+
+Resolve overlapping fades in core and send versioned timeline snapshots
+to subscribed clients after joining and channel registration. Late
+subscribers receive elapsed state instead of restarting the effect. Keep
+ordinary Java clients connected when no native rendering client subscribes.
+
+The matching Bedrock 1.26.51.1 server emitted seven captured instructions.
+Its executable's fade insertion and updater confirm minimum duration,
+current-opacity continuity, retained color and later fade-out completion.
+Targeted tests compare native schedules and samples without distributing
+native binaries, assets or captures.
+---
+ .../viabedrock/api/model/CameraFadeState.java |  95 +++++++++
+ .../api/model/CameraFadeTimeline.java         |  91 +++++++++
+ .../viabedrock/protocol/BedrockProtocol.java  |   2 +
+ .../protocol/model/CameraInstruction.java     | 191 ++++++++++++++++++
+ .../protocol/packet/CameraPackets.java        |  34 ++++
+ .../protocol/packet/JoinPackets.java          |   2 +
+ .../protocol/packet/MultiStatePackets.java    |   2 +
+ .../protocol/packet/UnhandledPackets.java     |   1 -
+ .../storage/CameraEffectsStorage.java         |  63 ++++++
+ .../api/model/CameraFadeTimelineTest.java     | 117 +++++++++++
+ .../protocol/model/CameraInstructionTest.java |  81 ++++++++
+ 11 files changed, 678 insertions(+), 1 deletion(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraFadeState.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraFadeTimeline.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/CameraInstruction.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/CameraPackets.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorage.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraFadeTimelineTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/CameraInstructionTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CameraFadeState.java b/src/main/java/net/raphimc/viabedrock/api/model/CameraFadeState.java
+new file mode 100644
+index 000000000..a686f658b
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/CameraFadeState.java
+@@ -0,0 +1,95 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++
++import java.util.ArrayList;
++import java.util.List;
++
++/** A core-resolved fade timeline. Elapsed time is relative to its first point. */
++public record CameraFadeState(float red, float green, float blue, float elapsed, List<Point> points) {
++
++    public static final String CHANNEL = "viabedrock:camera_fade";
++    public static final CameraFadeState EMPTY = new CameraFadeState(0, 0, 0, 0, List.of());
++    public static final Type<CameraFadeState> TYPE = new Type<>(CameraFadeState.class) {
++        @Override
++        public CameraFadeState read(final ByteBuf b) {
++            if (Types.VAR_INT.readPrimitive(b) != 1) {
++                throw new IllegalArgumentException("Unsupported camera fade payload version");
++            }
++            final float red = b.readFloat();
++            final float green = b.readFloat();
++            final float blue = b.readFloat();
++            final float elapsed = b.readFloat();
++            final int count = Types.VAR_INT.readPrimitive(b);
++            if (count < 0 || count > 64) {
++                throw new IllegalArgumentException("Invalid camera fade point count");
++            }
++            final List<Point> points = new ArrayList<>(count);
++            for (int i = 0; i < count; i++) {
++                points.add(new Point(b.readFloat(), b.readFloat()));
++            }
++            final CameraFadeState state = new CameraFadeState(red, green, blue, elapsed, points);
++            if (b.isReadable()) {
++                throw new IllegalArgumentException("Unexpected camera fade payload fields");
++            }
++            return state;
++        }
++
++        @Override
++        public void write(final ByteBuf b, final CameraFadeState state) {
++            Types.VAR_INT.writePrimitive(b, 1);
++            b.writeFloat(state.red).writeFloat(state.green).writeFloat(state.blue).writeFloat(state.elapsed);
++            Types.VAR_INT.writePrimitive(b, state.points.size());
++            for (final Point point : state.points) {
++                b.writeFloat(point.time).writeFloat(point.alpha);
++            }
++        }
++    };
++
++    public CameraFadeState {
++        points = List.copyOf(points);
++        if (!Float.isFinite(red) || !Float.isFinite(green) || !Float.isFinite(blue)
++                || !Float.isFinite(elapsed) || elapsed < 0 || points.size() > 64) {
++            throw new IllegalArgumentException("Invalid camera fade state");
++        }
++        float previous = -1;
++        for (final Point point : points) {
++            if (!Float.isFinite(point.time) || point.time < 0 || point.time < previous
++                    || !Float.isFinite(point.alpha) || point.alpha < 0 || point.alpha > 1) {
++                throw new IllegalArgumentException("Invalid camera fade point");
++            }
++            previous = point.time;
++        }
++    }
++
++    public float alpha(final float time) {
++        if (this.points.isEmpty() || time < 0 || time >= this.points.getLast().time) {
++            return 0;
++        }
++        float previousTime = 0;
++        float previousAlpha = 0;
++        for (final Point point : this.points) {
++            if (point.time - .0001F <= time) {
++                if (time <= point.time + .0001F) {
++                    return point.alpha;
++                }
++                previousTime = point.time;
++                previousAlpha = point.alpha;
++            } else {
++                final float progress = (time - previousTime) / (point.time - previousTime);
++                return progress >= 0 && progress <= 1 ? previousAlpha + (point.alpha - previousAlpha) * progress : point.alpha;
++            }
++        }
++        return 0;
++    }
++
++    public record Point(float time, float alpha) { }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CameraFadeTimeline.java b/src/main/java/net/raphimc/viabedrock/api/model/CameraFadeTimeline.java
+new file mode 100644
+index 000000000..a9f293d4d
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/CameraFadeTimeline.java
+@@ -0,0 +1,91 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.protocol.model.CameraInstruction;
++
++import java.util.ArrayList;
++import java.util.List;
++
++/** Matches the target client's fade point insertion and overlapping fade rules. */
++public final class CameraFadeTimeline {
++
++    private final List<CameraFadeState.Point> points = new ArrayList<>();
++    private float red;
++    private float green;
++    private float blue;
++
++    public void apply(final CameraInstruction.Fade fade, final float elapsed) {
++        final CameraInstruction.Times times = fade.times() == null ? new CameraInstruction.Times(1, .5F, 1) : fade.times();
++        final CameraInstruction.Vec3 color = fade.color() == null ? new CameraInstruction.Vec3(0, 0, 0) : fade.color();
++        if (!valid(times.fadeIn()) || !valid(times.hold()) || !valid(times.fadeOut())
++                || !Float.isFinite(times.fadeIn() + times.hold() + times.fadeOut())
++                || !Float.isFinite(color.x()) || !Float.isFinite(color.y()) || !Float.isFinite(color.z()) || !valid(elapsed)) {
++            throw new IllegalArgumentException("Invalid camera fade instruction");
++        }
++        final float alpha = this.snapshot(elapsed).alpha(elapsed);
++        if (!this.points.isEmpty() && elapsed >= this.points.getLast().time()) {
++            this.points.clear();
++        }
++        if (this.points.isEmpty()) {
++            this.red = color.x();
++            this.green = color.y();
++            this.blue = color.z();
++        } else {
++            this.points.replaceAll(point -> new CameraFadeState.Point(point.time() - elapsed, point.alpha()));
++            this.points.removeIf(point -> point.time() < 0);
++            if (!this.points.isEmpty()) {
++                this.points.addFirst(new CameraFadeState.Point(0, alpha));
++            }
++        }
++        final float hold = Math.max(.5F - (times.fadeIn() + times.fadeOut()), times.hold());
++        this.insert(times.fadeIn(), 1);
++        this.insert(times.fadeIn() + hold, 1);
++        this.insert(times.fadeIn() + hold + times.fadeOut(), 0);
++    }
++
++    public CameraFadeState snapshot(final float elapsed) {
++        if (this.points.isEmpty() || elapsed >= this.points.getLast().time()) {
++            return CameraFadeState.EMPTY;
++        }
++        return new CameraFadeState(this.red, this.green, this.blue, elapsed, this.points);
++    }
++
++    private void insert(final float time, final float alpha) {
++        final CameraFadeState state = new CameraFadeState(this.red, this.green, this.blue, 0, this.points);
++        if (!this.points.isEmpty() && !(state.alpha(time) + .0001F < alpha)
++                && !(this.points.getLast().time() + .0001F < time)) {
++            return;
++        }
++        int index = 0;
++        while (index < this.points.size() && time >= this.points.get(index).time()) {
++            if (time <= this.points.get(index).time() + .0001F) {
++                this.points.set(index, new CameraFadeState.Point(this.points.get(index).time(), alpha));
++                this.prune();
++                return;
++            }
++            index++;
++        }
++        this.points.add(index, new CameraFadeState.Point(time, alpha));
++        this.prune();
++    }
++
++    private void prune() {
++        for (int i = 1; i < this.points.size() - 1; ) {
++            final float alpha = this.points.get(i).alpha();
++            if (this.points.get(i - 1).alpha() >= alpha && this.points.get(i + 1).alpha() >= alpha) {
++                this.points.remove(i);
++            } else {
++                i++;
++            }
++        }
++    }
++
++    private static boolean valid(final float value) {
++        return Float.isFinite(value) && value >= 0;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+index 6c96820f3..9537f7adf 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+@@ -112,6 +112,7 @@ public class BedrockProtocol
+         EntityPackets.register(this);
+         HudPackets.register(this);
+         HudVisibilityPackets.register(this);
++        CameraPackets.register(this);
+         InventoryPackets.register(this);
+         NpcDialoguePackets.register(this);
+         WorldEffectPackets.register(this);
+@@ -169,6 +170,7 @@ public class BedrockProtocol
+         user.put(new NativeSkinStorage(user));
+         user.put(new PlayerInputStorage(user));
+         user.put(new HudVisibilityStorage(user));
++        user.put(new CameraEffectsStorage(user));
+         user.put(new PlayerListStorage());
+         user.put(new PlayerWaypointTracker(user));
+         user.put(new ScoreboardTracker());
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/CameraInstruction.java b/src/main/java/net/raphimc/viabedrock/protocol/model/CameraInstruction.java
+new file mode 100644
+index 000000000..418e62231
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/CameraInstruction.java
+@@ -0,0 +1,191 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.function.BiConsumer;
++import java.util.function.Function;
++
++/** Protocol 2193 camera fields. Null means absent, including optional booleans. */
++public record CameraInstruction(SetCamera set, Boolean clear, Fade fade, Target target, Boolean removeTarget,
++                                FieldOfView fieldOfView, Spline spline, Long attachToEntity, Boolean detachFromEntity) {
++
++    public static final Type<CameraInstruction> TYPE = new Type<>(CameraInstruction.class) {
++        @Override
++        public CameraInstruction read(final ByteBuf buffer) {
++            return new CameraInstruction(optional(buffer, CameraInstruction::readSet), optional(buffer, ByteBuf::readBoolean),
++                    optional(buffer, CameraInstruction::readFade), optional(buffer, b -> new Target(optional(b, CameraInstruction::readVec3), b.readLongLE())),
++                    optional(buffer, ByteBuf::readBoolean), optional(buffer, b -> new FieldOfView(b.readFloatLE(), b.readFloatLE(), string(b), b.readBoolean())),
++                    optional(buffer, CameraInstruction::readSpline), optional(buffer, ByteBuf::readLongLE), optional(buffer, ByteBuf::readBoolean));
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final CameraInstruction value) {
++            optional(buffer, value.set, CameraInstruction::writeSet);
++            optional(buffer, value.clear, ByteBuf::writeBoolean);
++            optional(buffer, value.fade, CameraInstruction::writeFade);
++            optional(buffer, value.target, (b, target) -> {
++                optional(b, target.centerOffset, CameraInstruction::writeVec3);
++                b.writeLongLE(target.actorUniqueId);
++            });
++            optional(buffer, value.removeTarget, ByteBuf::writeBoolean);
++            optional(buffer, value.fieldOfView, (b, fov) -> {
++                b.writeFloatLE(fov.value).writeFloatLE(fov.easeTime);
++                BedrockTypes.STRING.write(b, fov.easeType);
++                b.writeBoolean(fov.clear);
++            });
++            optional(buffer, value.spline, CameraInstruction::writeSpline);
++            optional(buffer, value.attachToEntity, ByteBuf::writeLongLE);
++            optional(buffer, value.detachFromEntity, ByteBuf::writeBoolean);
++        }
++    };
++
++    private static SetCamera readSet(final ByteBuf b) {
++        return new SetCamera(b.readUnsignedIntLE(), optional(b, v -> new Ease(v.readUnsignedByte(), v.readFloatLE())),
++                optional(b, CameraInstruction::readVec3), optional(b, CameraInstruction::readVec2), optional(b, CameraInstruction::readVec3),
++                optional(b, CameraInstruction::readVec2), optional(b, CameraInstruction::readVec3), optional(b, ByteBuf::readBoolean), b.readBoolean());
++    }
++
++    private static void writeSet(final ByteBuf b, final SetCamera value) {
++        b.writeIntLE((int) value.preset);
++        optional(b, value.ease, (v, ease) -> v.writeByte(ease.type).writeFloatLE(ease.duration));
++        optional(b, value.position, CameraInstruction::writeVec3);
++        optional(b, value.rotation, CameraInstruction::writeVec2);
++        optional(b, value.facing, CameraInstruction::writeVec3);
++        optional(b, value.viewOffset, CameraInstruction::writeVec2);
++        optional(b, value.entityOffset, CameraInstruction::writeVec3);
++        optional(b, value.defaults, ByteBuf::writeBoolean);
++        b.writeBoolean(value.ignoreStartingValues);
++    }
++
++    private static Fade readFade(final ByteBuf b) {
++        return new Fade(optional(b, v -> new Times(v.readFloatLE(), v.readFloatLE(), v.readFloatLE())), optional(b, CameraInstruction::readVec3));
++    }
++
++    private static void writeFade(final ByteBuf b, final Fade value) {
++        optional(b, value.times, (v, time) -> v.writeFloatLE(time.fadeIn).writeFloatLE(time.hold).writeFloatLE(time.fadeOut));
++        optional(b, value.color, CameraInstruction::writeVec3);
++    }
++
++    private static Spline readSpline(final ByteBuf b) {
++        final float time = b.readFloatLE();
++        final Integer type = optional(b, v -> (int) v.readUnsignedByte());
++        final List<Vec3> curve = list(b, CameraInstruction::readVec3);
++        final List<Progress> progress = list(b, v -> new Progress(v.readFloatLE(), v.readFloatLE(), string(v)));
++        final List<Rotation> rotation = list(b, v -> new Rotation(readVec3(v), v.readFloatLE(), string(v)));
++        return new Spline(time, type, curve, progress, rotation, optional(b, CameraInstruction::string), optional(b, ByteBuf::readBoolean));
++    }
++
++    private static void writeSpline(final ByteBuf b, final Spline value) {
++        b.writeFloatLE(value.totalTime);
++        optional(b, value.type, ByteBuf::writeByte);
++        list(b, value.curve, CameraInstruction::writeVec3);
++        list(b, value.progress, (v, frame) -> {
++            v.writeFloatLE(frame.value).writeFloatLE(frame.time);
++            BedrockTypes.STRING.write(v, frame.easeType);
++        });
++        list(b, value.rotations, (v, frame) -> {
++            writeVec3(v, frame.value);
++            v.writeFloatLE(frame.time);
++            BedrockTypes.STRING.write(v, frame.easeType);
++        });
++        optional(b, value.identifier, (v, identifier) -> BedrockTypes.STRING.write(v, identifier));
++        optional(b, value.loadFromJson, ByteBuf::writeBoolean);
++    }
++
++    private static String string(final ByteBuf b) {
++        final String value = BedrockTypes.STRING.read(b);
++        if (value.length() > 1024) {
++            throw new IllegalArgumentException("Camera string exceeds 1024 characters");
++        }
++        return value;
++    }
++
++    private static Vec2 readVec2(final ByteBuf b) {
++        return new Vec2(b.readFloatLE(), b.readFloatLE());
++    }
++
++    private static Vec3 readVec3(final ByteBuf b) {
++        return new Vec3(b.readFloatLE(), b.readFloatLE(), b.readFloatLE());
++    }
++
++    private static void writeVec2(final ByteBuf b, final Vec2 v) {
++        b.writeFloatLE(v.x).writeFloatLE(v.y);
++    }
++
++    private static void writeVec3(final ByteBuf b, final Vec3 v) {
++        b.writeFloatLE(v.x).writeFloatLE(v.y).writeFloatLE(v.z);
++    }
++
++    private static <T> T optional(final ByteBuf b, final Function<ByteBuf, T> reader) {
++        return b.readBoolean() ? reader.apply(b) : null;
++    }
++
++    private static <T> void optional(final ByteBuf b, final T value, final BiConsumer<ByteBuf, T> writer) {
++        b.writeBoolean(value != null);
++        if (value != null) {
++            writer.accept(b, value);
++        }
++    }
++
++    private static <T> List<T> list(final ByteBuf b, final Function<ByteBuf, T> reader) {
++        final int count = BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(b);
++        if (count < 0 || count > 4096) {
++            throw new IllegalArgumentException("Too many camera spline entries");
++        }
++        final List<T> values = new ArrayList<>(count);
++        for (int i = 0; i < count; i++) {
++            values.add(reader.apply(b));
++        }
++        return values;
++    }
++
++    private static <T> void list(final ByteBuf b, final List<T> values, final BiConsumer<ByteBuf, T> writer) {
++        BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(b, values.size());
++        for (final T value : values) {
++            writer.accept(b, value);
++        }
++    }
++
++    public record Vec2(float x, float y) { }
++
++    public record Vec3(float x, float y, float z) { }
++
++    public record Ease(int type, float duration) { }
++
++    public record SetCamera(long preset, Ease ease, Vec3 position, Vec2 rotation, Vec3 facing,
++                            Vec2 viewOffset, Vec3 entityOffset, Boolean defaults, boolean ignoreStartingValues) { }
++
++    public record Fade(Times times, Vec3 color) { }
++
++    public record Times(float fadeIn, float hold, float fadeOut) { }
++
++    public record Target(Vec3 centerOffset, long actorUniqueId) { }
++
++    public record FieldOfView(float value, float easeTime, String easeType, boolean clear) { }
++
++    public record Progress(float value, float time, String easeType) { }
++
++    public record Rotation(Vec3 value, float time, String easeType) { }
++
++    public record Spline(float totalTime, Integer type, List<Vec3> curve, List<Progress> progress,
++                         List<Rotation> rotations, String identifier, Boolean loadFromJson) {
++        public Spline {
++            curve = List.copyOf(curve);
++            progress = List.copyOf(progress);
++            rotations = List.copyOf(rotations);
++            if (curve.size() > 4096 || progress.size() > 4096 || rotations.size() > 4096) {
++                throw new IllegalArgumentException("Too many camera spline entries");
++            }
++        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/CameraPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/CameraPackets.java
+new file mode 100644
+index 000000000..d51f28cce
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/CameraPackets.java
+@@ -0,0 +1,34 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.type.Types;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.model.CameraInstruction;
++import net.raphimc.viabedrock.protocol.storage.CameraEffectsStorage;
++
++public final class CameraPackets {
++
++    public static void register(final BedrockProtocol protocol) {
++        protocol.registerClientbound(ClientboundBedrockPackets.CAMERA_INSTRUCTION, null, wrapper -> {
++            wrapper.cancel();
++            final CameraInstruction instruction = wrapper.read(CameraInstruction.TYPE);
++            if (wrapper.read(Types.REMAINING_BYTES).length != 0) {
++                throw new IllegalArgumentException("Unexpected camera instruction fields");
++            }
++            try {
++                wrapper.user().get(CameraEffectsStorage.class).apply(instruction);
++            } catch (final IllegalArgumentException exception) {
++                ViaBedrock.getPlatform().getLogger().warning("Ignoring invalid camera fade: " + exception.getMessage());
++            }
++        });
++    }
++
++    private CameraPackets() { }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+index ea4e20a9e..50aeb5c13 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+@@ -591,6 +591,8 @@ public final class JoinPackets {
+         user.get(PlayerInputStorage.class).sendSnapshot();
+         user.get(HudVisibilityStorage.class).markJoined();
+         user.get(HudVisibilityStorage.class).sendSnapshot();
++        user.get(CameraEffectsStorage.class).markJoined();
++        user.get(CameraEffectsStorage.class).sendSnapshot();
+ 
+         clientPlayer.createTeam();
+         clientPlayer.sendInitialEntityData();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+index 2508d029f..58450f532 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+@@ -52,6 +52,7 @@ import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
+ import net.raphimc.viabedrock.protocol.storage.PacketSyncStorage;
+ import net.raphimc.viabedrock.protocol.storage.PlayerInputStorage;
+ import net.raphimc.viabedrock.protocol.storage.HudVisibilityStorage;
++import net.raphimc.viabedrock.protocol.storage.CameraEffectsStorage;
+ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+ 
+ import java.nio.charset.StandardCharsets;
+@@ -167,6 +168,7 @@ public final class MultiStatePackets {
+             }
+             wrapper.user().get(PlayerInputStorage.class).sendSnapshot();
+             wrapper.user().get(HudVisibilityStorage.class).sendSnapshot();
++            wrapper.user().get(CameraEffectsStorage.class).sendSnapshot();
+ 
+             if (channels.contains(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
+                 ViaBedrockUtilityInterface.confirmPresence(wrapper.user());
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java
+index 172699ee1..45e5de53c 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java
+@@ -40,7 +40,6 @@ public final class UnhandledPackets {
+         protocol.cancelClientbound(ClientboundBedrockPackets.SCRIPT_MESSAGE); // Not relevant (Education Edition)
+         protocol.cancelClientbound(ClientboundBedrockPackets.LESSON_PROGRESS); // Not relevant (Education Edition)
+         protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_PRESETS); // Not possible in Java Edition
+-        protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_INSTRUCTION); // Not possible in Java Edition
+         protocol.cancelClientbound(ClientboundBedrockPackets.CURRENT_STRUCTURE_FEATURE); // Useless
+         protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_AIM_ASSIST); // Not possible in Java Edition
+         protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_AIM_ASSIST_PRESETS); // Not possible in Java Edition
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorage.java
+new file mode 100644
+index 000000000..b5ae2c9c3
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorage.java
+@@ -0,0 +1,63 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.StoredObject;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.raphimc.viabedrock.api.model.CameraFadeState;
++import net.raphimc.viabedrock.api.model.CameraFadeTimeline;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.model.CameraInstruction;
++
++public final class CameraEffectsStorage extends StoredObject {
++
++    private final CameraFadeTimeline fade = new CameraFadeTimeline();
++    private long updatedAt;
++    private boolean joined;
++    private CameraInstruction lastInstruction;
++
++    public CameraEffectsStorage(final UserConnection user) {
++        super(user);
++    }
++
++    public CameraInstruction lastInstruction() {
++        return this.lastInstruction;
++    }
++
++    public void apply(final CameraInstruction instruction) {
++        this.lastInstruction = instruction;
++        if (instruction.fade() != null) {
++            final long now = System.nanoTime();
++            this.fade.apply(instruction.fade(), this.elapsed(now));
++            this.updatedAt = now;
++            this.sendSnapshot();
++        }
++    }
++
++    public void markJoined() {
++        this.joined = true;
++    }
++
++    public void sendSnapshot() {
++        if (!this.joined || this.user().getProtocolInfo().getServerState() != State.PLAY
++                || !this.user().get(ChannelStorage.class).hasChannel(CameraFadeState.CHANNEL)) {
++            return;
++        }
++        final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
++        packet.write(Types.STRING, CameraFadeState.CHANNEL);
++        packet.write(CameraFadeState.TYPE, this.fade.snapshot(this.elapsed(System.nanoTime())));
++        packet.send(BedrockProtocol.class);
++    }
++
++    private float elapsed(final long now) {
++        return this.updatedAt == 0 ? 0 : Math.max(0, (now - this.updatedAt) / 1_000_000_000F);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CameraFadeTimelineTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CameraFadeTimelineTest.java
+new file mode 100644
+index 000000000..26a5c62ba
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/CameraFadeTimelineTest.java
+@@ -0,0 +1,117 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.google.gson.JsonParser;
++import com.google.gson.JsonArray;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.model.CameraInstruction;
++import org.junit.jupiter.api.Test;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.junit.jupiter.api.Assumptions.assumeTrue;
++
++class CameraFadeTimelineTest {
++
++    private static final CameraInstruction.Vec3 RED = new CameraInstruction.Vec3(1, 0, 0);
++    private static final CameraInstruction.Vec3 BLUE = new CameraInstruction.Vec3(0, 0, 1);
++
++    @Test
++    void mergesWithoutRestartingOpacityOrChangingColor() {
++        final var fade = new CameraFadeTimeline();
++        fade.apply(new CameraInstruction.Fade(new CameraInstruction.Times(1, .5F, 1), RED), 0);
++        fade.apply(new CameraInstruction.Fade(new CameraInstruction.Times(.1F, .1F, .1F), BLUE), .5F);
++        final var state = fade.snapshot(0);
++        assertEquals(RED.x(), state.red());
++        assertEquals(RED.z(), state.blue());
++        assertEquals(List.of(new CameraFadeState.Point(0, .5F), new CameraFadeState.Point(.1F, 1),
++                new CameraFadeState.Point(1, 1), new CameraFadeState.Point(2, 0)), state.points());
++        assertEquals(.75F, state.alpha(.05F), .000001F);
++        assertEquals(1, state.alpha(.5F));
++        assertEquals(.5F, state.alpha(1.5F));
++        assertEquals(CameraFadeState.EMPTY, fade.snapshot(2));
++        fade.apply(new CameraInstruction.Fade(new CameraInstruction.Times(0, 1, 0), BLUE), 2);
++        assertEquals(1, fade.snapshot(0).blue());
++    }
++
++    @Test
++    void defaultsMinimumDurationAndExpiredSnapshotsSurviveTransport() {
++        final var fade = new CameraFadeTimeline();
++        fade.apply(new CameraInstruction.Fade(null, null), 0);
++        assertEquals(.5F, fade.snapshot(0).alpha(.5F));
++        assertEquals(1, fade.snapshot(0).alpha(1.25F));
++        assertEquals(.5F, fade.snapshot(0).alpha(2));
++        final var state = fade.snapshot(.75F);
++        final var buffer = Unpooled.buffer();
++        try {
++            CameraFadeState.TYPE.write(buffer, state);
++            assertEquals(state, CameraFadeState.TYPE.read(buffer));
++            assertFalse(buffer.isReadable());
++        } finally {
++            buffer.release();
++        }
++        fade.apply(new CameraInstruction.Fade(new CameraInstruction.Times(0, 0, 0), BLUE), 3);
++        assertEquals(1, fade.snapshot(0).alpha(.49F));
++        assertEquals(CameraFadeState.EMPTY, fade.snapshot(.5F));
++    }
++
++    @Test
++    void invalidInstructionsDoNotMutateTheActiveFade() {
++        final var fade = new CameraFadeTimeline();
++        fade.apply(new CameraInstruction.Fade(null, RED), 0);
++        final var before = fade.snapshot(0);
++        for (final float invalid : new float[]{-1, Float.NaN, Float.POSITIVE_INFINITY}) {
++            assertThrows(IllegalArgumentException.class, () -> fade.apply(new CameraInstruction.Fade(new CameraInstruction.Times(invalid, 1, 1), BLUE), .5F));
++            assertEquals(before, fade.snapshot(0));
++        }
++        assertThrows(IllegalArgumentException.class, () -> new CameraFadeState(0, 0, 0, 0,
++                List.of(new CameraFadeState.Point(2, 1), new CameraFadeState.Point(1, 0))));
++    }
++
++    @Test
++    void targetExecutableFadeSchedulesAndSamples() throws Exception {
++        final String source = System.getenv("STACKANVIL_NATIVE_CAMERA_FADES");
++        assumeTrue(source != null);
++        final var data = JsonParser.parseString(Files.readString(Path.of(source))).getAsJsonObject();
++        for (final var value : data.getAsJsonArray("cases")) {
++            final var row = value.getAsJsonObject();
++            final var fade = new CameraFadeTimeline();
++            fade.apply(new CameraInstruction.Fade(times(row.getAsJsonArray("times")), RED), 0);
++            final var state = fade.snapshot(0);
++            checkKnots(row.getAsJsonArray("knots"), state);
++            assertEquals(row.get("alpha").getAsFloat(), state.alpha(row.get("elapsed").getAsFloat()), .000001F);
++        }
++        for (final var value : data.getAsJsonArray("sequences")) {
++            final var row = value.getAsJsonObject();
++            final var fade = new CameraFadeTimeline();
++            fade.apply(new CameraInstruction.Fade(times(row.getAsJsonArray("first")), RED), 0);
++            fade.apply(new CameraInstruction.Fade(times(row.getAsJsonArray("second")), BLUE), row.get("at").getAsFloat());
++            final var state = fade.snapshot(0);
++            checkKnots(row.getAsJsonArray("knots"), state);
++            for (final var sampleValue : row.getAsJsonArray("samples")) {
++                final var sample = sampleValue.getAsJsonObject();
++                assertEquals(sample.get("alpha").getAsFloat(), state.alpha(sample.get("elapsed").getAsFloat()), .000001F);
++            }
++        }
++    }
++
++    private static CameraInstruction.Times times(final JsonArray array) {
++        return new CameraInstruction.Times(array.get(0).getAsFloat(), array.get(1).getAsFloat(), array.get(2).getAsFloat());
++    }
++
++    private static void checkKnots(final JsonArray array, final CameraFadeState state) {
++        assertEquals(array.size(), state.points().size());
++        for (int i = 0; i < array.size(); i++) {
++            assertEquals(array.get(i).getAsJsonArray().get(0).getAsFloat(), state.points().get(i).time(), .000001F);
++            assertEquals(array.get(i).getAsJsonArray().get(1).getAsFloat(), state.points().get(i).alpha(), .000001F);
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/CameraInstructionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/CameraInstructionTest.java
+new file mode 100644
+index 000000000..91c678497
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/CameraInstructionTest.java
+@@ -0,0 +1,81 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.HexFormat;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.junit.jupiter.api.Assumptions.assumeTrue;
++
++class CameraInstructionTest {
++
++    @Test
++    void completeInstructionsPreserveAbsentAndFalseOptionsAndSignedActorIds() {
++        final var vec = new CameraInstruction.Vec3(-3.25F, 80, 7.5F);
++        final var set = new CameraInstruction.SetCamera(0xFFFFFFFFL, new CameraInstruction.Ease(31, 2), vec,
++                new CameraInstruction.Vec2(25, -30), vec, new CameraInstruction.Vec2(1, 2), vec, false, true);
++        final var spline = new CameraInstruction.Spline(5, 1, List.of(vec), List.of(new CameraInstruction.Progress(.25F, 2, "in_quad")),
++                List.of(new CameraInstruction.Rotation(vec, 3, "linear")), "example:route", false);
++        for (final long id : new long[]{Long.MIN_VALUE, -1, Long.MAX_VALUE}) {
++            final var instruction = new CameraInstruction(set, false, new CameraInstruction.Fade(null, vec), new CameraInstruction.Target(vec, id),
++                    true, new CameraInstruction.FieldOfView(30, .5F, "in_out_cubic", true), spline, id, false);
++            final var buffer = Unpooled.buffer();
++            try {
++                CameraInstruction.TYPE.write(buffer, instruction);
++                assertEquals(instruction, CameraInstruction.TYPE.read(buffer));
++                assertFalse(buffer.isReadable());
++            } finally {
++                buffer.release();
++            }
++        }
++    }
++
++    @Test
++    void rejectsUnboundedSplineCountsBeforeAllocation() {
++        final var buffer = Unpooled.buffer();
++        try {
++            buffer.writeZero(6).writeBoolean(true).writeFloatLE(1).writeBoolean(false);
++            BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(buffer, Integer.MAX_VALUE);
++            assertThrows(IllegalArgumentException.class, () -> CameraInstruction.TYPE.read(buffer));
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void matchingServerInstructionsConsumeEveryWireField() throws Exception {
++        final String source = System.getenv("STACKANVIL_NATIVE_CAMERA_WIRE");
++        assumeTrue(source != null);
++        int count = 0;
++        for (final String line : Files.readAllLines(Path.of(source))) {
++            if (!line.contains(" bytes=")) {
++                continue;
++            }
++            final String hex = line.split(" bytes=", 2)[1].split(" ", 2)[0];
++            final var buffer = Unpooled.wrappedBuffer(HexFormat.of().parseHex(hex));
++            final var output = Unpooled.buffer();
++            try {
++                final var instruction = CameraInstruction.TYPE.read(buffer);
++                assertFalse(buffer.isReadable());
++                CameraInstruction.TYPE.write(output, instruction);
++                assertEquals(hex, HexFormat.of().formatHex(com.viaversion.viaversion.api.type.Types.REMAINING_BYTES.read(output)));
++                count++;
++            } finally {
++                buffer.release();
++                output.release();
++            }
++        }
++        assertEquals(7, count);
++    }
++
++}
+-- 
+2.55.0
