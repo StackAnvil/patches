@@ -162,7 +162,7 @@ The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and
 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
-| U1 | Presets, instructions, splines, shake, and aim assistance | Incomplete | Core decodes target camera instructions and resolves fade timelines. The add-on draws fades through direct connections and ViaProxy. Transforms, presets, FOV, target tracking, splines, attachments, shake, aim assistance, and broader lifecycle comparisons remain incomplete. |
+| U1 | Presets, instructions, splines, shake, and aim assistance | Incomplete | Core resolves fades and FOV transitions. The add-on renders both through direct connections and ViaProxy. Presets, transforms, target tracking, splines, attachments, shake, aim assistance, local FOV modifiers, and broader lifecycle comparisons remain incomplete. |
 | U2 | Fog and HUD visibility | Incomplete | Core retains all target HUD restrictions and transports them through direct connections and ViaProxy. The add-on applies individual Java HUD restrictions and preserves local settings on reset. Fog, missing native widgets, and remaining visual comparisons are incomplete. |
 | U3 | Texture animations, toasts, credits, store requests, and inventory preferences | Incomplete | Implement target packet behavior and verify native presentation. |
 | U4 | Dynamic JSON UI and widgets | Incomplete | Extend static sidebar support with expression evaluation and applicable widgets. |
@@ -189,10 +189,10 @@ Ordinary Java has no standard packet for individual HUD restrictions.
 These results do not complete U2.
 
 The [camera instruction patch](../patches/viabedrock/upstreamable/0089-decode-camera-instructions-and-transport-native-fades.pr.md) decodes all instruction fields for protocol 2193.
-Core applies fade behavior and transports its resolved timeline with elapsed time.
-The [fade renderer](../patches/viafabricplus-bedrock/upstreamable/0023-render-core-resolved-server-fade-snapshots.pr.md) draws that timeline before the Java HUD.
+Core applies fade behavior and shared FOV transition rules, with elapsed snapshots and sequenced live commands.
+The [camera renderer](../patches/viafabricplus-bedrock/upstreamable/0023-render-core-resolved-server-fade-snapshots.pr.md) draws fades before the HUD and applies FOV before world projection and culling.
 Native timelines and opaque overlays have comparison evidence below.
-Other instruction fields remain decoded but unapplied.
+Other instruction fields remain decoded but unapplied. Local FOV modifiers and broader lifecycle behavior still need native comparisons.
 These results do not complete U1.
 
 ## Gameplay and entities
@@ -2945,8 +2945,8 @@ The full protocol, gameplay, editor, account, skin, persona, audio, UI, and plat
 
 **Implemented:** Core decodes the complete protocol 2193 camera instruction layout.
 Optional fields preserve absent values, false booleans, and signed actor IDs.
-The handler applies fade instructions and retains other decoded fields for future integrations.
-Those other fields do not yet control the camera.
+This step applied fade instructions and retained other decoded fields.
+The FOV implementation below extends the same handler.
 
 Core resolves overlapping fades, active color retention, defaults, minimum duration, and point tolerance.
 A versioned payload transports the timeline and elapsed time through direct connections and ViaProxy.
@@ -3024,8 +3024,80 @@ Host math results are rounded to floats; these samples do not establish bit-iden
 Spring, back, and elastic samples overshoot their endpoints.
 The implementation must preserve that behavior rather than clamp easing progress results to zero through one.
 
-**Remaining:** FOV overrides and preset application remain unimplemented.
+**Status at this research step:** FOV overrides and preset application had not been implemented.
 The next implementation needs a received preset registry, current FOV state, native easing, client projection, and lifecycle handling.
 Repeated set and clear commands, local settings, player effects, movement schemes, audio listeners, and both connection routes need visible comparisons.
 No native binaries, lookup tables, or raw captures enter the production patch stack.
 All original coverage requirements remain active.
+
+
+## Server FOV transitions, October 5, 2026
+
+**Implemented:** Core resolves FOV targets, timing, easing, interruption, and clear lifecycle through a shared transition model.
+Targets clamp to 30–110 degrees and convert to radians.
+The model preserves the native float-epsilon branch and easing overshoot.
+An immediate set changes the target without replacing an existing transition.
+An eased set retains an existing clear flag.
+An eased clear removes the override on the update after its transition completes.
+Ordinary camera clear also removes the FOV override while leaving fades active.
+
+The versioned `viabedrock:camera_fov` channel carries sequenced live commands and elapsed snapshots through both routes.
+Live clients supply their previous rendered projection and normal local projection to the shared core rules.
+Core retains the unresolved local projection when client context is unavailable.
+Snapshot restoration resolves that value locally and advances the elapsed transition.
+It does not replay the transition from its beginning.
+Historical changes to the local projection during an unsubscribed interval remain unverified.
+
+The add-on applies the result before the world camera builds its projection and culling matrices.
+It preserves the existing separate hand projection and clears pending state at disconnect.
+Rendering does not require a Store session or a local game installation.
+
+**Verified numeric evidence:** The shared easing implementation matches 640 native factor samples across all 32 target easing functions.
+The maximum difference is below 0.00000001.
+The shared frame updater also matches 288 native linear sequences, including epsilon durations, completion, and the removal branch.
+These private comparisons execute the target functions from Bedrock 1.26.51.1, build 51061372.
+They do not establish bit-identical Windows math-library behavior or complete native command setup.
+
+**Native runtime evidence:** An owned local capture contains nine FOV commands with the target wire layout.
+It covers eased set and clear, immediate set and clear, interrupted easing, and a set during an active clear.
+Its scene hash is `0de006222ed875fb74b1a7b9a0000e49a416384581be4cc0987e3003fe0e3700`.
+A second owned capture contains first-person preset selection, two FOV sets, and two ordinary camera clears.
+Its scene hash is `d5e37208ada41438748b6ba2a80544396f655b5cfc202d51c7c82f4a942491ca`.
+Reviewed native screenshots show a narrowed tree view followed by the wider local view after camera clear.
+This also confirms the reset path found in the target instruction application at `1466f1230`.
+
+**Build evidence:** All four projects pass the complete build with routed dependencies and verified VFP artifacts.
+A follow-up full core test run supplies all four private camera fixtures.
+The combined final results report 1,083 passing tests, 124 optional skips, and no failures or errors.
+The private camera data, raw captures, executable, and licensed assets remain outside the patch stack.
+
+**Verified CubeCraft replay:** Both complete 240-second replays pass transport and rendering checks and retain all 311 recorded skin updates.
+The fixture preserves the original scene and adds the nine captured FOV commands at authored times.
+Its scene hash is `cfc2ff19ff3d10645847516370eac7482c9f6b41ad17cb627196fd4f822d8e00`.
+ViaProxy session `2026-10-05T20-20-16.241Z-replay-scene` records 1,550 FOV samples.
+Direct session `2026-10-05T20-24-53.693Z-replay-scene` records 1,514 samples.
+Both receive the initial snapshot and all nine commands without camera errors.
+
+Reviewed screenshots show 30-degree and 110-degree views, immediate 45-degree views, and the restored local view on both routes.
+Out-back easing reaches about 117.9 degrees before settling at 110.
+An immediate target change retains the active six-second transition and finishes at 100 degrees.
+A set during clear preserves the clear flag, overshoots below 44 degrees, and then returns to the local projection.
+These checks verify the transported FOV path alongside the recorded scene.
+They do not establish FOV usage by CubeCraft itself, exact native images, or fresh live-server behavior.
+
+**Verified ordinary clear:** Supplemental 65-second replays preserve the second owned capture and pass complete scene transport on both routes.
+ViaProxy session `2026-10-05T20-30-25.741Z-replay-scene` records 453 FOV samples.
+Direct session `2026-10-05T20-32-47.234Z-replay-scene` records 442 samples.
+Each receives both FOV sets and both camera clears without camera errors.
+Reviewed screenshots show the narrowed views and restored local view.
+
+The direct supplemental replay also passes its broader rendering checks.
+The ViaProxy supplemental client lacks the private built-in asset cache supplied to the direct replay.
+Its skin installation and geometry checks fail, and its recorded avatar does not enter the audited third-person scene.
+Those failures remain recorded; the camera checks do not establish avatar parity for that configuration.
+The complete CubeCraft fixture passes its rendering checks through both routes.
+These observations retain the unavailable-asset and broader skin requirements.
+
+**Remaining:** Presets, transforms, target tracking, splines, attachments, shake, fog, and aim assistance remain incomplete.
+Native local FOV modifiers, first-person integration, pauses, transfers, late subscription, and broader lifecycle behavior need further comparisons.
+The full protocol, gameplay, editor, account, skin, persona, audio, UI, and platform requirements remain active.

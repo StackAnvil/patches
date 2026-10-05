@@ -1,8 +1,8 @@
-# Decode camera instructions and transport native fades
+# Decode camera instructions and resolve server camera effects
 
 ## Purpose
 
-Implement server camera fades in core. Keep the target instruction fields available to integrations that implement the remaining camera behavior.
+Implement server fades and shared FOV transition rules in core. Keep the target instruction fields available to integrations that implement the remaining camera behavior.
 
 ## Target evidence
 
@@ -20,12 +20,27 @@ Core combines fades into a color and opacity timeline. A versioned payload carri
 
 Invalid fade values leave the active timeline unchanged. Malformed wire layouts and excessive counts still fail decoding.
 
+FOV commands clamp targets to 30–110 degrees and store radians. The shared model preserves native easing overshoot and clear removal timing.
+An immediate set retains an existing transition. An eased set retains an existing clear flag.
+Ordinary camera clear removes the FOV override without clearing the fade timeline.
+Native instruction application at `1466f1230` and a captured native clear flow establish this reset.
+
+The `viabedrock:camera_fov` payload carries a sequenced command and an elapsed transition snapshot.
+Live clients supply their current rendered projection and normal local projection to the shared rules.
+Core retains an unresolved local projection when that context is unavailable. A late subscriber resolves it locally.
+Snapshots preserve elapsed progress; they do not restart the transition.
+Historical changes to the local projection during an unsubscribed interval remain unverified.
+
 ## Verification
 
 Targeted tests cover state transport, expiration, overlapping colors, and invalid inputs. Optional private comparisons cover seven server packets, 42 independent fades, and 105 overlapping sequences with 735 samples.
+
+Private FOV comparisons cover 640 native easing factors and 288 native updater sequences.
+The factor comparison differs by less than 0.00000001. These tests exclude command setup and native local-projection lookup.
 
 Full stack builds and rendered connection checks are recorded in the coverage ledger.
 
 ## Remaining work
 
-Only fade behavior is applied. Presets, camera movement, target tracking, FOV, splines, attachments, shake, and aim assistance remain incomplete. Retaining a decoded instruction does not establish camera state or behavioral parity.
+Fade and FOV behavior are applied. Presets, camera movement, target tracking, splines, attachments, shake, and aim assistance remain incomplete.
+Native local FOV modifiers, late context changes, pauses, transfers, and broader lifecycle behavior need further comparisons. Retaining a decoded instruction does not establish camera state or behavioral parity.

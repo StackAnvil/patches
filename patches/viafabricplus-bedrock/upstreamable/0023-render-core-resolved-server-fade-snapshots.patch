@@ -1,7 +1,7 @@
-From d73499fb107286ac011c4d9aff5b645ac9f3746a Mon Sep 17 00:00:00 2001
+From 1984d35db833dde2a89e946c0e10cdcb4d5f6eb5 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 21:42:35 +0200
-Subject: [PATCH] feat(camera): render core-resolved server fade snapshots
+Subject: [PATCH] feat(camera): render core-resolved server camera effects
 
 Subscribe to ViaBedrock's versioned camera fade channel on direct and
 ViaProxy connections. Draw the supplied color and opacity timeline while
@@ -10,34 +10,49 @@ remaining elapsed state after late registration instead of restarting it.
 
 Fade merging and protocol decoding belong to core. The add-on only owns
 the client clock and overlay extraction, and releases state at disconnect.
-Preset movement, FOV, splines, shake and aim assistance remain separate
+Preset movement, splines, shake and aim assistance remain separate
 requirements. Native screenshot comparison must establish overlay order.
+
+Apply server FOV to the world camera before projection and culling setup.
+Use the shared core transition rules with the previous rendered projection
+and the unmodified local projection, preserving native overshoot and clear
+lifecycle. Queue commands until a projection context exists and restore
+elapsed snapshots without replaying the effect from its beginning. Keep
+the separate first-person hand projection and release state at disconnect.
 ---
- .../bedrock/ViaFabricPlusBedrock.java         |  6 +++
- .../bedrock/camera/BedrockCameraFade.java     | 40 +++++++++++++++++++
- .../bedrock/camera/CameraFadePayload.java     | 22 ++++++++++
- .../render/MixinBedrockCameraFade.java        | 23 +++++++++++
- .../render/MixinMinecraftHudVisibility.java   |  2 +
- .../viafabricplus-bedrock.mixins.json         |  3 +-
- 6 files changed, 95 insertions(+), 1 deletion(-)
+ .../bedrock/ViaFabricPlusBedrock.java         | 12 ++++
+ .../bedrock/camera/BedrockCameraFade.java     | 40 +++++++++++
+ .../bedrock/camera/BedrockCameraFov.java      | 68 +++++++++++++++++++
+ .../bedrock/camera/CameraFadePayload.java     | 22 ++++++
+ .../bedrock/camera/CameraFovPayload.java      | 22 ++++++
+ .../render/MixinBedrockCameraFade.java        | 23 +++++++
+ .../render/MixinBedrockCameraFov.java         | 23 +++++++
+ .../render/MixinMinecraftHudVisibility.java   |  4 ++
+ .../viafabricplus-bedrock.mixins.json         |  4 +-
+ 9 files changed, 217 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFade.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFov.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraFadePayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraFovPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraFade.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraFov.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index ee55d33..89afaa5 100644
+index ee55d33..640aacf 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-@@ -45,6 +45,8 @@ import com.viaversion.viafabricplus.bedrock.inventory.CartographyPayload;
+@@ -45,6 +45,10 @@ import com.viaversion.viafabricplus.bedrock.inventory.CartographyPayload;
  import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
  import com.viaversion.viafabricplus.bedrock.input.InputPermissionsPayload;
  import com.viaversion.viafabricplus.bedrock.hud.HudVisibilityPayload;
 +import com.viaversion.viafabricplus.bedrock.camera.CameraFadePayload;
 +import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraFade;
++import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraFov;
++import com.viaversion.viafabricplus.bedrock.camera.CameraFovPayload;
  import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
  import com.viaversion.viafabricplus.bedrock.input.RawInputPayload;
  import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
-@@ -117,6 +119,10 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -117,6 +121,14 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
          PayloadTypeRegistry.clientboundPlay().register(HudVisibilityPayload.TYPE, HudVisibilityPayload.CODEC);
          ClientPlayNetworking.registerGlobalReceiver(HudVisibilityPayload.TYPE,
              (payload, context) -> BedrockHudVisibility.accept(payload.state()));
@@ -45,6 +60,10 @@ index ee55d33..89afaa5 100644
 +        ClientPlayNetworking.registerGlobalReceiver(CameraFadePayload.TYPE,
 +            (payload, context) -> BedrockCameraFade.accept(payload.state()));
 +        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> BedrockCameraFade.clear());
++        PayloadTypeRegistry.clientboundPlay().register(CameraFovPayload.TYPE, CameraFovPayload.CODEC);
++        ClientPlayNetworking.registerGlobalReceiver(CameraFovPayload.TYPE,
++            (payload, context) -> BedrockCameraFov.accept(payload.state()));
++        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> BedrockCameraFov.clear());
          this.settings = new BedrockSettings();
          this.account = new BedrockAccount(ViaFabricPlus.api().path().resolve("bedrock.json"));
          this.appearances = new BedrockAppearanceStore(ViaFabricPlus.api().path().resolve("bedrock-appearances"));
@@ -94,6 +113,80 @@ index 0000000..9cafc21
 +
 +    private static int channel(final float value) { return Math.round(Math.clamp(value, 0, 1) * 255); }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFov.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFov.java
+new file mode 100644
+index 0000000..49fab8a
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/BedrockCameraFov.java
+@@ -0,0 +1,68 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.camera;
++
++import net.raphimc.viabedrock.api.model.CameraFovState;
++import net.raphimc.viabedrock.api.model.CameraFovState.Value;
++import net.raphimc.viabedrock.api.model.CameraFovTimeline;
++
++import java.util.ArrayDeque;
++import java.util.Deque;
++
++/** Supplies local projection inputs to the shared native transition rules. */
++public final class BedrockCameraFov {
++    private static final CameraFovTimeline TIMELINE = new CameraFovTimeline();
++    private static final Deque<Pending> PENDING = new ArrayDeque<>();
++    private static long acceptedSequence = -1;
++    private static long appliedSequence = -1;
++    private static long previousFrame;
++
++    private BedrockCameraFov() { }
++
++    public static void accept(final CameraFovState state) {
++        if (state.sequence() <= acceptedSequence) return;
++        acceptedSequence = state.sequence();
++        PENDING.addLast(new Pending(state, System.nanoTime()));
++    }
++
++    public static CameraFovState.Transition current() { return TIMELINE.state(); }
++
++    public static void clear() {
++        TIMELINE.restore(CameraFovState.Transition.EMPTY);
++        PENDING.clear();
++        acceptedSequence = -1;
++        appliedSequence = -1;
++        previousFrame = 0;
++    }
++
++    public static float project(final float normalDegrees, final float renderedDegrees) {
++        final long now = System.nanoTime();
++        final float delta = previousFrame == 0 ? 0 : Math.max(0, (now - previousFrame) / 1_000_000_000F);
++        previousFrame = now;
++        final Value normal = Value.constant(normalDegrees * CameraFovState.DEGREES_TO_RADIANS);
++        final Value rendered = Float.isFinite(renderedDegrees) && renderedDegrees > 0
++                ? Value.constant(renderedDegrees * CameraFovState.DEGREES_TO_RADIANS) : normal;
++        boolean restored = false;
++        Value projection = null;
++        while (!PENDING.isEmpty()) {
++            final Pending pending = PENDING.removeFirst();
++            final CameraFovState snapshot = pending.state;
++            if (snapshot.command() != null && snapshot.sequence() == appliedSequence + 1) {
++                TIMELINE.apply(snapshot.command(), rendered, normal);
++                restored = false;
++            } else {
++                TIMELINE.restore(snapshot.transition().resolveLocal(normal.radians()));
++                projection = TIMELINE.advance(snapshot.elapsed() + Math.max(0, (now - pending.receivedAt) / 1_000_000_000F));
++                restored = true;
++            }
++            appliedSequence = snapshot.sequence();
++        }
++        if (!restored) projection = TIMELINE.advance(delta);
++        return projection == null ? normalDegrees : projection.radians() / CameraFovState.DEGREES_TO_RADIANS;
++    }
++
++    private record Pending(CameraFovState state, long receivedAt) { }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraFadePayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraFadePayload.java
 new file mode 100644
 index 0000000..1e1434e
@@ -121,6 +214,34 @@ index 0000000..1e1434e
 +
 +    @Override
 +    public Type<CameraFadePayload> type() { return TYPE; }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraFovPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraFovPayload.java
+new file mode 100644
+index 0000000..3a17da1
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/camera/CameraFovPayload.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.camera;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.CameraFovState;
++
++public record CameraFovPayload(CameraFovState state) implements CustomPacketPayload {
++    public static final Type<CameraFovPayload> TYPE = new Type<>(Identifier.parse(CameraFovState.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, CameraFovPayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> CameraFovState.TYPE.write(buffer, payload.state),
++            buffer -> new CameraFovPayload(CameraFovState.TYPE.read(buffer)));
++
++    @Override
++    public Type<CameraFovPayload> type() { return TYPE; }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraFade.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraFade.java
 new file mode 100644
@@ -151,31 +272,70 @@ index 0000000..d122b86
 +        BedrockCameraFade.extract(graphics);
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraFov.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraFov.java
+new file mode 100644
+index 0000000..9c592fc
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockCameraFov.java
+@@ -0,0 +1,23 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
++
++import com.llamalad7.mixinextras.injector.ModifyReturnValue;
++import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraFov;
++import net.minecraft.client.Camera;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.injection.At;
++
++@Mixin(Camera.class)
++public abstract class MixinBedrockCameraFov {
++    @Shadow private float fov;
++
++    @ModifyReturnValue(method = "calculateFov", at = @At("RETURN"))
++    private float serverProjection(final float normal) {
++        return BedrockCameraFov.project(normal, this.fov);
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftHudVisibility.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftHudVisibility.java
-index 9f4d7b5..5dbaec8 100644
+index 9f4d7b5..c654a5d 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftHudVisibility.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinMinecraftHudVisibility.java
-@@ -6,6 +6,7 @@
+@@ -6,6 +6,8 @@
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
  
  import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
 +import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraFade;
++import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraFov;
  import net.minecraft.client.Minecraft;
  import net.minecraft.client.gui.screens.Screen;
  import org.spongepowered.asm.mixin.Mixin;
-@@ -19,6 +20,7 @@ public abstract class MixinMinecraftHudVisibility {
+@@ -19,6 +21,8 @@ public abstract class MixinMinecraftHudVisibility {
      @Inject(method = "disconnect(Lnet/minecraft/client/gui/screens/Screen;ZZ)V", at = @At("HEAD"))
      private void clearHud(final Screen screen, final boolean transferring, final boolean skipSaving, final CallbackInfo ci) {
          BedrockHudVisibility.clear();
 +        BedrockCameraFade.clear();
++        BedrockCameraFov.clear();
      }
  
  }
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index e7195f1..c365a86 100644
+index e7195f1..e3e1fd6 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -120,7 +120,8 @@
+@@ -93,6 +93,7 @@
+     "features.render.MixinBedrockFirstPersonVisibility",
+     "features.render.MixinBedrockFirstPersonBobbing",
+     "features.render.MixinBedrockFirstPersonProjection",
++    "features.render.MixinBedrockCameraFov",
+     "features.render.MixinBedrockHandItemLifecycle",
+     "features.render.MixinBedrockModelPartTransforms",
+     "features.render.MixinPlayerSkinWidget",
+@@ -120,7 +121,8 @@
      "features.particle.MixinBedrockParticlePipelines",
      "features.particle.MixinBedrockParticleRenderType",
      "features.render.MixinBedrockHudVisibility",
