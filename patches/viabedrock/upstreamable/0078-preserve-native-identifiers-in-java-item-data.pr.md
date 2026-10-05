@@ -44,13 +44,19 @@ A rebuilt Java 26.3 client through ViaProxy receives the real spear's tag, delay
 
 ## Original decoded item snapshots
 
-The same standard custom data now carries `viabedrock:item_stack` with schema version 1.
+The same standard custom data now carries `viabedrock:item_stack` with schema version 2.
 Core captures this immutable context before Java mapping and NBT rewriting.
 It retains native item identity, auxiliary data, block runtime identity, shield blocking ticks, ordered restrictions, and typed original user data.
 Absent user data remains distinct from an empty compound.
 Count stays in the current Java stack, and inventory network IDs stay in the inventory tracker.
 
-The parser requires the exact scalar widths and rejects unknown versions or malformed lists.
+Version two preserves declared element types for empty user-data lists.
+ViaNBT serialization and Java 26.3 `NbtIo` discard those declarations.
+Segmented paths and type IDs travel beside the original compound and restore its types on an independent copy.
+Compound keys remain literal, including numeric keys and slashes.
+List indices use canonical decimal notation.
+The parser rejects unknown versions, incorrect widths, invalid paths, conflicting types, and duplicate targets.
+
 Lists and compounds remain independent from source items, encoded tags, and returned accessor values.
 The snapshot represents decoded values after the existing codec's normalization.
 It does not replace raw packet capture or inventory validation.
@@ -60,13 +66,23 @@ The [classifier research](../../../docs/bedrock-coverage.md#native-item-classifi
 Java component equality cannot reconstruct these inputs after translation.
 This patch supplies their transport contract without claiming native classification.
 
-Four focused tests cover typed NBT, ownership, absent compounds, count and network-ID separation, schema versions, and malformed data.
-Direct and ViaProxy clients each preserve seven authored inventory cases through the production decoder, translator, and Minecraft item stack.
+Six focused tests cover typed NBT, ownership, absent compounds, count and network-ID separation, schema versions, and malformed data.
+They also cover empty typed lists inside compounds and lists, untyped empty lists, and invalid restoration metadata.
+
+An independent byte fixture verifies type loss through both ViaNBT and the actual Minecraft 26.3 codec.
+Instruction probes execute 504 comparison cases in the matching native binary.
+Native list equality compares declared types even when empty.
+Float and double equality equate signed zero and reject NaNs, including shared references.
+These probes establish transport requirements, without implementing native item classification.
+
+Direct and ViaProxy clients each preserve nine authored inventory cases through the production decoder, translator, and Minecraft item stack.
 They cover typed nested NBT, restriction ordering and duplicates, shield timestamp bits, map identifier widths, auxiliary data, and block runtime identity.
+Each route restores four typed empty lists and preserves one untyped empty list.
+They include nested compound keys and empty lists inside another list.
 These additional packets enter after the private scene recorder and have separate byte receipts and expected fields.
 Both routes independently preserve the complete recorded 75-second scene prefix.
 
-Dependency builds and final Java suites pass 1,026 tests, with 115 optional skips and no failures or errors.
+Dependency builds and final Java suites pass 1,031 tests, with 115 optional skips and no failures or errors.
 All 90 core patches replay successfully.
 Native item-specific classifiers, restriction hashes, derived auxiliary data, charged-item construction, and complete visible timing remain incomplete or unverified.
 Snapshot overhead remains unmeasured.

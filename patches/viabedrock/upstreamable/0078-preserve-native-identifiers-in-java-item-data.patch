@@ -1,4 +1,4 @@
-From 2130901d5a397331c7a224fb7053e7732d8f5467 Mon Sep 17 00:00:00 2001
+From a13275b10f00c078229749a3badf37b73eb783d5 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 3 Oct 2026 01:05:30 +0200
 Subject: [PATCH] feat(items): preserve native item context in Java data
@@ -41,17 +41,31 @@ substitute Java component equality for native item classification. Target
 Bedrock 1.26.51.1 build 51061372 classifier inspection establishes that
 these inputs affect native retained-hand decisions. Keep native classifier
 and final visual verification gaps explicit.
+
+Use snapshot schema version two to preserve the declared element types of
+empty user-data lists. ViaNBT serialization and Java 26.3 NbtIo discard
+those declarations. Carry explicit segmented paths and type IDs beside
+the original compound, then restore them on an independent copy. Validate
+paths, widths, duplicate targets, and declared types before restoration.
+
+Target executable instruction probes verify that native list equality
+compares declared types even when empty. Float and double comparisons
+also distinguish NaNs while equating signed zero. The metadata preserves
+inputs for that future native comparison without changing Java NBT or
+using Java tag equality as a native classifier.
 ---
- .../api/model/NativeItemStackData.java        |  92 +++++++++++++++
- .../protocol/model/ItemAnimationData.java     |  88 +++++++++++++++
- .../protocol/model/ItemUseDuration.java       |  25 +++++
- .../protocol/rewriter/ItemDataRewriter.java   |  26 +++++
- .../protocol/rewriter/ItemRewriter.java       |   9 ++
- .../api/model/NativeItemStackDataTest.java    | 106 ++++++++++++++++++
- .../protocol/model/ItemAnimationDataTest.java |  90 +++++++++++++++
- .../protocol/model/ItemUseDurationTest.java   |  82 ++++++++++++++
- .../protocol/rewriter/ItemIdentityTest.java   |  58 ++++++++++
- 9 files changed, 576 insertions(+)
+ .../api/model/NativeItemListTypes.java        | 131 ++++++++++++++
+ .../api/model/NativeItemStackData.java        | 101 +++++++++++
+ .../protocol/model/ItemAnimationData.java     |  88 ++++++++++
+ .../protocol/model/ItemUseDuration.java       |  25 +++
+ .../protocol/rewriter/ItemDataRewriter.java   |  26 +++
+ .../protocol/rewriter/ItemRewriter.java       |   9 +
+ .../api/model/NativeItemStackDataTest.java    | 164 ++++++++++++++++++
+ .../protocol/model/ItemAnimationDataTest.java |  90 ++++++++++
+ .../protocol/model/ItemUseDurationTest.java   |  82 +++++++++
+ .../protocol/rewriter/ItemIdentityTest.java   |  58 +++++++
+ 10 files changed, 774 insertions(+)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeItemListTypes.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeItemStackData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/ItemAnimationData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/ItemUseDuration.java
@@ -60,12 +74,149 @@ and final visual verification gaps explicit.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/ItemUseDurationTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemIdentityTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeItemListTypes.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeItemListTypes.java
+new file mode 100644
+index 000000000..b1e6abcf1
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeItemListTypes.java
+@@ -0,0 +1,131 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.nbt.io.TagRegistry;
++import com.viaversion.nbt.tag.ByteTag;
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.nbt.tag.LongArrayTag;
++import com.viaversion.nbt.tag.StringTag;
++import com.viaversion.nbt.tag.Tag;
++
++import java.util.ArrayList;
++import java.util.HashSet;
++import java.util.List;
++
++/** Retains empty-list element types which ordinary Java NBT serialization discards. */
++final class NativeItemListTypes {
++
++    static ListTag<CompoundTag> capture(final CompoundTag data) {
++        final ListTag<CompoundTag> result = new ListTag<>(CompoundTag.class);
++        capture(data, new ArrayList<>(), result);
++        return result;
++    }
++
++    private static void capture(final Tag data, final List<String> path, final ListTag<CompoundTag> result) {
++        if (data instanceof CompoundTag compound) {
++            for (final String key : compound.keySet().stream().sorted().toList()) {
++                path.add(key);
++                capture(compound.get(key), path, result);
++                path.remove(path.size() - 1);
++            }
++        } else if (data instanceof ListTag<?> list) {
++            if (list.isEmpty() && list.getElementType() != null) {
++                final int type = TagRegistry.getIdFor(list.getElementType());
++                if (type <= 0 || type > LongArrayTag.ID) {
++                    throw new IllegalArgumentException("Unregistered item list element type");
++                }
++                final CompoundTag entry = new CompoundTag();
++                entry.put("path", new ListTag<>(path.stream().map(StringTag::new).toList()));
++                entry.putByte("type", (byte) type);
++                result.add(entry);
++            }
++            for (int index = 0; index < list.size(); index++) {
++                path.add(Integer.toString(index));
++                capture(list.get(index), path, result);
++                path.remove(path.size() - 1);
++            }
++        }
++    }
++
++    static CompoundTag restore(final CompoundTag data, final Tag types) {
++        if (types == null) {
++            return data;
++        }
++        if (data == null || !(types instanceof ListTag<?> entries)
++                || !entries.isEmpty() && entries.getElementType() != CompoundTag.class) {
++            throw new IllegalArgumentException("Invalid item list type metadata");
++        }
++        final CompoundTag result = data.copy();
++        final var seen = new HashSet<List<String>>();
++        for (final Tag value : entries) {
++            if (!(value instanceof CompoundTag entry) || !(entry.get("type") instanceof ByteTag type)
++                    || !(entry.get("path") instanceof ListTag<?> segments) || segments.isEmpty()
++                    || segments.getElementType() != StringTag.class) {
++                throw new IllegalArgumentException("Invalid item list type metadata");
++            }
++            if (type.asByte() <= 0 || type.asByte() > LongArrayTag.ID) {
++                throw new IllegalArgumentException("Unknown item list element type");
++            }
++            final Class<? extends Tag> elementType = TagRegistry.getClassFor(type.asByte());
++            final List<String> path = new ArrayList<>();
++            for (final Tag segment : segments) {
++                if (!(segment instanceof StringTag name)) {
++                    throw new IllegalArgumentException("Invalid item list path");
++                }
++                path.add(name.getValue());
++            }
++            if (!seen.add(path)) {
++                throw new IllegalArgumentException("Duplicate item list path");
++            }
++            Tag parent = result;
++            for (int index = 0; index < path.size() - 1; index++) {
++                parent = child(parent, path.get(index));
++            }
++            final String last = path.get(path.size() - 1);
++            final Tag target = child(parent, last);
++            if (!(target instanceof ListTag<?> list) || !list.isEmpty()
++                    || list.getElementType() != null && list.getElementType() != elementType) {
++                throw new IllegalArgumentException("Item list type targets incompatible data");
++            }
++            final ListTag<?> restored = new ListTag<>(elementType);
++            if (parent instanceof CompoundTag compound) {
++                compound.put(last, restored);
++            } else {
++                replace((ListTag<?>) parent, index(last), restored);
++            }
++        }
++        return result;
++    }
++
++    private static Tag child(final Tag parent, final String segment) {
++        if (parent instanceof CompoundTag compound) {
++            return compound.get(segment);
++        } else if (parent instanceof ListTag<?> list) {
++            return list.get(index(segment));
++        }
++        throw new IllegalArgumentException("Invalid item list path");
++    }
++
++    private static int index(final String segment) {
++        final int index = Integer.parseInt(segment);
++        if (index < 0 || !segment.equals(Integer.toString(index))) {
++            throw new IllegalArgumentException("Invalid item list index");
++        }
++        return index;
++    }
++
++    @SuppressWarnings("unchecked")
++    private static void replace(final ListTag<?> parent, final int index, final ListTag<?> value) {
++        // The validated target is already a ListTag, preserving the parent's element class.
++        ((ListTag<Tag>) parent).set(index, value);
++    }
++
++    private NativeItemListTypes() {
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeItemStackData.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeItemStackData.java
 new file mode 100644
-index 000000000..44907efd6
+index 000000000..72a887bc5
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeItemStackData.java
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,101 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -107,7 +258,7 @@ index 000000000..44907efd6
 +
 +    public CompoundTag toTag() {
 +        final CompoundTag tag = new CompoundTag();
-+        tag.putInt("version", 1);
++        tag.putInt("version", 2);
 +        tag.putInt("item_id", this.itemId);
 +        tag.putShort("auxiliary_value", this.auxiliaryValue);
 +        tag.putInt("block_runtime_id", this.blockRuntimeId);
@@ -116,13 +267,17 @@ index 000000000..44907efd6
 +        tag.put("can_break", strings(this.canBreak));
 +        if (this.userData != null) {
 +            tag.put("user_data", this.userData.copy());
++            final var listTypes = NativeItemListTypes.capture(this.userData);
++            if (!listTypes.isEmpty()) {
++                tag.put("user_data_list_types", listTypes);
++            }
 +        }
 +        return tag;
 +    }
 +
 +    /** Unknown versions and malformed snapshots have no native comparison context. */
 +    public static NativeItemStackData fromTag(final CompoundTag tag) {
-+        if (tag == null || !(tag.get("version") instanceof IntTag version) || version.asInt() != 1
++        if (tag == null || !(tag.get("version") instanceof IntTag version) || version.asInt() != 2
 +                || !(tag.get("item_id") instanceof IntTag itemId)
 +                || !(tag.get("auxiliary_value") instanceof ShortTag auxiliary)
 +                || !(tag.get("block_runtime_id") instanceof IntTag blockRuntime)
@@ -135,8 +290,13 @@ index 000000000..44907efd6
 +        if (canPlace == null || canBreak == null) {
 +            return null;
 +        }
-+        return new NativeItemStackData(itemId.asInt(), auxiliary.asShort(), blockRuntime.asInt(), blockingTicks.asLong(),
-+                canPlace, canBreak, tag.getCompoundTag("user_data"));
++        try {
++            final CompoundTag userData = NativeItemListTypes.restore(tag.getCompoundTag("user_data"), tag.get("user_data_list_types"));
++            return new NativeItemStackData(itemId.asInt(), auxiliary.asShort(), blockRuntime.asInt(), blockingTicks.asLong(),
++                    canPlace, canBreak, userData);
++        } catch (final IllegalArgumentException | IndexOutOfBoundsException invalid) {
++            return null;
++        }
 +    }
 +
 +    private static ListTag<StringTag> strings(final List<String> values) {
@@ -391,10 +551,10 @@ index 57a19b5f9..ba2d3dbc4 100644
  
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeItemStackDataTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeItemStackDataTest.java
 new file mode 100644
-index 000000000..43f639cf4
+index 000000000..354b81ebc
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeItemStackDataTest.java
-@@ -0,0 +1,106 @@
+@@ -0,0 +1,164 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -405,6 +565,7 @@ index 000000000..43f639cf4
 +import com.viaversion.nbt.tag.ByteArrayTag;
 +import com.viaversion.nbt.tag.CompoundTag;
 +import com.viaversion.nbt.tag.IntTag;
++import com.viaversion.nbt.tag.FloatTag;
 +import com.viaversion.nbt.tag.ListTag;
 +import com.viaversion.nbt.tag.StringTag;
 +import com.viaversion.viaversion.api.type.Types;
@@ -484,7 +645,7 @@ index 000000000..43f639cf4
 +        final var source = NativeItemStackData.fromItem(new BedrockItem(1));
 +        assertNull(NativeItemStackData.fromTag(null));
 +        final var unknown = source.toTag();
-+        unknown.putInt("version", 2);
++        unknown.putInt("version", 3);
 +        assertNull(NativeItemStackData.fromTag(unknown));
 +        final var wrongWidth = source.toTag();
 +        wrongWidth.putInt("auxiliary_value", 0);
@@ -498,6 +659,63 @@ index 000000000..43f639cf4
 +        final var missing = source.toTag();
 +        missing.remove("blocking_ticks");
 +        assertNull(NativeItemStackData.fromTag(missing));
++    }
++
++    @Test
++    void preservesEmptyListTypesThroughSerializationAtEveryNestedPosition() {
++        final CompoundTag nested = new CompoundTag();
++        nested.put("0", new ListTag<>(FloatTag.class));
++        nested.put("empty/key~", new ListTag<>(StringTag.class));
++        final CompoundTag data = new CompoundTag();
++        data.put("nested", nested);
++        data.put("lists", new ListTag<>(List.of(new ListTag<>(IntTag.class), new ListTag<>(CompoundTag.class))));
++        data.put("compounds", new ListTag<>(List.of(nested.copy())));
++        data.put("unspecified", new ListTag<>());
++        final var source = new NativeItemStackData(1, (short) 0, 0, 0, List.of(), List.of(), data);
++        final var buffer = Unpooled.buffer();
++        try {
++            Types.TAG.write(buffer, source.toTag());
++            final var transported = (CompoundTag) Types.TAG.read(buffer);
++            assertNull(transported.getCompoundTag("user_data").getCompoundTag("nested").getListTag("0").getElementType());
++            final var restored = NativeItemStackData.fromTag(transported);
++            assertEquals(source, restored);
++            assertNull(transported.getCompoundTag("user_data").getCompoundTag("nested").getListTag("0").getElementType());
++            assertEquals(FloatTag.class, restored.userData().getCompoundTag("nested").getListTag("0").getElementType());
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void rejectsListTypeMetadataThatCannotDescribeTheOriginalTree() {
++        final CompoundTag data = new CompoundTag();
++        data.put("empty", new ListTag<>(FloatTag.class));
++        data.put("full", new ListTag<>(List.of(new FloatTag(1))));
++        data.put("nested", new ListTag<>(List.of(new ListTag<>(FloatTag.class))));
++        final var source = new NativeItemStackData(1, (short) 0, 0, 0, List.of(), List.of(), data);
++        final var previousVersion = source.toTag();
++        previousVersion.putInt("version", 1);
++        assertNull(NativeItemStackData.fromTag(previousVersion));
++        final var absent = new NativeItemStackData(1, (short) 0, 0, 0, List.of(), List.of(), null).toTag();
++        absent.put("user_data_list_types", source.toTag().get("user_data_list_types"));
++        assertNull(NativeItemStackData.fromTag(absent));
++        for (final int type : List.of(0, -1, 127, IntTag.ID)) {
++            final var invalid = source.toTag();
++            invalid.getListTag("user_data_list_types", CompoundTag.class).get(0).putByte("type", (byte) type);
++            assertNull(NativeItemStackData.fromTag(invalid));
++        }
++        for (final List<String> path : List.of(List.<String>of(), List.of("missing"), List.of("full"),
++                List.of("empty", "child"), List.of("nested", "-1"), List.of("nested", "00"), List.of("nested", "1"))) {
++            final var invalid = source.toTag();
++            invalid.getListTag("user_data_list_types", CompoundTag.class).get(0)
++                    .put("path", new ListTag<>(path.stream().map(StringTag::new).toList()));
++            assertNull(NativeItemStackData.fromTag(invalid));
++        }
++        final var duplicate = source.toTag();
++        final var types = duplicate.getListTag("user_data_list_types", CompoundTag.class);
++        types.add(types.get(0).copy());
++        assertNull(NativeItemStackData.fromTag(duplicate));
++        assertEquals(source, NativeItemStackData.fromTag(source.toTag()));
 +    }
 +
 +}

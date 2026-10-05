@@ -1791,10 +1791,14 @@ Reference inputs, executable exports, and runtime probes remain private.
 ## Original Bedrock item comparison data
 
 **Implemented:** Core captures an immutable snapshot of each decoded item before Java mapping and NBT rewriting.
-Standard Java custom data carries the snapshot in the versioned `viabedrock:item_stack` compound.
+Standard Java custom data carries the snapshot in the `viabedrock:item_stack` compound with schema version two.
 Its fields retain the native item ID, auxiliary value, block runtime ID, shield blocking ticks, restriction lists, and typed user data.
 Restriction lists preserve order and duplicates.
 Absent user data remains distinct from an empty compound.
+
+Declared types for empty user-data lists travel as segmented paths and type IDs beside that compound.
+Restoration validates literal compound keys, canonical list indices, target emptiness, registered type IDs, and duplicate paths.
+It restores an independent copy without changing Java's NBT format or the transported input.
 
 Count remains the current Java stack count.
 Inventory network IDs remain in the authoritative inventory tracker.
@@ -1817,11 +1821,21 @@ The [classifier research](#native-item-classification-research) records dispatch
 This transport supplies the original decoded inputs for those classifiers.
 It does not implement their native selection rules.
 
-**Verified:** Four core tests cover typed NBT round trips, independent ownership, absent compounds, unsupported versions, wrong widths, and malformed restrictions.
-Direct and ViaProxy clients each receive seven additional authored inventory packets through the production decoder and translator.
+**Verified:** Six core tests cover typed NBT round trips, independent ownership, absent compounds, unsupported versions, wrong widths, and malformed restrictions.
+They also cover empty list declarations at nested positions and malformed restoration metadata.
+
+An independent byte fixture confirms type loss through ViaNBT serialization and the actual Minecraft 26.3 `NbtIo` codec.
+Instruction probes execute 504 native NBT comparison cases in the matching target binary.
+Lists compare their declared types even when empty.
+Float and double equality equate signed zero and reject NaNs, including shared references.
+Compound, string, and array instruction cases remain unverified in this probe.
+
+Direct and ViaProxy clients each receive nine additional authored inventory packets through the production decoder and translator.
 The resulting Minecraft stacks preserve nested compounds, every numeric NBT width, arrays, lists, counts, auxiliary data, and a valid block runtime ID.
 The cases also preserve ordered duplicate restrictions, signed shield timestamp bits, and Long versus Int map identifiers.
 Each client accepts the transported context through the core parser.
+Each route restores four typed empty lists and preserves one untyped empty list.
+These cases include nested compound keys and lists inside another list.
 
 The private harness supplies these additional packets after the recorder and before production decoding.
 It saves their bytes and independently authored expected fields separately from the recorded native scene.
@@ -1838,7 +1852,7 @@ The generic third-person audit still reports no avatar submission for this fixtu
 The transport-only option retains that report.
 Unavailable built-in assets produce account warnings without preventing the server graphs or hand checks from completing.
 
-**Validation:** Dependency builds and final Java suites pass 1,026 tests, with 115 optional skips and no failures or errors.
+**Validation:** Dependency builds and final Java suites pass 1,031 tests, with 115 optional skips and no failures or errors.
 The final suites enable the private native hand-update, shield timeline, and blocking fixtures.
 The full stacks replay all 90 core patches and 23 add-on patches.
 
