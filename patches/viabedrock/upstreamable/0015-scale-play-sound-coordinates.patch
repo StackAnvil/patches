@@ -1,4 +1,4 @@
-From 428fc5800f1fc42e6ec7f5fc19de61a813b774e9 Mon Sep 17 00:00:00 2001
+From 5a054f06253acec95c3103b47118b7bbf71f624f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 19:48:51 +0200
 Subject: [PATCH] feat(effects): transport native resources and sound commands
@@ -116,6 +116,12 @@ pack, empty layer indexes, resource limits and the existing decoder format.
 Small libraries keep the sequential path; large libraries own temporary
 compressed storage and at most four workers. Old cached libraries remain
 readable because decoded resources and metadata do not change.
+
+Stream the actor archive directly after its provenance header, avoiding
+a complete intermediate ZIP copy. Use segmented Commons IO buffers for
+embedded archives to avoid recopying earlier bytes during growth. Keep
+all headers, entry ordering, compression and limits unchanged. Targeted
+tests cover large framed archives and native decoder compatibility.
 ---
  build.gradle                                  |   6 +
  .../api/model/NativeBlockIdentifiers.java     | 144 +++++++++++
@@ -124,9 +130,9 @@ readable because decoded resources and metadata do not change.
  .../viabedrock/api/model/SoundCaptions.java   |  94 ++++++++
  .../api/model/SoundListenerRange.java         |  24 ++
  .../api/model/SoundPlaybackMessage.java       |  76 ++++++
- .../api/resourcepack/NativeActorLibrary.java  | 102 ++++++++
+ .../api/resourcepack/NativeActorLibrary.java  | 101 ++++++++
  .../resourcepack/NativeParticleLibrary.java   |  40 +++
- .../resourcepack/NativeResourceArchive.java   | 147 +++++++++++
+ .../resourcepack/NativeResourceArchive.java   | 153 ++++++++++++
  .../api/resourcepack/NativeSoundLibrary.java  |  56 +++++
  .../api/resourcepack/SoundTranslations.java   |  52 ++++
  .../api/resourcepack/WaveSound.java           | 228 ++++++++++++++++++
@@ -143,7 +149,7 @@ readable because decoded resources and metadata do not change.
  .../api/model/NativeBlockViewTest.java        | 141 +++++++++++
  .../api/model/SoundCaptionsTest.java          |  80 ++++++
  .../api/model/SoundListenerRangeTest.java     |  27 +++
- .../resourcepack/NativeActorLibraryTest.java  | 130 ++++++++++
+ .../resourcepack/NativeActorLibraryTest.java  | 156 ++++++++++++
  .../NativeResourceArchiveTest.java            |  51 ++++
  .../resourcepack/SoundTranslationsTest.java   |  46 ++++
  .../api/resourcepack/WaveSoundTest.java       | 182 ++++++++++++++
@@ -153,7 +159,7 @@ readable because decoded resources and metadata do not change.
  .../protocol/packet/PlaySoundPacketsTest.java |  88 +++++++
  .../protocol/packet/SoundUpdateTest.java      |  79 ++++++
  .../storage/NativeBlockSectionTest.java       |  54 +++++
- 36 files changed, 2676 insertions(+), 71 deletions(-)
+ 36 files changed, 2707 insertions(+), 71 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockIdentifiers.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockSection.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockView.java
@@ -184,10 +190,10 @@ readable because decoded resources and metadata do not change.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/NativeBlockSectionTest.java
 
 diff --git a/build.gradle b/build.gradle
-index 0596643a6..d8776cf84 100644
+index e80713299..8a42a47d9 100644
 --- a/build.gradle
 +++ b/build.gradle
-@@ -171,3 +171,9 @@ registerToolTask("sortJson", "net.raphimc.viabedrock.tool.JsonSorter",
+@@ -172,3 +172,9 @@ registerToolTask("sortJson", "net.raphimc.viabedrock.tool.JsonSorter",
      "Sorts data asset json files in place. Options: --file (required), --deep")
  registerToolTask("convertResourcePack", "net.raphimc.viabedrock.test.ResourcePackConverterTest",
      "Converts a bedrock .mcpack to a java resource pack. Options: --input (required), --output")
@@ -802,10 +808,10 @@ index 000000000..e20d2267d
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibrary.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibrary.java
 new file mode 100644
-index 000000000..4f0f72730
+index 000000000..73dfa115e
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibrary.java
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,101 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -815,7 +821,7 @@ index 000000000..4f0f72730
 +
 +import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 +
-+import java.io.ByteArrayOutputStream;
++import org.apache.commons.io.output.UnsynchronizedByteArrayOutputStream;
 +import java.io.DataInputStream;
 +import java.io.DataOutputStream;
 +import java.io.IOException;
@@ -837,10 +843,7 @@ index 000000000..4f0f72730
 +        if (packs.size() > MAX_PACKS) {
 +            throw new IOException("Too many native actor packs");
 +        }
-+        final byte[] archive = NativeResourceArchive.encode(packs.stream().map(ResourcePack::content).toList(),
-+                NativeActorLibrary::resource, List.of("manifest.json", "pack_manifest.json", "sounds.json"),
-+                List.of(".json", ".material", ".png", ".tga", ".jpg", ".ogg", ".fsb", ".wav", ".lang"));
-+        final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
++        final var bytes = UnsynchronizedByteArrayOutputStream.builder().get();
 +        try (DataOutputStream fields = new DataOutputStream(bytes)) {
 +            fields.writeInt(1);
 +            fields.writeInt(ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
@@ -848,7 +851,9 @@ index 000000000..4f0f72730
 +            for (final ResourcePack pack : packs) {
 +                fields.writeByte(server.test(pack) ? 1 : 0);
 +            }
-+            fields.write(archive);
++            NativeResourceArchive.write(packs.stream().map(ResourcePack::content).toList(),
++                    NativeActorLibrary::resource, List.of("manifest.json", "pack_manifest.json", "sounds.json"),
++                    List.of(".json", ".material", ".png", ".tga", ".jpg", ".ogg", ".fsb", ".wav", ".lang"), fields);
 +        }
 +        return bytes.toByteArray();
 +    }
@@ -956,10 +961,10 @@ index 000000000..a92747977
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeResourceArchive.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeResourceArchive.java
 new file mode 100644
-index 000000000..5ec56a5b8
+index 000000000..8b528490d
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeResourceArchive.java
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,153 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -971,10 +976,11 @@ index 000000000..5ec56a5b8
 +import net.raphimc.viabedrock.api.resourcepack.content.ResourcePackZipWriter;
 +import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 +
-+import java.io.ByteArrayOutputStream;
++import org.apache.commons.io.output.UnsynchronizedByteArrayOutputStream;
 +import java.io.DataInputStream;
 +import java.io.IOException;
 +import java.io.InputStream;
++import java.io.OutputStream;
 +import java.nio.ByteBuffer;
 +import java.util.ArrayList;
 +import java.util.Collections;
@@ -996,6 +1002,13 @@ index 000000000..5ec56a5b8
 +
 +    static byte[] encode(final List<Content> packs, final Predicate<String> permitted,
 +                         final List<String> paths, final List<String> extensions) throws IOException {
++        final var bytes = UnsynchronizedByteArrayOutputStream.builder().get();
++        write(packs, permitted, paths, extensions, bytes);
++        return bytes.toByteArray();
++    }
++
++    static void write(final List<Content> packs, final Predicate<String> permitted,
++                      final List<String> paths, final List<String> extensions, final OutputStream output) throws IOException {
 +        final List<Map<String, byte[]>> selected = select(packs, permitted, paths, extensions);
 +        final List<ResourcePackZipWriter.Entry> entries = new ArrayList<>();
 +        entries.add(new ResourcePackZipWriter.Entry("header", ByteBuffer.allocate(12).putInt(1).putInt(ProtocolConstants.BEDROCK_PROTOCOL_VERSION).putInt(selected.size()).array()));
@@ -1004,9 +1017,7 @@ index 000000000..5ec56a5b8
 +                entries.add(new ResourcePackZipWriter.Entry(index + "/" + file.getKey(), file.getValue()));
 +            }
 +        }
-+        final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-+        ResourcePackZipWriter.write(entries, bytes);
-+        return bytes.toByteArray();
++        ResourcePackZipWriter.write(entries, output);
 +    }
 +
 +    static List<Map<String, byte[]>> select(final List<Content> packs, final Predicate<String> permitted,
@@ -2419,10 +2430,10 @@ index 000000000..65b8a9ea4
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibraryTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibraryTest.java
 new file mode 100644
-index 000000000..0f2e78008
+index 000000000..3b0dd1860
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibraryTest.java
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,156 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2443,6 +2454,7 @@ index 000000000..0f2e78008
 +import java.util.Arrays;
 +import java.util.List;
 +import java.util.Map;
++import java.util.Random;
 +import java.util.UUID;
 +import java.util.zip.ZipEntry;
 +import java.util.zip.ZipOutputStream;
@@ -2480,6 +2492,31 @@ index 000000000..0f2e78008
 +        assertFalse(layers.get(1).resources().containsKey("scripts/private.js"));
 +        assertArrayEquals(encoded, NativeActorLibrary.encode(List.of(lower, actor, upper), pack -> pack != lower));
 +        assertThrows(UnsupportedOperationException.class, () -> layers.get(1).resources().clear());
++    }
++
++    @Test
++    void largeFramedArchivesPreserveProvenanceAndBytesAcrossBufferGrowth() throws Exception {
++        final InMemoryContent lower = content(1);
++        final InMemoryContent empty = content(2);
++        final InMemoryContent upper = content(3);
++        final byte[] data = new byte[3 * 1024 * 1024];
++        new Random(2193).nextBytes(data);
++        lower.put("textures/a.png", data);
++        lower.put("textures/b.png", new byte[data.length]);
++        upper.put("textures/a.png", data.clone());
++        final List<ResourcePack> packs = List.of(new ResourcePack(lower), new ResourcePack(empty), new ResourcePack(upper));
++        final byte[] archive = NativeActorLibrary.encode(packs, pack -> pack == packs.get(2));
++        assertTrue(archive.length > 4 * 1024 * 1024);
++        final var layers = NativeActorLibrary.decode(new ByteArrayInputStream(archive));
++        assertEquals(List.of(false, false, true), layers.stream().map(NativeActorLibrary.Layer::server).toList());
++        for (int index = 0; index < packs.size(); index++) {
++            final var expected = packs.get(index).content();
++            assertEquals(expected.getFilesDeep("", "").size(), layers.get(index).resources().size());
++            for (final String path : expected.getFilesDeep("", "")) {
++                assertArrayEquals(expected.get(path), layers.get(index).resources().get(path));
++            }
++        }
++        assertArrayEquals(archive, NativeActorLibrary.encode(packs, pack -> pack == packs.get(2)));
 +    }
 +
 +    @Test

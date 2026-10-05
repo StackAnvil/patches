@@ -1890,3 +1890,51 @@ These phase improvements do not prevent every timeout; transport liveness remain
 Both routes load two newly converted packs and preserve the complete recorded scene hash and all 216 skin updates.
 No unresolved model or block errors occur.
 These checks establish loading regressions, not complete native visual parity or faster joining.
+
+## Resource conversion: segmented buffers and actor archive streaming
+
+**Implemented:** Core uses segmented Commons IO buffers for memory ZIP output and embedded native libraries.
+Actor encoding writes its ZIP directly after the provenance header, without an intermediate complete archive.
+Each encoder owns its buffer. Compression workers retain their separate backing stores.
+Disk-cache output still streams directly to its temporary file.
+The [Commons IO API](https://commons.apache.org/proper/commons-io/apidocs/org/apache/commons/io/output/UnsynchronizedByteArrayOutputStream.html) describes the buffer and independent result bytes.
+
+The existing CubeCraft fixture contains five server packs and 42 licensed image layers from Bedrock 1.26.51.1.
+Java 25 uses four available processors and a 2 GiB heap on Linux.
+Eight conversions exclude two warm-ups in separate baseline and candidate processes.
+
+| Measured stage | Baseline | Candidate |
+| --- | --- | --- |
+| Actor encoder allocation on its calling thread | 315.2 MiB | 209.7 MiB |
+| Actor encoder CPU on its calling thread | 103.6 ms | 83.1 ms |
+| Memory ZIP allocation on its calling thread | 449.8 MiB | 308.7 MiB |
+| Rewrite plus memory ZIP median | 1145 ms | 1102 ms |
+
+Actor allocation decreases by about 33 percent, and memory packaging allocation decreases by about 31 percent.
+The measured conversion time decreases by about 4 percent. This small timing difference needs broader measurements.
+Allocation totals exclude compression worker threads and do not measure peak heap usage.
+The disk-cache writer already avoids the outer memory ZIP buffer, so its gains differ.
+
+Eight trials with two simultaneous conversions exclude two warm-ups.
+Median pair completion is 1436 ms for the baseline and 1413 ms for the candidate.
+This small timing difference does not establish a general concurrent speedup.
+
+All four embedded libraries remain byte-identical, including the actor header and provenance bytes.
+All 15,823 original entries and 786 shared parents remain equivalent after the existing model and JSON normalization.
+Both complete outputs occupy about 78.2 MB.
+No decoder format or cache fingerprint changes.
+
+Targeted tests cover memory versus streamed output across buffer growth and large actor archives with provenance and texture overrides.
+Existing tests retain archive limits, deterministic output, interruption, worker cleanup, output errors, and cache retries.
+Both owning patches pass their targeted suites and Checkstyle tasks before the remaining stack applies.
+The cache patch applies independently to the pinned upstream base, and the full stack replays and builds.
+The full suites report 1,033 passing Java tests, no failures or errors, and 115 optional skips.
+
+These measurements exclude acquisition, downloads, prompts, client reloads, and complete joining times.
+Larger concurrent stacks, macOS, and Windows remain unverified for this change.
+Transport liveness remains necessary during acquisition and other waits.
+
+Fresh disk-cache replays pass complete transport and rendering checks on direct and ViaProxy connections.
+Both routes load two newly converted packs and preserve the complete recorded scene hash.
+All 216 recorded skin updates remain unchanged, with no unresolved model or block errors.
+These checks establish loading and rendering regressions, not complete native visual parity or faster joining.

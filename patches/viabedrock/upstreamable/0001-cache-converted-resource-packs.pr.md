@@ -157,3 +157,14 @@ Unrelated language paths can parse independently.
 
 The owning patch applies alone to its pinned upstream base and passes 18 tests and both Checkstyle tasks.
 See the [native library benchmark](0015-scale-play-sound-coordinates.pr.md#compress-entries-within-large-native-libraries) for measured conversion gains.
+
+## Use segmented memory output
+
+Memory ZIP output now uses a segmented Commons IO buffer, avoiding copies of earlier bytes during growth.
+Disk-cache output retains its existing file stream.
+A regression compares byte-identical memory and streamed archives across the initial four-MiB buffer boundary.
+Existing cleanup, interruption, retry, and deterministic output tests still pass.
+
+The private CubeCraft profile reduces calling-thread packaging allocation from 449.8 MiB to 308.7 MiB, about 31 percent.
+This measures memory output, not peak heap usage or the disk-cache writer.
+See the [combined buffer measurements](0015-scale-play-sound-coordinates.pr.md#reduce-archive-buffer-copies) for the fixture, timing, and remaining limits.

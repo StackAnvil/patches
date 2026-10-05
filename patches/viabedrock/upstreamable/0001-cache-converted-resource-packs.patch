@@ -1,4 +1,4 @@
-From 061cb8eec212ade5b1642955a9d763409c5f23bf Mon Sep 17 00:00:00 2001
+From 64bd35f786676a379efa0c8bb9da5d9db25edfb4 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:52:24 +0200
 Subject: [PATCH] perf(resource-packs): cache converted packs by content
@@ -82,9 +82,14 @@ Bundled Content instances are reused across connections; HashMap
 computeIfAbsent races during concurrent cold definition loads and can
 throw ConcurrentModificationException. Retain one immutable parsed table
 per path without serializing unrelated language paths.
+
+Use a segmented Commons IO buffer for memory archives, avoiding copies
+of all preceding bytes each time the output grows. Keep disk streaming
+and deterministic archive bytes unchanged. Verify equivalence across
+buffer growth and the existing cache failure, retry and worker cases.
 ---
- build.gradle                                  |  11 +
- .../api/resourcepack/content/Content.java     |  27 +-
+ build.gradle                                  |  12 +
+ .../api/resourcepack/content/Content.java     |  29 +-
  .../content/ResourcePackZipWriter.java        | 178 +++++++++++
  .../http/ConvertedResourcePackCache.java      | 253 +++++++++++++++
  .../http/ConverterDataManifest.java           |  74 +++++
@@ -98,11 +103,11 @@ per path without serializing unrelated language paths.
  .../impl/NoOpResourcePackProvider.java        |  11 +-
  .../storage/ResourcePackLoadStateTracker.java |  62 ++--
  .../content/ContentLanguageCacheTest.java     |  65 ++++
- .../content/ResourcePackZipWriterTest.java    | 154 +++++++++
+ .../content/ResourcePackZipWriterTest.java    | 166 ++++++++++
  .../http/ConvertedResourcePackCacheTest.java  | 255 +++++++++++++++
  .../ResourcePackClientResponseTest.java       |  74 +++++
  .../ResourcePackLoadStateTrackerTest.java     |  43 +++
- 19 files changed, 1545 insertions(+), 261 deletions(-)
+ 19 files changed, 1560 insertions(+), 261 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConverterDataManifest.java
@@ -114,18 +119,19 @@ per path without serializing unrelated language paths.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/ResourcePackLoadStateTrackerTest.java
 
 diff --git a/build.gradle b/build.gradle
-index b081953c4..0596643a6 100644
+index b081953c4..e80713299 100644
 --- a/build.gradle
 +++ b/build.gradle
-@@ -103,6 +103,7 @@ dependencies {
+@@ -103,6 +103,8 @@ dependencies {
          exclude group: "com.viaversion.mcstructs", module: "snbt"
          exclude group: "com.viaversion.mcstructs", module: "converter"
      }
 +    api "org.apache.commons:commons-compress:1.28.0"
++    implementation "commons-io:commons-io:2.20.0"
      api "com.vdurmont:semver4j:3.1.0"
      api "com.mojang:brigadier:1.3.10"
      api "at.yawk.lz4:lz4-java:1.12.0"
-@@ -116,6 +117,16 @@ dependencies {
+@@ -116,6 +118,16 @@ dependencies {
      toolImplementation "org.jsoup:jsoup:1.23.2"
      toolImplementation "org.ow2.asm:asm-tree:9.10.1"
      toolImplementation "net.lenni0451.commons:asm:1.9.2"
@@ -143,10 +149,17 @@ index b081953c4..0596643a6 100644
  
  def registerToolTask(String name, String toolMainClass, String toolDescription) {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
-index 622e99d2e..3862ea512 100644
+index 622e99d2e..88f4e0beb 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
-@@ -26,17 +26,16 @@ import java.awt.image.BufferedImage;
+@@ -21,22 +21,23 @@ import com.viaversion.viaversion.libs.gson.JsonObject;
+ import com.viaversion.viaversion.util.GsonUtil;
+ import net.raphimc.viabedrock.api.util.JsonUtil;
+ 
++import org.apache.commons.io.output.UnsynchronizedByteArrayOutputStream;
++
+ import javax.imageio.ImageIO;
+ import java.awt.image.BufferedImage;
  import java.io.ByteArrayInputStream;
  import java.io.ByteArrayOutputStream;
  import java.io.IOException;
@@ -167,7 +180,7 @@ index 622e99d2e..3862ea512 100644
  
      public abstract List<String> getFilesShallow(final String path, final String extension);
  
-@@ -161,18 +160,14 @@ public abstract class Content {
+@@ -161,18 +162,14 @@ public abstract class Content {
      }
  
      public byte[] toZip() throws IOException {
@@ -183,7 +196,7 @@ index 622e99d2e..3862ea512 100644
 -        }
 -        zipOutputStream.close();
 -        return baos.toByteArray();
-+        final ByteArrayOutputStream output = new ByteArrayOutputStream(4 * 1024 * 1024);
++        final var output = UnsynchronizedByteArrayOutputStream.builder().setBufferSize(4 * 1024 * 1024).get();
 +        this.writeZip(output);
 +        return output.toByteArray();
 +    }
@@ -1723,10 +1736,10 @@ index 000000000..c0f072f08
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriterTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriterTest.java
 new file mode 100644
-index 000000000..80638cd70
+index 000000000..0b799ed28
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriterTest.java
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,166 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1817,6 +1830,18 @@ index 000000000..80638cd70
 +            }
 +            assertNull(zip.getNextEntry());
 +        }
++    }
++
++    @Test
++    void memoryAndStreamedArchivesRemainIdenticalAcrossBufferGrowth() throws Exception {
++        final Content content = new InMemoryContent();
++        for (final var entry : entries()) {
++            content.put(entry.path(), entry.data());
++        }
++        final ByteArrayOutputStream streamed = new ByteArrayOutputStream();
++        content.writeZip(streamed);
++        assertTrue(streamed.size() > 4 * 1024 * 1024);
++        assertArrayEquals(streamed.toByteArray(), content.toZip());
 +    }
 +
 +    @Test
