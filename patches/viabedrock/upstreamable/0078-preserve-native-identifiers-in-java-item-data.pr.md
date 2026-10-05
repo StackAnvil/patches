@@ -40,3 +40,34 @@ The [Creator kinetic-weapon reference](https://learn.microsoft.com/en-us/minecra
 All four build targets and the Prism bundle pass. Core passes 385 tests with no failures or skips. Tests cover copied metadata, optional conditions, both NBT widths, signed and unsigned boundaries, invalid swing values, and immutable tags. The add-on reports 482 tests, no failures, and 96 optional fixture skips. Native kinetic, swing, tag, item-name, and duration query fixtures are enabled.
 
 A rebuilt Java 26.3 client through ViaProxy receives the real spear's tag, delay 15, condition durations 300/200/100, and 13 swing ticks. Production queries return these values. The licensed player graph, sampled with those production queries and controlled use ticks, produces right-arm X rotations of -30, -62, and -30 degrees for hold, use, and release. This verifies graph activation and query binding. It does not establish visible native motion or complete attack timing parity.
+
+
+## Original decoded item snapshots
+
+The same standard custom data now carries `viabedrock:item_stack` with schema version 1.
+Core captures this immutable context before Java mapping and NBT rewriting.
+It retains native item identity, auxiliary data, block runtime identity, shield blocking ticks, ordered restrictions, and typed original user data.
+Absent user data remains distinct from an empty compound.
+Count stays in the current Java stack, and inventory network IDs stay in the inventory tracker.
+
+The parser requires the exact scalar widths and rejects unknown versions or malformed lists.
+Lists and compounds remain independent from source items, encoded tags, and returned accessor values.
+The snapshot represents decoded values after the existing codec's normalization.
+It does not replace raw packet capture or inventory validation.
+
+Bedrock 1.26.51.1 build 51061372 reads these inputs in its retained-hand classifiers.
+The [classifier research](../../../docs/bedrock-coverage.md#native-item-classification-research) records the versioned evidence and remaining gaps.
+Java component equality cannot reconstruct these inputs after translation.
+This patch supplies their transport contract without claiming native classification.
+
+Four focused tests cover typed NBT, ownership, absent compounds, count and network-ID separation, schema versions, and malformed data.
+Direct and ViaProxy clients each preserve seven authored inventory cases through the production decoder, translator, and Minecraft item stack.
+They cover typed nested NBT, restriction ordering and duplicates, shield timestamp bits, map identifier widths, auxiliary data, and block runtime identity.
+These additional packets enter after the private scene recorder and have separate byte receipts and expected fields.
+Both routes independently preserve the complete recorded 75-second scene prefix.
+
+Dependency builds and final Java suites pass 1,026 tests, with 115 optional skips and no failures or errors.
+All 90 core patches replay successfully.
+Native item-specific classifiers, restriction hashes, derived auxiliary data, charged-item construction, and complete visible timing remain incomplete or unverified.
+Snapshot overhead remains unmeasured.
+The [coverage ledger](../../../docs/bedrock-coverage.md#original-bedrock-item-comparison-data) records the complete evidence and limits.

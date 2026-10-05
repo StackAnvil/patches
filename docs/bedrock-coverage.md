@@ -1782,6 +1782,67 @@ The private native hand-update, shield timeline, and blocking fixtures are enabl
 The full stacks replay all 90 core patches and 23 add-on patches.
 
 **Remaining:** Item classification still uses Java comparison rules to select retain, update, or animate.
-Original Bedrock comparison data, item-specific classifiers, the selected-slot cache, and complete item-use timing need implementation and verification.
+Item-specific classifiers, the selected-slot cache, and complete item-use timing need implementation and verification.
+The following section records original Bedrock comparison data transport.
 Matching height and copy decisions does not establish final held-item drawing or visible swap parity.
 Reference inputs, executable exports, and runtime probes remain private.
+
+
+## Original Bedrock item comparison data
+
+**Implemented:** Core captures an immutable snapshot of each decoded item before Java mapping and NBT rewriting.
+Standard Java custom data carries the snapshot in the versioned `viabedrock:item_stack` compound.
+Its fields retain the native item ID, auxiliary value, block runtime ID, shield blocking ticks, restriction lists, and typed user data.
+Restriction lists preserve order and duplicates.
+Absent user data remains distinct from an empty compound.
+
+Count remains the current Java stack count.
+Inventory network IDs remain in the authoritative inventory tracker.
+The snapshot describes decoded values, including normalization from the existing Bedrock codec.
+It does not preserve raw packet bytes or authorize inventory requests.
+Unknown snapshot versions, incorrect scalar widths, and malformed lists return no comparison context.
+
+The snapshot owns its lists and user data independently from source items, encoded compounds, and accessor results.
+The existing inventory path carries the data through direct connections and ViaProxy.
+The production implementation requires no local Bedrock installation.
+
+The add-on excludes the snapshot from its temporary Java fallback comparison views.
+It also normalizes empty custom data in those views while preserving every remaining field and component.
+A context-only change refreshes the retained stack immediately without an additional swap animation.
+The incoming and retained stacks keep their complete data.
+Native identifiers, compiled animation fields, and unrelated custom data still affect fallback comparisons.
+
+**Native evidence:** The matching 1.26.51.1 executable, build 51061372, reads these inputs in its retained-hand classifiers.
+The [classifier research](#native-item-classification-research) records dispatch, comparison branches, restriction hashes, and remaining construction gaps.
+This transport supplies the original decoded inputs for those classifiers.
+It does not implement their native selection rules.
+
+**Verified:** Four core tests cover typed NBT round trips, independent ownership, absent compounds, unsupported versions, wrong widths, and malformed restrictions.
+Direct and ViaProxy clients each receive seven additional authored inventory packets through the production decoder and translator.
+The resulting Minecraft stacks preserve nested compounds, every numeric NBT width, arrays, lists, counts, auxiliary data, and a valid block runtime ID.
+The cases also preserve ordered duplicate restrictions, signed shield timestamp bits, and Long versus Int map identifiers.
+Each client accepts the transported context through the core parser.
+
+The private harness supplies these additional packets after the recorder and before production decoding.
+It saves their bytes and independently authored expected fields separately from the recorded native scene.
+Both routes preserve the complete recorded 75-second scene prefix.
+That prefix check does not establish native origin or native behavior for the additional inputs.
+
+Each route passes 32 metadata-refresh checks through Minecraft's actual hand tick.
+These checks cover both hands, busy and available hands, two initial heights, absent or empty custom data, and existing metadata.
+Four additional checks preserve Java's comparison behavior for changed identifiers and unrelated custom data.
+Both routes retain the existing height, copy-boundary, blocking, shield bob, clock, and hand rendering results.
+
+Both clients reach playable spawn and load the accepted server graphs.
+The generic third-person audit still reports no avatar submission for this fixture's first-person-only controllers.
+The transport-only option retains that report.
+Unavailable built-in assets produce account warnings without preventing the server graphs or hand checks from completing.
+
+**Validation:** Dependency builds and final Java suites pass 1,026 tests, with 115 optional skips and no failures or errors.
+The final suites enable the private native hand-update, shield timeline, and blocking fixtures.
+The full stacks replay all 90 core patches and 23 add-on patches.
+
+**Remaining:** Native item-specific classification, restriction hashing, derived auxiliary data, nested charged items, and selected-slot timing remain incomplete or unverified.
+Complete item-use timing and final held-item pixels still require native comparisons.
+The extra snapshot's memory, bandwidth, and conversion costs remain unmeasured.
+Private fixtures, packet bytes, and diagnostics remain outside the repository.

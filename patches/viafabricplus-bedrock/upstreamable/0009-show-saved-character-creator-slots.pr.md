@@ -1936,5 +1936,31 @@ The dependency builds and final Java suites pass 1,022 tests, with 115 optional 
 All 23 add-on patches replay successfully.
 
 Item comparison still uses Java selection rules, with full stack equality as the retain case.
-Original Bedrock comparison data, item-specific classifiers, selected-slot timing, and complete visible swap parity remain incomplete or unverified.
+Item-specific classifiers, selected-slot timing, and complete visible swap parity remain incomplete or unverified.
+The following section records original Bedrock comparison data transport.
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-hand-height-and-retained-item-lifecycle) records the evidence and limits.
+
+
+### Original item data and Java fallback comparisons
+
+Core now transports decoded original item data in the versioned `viabedrock:item_stack` custom-data compound.
+The retained Minecraft stack keeps this context independently from the equipped stack.
+The add-on removes only this compound from temporary Java fallback comparison views and normalizes empty custom data there.
+Other components, native identifiers, and compiled animation fields remain comparison inputs.
+A metadata-only change immediately refreshes the retained copy without triggering a swap animation.
+
+Direct and ViaProxy runtime probes each preserve seven authored inventory cases through the production decoder and Minecraft stack.
+Both clients pass 32 metadata-refresh cases through the actual hand tick, including busy hands and absent or empty custom data.
+Four additional cases retain Java's comparison behavior for changed identifiers and unrelated custom data.
+The original native scene prefix remains complete on both routes.
+The additional authored packets enter after scene recording and have separate receipts.
+
+Existing hand height, copy, blocking, bob, clock, and rendering checks still pass.
+The fixture's first-person-only controllers still produce the expected generic third-person audit failure.
+Account warnings for unavailable built-in assets do not prevent accepted server graphs or hand checks from completing.
+Dependency builds and final Java suites pass 1,026 tests, with 115 optional skips and no failures or errors.
+All 23 add-on patches replay successfully.
+
+Item selection still uses Java fallback rules.
+Native item-specific comparison, restriction hashing, derived auxiliary data, charged items, selected-slot timing, and final visible parity remain incomplete or unverified.
+The [coverage ledger](../../../docs/bedrock-coverage.md#original-bedrock-item-comparison-data) records the contract and limits.

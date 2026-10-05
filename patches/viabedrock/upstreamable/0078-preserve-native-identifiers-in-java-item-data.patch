@@ -1,4 +1,4 @@
-From 0272fdaf2417d820af776cbd2479cf786a3b75a1 Mon Sep 17 00:00:00 2001
+From 2130901d5a397331c7a224fb7053e7732d8f5467 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 3 Oct 2026 01:05:30 +0200
 Subject: [PATCH] feat(items): preserve native item context in Java data
@@ -28,21 +28,136 @@ Native 1.26.51.1 callback execution verifies main-hand lookup, optional
 condition flags, unsigned delay, signed condition durations, tag matching,
 and swing tick conversion. Render metadata travels in standard custom
 data so direct connections and ViaProxy share the same contract.
+
+Capture immutable decoded stack context before Java rewriting. Carry the
+native item ID, auxiliary value, block runtime ID, shield blocking ticks,
+ordered restriction lists, and original typed user data in a versioned
+viabedrock:item_stack custom-data compound. Preserve absent versus empty
+user data and independent ownership through the Java NBT wire format.
+
+Count remains the live Java stack count, and inventory network IDs stay
+within inventory tracking. This context does not authorize requests or
+substitute Java component equality for native item classification. Target
+Bedrock 1.26.51.1 build 51061372 classifier inspection establishes that
+these inputs affect native retained-hand decisions. Keep native classifier
+and final visual verification gaps explicit.
 ---
- .../protocol/model/ItemAnimationData.java     | 88 ++++++++++++++++++
- .../protocol/model/ItemUseDuration.java       | 25 ++++++
- .../protocol/rewriter/ItemDataRewriter.java   | 23 +++++
- .../protocol/rewriter/ItemRewriter.java       |  7 ++
- .../protocol/model/ItemAnimationDataTest.java | 90 +++++++++++++++++++
- .../protocol/model/ItemUseDurationTest.java   | 82 +++++++++++++++++
- .../protocol/rewriter/ItemIdentityTest.java   | 54 +++++++++++
- 7 files changed, 369 insertions(+)
+ .../api/model/NativeItemStackData.java        |  92 +++++++++++++++
+ .../protocol/model/ItemAnimationData.java     |  88 +++++++++++++++
+ .../protocol/model/ItemUseDuration.java       |  25 +++++
+ .../protocol/rewriter/ItemDataRewriter.java   |  26 +++++
+ .../protocol/rewriter/ItemRewriter.java       |   9 ++
+ .../api/model/NativeItemStackDataTest.java    | 106 ++++++++++++++++++
+ .../protocol/model/ItemAnimationDataTest.java |  90 +++++++++++++++
+ .../protocol/model/ItemUseDurationTest.java   |  82 ++++++++++++++
+ .../protocol/rewriter/ItemIdentityTest.java   |  58 ++++++++++
+ 9 files changed, 576 insertions(+)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeItemStackData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/ItemAnimationData.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/ItemUseDuration.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeItemStackDataTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/ItemAnimationDataTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/ItemUseDurationTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemIdentityTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeItemStackData.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeItemStackData.java
+new file mode 100644
+index 000000000..44907efd6
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeItemStackData.java
+@@ -0,0 +1,92 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.IntTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.nbt.tag.LongTag;
++import com.viaversion.nbt.tag.ShortTag;
++import com.viaversion.nbt.tag.StringTag;
++import com.viaversion.nbt.tag.Tag;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++
++import java.util.Arrays;
++import java.util.List;
++
++/** Immutable decoded Bedrock stack data before Java conversion. Count stays in the Java stack. */
++public record NativeItemStackData(int itemId, short auxiliaryValue, int blockRuntimeId, long blockingTicks,
++                                  List<String> canPlace, List<String> canBreak, CompoundTag userData) {
++
++    public NativeItemStackData {
++        canPlace = List.copyOf(canPlace);
++        canBreak = List.copyOf(canBreak);
++        userData = userData == null ? null : userData.copy();
++    }
++
++    @Override
++    public CompoundTag userData() {
++        return this.userData == null ? null : this.userData.copy();
++    }
++
++    public static NativeItemStackData fromItem(final BedrockItem item) {
++        return new NativeItemStackData(item.identifier(), item.data(), item.blockRuntimeId(), item.blockingTicks(),
++                Arrays.asList(item.canPlace()), Arrays.asList(item.canBreak()), item.tag());
++    }
++
++    public CompoundTag toTag() {
++        final CompoundTag tag = new CompoundTag();
++        tag.putInt("version", 1);
++        tag.putInt("item_id", this.itemId);
++        tag.putShort("auxiliary_value", this.auxiliaryValue);
++        tag.putInt("block_runtime_id", this.blockRuntimeId);
++        tag.putLong("blocking_ticks", this.blockingTicks);
++        tag.put("can_place", strings(this.canPlace));
++        tag.put("can_break", strings(this.canBreak));
++        if (this.userData != null) {
++            tag.put("user_data", this.userData.copy());
++        }
++        return tag;
++    }
++
++    /** Unknown versions and malformed snapshots have no native comparison context. */
++    public static NativeItemStackData fromTag(final CompoundTag tag) {
++        if (tag == null || !(tag.get("version") instanceof IntTag version) || version.asInt() != 1
++                || !(tag.get("item_id") instanceof IntTag itemId)
++                || !(tag.get("auxiliary_value") instanceof ShortTag auxiliary)
++                || !(tag.get("block_runtime_id") instanceof IntTag blockRuntime)
++                || !(tag.get("blocking_ticks") instanceof LongTag blockingTicks)
++                || tag.contains("user_data") && !(tag.get("user_data") instanceof CompoundTag)) {
++            return null;
++        }
++        final var canPlace = readStrings(tag.get("can_place"));
++        final var canBreak = readStrings(tag.get("can_break"));
++        if (canPlace == null || canBreak == null) {
++            return null;
++        }
++        return new NativeItemStackData(itemId.asInt(), auxiliary.asShort(), blockRuntime.asInt(), blockingTicks.asLong(),
++                canPlace, canBreak, tag.getCompoundTag("user_data"));
++    }
++
++    private static ListTag<StringTag> strings(final List<String> values) {
++        final var tag = new ListTag<>(StringTag.class);
++        for (final String value : values) {
++            tag.add(new StringTag(value));
++        }
++        return tag;
++    }
++
++    private static List<String> readStrings(final Tag tag) {
++        if (!(tag instanceof ListTag<?> list)) {
++            return null;
++        }
++        if (!list.isEmpty() && list.getElementType() != StringTag.class) {
++            return null;
++        }
++        return list.getValue().stream().map(value -> ((StringTag) value).getValue()).toList();
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemAnimationData.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemAnimationData.java
 new file mode 100644
 index 000000000..acdb84c58
@@ -169,21 +284,23 @@ index 000000000..060368e60
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
-index 2635bd6ff..d81445cee 100644
+index 2635bd6ff..7eeeba7a8 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
-@@ -43,6 +43,7 @@ import net.raphimc.viabedrock.api.util.TextUtil;
+@@ -43,6 +43,8 @@ import net.raphimc.viabedrock.api.util.TextUtil;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Enchant_Type;
  import net.raphimc.viabedrock.protocol.model.BedrockItem;
 +import net.raphimc.viabedrock.protocol.model.ItemAnimationData;
++import net.raphimc.viabedrock.api.model.NativeItemStackData;
  
  import java.util.ArrayList;
  import java.util.HashMap;
-@@ -53,6 +54,10 @@ import java.util.logging.Level;
+@@ -53,6 +55,11 @@ import java.util.logging.Level;
  
  public final class ItemDataRewriter {
  
++    public static final String BEDROCK_STACK_TAG = "viabedrock:item_stack";
 +    public static final String BEDROCK_IDENTIFIER_TAG = "viabedrock:item_identifier";
 +    public static final String BEDROCK_ANIMATION_TAG = "viabedrock:item_animation";
 +    public static final String BEDROCK_USE_DURATION_TAG = "viabedrock:item_use_duration";
@@ -191,14 +308,15 @@ index 2635bd6ff..d81445cee 100644
      private static final Set<String> DYED_LEATHER_ARMOR_ITEMS = Set.of(
              "minecraft:leather_helmet", "minecraft:leather_chestplate",
              "minecraft:leather_leggings", "minecraft:leather_boots");
-@@ -255,6 +260,24 @@ public final class ItemDataRewriter {
+@@ -255,6 +262,25 @@ public final class ItemDataRewriter {
          }
      }
  
 +    /** Retain native identity and animation context across Java mappings and proxy connections. */
-+    static CompoundTag withBedrockItemData(final CompoundTag javaData, final String identifier, final ItemAnimationData animation) {
++    static CompoundTag withBedrockItemData(final CompoundTag javaData, final String identifier, final ItemAnimationData animation, final NativeItemStackData nativeStack) {
 +        final CompoundTag data = javaData == null ? new CompoundTag() : javaData.copy();
 +        data.putString(BEDROCK_IDENTIFIER_TAG, identifier);
++        data.put(BEDROCK_STACK_TAG, nativeStack.toTag());
 +        if (animation.useDurationTicks() != null) {
 +            data.putInt(BEDROCK_USE_DURATION_TAG, animation.useDurationTicks());
 +        } else {
@@ -217,10 +335,18 @@ index 2635bd6ff..d81445cee 100644
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index 57a19b5f9..acad812fe 100644
+index 57a19b5f9..ba2d3dbc4 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-@@ -49,6 +49,7 @@ import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomItemTags;
+@@ -39,6 +39,7 @@ import com.viaversion.viaversion.libs.fastutil.ints.IntSortedSet;
+ import com.viaversion.viaversion.util.Key;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.model.BlockState;
++import net.raphimc.viabedrock.api.model.NativeItemStackData;
+ import net.raphimc.viabedrock.api.resourcepack.definition.ItemDefinitions;
+ import net.raphimc.viabedrock.api.util.TextUtil;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+@@ -49,6 +50,7 @@ import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomItemTags;
  import net.raphimc.viabedrock.protocol.model.BedrockItem;
  import net.raphimc.viabedrock.protocol.model.ItemEntry;
  import net.raphimc.viabedrock.protocol.model.ItemCooldown;
@@ -228,7 +354,7 @@ index 57a19b5f9..acad812fe 100644
  import net.raphimc.viabedrock.protocol.rewriter.item.BundleItemRewriter;
  import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomAttachableResourceRewriter;
  import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
-@@ -67,6 +68,8 @@ import java.util.logging.Level;
+@@ -67,6 +69,8 @@ import java.util.logging.Level;
  
  public class ItemRewriter extends StoredObject {
  
@@ -237,7 +363,7 @@ index 57a19b5f9..acad812fe 100644
      private final Map<String, ItemCooldown> cooldowns = new HashMap<>(Map.of(
              "minecraft:ender_pearl", new ItemCooldown("ender_pearl", 1F),
              "minecraft:goat_horn", new ItemCooldown("goat_horn", 7F),
-@@ -99,6 +102,7 @@ public class ItemRewriter extends StoredObject {
+@@ -99,6 +103,7 @@ public class ItemRewriter extends StoredObject {
              this.items.put(itemEntry.identifier(), itemEntry.id());
              if (itemEntry.componentData() != null
                      && itemEntry.componentData().get("components") instanceof CompoundTag components) {
@@ -245,16 +371,136 @@ index 57a19b5f9..acad812fe 100644
                  final ItemCooldown cooldown = ItemCooldown.fromNetworkComponents(components);
                  if (cooldown != null) {
                      this.cooldowns.put(itemEntry.identifier(), cooldown);
-@@ -253,6 +257,9 @@ public class ItemRewriter extends StoredObject {
+@@ -147,6 +152,7 @@ public class ItemRewriter extends StoredObject {
+             return StructuredItem.empty();
+         }
+ 
++        final NativeItemStackData nativeStack = NativeItemStackData.fromItem(bedrockItem);
+         final BedrockMappingData.JavaItemMapping javaItemMapping;
+         final Map<BlockState, BedrockMappingData.JavaItemMapping> blockItemMappings = BedrockProtocol.MAPPINGS.getBedrockToJavaBlockItems().get(identifier);
+         if (blockItemMappings != null) {
+@@ -253,6 +259,9 @@ public class ItemRewriter extends StoredObject {
          }
  
          CustomAttachableResourceRewriter.applyItemModel(this.user().get(ResourcePackStorage.class), identifier, javaItem);
 +        javaItem.dataContainer().set(StructuredDataKey.CUSTOM_DATA,
 +                ItemDataRewriter.withBedrockItemData(javaItem.dataContainer().get(StructuredDataKey.CUSTOM_DATA),
-+                        identifier, this.animationData.getOrDefault(identifier, ItemAnimationData.EMPTY)));
++                        identifier, this.animationData.getOrDefault(identifier, ItemAnimationData.EMPTY), nativeStack));
          return javaItem;
      }
  
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeItemStackDataTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeItemStackDataTest.java
+new file mode 100644
+index 000000000..43f639cf4
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeItemStackDataTest.java
+@@ -0,0 +1,106 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.nbt.tag.ByteArrayTag;
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.IntTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.nbt.tag.StringTag;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeItemStackDataTest {
++
++    @Test
++    void preservesTypedNestedDataAndSignedBitsThroughJavaNbt() {
++        final CompoundTag nested = new CompoundTag();
++        nested.putByte("FireworkType", (byte) -1);
++        nested.put("FireworkColor", new ByteArrayTag(new byte[]{1, -1, 17}));
++        final CompoundTag tag = new CompoundTag();
++        tag.put("FireworksItem", nested);
++        tag.putLong("map_uuid", Long.MIN_VALUE);
++        tag.putInt("Damage", 71);
++        final var source = new BedrockItem(321, Short.MAX_VALUE, (byte) 255, tag,
++                new String[]{"minecraft:stone", "minecraft:dirt", "minecraft:stone"}, new String[]{"minecraft:glass"},
++                Long.MIN_VALUE, Integer.MIN_VALUE, 73);
++        final var snapshot = NativeItemStackData.fromItem(source);
++        final var buffer = Unpooled.buffer();
++        try {
++            Types.TAG.write(buffer, snapshot.toTag());
++            final var decoded = NativeItemStackData.fromTag((CompoundTag) Types.TAG.read(buffer));
++            assertEquals(snapshot, decoded);
++            assertFalse(buffer.isReadable());
++            assertEquals(List.of("minecraft:stone", "minecraft:dirt", "minecraft:stone"), decoded.canPlace());
++            assertEquals(tag, decoded.userData());
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void ownsSnapshotDataIndependentlyFromTheSourceAndEncodedTags() {
++        final CompoundTag tag = new CompoundTag();
++        tag.putInt("Damage", 17);
++        final String[] restrictions = {"minecraft:stone"};
++        final var source = new BedrockItem(17, (short) 3, (byte) 1, tag, restrictions, new String[0], 9, 0, null);
++        final var snapshot = NativeItemStackData.fromItem(source);
++        final var encoded = snapshot.toTag();
++        final var decoded = NativeItemStackData.fromTag(encoded);
++        tag.putInt("Damage", 99);
++        restrictions[0] = "minecraft:dirt";
++        source.setData(7);
++        encoded.getCompoundTag("user_data").putInt("Damage", 81);
++        snapshot.userData().putInt("Damage", 83);
++        decoded.userData().putInt("Damage", 85);
++        assertEquals(snapshot, decoded);
++        assertEquals(17, snapshot.userData().getInt("Damage"));
++        assertEquals(3, snapshot.auxiliaryValue());
++        assertEquals(List.of("minecraft:stone"), snapshot.canPlace());
++        assertThrows(UnsupportedOperationException.class, () -> snapshot.canPlace().add("minecraft:dirt"));
++    }
++
++    @Test
++    void keepsAbsentUserDataDistinctFromAnEmptyCompound() {
++        final var absent = NativeItemStackData.fromItem(new BedrockItem(1));
++        final var present = NativeItemStackData.fromItem(new BedrockItem(1, (short) 0, (byte) 1, new CompoundTag()));
++        assertNull(NativeItemStackData.fromTag(absent.toTag()).userData());
++        assertTrue(NativeItemStackData.fromTag(present.toTag()).userData().isEmpty());
++        assertNotEquals(absent, present);
++        final var source = new BedrockItem(1);
++        source.setAmount(2);
++        source.setNetId(17);
++        assertEquals(absent, NativeItemStackData.fromItem(source));
++    }
++
++    @Test
++    void rejectsUnknownVersionsWrongWidthsAndMalformedRestrictions() {
++        final var source = NativeItemStackData.fromItem(new BedrockItem(1));
++        assertNull(NativeItemStackData.fromTag(null));
++        final var unknown = source.toTag();
++        unknown.putInt("version", 2);
++        assertNull(NativeItemStackData.fromTag(unknown));
++        final var wrongWidth = source.toTag();
++        wrongWidth.putInt("auxiliary_value", 0);
++        assertNull(NativeItemStackData.fromTag(wrongWidth));
++        final var wrongUserData = source.toTag();
++        wrongUserData.put("user_data", new StringTag("invalid"));
++        assertNull(NativeItemStackData.fromTag(wrongUserData));
++        final var wrongRestrictions = source.toTag();
++        wrongRestrictions.put("can_place", new ListTag<>(List.of(new IntTag(17))));
++        assertNull(NativeItemStackData.fromTag(wrongRestrictions));
++        final var missing = source.toTag();
++        missing.remove("blocking_ticks");
++        assertNull(NativeItemStackData.fromTag(missing));
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/ItemAnimationDataTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemAnimationDataTest.java
 new file mode 100644
 index 000000000..0e65ce981
@@ -441,10 +687,10 @@ index 000000000..8390e3fe6
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemIdentityTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemIdentityTest.java
 new file mode 100644
-index 000000000..859982562
+index 000000000..8717fa895
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemIdentityTest.java
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,58 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -455,11 +701,15 @@ index 000000000..859982562
 +import com.viaversion.nbt.tag.CompoundTag;
 +import org.junit.jupiter.api.Test;
 +import net.raphimc.viabedrock.protocol.model.ItemAnimationData;
++import net.raphimc.viabedrock.api.model.NativeItemStackData;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
 +import java.util.List;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class ItemIdentityTest {
++
++    private static final NativeItemStackData STACK = NativeItemStackData.fromItem(new BedrockItem(1));
 +
 +    @Test
 +    void preservesUnrelatedCustomDataAndDoesNotMutateSharedMappings() {
@@ -470,15 +720,15 @@ index 000000000..859982562
 +        original.putInt("viabedrock:creative_entry", 23);
 +        original.putString(ItemDataRewriter.BEDROCK_IDENTIFIER_TAG, "old");
 +        final String identifier = "probe:custom_item";
-+        final CompoundTag result = ItemDataRewriter.withBedrockItemData(original, identifier, new ItemAnimationData(1440000, List.of("probe:tag"), 13, null));
++        final CompoundTag result = ItemDataRewriter.withBedrockItemData(original, identifier, new ItemAnimationData(1440000, List.of("probe:tag"), 13, null), STACK);
 +        assertEquals(identifier, result.getString(ItemDataRewriter.BEDROCK_IDENTIFIER_TAG));
 +        assertEquals(1440000, result.getInt(ItemDataRewriter.BEDROCK_USE_DURATION_TAG));
 +        assertFalse(original.contains(ItemDataRewriter.BEDROCK_USE_DURATION_TAG));
 +        assertFalse(original.contains(ItemDataRewriter.BEDROCK_ANIMATION_TAG));
 +        assertEquals(13, result.getCompoundTag(ItemDataRewriter.BEDROCK_ANIMATION_TAG).getInt("swing_duration_ticks"));
-+        assertFalse(ItemDataRewriter.withBedrockItemData(result, identifier, ItemAnimationData.EMPTY)
++        assertFalse(ItemDataRewriter.withBedrockItemData(result, identifier, ItemAnimationData.EMPTY, STACK)
 +                .contains(ItemDataRewriter.BEDROCK_ANIMATION_TAG));
-+        assertFalse(ItemDataRewriter.withBedrockItemData(result, identifier, ItemAnimationData.EMPTY)
++        assertFalse(ItemDataRewriter.withBedrockItemData(result, identifier, ItemAnimationData.EMPTY, STACK)
 +                .contains(ItemDataRewriter.BEDROCK_USE_DURATION_TAG));
 +        assertEquals(original.getInt("viabedrock:creative_entry"), result.getInt("viabedrock:creative_entry"));
 +        assertEquals(nested, result.getCompoundTag("nested"));
@@ -491,11 +741,11 @@ index 000000000..859982562
 +    void keepsDifferentNativeAliasesDistinctDespiteTheirSharedJavaMapping() {
 +        final String first = "minecraft:apple";
 +        final String second = "probe:apple";
-+        final CompoundTag a = ItemDataRewriter.withBedrockItemData(null, first, ItemAnimationData.EMPTY);
-+        final CompoundTag b = ItemDataRewriter.withBedrockItemData(null, second, ItemAnimationData.EMPTY);
++        final CompoundTag a = ItemDataRewriter.withBedrockItemData(null, first, ItemAnimationData.EMPTY, STACK);
++        final CompoundTag b = ItemDataRewriter.withBedrockItemData(null, second, ItemAnimationData.EMPTY, STACK);
 +        assertNotEquals(a, b);
-+        assertEquals(a, ItemDataRewriter.withBedrockItemData(a, first, ItemAnimationData.EMPTY));
-+        assertEquals(b, ItemDataRewriter.withBedrockItemData(a, second, ItemAnimationData.EMPTY));
++        assertEquals(a, ItemDataRewriter.withBedrockItemData(a, first, ItemAnimationData.EMPTY, STACK));
++        assertEquals(b, ItemDataRewriter.withBedrockItemData(a, second, ItemAnimationData.EMPTY, STACK));
 +    }
 +
 +}
