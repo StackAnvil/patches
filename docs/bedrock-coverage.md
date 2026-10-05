@@ -162,7 +162,7 @@ The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and
 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
-| U1 | Presets, instructions, splines, shake, and aim assistance | Incomplete | Core retains received presets and resolves optional-field inheritance. It also resolves fades, FOV transitions, and default camera shake, which the add-on renders. Free-camera activation, pose transport, per-preset overrides, and native blend arithmetic now have production paths. Target tracking, splines, attachments, aim assistance, native follow cameras, built-in perspective pose parity, listener/effect application, custom shake parameters, and broader lifecycle comparisons remain incomplete. |
+| U1 | Presets, instructions, splines, shake, and aim assistance | Incomplete | Core retains received presets and resolves optional-field inheritance. It also resolves fades, FOV transitions, and default camera shake, which the add-on renders. Free-camera activation, pose transport, per-preset overrides, and native blend arithmetic now have production paths. Target tracking, splines, attachments, aim assistance, native follow cameras, built-in perspective pose parity, player-effects application, custom shake parameters, and broader lifecycle comparisons remain incomplete. |
 | U2 | Fog and HUD visibility | Incomplete | Core retains all target HUD restrictions and transports them through direct connections and ViaProxy. The add-on applies individual Java HUD restrictions and preserves local settings on reset. Fog, missing native widgets, and remaining visual comparisons are incomplete. |
 | U3 | Texture animations, toasts, credits, store requests, and inventory preferences | Incomplete | Implement target packet behavior and verify native presentation. |
 | U4 | Dynamic JSON UI and widgets | Incomplete | Extend static sidebar support with expression evaluation and applicable widgets. |
@@ -3291,10 +3291,69 @@ The screenshots and videos remain private.
 Late subscriptions restore settled targets because core lacks the original interrupted rendering frame.
 Exact restoration during an existing blend remains incomplete.
 The three built-in perspective commands currently use Java collision and distance rules.
-Native third-person pose parity, player effects, audio-listener choices, camera/FOV coupling, follow cameras, splines, targets, attachments, and aim assistance remain open.
+Native third-person pose parity, player effects, audible listener parity, camera/FOV coupling, follow cameras, splines, targets, attachments, and aim assistance remain open.
 
 The first ViaProxy attempt timed out during configuration, before receiving presets or camera commands.
 Its journal contains login success and client cache status but no resource-pack info.
 The next attempt completed the scene, passed transport and skin-rendering checks, and retained the same preset report as the direct route.
 The intermittent replay handshake needs separate investigation.
 This movement work does not establish a fix for that timeout.
+
+
+## Camera audio listeners, October 6, 2026
+
+U1 remains incomplete.
+
+**Implemented:** Core selects the camera when the resolved listener field is absent or differs from `1`.
+The target built-in preset assets have no player-listener override.
+An explicit player listener inherits through custom presets, while explicit camera selection overrides it.
+Clear restores ordinary camera audio.
+
+Core computes player forward/up vectors with the target float sine lookup and normalization.
+The add-on supplies local eye coordinates and current player angles.
+Its sound-engine hook applies that result before Minecraft sends the listener to its sound executor.
+Camera selection retains the rendered camera transform, including its current blend and shake.
+The active command selects the listener independently of the visual blend.
+Disconnect clears the server selection.
+
+Bedrock PCM playback, admission checks, and caption positioning consume the same sound-engine listener.
+The implementation introduces no second audio device or separate caption listener.
+Both routes use the existing versioned camera position payload.
+
+**Native evidence:** Bedrock 1.26.51.1, build 51061372, protocol 2193.
+Preset application `1409eed30` adds the player-listener marker only for explicit player selection.
+Query `1409f62f0` checks that marker on the active camera usage entity.
+It does not read pose blend progress or copied rendering fields.
+Updater `1446d0800` copies rendered camera coordinates and orientation for camera listeners.
+For player listeners it uses interpolated actor coordinates and current player pitch/yaw.
+Actor helper `141a244e0` performs the coordinate interpolation.
+
+The private probe executes all three native functions across 72 samples.
+Cases include valid/missing markers, invalid weak contexts, three interpolation fractions, and six player rotations.
+Eighteen samples select the player.
+The probe supplies authored component storage, virtual client lookup, clock access, and security/CRT boundaries.
+These samples exclude camera activation ordering and actor coordinate provenance.
+
+[Microsoft's camera guide](https://learn.microsoft.com/en-us/minecraft/creator/documents/CameraSystem/CameraCommandIntroduction?view=minecraft-bedrock-stable) describes camera position/orientation audio and the `listener` preset field.
+The target executable establishes the marker and vector behavior for the pinned build.
+
+**Automated checks:** Five targeted core tests pass with all supplied private fixtures and no skips.
+They cover native player orientation, inherited listener choices, camera defaults, and existing command/facing behavior.
+Core style checks, tooling checks, and the camera replay audit regression test pass.
+All four stack builds pass.
+
+**Route checks:** Complete direct and ViaProxy replays retain the recorded scene hash.
+Both reach spawn, load their resource packs, and pass transport and existing skin-rendering checks.
+Each route records 92 camera observations.
+All five settled targets use the expected listener, including inherited player selection and camera overrides.
+Player listener coordinates match interpolated Java feet plus eye height, with current player orientation.
+Clear restores the ordinary camera listener.
+
+During camera movement, the asynchronous Java sound update can lag the sampled rendering frame.
+The largest observed position differences are 0.706 blocks direct and 0.122 blocks through ViaProxy.
+Settled camera coordinates match.
+These observations verify route delivery and listener integration, but exclude native audio-frame timing and audible panning.
+
+**Remaining:** Native eye-height provenance, vehicles, death, listener activation timing, and audible panning remain unverified.
+The Java eye position is a client integration input, not proof of native player-coordinate parity.
+Native first/third-person poses, player effects, follow cameras, splines, fog, and aim assistance remain incomplete.

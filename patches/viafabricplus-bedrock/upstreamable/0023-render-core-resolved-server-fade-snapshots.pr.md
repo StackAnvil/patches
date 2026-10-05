@@ -69,7 +69,8 @@ Exact mid-blend restoration remains incomplete.
 
 Built-in first/third-person activation currently uses Java camera alignment.
 Native third-person distance and collision still need implementation and comparison.
-The transported audio/effect fields, native follow cameras, splines, attached actors, and aim assistance remain incomplete.
+Player-effects application, native follow cameras, splines, attached actors, and aim assistance remain incomplete.
+The listener section below records audio application.
 
 Complete direct and ViaProxy replays pass transport and existing skin-rendering checks.
 Both reproduce all five free-camera targets, the short yaw arc, overshoot, perspective activation, and clear.
@@ -77,3 +78,21 @@ Their complete scene hashes match the native capture, and core preset reports ma
 Stationary screenshots still differ in projection, lighting, and foliage.
 This verification establishes movement behavior, with visible parity still incomplete.
 One ViaProxy attempt timed out before presets; the completed retry does not establish a fix for that intermittent handshake.
+
+## Camera audio listeners
+
+The sound-engine listener follows the current preset's resolved listener choice.
+Camera selection keeps Minecraft's rendered camera transform.
+Player selection supplies the local interpolated eye position and current player angles to core's listener math.
+The visual camera blend does not delay listener selection.
+Clear and disconnect restore the ordinary camera listener.
+
+The hook updates Minecraft's shared listener before its sound executor receives the transform.
+Bedrock PCM playback, admission checks, and caption positioning already consume that listener.
+They need no separate device or listener state.
+Clients without an active server camera retain the normal sound transform.
+
+Core tests compare player orientation against the target executable.
+Private replay diagnostics read the actual sound-engine listener position, forward vector, and up vector.
+Complete route checks and limits are recorded in the coverage ledger.
+Native eye-height, vehicle/death behavior, listener activation timing, and audible panning remain unverified.

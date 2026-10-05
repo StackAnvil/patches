@@ -37,9 +37,14 @@ final class ReplaySceneDiagnostics {
             state.put("cameraDetached", call(camera, "isDetached"));
             state.put("cameraPosition", vector(call(camera, "position")));
             state.put("cameraRotation", List.of(call(camera, "xRot"), call(camera, "yRot")));
+            Object listener = call(call(minecraft, "getSoundManager"), "getListenerTransform");
+            state.put("listenerPosition", vector(call(listener, "position")));
+            state.put("listenerForward", vector(call(listener, "forward")));
+            state.put("listenerUp", vector(call(listener, "up")));
             state.put("cameraUsesLocalPlayer", call(minecraft, "getCameraEntity") == player);
             if (player != null) {
                 state.put("playerPosition", List.of(call(player, "getX"), call(player, "getY"), call(player, "getZ")));
+                state.put("playerEyeHeight", call(player, "getEyeHeight"));
                 state.put("playerMotion", vector(call(player, "getDeltaMovement")));
                 state.put("onGround", call(player, "onGround"));
                 state.put("invisible", call(player, "isInvisible"));

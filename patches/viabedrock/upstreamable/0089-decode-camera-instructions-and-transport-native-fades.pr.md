@@ -124,7 +124,7 @@ Core resolves free-camera position, rotation, facing targets, inheritance, and p
 A `default` command clears the position and rotation overrides.
 Invalid commands preserve the active camera and its previous overrides.
 The resolved payload also retains player-effects and audio-listener choices.
-Their client application remains incomplete.
+The client now applies audio-listener selection. Player-effects application remains incomplete.
 
 The renderer supplies its interrupted frame to the shared `CameraPoseTimeline`.
 Core owns quaternion conversion, the incremental blend, shortest yaw rotation, easing overshoot, and endpoint rendering fields.
@@ -154,3 +154,29 @@ Their complete scene hashes match the native capture, and core preset reports ma
 Stationary screenshots still differ in projection, lighting, and foliage.
 This verification establishes movement behavior, with visible parity still incomplete.
 One ViaProxy attempt timed out before presets; the completed retry does not establish a fix for that intermittent handshake.
+
+## Camera audio listeners
+
+Absent listener fields select the camera, including built-in presets.
+Only the resolved value `1` selects the player.
+Native preset application at `1409eed30` adds `MinecraftCamera::PlayerAudioListenerComponent` only for that explicit value.
+The target built-in preset assets contain no listener override.
+
+Native query `1409f62f0` checks the active camera usage entity for that marker.
+It does not inspect pose blend progress or copied rendering fields.
+Native updater `1446d0800` selects both position and orientation.
+Camera listeners copy the rendered view.
+Player listeners use the interpolated actor position and its current pitch and yaw.
+Shared core math reproduces the native float sine lookup and normalized forward/up vectors.
+
+The private probe executes 72 target listener updates, including missing markers and invalid weak contexts.
+Eighteen samples select the player.
+The actual target query, updater, and actor interpolation helper execute with authored component storage.
+Virtual client lookup, clock access, and security/CRT boundaries use probe inputs.
+These tests exclude camera activation ordering and the provenance of actor position coordinates.
+
+Five targeted tests pass with no skips using the private fixtures.
+They cover native player orientation, inherited listener overrides, the camera default, and existing command/facing behavior.
+The add-on applies the current command's listener choice independently of its visual blend.
+Native activation timing, eye height, vehicles, death, and audible panning remain unverified.
+Route checks are recorded in the coverage ledger.
