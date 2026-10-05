@@ -50,6 +50,16 @@ The first command downloads Windows installation media and VirtIO drivers throug
 Download progress stays in `.stackanvil/lab/vms/windows/download.log`.
 The launch log stays beside it in `launch.log`.
 
+The lab checks ISO volume descriptors before it reports successful preparation or starts a guest.
+Quickget can return success when Microsoft blocks a download, or save an HTML error page as an ISO.
+If validation fails, read `download.log` and download the official installation media.
+Replace only the failed media at the path in `windows-11.conf`, then repeat preparation.
+Keep the profile, configuration, and guest disk.
+Use Microsoft's [Windows 11 download page](https://www.microsoft.com/software-download/windows11) for retail media.
+Microsoft also supplies [Enterprise evaluation media](https://www.microsoft.com/en-us/evalcenter/download-windows-11-enterprise), which needs no product key.
+Quickget's generated answer file selects Windows Pro and does not apply unchanged to that evaluation edition.
+Obtain replacement drivers from the [official VirtIO download directory](https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/).
+
 Complete installation in the guest viewer.
 Quickget's unattended installation creates the `Quickemu` local account with password `quickemu`.
 Change that guest password after installation.

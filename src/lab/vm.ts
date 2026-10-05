@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants, existsSync } from "node:fs";
 import { access, chmod, copyFile, mkdir, open, readFile, readdir, rm, statfs, writeFile } from "node:fs/promises";
 import { cpus, freemem, totalmem } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { root } from "../model.ts";
 import { artifact, bundlePrism } from "../prism.ts";
@@ -50,6 +50,25 @@ export function vmConfig(spec: VmSpec): string {
   return `source './${configName(spec)}.conf'\narch="x86_64"\ncpu_cores="${spec.cores}"\nram="${spec.ramGiB}G"\ndisk_size="${spec.diskGiB}G"\ndisplay="spice"\nviewer="none"\ngl="off"\nsound_card="none"\npublic_dir="none"\nnetwork=""\nport_forwards=()\nssh_port="0"\nextra_args="-qmp unix:control.socket,server=on,wait=off"\n`;
 }
 
+/** Quickget can return success after a blocked download or save an HTML error page as an ISO. */
+export async function validateInstallMedia(config: string): Promise<void> {
+  const contents = await readFile(config, "utf8");
+  for (const match of contents.matchAll(/^(?:iso|fixed_iso)=["']([^"'\n]+)["']\s*$/gm)) {
+    const media = resolve(dirname(config), match[1]!);
+    let handle;
+    try { handle = await open(media, "r"); }
+    catch { throw new Error(`Installation media is missing: ${media}. Read download.log and obtain the official ISO before starting the VM.`); }
+    try {
+      const header = Buffer.alloc(64 * 1024);
+      const { bytesRead } = await handle.read(header, 0, header.length, 32 * 1024);
+      const descriptors = header.subarray(0, bytesRead);
+      if (!["CD001", "BEA01", "NSR02", "NSR03"].some((magic) => descriptors.includes(Buffer.from(magic)))) {
+        throw new Error(`Invalid installation ISO: ${media}. The download may contain an HTML error page. Replace it with the official media.`);
+      }
+    } finally { await handle.close(); }
+  }
+}
+
 async function privateDirectory(path: string): Promise<void> {
   await mkdir(path, { recursive: true, mode: 0o700 });
   await chmod(path, 0o700);
@@ -83,6 +102,7 @@ export async function prepareVm(path: string, spec: VmSpec, download: (args: str
   await chmod(original, 0o600);
   const wrapper = join(path, `${spec.name}.conf`);
   if (!existsSync(wrapper)) await writeFile(wrapper, vmConfig(spec), { flag: "wx", mode: 0o600 });
+  await validateInstallMedia(original);
 }
 
 async function locked<T>(path: string, operation: () => Promise<T>): Promise<T> {
@@ -223,6 +243,7 @@ export async function vmMain(args: string[]): Promise<void> {
     await requireHost();
     await locked(path, async () => {
       validatePaths(path, spec);
+      await validateInstallMedia(join(path, `${configName(spec)}.conf`));
       if (existsSync(controlPath(selected))) {
         try {
           await control(spec, (command) => command("query-status"));

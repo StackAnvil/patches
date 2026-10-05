@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { prepareVm, shareResponse, validateSpec, type VmSpec } from "../src/lab/vm.ts";
+import { prepareVm, shareResponse, validateInstallMedia, validateSpec, type VmSpec } from "../src/lab/vm.ts";
 import { keyEvents, pointerEvents } from "../src/lab/qmp.ts";
 
 const spec: VmSpec = { version: 1, guest: "windows", release: "11", name: "sa-windows-0123456789ab", cores: 4, ramGiB: 8, diskGiB: 128 };
@@ -51,6 +51,19 @@ describe("VM installation preservation", () => {
     expect(downloads).toBe(0);
   }));
 });
+
+test("missing or HTML installation media is rejected without replacing existing disks", async () => temporary(async (path) => {
+  const config = join(path, "windows-11.conf");
+  const media = join(path, "installer.iso");
+  await writeFile(config, 'iso="installer.iso"\n');
+  await expect(validateInstallMedia(config)).rejects.toBeInstanceOf(Error);
+  await writeFile(media, Buffer.from([60, 104, 116, 109, 108, 62]));
+  await expect(validateInstallMedia(config)).rejects.toBeInstanceOf(Error);
+  const volume = Buffer.alloc(128 * 1024);
+  volume.set([1, 67, 68, 48, 48, 49, 1], 32 * 1024);
+  await writeFile(media, volume);
+  await expect(validateInstallMedia(config)).resolves.toBeUndefined();
+}));
 
 test("guest input validation rejects invalid numeric events and unsafe profiles", () => {
   for (const value of [NaN, Infinity, -0.1, 1.1]) expect(() => pointerEvents(value, 0.5, "left")).toThrow();
