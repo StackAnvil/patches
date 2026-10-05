@@ -1991,7 +1991,7 @@ The complete stacks replay and all four projects build.
 The final suites pass 1,033 Java tests, with 115 optional skips and no failures or errors.
 
 **Remaining:** Complete joining times, larger stacks, macOS, and Windows require further measurements.
-The outer ZIP writer still compresses the largest remaining native archive.
+The stored-archive optimization below removes the repeated outer compression pass.
 Transport liveness remains necessary during acquisition, prompts, downloads, and client reloads.
 This change does not establish final native pixels or prevent every timeout.
 
@@ -2000,4 +2000,54 @@ Fresh disk-cache replays pass complete transport and rendering checks on direct 
 Both routes load two newly converted packs and preserve the complete recorded scene and all 216 skin updates.
 Neither route reports unresolved model, block, or accepted-archive decode errors.
 The reload regression test also verifies refreshed effect bytes after actor-cache invalidation and resource-manager replacement.
+These checks establish loading regressions, not complete native visual parity or faster joining.
+
+
+## Store the embedded native archive without another deflation pass
+
+**Implemented:** The native archive already contains compressed entries.
+Core now stores its complete payload in the outer ZIP without another deflation pass.
+Ordinary Java models, JSON, textures, and metadata retain their existing compression.
+The native archive bytes, header, provenance, resource bounds, and decoder remain unchanged.
+Older cached conversions remain valid.
+
+Content preserves the stored-entry choice across merges and copied paths.
+An ordinary replacement restores deflation, while a failed replacement retains the previous choice.
+Content subclasses implement `putBytes` instead of overriding `put`, so one write path maintains this metadata.
+Sequential output supplies the stored entry's size and CRC.
+Parallel output uses the same ZIP method with the existing worker limits and cleanup.
+
+**Measured:** The private fixture contains five CubeCraft packs and 42 licensed image layers from Bedrock 1.26.51.1.
+Separate production JVMs use Java 25, four processors, and a 2 GiB heap on Linux.
+Eight conversions exclude two warm-ups.
+
+| Measured stage | Baseline | Stored native archive |
+| --- | --- | --- |
+| Rewrite plus memory ZIP median | 1099 ms | 595 ms |
+| Outer ZIP median | 727 ms | 189 ms |
+| Complete pack size | 49.5 MB | 53.7 MB |
+
+Conversion and packaging take about 46 percent less time on this fixture.
+The outer ZIP stage takes about 74 percent less time.
+Output grows about 8.5 percent because outer deflation previously compressed some repeated bytes inside the native archive.
+Memory output also allocates a slightly larger final buffer.
+Calling-thread allocation increases from 231.7 MiB to 235.9 MiB and excludes compression workers.
+
+This tradeoff can offset the conversion gain on slower network links.
+These measurements exclude acquisition, prompts, downloads, client reloads, and complete joining times.
+Larger stacks, concurrent conversions, macOS, and Windows remain unmeasured for this change.
+Transport liveness remains necessary during those waits.
+
+**Verified:** The production output preserves the native archive byte for byte.
+All 15,820 retained entries and 786 shared model parents remain equivalent after existing model-identity and JSON-order normalization.
+Tests cover stored and deflated entries, CRCs, sizes, worker-count determinism, merging, ordinary replacement, and failed replacement.
+Existing cleanup, interruption, output ownership, and cache retry tests still pass.
+The cache patch applies independently to its pinned upstream base and passes its tests and both Checkstyle tasks.
+All four projects build, with 1,036 passing Java tests, 115 optional skips, and no failures or errors.
+
+
+Fresh disk-cache replays pass complete transport and rendering checks on direct and ViaProxy connections.
+Both routes load two new conversions with stored native archive entries.
+The complete recorded scene hash remains unchanged, and all 216 skin updates retain their recorded bytes.
+Neither route reports unresolved model, block, or accepted-archive decode errors.
 These checks establish loading regressions, not complete native visual parity or faster joining.

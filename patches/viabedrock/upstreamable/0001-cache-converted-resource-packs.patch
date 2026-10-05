@@ -1,4 +1,4 @@
-From 18e9ef9fffda02a8f12d994106b6ac49cd368c88 Mon Sep 17 00:00:00 2001
+From c6ec9a2aca203e746fe177048e5c4ace2514a70d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:52:24 +0200
 Subject: [PATCH] perf(resource-packs): cache converted packs by content
@@ -87,10 +87,26 @@ Use a segmented Commons IO buffer for memory archives, avoiding copies
 of all preceding bytes each time the output grows. Keep disk streaming
 and deterministic archive bytes unchanged. Verify equivalence across
 buffer growth and the existing cache failure, retry and worker cases.
+
+Allow producers to mark already compressed payloads for stored ZIP output.
+Preserve that choice across content merges, reset it after ordinary writes,
+and retain the previous choice when a replacement fails. Keep payload
+writes behind one Content method so storage implementations cannot leave
+stale compression metadata. Content subclasses now implement putBytes.
+
+Sequential output calculates the required stored-entry size and CRC.
+Scatter/gather output uses the same explicit method without another
+deflation pass. Keep ordinary entries compressed, sorted and deterministic.
+Older cached packs remain valid because only ZIP methods change.
+
+BREAKING CHANGE: Content subclasses implement protected putBytes instead
+of overriding put. The public put method now maintains ZIP metadata.
 ---
  build.gradle                                  |  12 +
- .../api/resourcepack/content/Content.java     |  29 +-
- .../content/ResourcePackZipWriter.java        | 178 +++++++++++
+ .../api/resourcepack/content/Content.java     |  56 ++--
+ .../content/DirectoryContent.java             |   2 +-
+ .../resourcepack/content/InMemoryContent.java |   2 +-
+ .../content/ResourcePackZipWriter.java        | 190 +++++++++++
  .../http/ConvertedResourcePackCache.java      | 253 +++++++++++++++
  .../http/ConverterDataManifest.java           |  74 +++++
  .../http/ResourcePackHttpServer.java          | 145 ++++-----
@@ -103,11 +119,11 @@ buffer growth and the existing cache failure, retry and worker cases.
  .../impl/NoOpResourcePackProvider.java        |  11 +-
  .../storage/ResourcePackLoadStateTracker.java |  62 ++--
  .../content/ContentLanguageCacheTest.java     |  65 ++++
- .../content/ResourcePackZipWriterTest.java    | 166 ++++++++++
+ .../content/ResourcePackZipWriterTest.java    | 241 ++++++++++++++
  .../http/ConvertedResourcePackCacheTest.java  | 255 +++++++++++++++
  .../ResourcePackClientResponseTest.java       |  74 +++++
  .../ResourcePackLoadStateTrackerTest.java     |  43 +++
- 19 files changed, 1560 insertions(+), 261 deletions(-)
+ 21 files changed, 1674 insertions(+), 265 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConverterDataManifest.java
@@ -149,10 +165,10 @@ index b081953c4..e80713299 100644
  
  def registerToolTask(String name, String toolMainClass, String toolDescription) {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
-index 622e99d2e..88f4e0beb 100644
+index 622e99d2e..21dd17dde 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
-@@ -21,22 +21,23 @@ import com.viaversion.viaversion.libs.gson.JsonObject;
+@@ -21,22 +21,25 @@ import com.viaversion.viaversion.libs.gson.JsonObject;
  import com.viaversion.viaversion.util.GsonUtil;
  import net.raphimc.viabedrock.api.util.JsonUtil;
  
@@ -176,11 +192,48 @@ index 622e99d2e..88f4e0beb 100644
  public abstract class Content {
  
 -    private final Map<String, Map<String, String>> langCache = new HashMap<>();
++    private final Set<String> storedZipEntries = new HashSet<>();
++
 +    private final Map<String, Map<String, String>> langCache = new ConcurrentHashMap<>();
  
      public abstract List<String> getFilesShallow(final String path, final String extension);
  
-@@ -161,18 +162,14 @@ public abstract class Content {
+@@ -59,7 +62,24 @@ public abstract class Content {
+ 
+     public abstract byte[] get(final String path);
+ 
+-    public abstract boolean put(final String path, final byte[] data);
++    public final boolean put(final String path, final byte[] data) {
++        final boolean replaced = this.putBytes(path, data);
++        this.storedZipEntries.remove(path);
++        return replaced;
++    }
++
++    /** Stores an already compressed payload without another deflation pass when exporting the ZIP. */
++    public final boolean putStored(final String path, final byte[] data) {
++        final boolean replaced = this.putBytes(path, data);
++        this.storedZipEntries.add(path);
++        return replaced;
++    }
++
++    public final boolean isStored(final String path) {
++        return this.storedZipEntries.contains(path);
++    }
++
++    protected abstract boolean putBytes(final String path, final byte[] data);
+ 
+     public String getString(final String path) {
+         final byte[] bytes = this.get(path);
+@@ -157,22 +177,22 @@ public abstract class Content {
+     }
+ 
+     public void copyFrom(final Content content, final String sourcePath, final String targetPath) {
+-        this.put(targetPath, content.get(sourcePath));
++        if (content.isStored(sourcePath)) {
++            this.putStored(targetPath, content.get(sourcePath));
++        } else {
++            this.put(targetPath, content.get(sourcePath));
++        }
      }
  
      public byte[] toZip() throws IOException {
@@ -207,12 +260,38 @@ index 622e99d2e..88f4e0beb 100644
      }
  
      public static class LazyImage {
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/DirectoryContent.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/DirectoryContent.java
+index 9725052a1..64ecfcb05 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/DirectoryContent.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/DirectoryContent.java
+@@ -89,7 +89,7 @@ public class DirectoryContent extends Content {
+     }
+ 
+     @Override
+-    public boolean put(final String path, final byte[] data) {
++    protected boolean putBytes(final String path, final byte[] data) {
+         final boolean exists = this.contains(path);
+         try {
+             Files.write(this.resolvePath(this.dir, Path.of(path)), data);
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/InMemoryContent.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/InMemoryContent.java
+index 7717839d7..ffedf0521 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/InMemoryContent.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/InMemoryContent.java
+@@ -47,7 +47,7 @@ public class InMemoryContent extends Content {
+     }
+ 
+     @Override
+-    public boolean put(final String path, final byte[] data) {
++    protected boolean putBytes(final String path, final byte[] data) {
+         return this.content.put(path, data) != null;
+     }
+ 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java
 new file mode 100644
-index 000000000..c84695ba8
+index 000000000..e818cc48e
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java
-@@ -0,0 +1,178 @@
+@@ -0,0 +1,190 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -250,6 +329,7 @@ index 000000000..c84695ba8
 +import java.util.concurrent.TimeUnit;
 +import java.util.concurrent.atomic.AtomicInteger;
 +import java.util.zip.Deflater;
++import java.util.zip.CRC32;
 +import java.util.zip.ZipEntry;
 +import java.util.zip.ZipOutputStream;
 +
@@ -265,7 +345,7 @@ index 000000000..c84695ba8
 +        try (output) {
 +            final List<Entry> entries = new ArrayList<>();
 +            for (final String path : content.getFilesDeep("", "").stream().sorted().toList()) {
-+                entries.add(new Entry(path, content.get(path)));
++                entries.add(new Entry(path, content.get(path), content.isStored(path)));
 +            }
 +            write(entries, output);
 +        }
@@ -284,6 +364,14 @@ index 000000000..c84695ba8
 +                    for (final Entry file : entries) {
 +                        final ZipEntry entry = new ZipEntry(file.path());
 +                        entry.setTime(0L);
++                        if (file.stored()) {
++                            final CRC32 crc = new CRC32();
++                            crc.update(file.data());
++                            entry.setMethod(ZipEntry.STORED);
++                            entry.setSize(file.data().length);
++                            entry.setCompressedSize(file.data().length);
++                            entry.setCrc(crc.getValue());
++                        }
 +                        zip.putNextEntry(entry);
 +                        zip.write(file.data());
 +                        zip.closeEntry();
@@ -310,7 +398,7 @@ index 000000000..c84695ba8
 +                for (final Entry file : entries) {
 +                    final ZipArchiveEntry entry = new ZipArchiveEntry(file.path());
 +                    entry.setTime(0L);
-+                    entry.setMethod(ZipEntry.DEFLATED);
++                    entry.setMethod(file.stored() ? ZipEntry.STORED : ZipEntry.DEFLATED);
 +                    scatter.addArchiveEntry(entry, () -> new ByteArrayInputStream(file.data()));
 +                }
 +                scatter.writeTo(zip);
@@ -337,7 +425,10 @@ index 000000000..c84695ba8
 +    }
 +
 +    /** Entry bytes remain owned by the caller and must not change during the write. */
-+    public record Entry(String path, byte[] data) {
++    public record Entry(String path, byte[] data, boolean stored) {
++        public Entry(final String path, final byte[] data) {
++            this(path, data, false);
++        }
 +    }
 +
 +    /** Removes late-created worker files after the executor has terminated, including on failed writes. */
@@ -1736,10 +1827,10 @@ index 000000000..c0f072f08
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriterTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriterTest.java
 new file mode 100644
-index 000000000..0b799ed28
+index 000000000..4e177dceb
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriterTest.java
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,241 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1773,6 +1864,8 @@ index 000000000..0b799ed28
 +import java.util.List;
 +import java.util.Random;
 +import java.util.zip.ZipFile;
++import java.util.zip.ZipEntry;
++import java.util.zip.CRC32;
 +import java.util.zip.ZipInputStream;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -1785,7 +1878,7 @@ index 000000000..0b799ed28
 +    private static List<ResourcePackZipWriter.Entry> entries() {
 +        final byte[] random = new byte[3 * 1024 * 1024];
 +        new Random(2193).nextBytes(random);
-+        return List.of(new ResourcePackZipWriter.Entry("assets/pack/a", random),
++        return List.of(new ResourcePackZipWriter.Entry("assets/pack/a", random, true),
 +                new ResourcePackZipWriter.Entry("assets/pack/b", new byte[random.length]),
 +                new ResourcePackZipWriter.Entry("assets/pack/c", Arrays.copyOf(random, random.length)),
 +                new ResourcePackZipWriter.Entry("assets/pack/é", new byte[0]));
@@ -1842,6 +1935,79 @@ index 000000000..0b799ed28
 +        content.writeZip(streamed);
 +        assertTrue(streamed.size() > 4 * 1024 * 1024);
 +        assertArrayEquals(streamed.toByteArray(), content.toZip());
++    }
++
++    @Test
++    void mixedStoredAndDeflatedEntriesWorkInBothBackends() throws Exception {
++        final var payloads = entries();
++        final var mixed = List.of(new ResourcePackZipWriter.Entry(payloads.get(0).path(), payloads.get(0).data(), true),
++                payloads.get(1), new ResourcePackZipWriter.Entry(payloads.get(3).path(), payloads.get(3).data(), true));
++        final ByteArrayOutputStream sequential = new ByteArrayOutputStream();
++        final ByteArrayOutputStream parallel = new ByteArrayOutputStream();
++        // A single entry forces the ordinary writer regardless of processor count or payload size.
++        ResourcePackZipWriter.write(List.of(mixed.get(0)), sequential);
++        ResourcePackZipWriter.writeParallel(mixed, parallel, this.directory, 4);
++        for (final var result : List.of(java.util.Map.entry(sequential.toByteArray(), 1), java.util.Map.entry(parallel.toByteArray(), mixed.size()))) {
++            try (var zip = new ZipInputStream(new ByteArrayInputStream(result.getKey()))) {
++                for (int index = 0; index < result.getValue(); index++) {
++                    final var entry = zip.getNextEntry();
++                    assertNotNull(entry);
++                    final var expected = mixed.get(index);
++                    assertEquals(expected.path(), entry.getName());
++                    assertEquals(expected.stored() ? ZipEntry.STORED : ZipEntry.DEFLATED, entry.getMethod());
++                    assertArrayEquals(expected.data(), zip.readAllBytes());
++                    final CRC32 crc = new CRC32();
++                    crc.update(expected.data());
++                    assertEquals(crc.getValue(), entry.getCrc());
++                    if (expected.stored()) {
++                        assertEquals(expected.data().length, entry.getSize());
++                        assertEquals(entry.getSize(), entry.getCompressedSize());
++                    }
++                }
++                assertNull(zip.getNextEntry());
++            }
++        }
++    }
++
++    @Test
++    void storedOutputHintsSurviveMergingAndResetAfterReplacement() throws Exception {
++        final String path = entries().get(0).path();
++        final byte[] data = entries().get(0).data();
++        Files.createDirectories(this.directory.resolve(path).getParent());
++        for (final Content source : List.of(new InMemoryContent(), new DirectoryContent(this.directory))) {
++            source.putStored(path, data);
++            final Content merged = new InMemoryContent();
++            merged.putAll(source);
++            assertTrue(merged.isStored(path));
++            try (var zip = new ZipInputStream(new ByteArrayInputStream(merged.toZip()))) {
++                assertEquals(ZipEntry.STORED, zip.getNextEntry().getMethod());
++                assertArrayEquals(data, zip.readAllBytes());
++            }
++            merged.put(path, new byte[data.length]);
++            assertFalse(merged.isStored(path));
++            try (var zip = new ZipInputStream(new ByteArrayInputStream(merged.toZip()))) {
++                assertEquals(ZipEntry.DEFLATED, zip.getNextEntry().getMethod());
++                assertArrayEquals(new byte[data.length], zip.readAllBytes());
++            }
++        }
++    }
++
++    @Test
++    void failedReplacementRetainsTheExistingCompressionHint() {
++        final String path = entries().get(0).path();
++        final InMemoryContent content = new InMemoryContent() {
++            @Override
++            protected boolean putBytes(final String entryPath, final byte[] data) {
++                if (data.length == 0) {
++                    throw new IllegalStateException();
++                }
++                return super.putBytes(entryPath, data);
++            }
++        };
++        content.putStored(path, new byte[1]);
++        assertThrows(IllegalStateException.class, () -> content.put(path, new byte[0]));
++        assertTrue(content.isStored(path));
++        assertArrayEquals(new byte[1], content.get(path));
 +    }
 +
 +    @Test
