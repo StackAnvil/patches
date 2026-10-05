@@ -1,0 +1,242 @@
+From d434682ba66eb96fbd0b7589137a9a8f32ca76e3 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 11:47:35 +0200
+Subject: [PATCH] fix(movement): keep sprint boost in the Java attribute
+ modifier
+
+The local player's Bedrock movement value already includes sprint, but
+translation sends it as a Java base with no modifiers. A client mod that
+reapplies setSprinting(true) then adds Java's boost to that boosted base,
+raising the attribute from 0.13 to 0.169.
+
+Send the clamped effective speed divided by the sprint multiplier as the
+base, together with Java's minecraft:sprinting modifier and its exact
+float-promoted amount. Repeated sprint calls replace that modifier by id.
+Keep Bedrock attribute state, server overrides, other native modifiers,
+and native limits intact; normalize only the local player's Java output.
+
+Packet regression tests cover repeated sprint calls, start/stop, server
+speed updates, other native modifiers, zero speed, and both native limits.
+A local probe against Minecraft 26.3 attribute operations reproduces the
+reported double boost. CubeCraft gameplay speed remains unmeasured.
+---
+ .../api/model/entity/ClientPlayerEntity.java  |  20 ++-
+ .../ClientPlayerMovementAttributeTest.java    | 155 ++++++++++++++++++
+ 2 files changed, 174 insertions(+), 1 deletion(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerMovementAttributeTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
+index 7eafefdf2..59672a1ff 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
+@@ -28,6 +28,7 @@ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.util.EnumUtil;
+ import net.raphimc.viabedrock.api.util.PacketFactory;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.generated.java.Attributes;
+ import net.raphimc.viabedrock.protocol.PlayerActionPacketFactory;
+ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.data.enums.Direction;
+@@ -54,6 +55,8 @@ import java.util.logging.Level;
+ 
+ public class ClientPlayerEntity extends PlayerEntity {
+ 
++    private static final float SPRINT_SPEED_BOOST = 0.3F;
++
+     private final AtomicInteger teleportId = new AtomicInteger(1);
+     private final GameSessionStorage gameSession;
+ 
+@@ -481,7 +484,7 @@ public class ClientPlayerEntity extends PlayerEntity {
+         final List<EntityAttribute.Modifier> modifiers = new ArrayList<>(Arrays.asList(oldMovementAttribute.modifiers()));
+         modifiers.removeIf(modifier -> modifier.id().equals("d208fc00-42aa-4aad-9276-d5446530de43") && modifier.name().equals("Sprinting speed boost") && modifier.operation() == AttributeModifierOperation.OPERATION_MULTIPLY_TOTAL);
+         if (this.sprinting) {
+-            modifiers.add(new EntityAttribute.Modifier("d208fc00-42aa-4aad-9276-d5446530de43", "Sprinting speed boost", 0.3F, AttributeModifierOperation.OPERATION_MULTIPLY_TOTAL, AttributeOperands.OPERAND_CURRENT, false));
++            modifiers.add(new EntityAttribute.Modifier("d208fc00-42aa-4aad-9276-d5446530de43", "Sprinting speed boost", SPRINT_SPEED_BOOST, AttributeModifierOperation.OPERATION_MULTIPLY_TOTAL, AttributeOperands.OPERAND_CURRENT, false));
+         }
+         final EntityAttribute newMovementAttribute = oldMovementAttribute.withModifiers(modifiers.toArray(new EntityAttribute.Modifier[0]));
+         // Compute the current value, as the client only updates it when a modifier is changed by itself
+@@ -562,6 +565,21 @@ public class ClientPlayerEntity extends PlayerEntity {
+     @Override
+     protected boolean translateAttribute(final EntityAttribute attribute, final PacketWrapper javaAttributes, final AtomicInteger attributeCount, final List<EntityData> javaEntityData) {
+         return switch (attribute.name()) {
++            case "minecraft:movement" -> {
++                javaAttributes.write(Types.VAR_INT, BedrockProtocol.MAPPINGS.getJavaEntityAttributes().get(Attributes.MOVEMENT_SPEED)); // attribute id
++                // Preserve the effective Bedrock value, including its limits and server overrides.
++                // Java replaces its local sprint modifier by id when sprint is reapplied.
++                final double speed = attribute.computeClampedValue();
++                javaAttributes.write(Types.DOUBLE, this.sprinting ? speed / (1D + SPRINT_SPEED_BOOST) : speed); // base value
++                javaAttributes.write(Types.VAR_INT, this.sprinting ? 1 : 0); // modifier count
++                if (this.sprinting) {
++                    javaAttributes.write(Types.STRING, "minecraft:sprinting"); // modifier id
++                    javaAttributes.write(Types.DOUBLE, (double) SPRINT_SPEED_BOOST); // amount
++                    javaAttributes.write(Types.BYTE, (byte) 2); // add multiplied total
++                }
++                attributeCount.incrementAndGet();
++                yield true;
++            }
+             case "minecraft:health", "minecraft:player.hunger", "minecraft:player.saturation" -> {
+                 final EntityAttribute health = attribute.name().equals("minecraft:health") ? attribute : this.attributes.get("minecraft:health");
+                 final EntityAttribute hunger = attribute.name().equals("minecraft:player.hunger") ? attribute : this.attributes.get("minecraft:player.hunger");
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerMovementAttributeTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerMovementAttributeTest.java
+new file mode 100644
+index 000000000..17e351e83
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerMovementAttributeTest.java
+@@ -0,0 +1,155 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.entity;
++
++import com.google.common.collect.HashBiMap;
++import com.viaversion.viaversion.api.Via;
++import com.viaversion.viaversion.api.ViaManager;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.Protocol;
++import com.viaversion.viaversion.api.protocol.ProtocolManager;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.AttributeModifierOperation;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.AttributeOperands;
++import net.raphimc.viabedrock.protocol.model.EntityAttribute;
++import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Field;
++import java.lang.reflect.InvocationHandler;
++import java.lang.reflect.Proxy;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class ClientPlayerMovementAttributeTest {
++
++    private final List<PacketWrapper> sent = new ArrayList<>();
++    private Field managerField;
++    private Field attributesField;
++    private Object previousManager;
++    private Object previousAttributes;
++    private ClientPlayerEntity player;
++
++    @BeforeAll
++    static void initializeStructuredDataKeys() throws Exception {
++        Class.forName("com.viaversion.viaversion.api.minecraft.data.StructuredDataKey");
++    }
++
++    @BeforeEach
++    void installPacketCapture() throws Exception {
++        this.managerField = Via.class.getDeclaredField("manager");
++        this.managerField.setAccessible(true);
++        this.previousManager = this.managerField.get(null);
++        this.attributesField = BedrockProtocol.MAPPINGS.getClass().getDeclaredField("javaEntityAttributes");
++        this.attributesField.setAccessible(true);
++        this.previousAttributes = this.attributesField.get(BedrockProtocol.MAPPINGS);
++        this.attributesField.set(BedrockProtocol.MAPPINGS, HashBiMap.create(Map.of("minecraft:movement_speed", 0)));
++        final ProtocolManager protocols = proxy(ProtocolManager.class, (ignored, method, arguments) -> {
++            if (method.getName().equals("createPacketWrapper")) {
++                return new PacketWrapperImpl(ClientboundPackets26_3.UPDATE_ATTRIBUTES, null, null) {
++                    @Override
++                    public void send(final Class<? extends Protocol> protocol, final boolean skipCurrentPipeline) {
++                        ClientPlayerMovementAttributeTest.this.sent.add(this);
++                    }
++                };
++            }
++            throw new AssertionError(method.getName());
++        });
++        this.managerField.set(null, proxy(ViaManager.class, (ignored, method, arguments) -> {
++            if (method.getName().equals("getProtocolManager")) {
++                return protocols;
++            }
++            throw new AssertionError(method.getName());
++        }));
++        final UserConnection user = proxy(UserConnection.class, (ignored, method, arguments) -> null);
++        this.player = new ClientPlayerEntity(user, 1, UUID.randomUUID(), new PlayerAbilities(1, (byte) 0, (byte) 0));
++        this.player.attributes().put("minecraft:movement", movement(0.1F, 0.1F, 0F, Float.MAX_VALUE));
++    }
++
++    @AfterEach
++    void restoreGlobals() throws Exception {
++        this.managerField.set(null, this.previousManager);
++        this.attributesField.set(BedrockProtocol.MAPPINGS, this.previousAttributes);
++    }
++
++    @Test
++    void sprintTogglesSendAnUnboostedBaseAndTheJavaSprintModifier() throws Exception {
++        this.player.setSprinting(true);
++        final PacketWrapper sprint = this.lastPacket();
++        assertEquals(0.1D, sprint.get(Types.DOUBLE, 0), 0.000001D);
++        assertSprint(sprint, 0.13D);
++        for (int repeat = 0; repeat < 5; repeat++) {
++            this.player.setSprinting(true);
++            assertSprint(this.lastPacket(), 0.13D);
++            assertEquals(sprint.get(Types.DOUBLE, 0), this.lastPacket().get(Types.DOUBLE, 0));
++        }
++        this.player.setSprinting(false);
++        assertEquals(0, this.lastPacket().get(Types.VAR_INT, 3));
++        assertEquals(0.1D, this.lastPacket().get(Types.DOUBLE, 0), 0.000001D);
++    }
++
++    @Test
++    void serverUpdatesPreserveCustomEffectiveSpeedsWithoutMutatingNativeAttributes() throws Exception {
++        this.player.setSprinting(true);
++        for (final float speed : new float[]{0F, 0.065F, 0.26F}) {
++            final EntityAttribute server = movement(speed, 0.1F, 0F, Float.MAX_VALUE);
++            this.player.updateAttributes(new EntityAttribute[]{server});
++            assertSprint(this.lastPacket(), speed);
++            assertSame(server, this.player.attributes().get(server.name()));
++        }
++        this.player.setSprinting(false);
++        final EntityAttribute walking = movement(0.2F, 0.1F, 0F, Float.MAX_VALUE);
++        this.player.updateAttributes(new EntityAttribute[]{walking});
++        assertEquals(0, this.lastPacket().get(Types.VAR_INT, 3));
++        assertEquals((double) walking.currentValue(), this.lastPacket().get(Types.DOUBLE, 0));
++    }
++
++    @Test
++    void normalizesAfterNativeLimitsAndRetainsOtherNativeModifiers() throws Exception {
++        final EntityAttribute.Modifier custom = new EntityAttribute.Modifier("custom", "custom", 0.5F,
++                AttributeModifierOperation.OPERATION_MULTIPLY_TOTAL, AttributeOperands.OPERAND_CURRENT, false);
++        this.player.attributes().put("minecraft:movement", movement(0.1F, 0.1F, 0F, Float.MAX_VALUE).withModifiers(new EntityAttribute.Modifier[]{custom}));
++        this.player.setSprinting(true);
++        assertSprint(this.lastPacket(), 0.195D);
++        this.player.updateAttributes(new EntityAttribute[]{movement(0.13F, 0.1F, 0.12F, 0.125F)});
++        assertSprint(this.lastPacket(), 0.125D);
++        this.player.updateAttributes(new EntityAttribute[]{movement(0.05F, 0.1F, 0.12F, 0.125F)});
++        assertSprint(this.lastPacket(), 0.12D);
++    }
++
++    private PacketWrapper lastPacket() {
++        return this.sent.get(this.sent.size() - 1);
++    }
++
++    private static void assertSprint(final PacketWrapper packet, final double effectiveSpeed) throws Exception {
++        assertEquals(1, packet.get(Types.VAR_INT, 1)); // attribute count
++        assertEquals(1, packet.get(Types.VAR_INT, 3)); // modifier count
++        assertEquals("minecraft:sprinting", packet.get(Types.STRING, 0));
++        assertEquals((double) 0.3F, packet.get(Types.DOUBLE, 1));
++        assertEquals((byte) 2, packet.get(Types.BYTE, 0));
++        assertEquals(effectiveSpeed, packet.get(Types.DOUBLE, 0) * (1D + packet.get(Types.DOUBLE, 1)), 0.000001D);
++    }
++
++    private static EntityAttribute movement(final float current, final float defaultValue, final float min, final float max) {
++        return new EntityAttribute("minecraft:movement", current, min, max, defaultValue, min, max, new EntityAttribute.Modifier[0]);
++    }
++
++    private static <T> T proxy(final Class<T> type, final InvocationHandler handler) {
++        return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, handler));
++    }
++
++}
+-- 
+2.55.0
