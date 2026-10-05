@@ -3412,3 +3412,26 @@ The recorder now defers its camera-preset audit until the custom-block pack gate
 Earlier observer exceptions came from comparing intentionally queued packets with undecoded core state.
 Recordings also require gameplay acknowledgments and reject early exits or logged disconnections.
 A spawn notification followed by a disconnected loading screen no longer passes the recording command.
+
+## BDS HTTP signaling, October 6, 2026
+
+**Implemented and verified through ViaProxy:** Core now owns HTTP NetherNet signaling.
+The pinned BDS 1.26.51.1 returns successful capability status with no JSON body.
+Its native client accepts that response and posts its SDP offer.
+The newer transport rejected the endpoint before sending an offer.
+Both connection integrations now use the shared core implementation.
+
+Four real loopback tests cover TLS rejection, empty capabilities, SDP exchange, unsupported endpoints, invalid answers, and certificate rejection.
+Certificate validation failures do not trigger plaintext fallback.
+Core Checkstyle, the complete ViaProxy build, and the complete add-on build pass.
+The core patch applies to its pinned upstream base without setup.
+
+The rebuilt proxy reaches a visible strict BDS world and completes the configured 120-second recording.
+Its journal includes local-player initialization and 1,955 continuing input packets.
+The native baseline remains connected through walking and jumping.
+A simultaneous connection using the same account returned `ServerIdConflict`; disconnecting the native client resolved it.
+
+This establishes the tested authenticated HTTP joining route.
+Direct add-on joining, offline HTTP identities, and full movement parity remain open.
+The BDS scene also exposes unsupported falling-block variants and secondary block-layer warnings that need separate investigation.
+Raw traffic, identities, logs, and screenshots remain private.

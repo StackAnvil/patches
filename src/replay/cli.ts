@@ -288,7 +288,7 @@ async function main(): Promise<void> {
   await mkdir(join(proxyHome, "plugins"), { mode: 0o700 });
   await writeFile(join(proxyHome, "plugins/recorder.jar"), await readFile(plugin), { mode: 0o600 });
   if (mode === "record") {
-    if (input !== "local") {
+    if (input !== "local" || option("--account")) {
       const authPath = resolve(option("--account") ?? process.env.STACKANVIL_BEDROCK_ACCOUNT ?? accountDefault);
       const auth = JSON.parse(await readFile(authPath, "utf8"));
       auth.accountType = "net.raphimc.viaproxy.saves.impl.accounts.BedrockAccount";
@@ -324,11 +324,11 @@ async function main(): Promise<void> {
     let child: ChildProcess | undefined;
     if (client === "proxy") {
       child = service("java", ["-DskipUpdateCheck", `-Dstackanvil.recording=${directory}`, "-jar", jar, "cli", "--bind-address", `127.0.0.1:${bind}`,
-        "--target-address", target!, "--target-version", "Bedrock 1.26.51", "--auth-method", mode === "record" && input !== "local" ? "ACCOUNT" : "NONE", "--minecraft-account-index", "0", "--log-ips", "false"], proxyHome, proxyLog);
+        "--target-address", target!, "--target-version", "Bedrock 1.26.51", "--auth-method", mode === "record" && (input !== "local" || option("--account")) ? "ACCOUNT" : "NONE", "--minecraft-account-index", "0", "--log-ips", "false"], proxyHome, proxyLog);
       await ready(child, proxyLog, /ViaProxy started successfully/);
     } else if (client === "native") {
       const separator = target!.lastIndexOf(":");
-      const account = mode === "replay" || input === "local" ? "offline" : resolve(option("--account") ?? process.env.STACKANVIL_BEDROCK_ACCOUNT ?? accountDefault);
+      const account = mode === "replay" || (input === "local" && !option("--account")) ? "offline" : resolve(option("--account") ?? process.env.STACKANVIL_BEDROCK_ACCOUNT ?? accountDefault);
       child = service("java", [`-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`,
         "com.enderdash.agent.replay.NativeCaptureProxy", directory, String(bind), target!.slice(0, separator), target!.slice(separator + 1), account], directory, proxyLog);
       await ready(child, proxyLog, /StackAnvil native capture ready/);

@@ -1,0 +1,434 @@
+From 918c609ca158106dcd8d63354c56c42f9283ebe9 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 01:02:13 +0200
+Subject: [PATCH] fix(nethernet): accept BDS capability responses without
+ metadata
+
+The pinned BDS 1.26.51.1 endpoint returns an empty 200 response to its
+capability probe. A native 26.51 client proceeds to the SDP exchange and
+spawns successfully, while the newer transport rejects the missing JSON.
+
+Provide the complete HTTP signaling flow in core for direct and proxy
+clients. Use the capability status independently of optional metadata,
+retain SDP and transport identity validation, cancel pending requests on
+close, and reject certificate validation failures instead of downgrading.
+
+Loopback tests cover native-style plaintext TLS rejection, empty capability
+responses, unsupported endpoints, SDP delivery and invalid answers.
+---
+ .../netty/nethernet/BedrockHttpSignaling.java | 188 ++++++++++++++++
+ .../nethernet/BedrockHttpSignalingTest.java   | 208 ++++++++++++++++++
+ 2 files changed, 396 insertions(+)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/netty/nethernet/BedrockHttpSignaling.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/netty/nethernet/BedrockHttpSignalingTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/netty/nethernet/BedrockHttpSignaling.java b/src/main/java/net/raphimc/viabedrock/netty/nethernet/BedrockHttpSignaling.java
+new file mode 100644
+index 000000000..d50777de4
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/netty/nethernet/BedrockHttpSignaling.java
+@@ -0,0 +1,188 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.netty.nethernet;
++
++import org.cloudburstmc.netty.channel.nethernet.NetherNetConstants;
++import org.cloudburstmc.netty.channel.nethernet.signaling.IceServerInfo;
++import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetClientSignaling;
++
++import javax.net.ssl.SSLException;
++import java.security.cert.CertificateException;
++import java.security.cert.CertPathValidatorException;
++import java.net.ConnectException;
++import java.net.InetSocketAddress;
++import java.net.SocketAddress;
++import java.net.URI;
++import java.net.http.HttpClient;
++import java.net.http.HttpRequest;
++import java.net.http.HttpResponse;
++import java.time.Duration;
++import java.util.List;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.CompletionException;
++import java.util.concurrent.ThreadLocalRandom;
++
++/** Complete non-trickle HTTP signaling shared by direct clients and proxies. */
++public final class BedrockHttpSignaling implements NetherNetClientSignaling {
++
++    private static final Duration TIMEOUT = Duration.ofSeconds(10);
++    private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(TIMEOUT).version(HttpClient.Version.HTTP_1_1).build();
++    private final String localNetworkId = Long.toUnsignedString(ThreadLocalRandom.current().nextLong());
++    private InetSocketAddress address;
++    private boolean secure;
++    private boolean closed;
++    private String connectionId;
++    private SignalHandler handler;
++    private FailureHandler failure;
++    private CompletableFuture<?> pending;
++
++    @Override
++    public boolean usesTrickleIce() {
++        return false;
++    }
++
++    @Override
++    public synchronized CompletableFuture<List<IceServerInfo>> connect(final SocketAddress remoteAddress) {
++        if (this.closed || this.address != null) {
++            return CompletableFuture.failedFuture(new IllegalStateException("Create HTTP signaling for each connection"));
++        }
++        if (!(remoteAddress instanceof InetSocketAddress endpoint)) {
++            return CompletableFuture.failedFuture(new IllegalArgumentException("HTTP signaling requires an internet socket address"));
++        }
++        this.address = endpoint;
++        return this.probe(true).handle((response, error) -> {
++            if (error == null) {
++                return this.acceptProbe(response, true);
++            }
++            final Throwable cause = unwrap(error);
++            // Native BDS can reject the TLS ClientHello with a fatal handshake alert.
++            // Certificate validation failures must not downgrade HTTPS to plaintext.
++            if (!(cause instanceof SSLException) || certificateFailure(cause)) {
++                return CompletableFuture.<List<IceServerInfo>>failedFuture(cause);
++            }
++            return this.probe(false).thenCompose(fallback -> this.acceptProbe(fallback, false));
++        }).thenCompose(result -> result);
++    }
++
++    private synchronized CompletableFuture<HttpResponse<Void>> probe(final boolean secure) {
++        if (this.closed) {
++            return CompletableFuture.failedFuture(new IllegalStateException("HTTP signaling is closed"));
++        }
++        final HttpRequest request = HttpRequest.newBuilder(this.uri(secure, "/v1/join"))
++                .timeout(TIMEOUT).header("Accept", "application/json").GET().build();
++        final CompletableFuture<HttpResponse<Void>> future = HTTP.sendAsync(request, HttpResponse.BodyHandlers.discarding());
++        this.pending = future;
++        return future;
++    }
++
++    private synchronized CompletableFuture<List<IceServerInfo>> acceptProbe(final HttpResponse<?> response, final boolean secure) {
++        if (this.closed) {
++            return CompletableFuture.failedFuture(new IllegalStateException("HTTP signaling is closed"));
++        }
++        if (response.statusCode() / 100 != 2) {
++            return CompletableFuture.failedFuture(new ConnectException("NetherNet capability check returned HTTP " + response.statusCode()));
++        }
++        // The capability status determines support. BDS 1.26.51.1 can return an
++        // empty metadata body, which the native client accepts before posting its offer.
++        this.secure = secure;
++        return CompletableFuture.completedFuture(List.of());
++    }
++
++    @Override
++    public synchronized void sendDescription(final String targetNetworkId, final String offer) {
++        if (this.closed) {
++            return;
++        }
++        if (this.address == null || this.connectionId == null) {
++            throw new IllegalStateException("Connect and register a signal handler before sending an offer");
++        }
++        final HttpRequest request = HttpRequest.newBuilder(this.uri(this.secure, "/v1/join/" + this.localNetworkId))
++                .timeout(TIMEOUT).header("Content-Type", "application/sdp").header("Accept", "application/sdp")
++                .POST(HttpRequest.BodyPublishers.ofString(offer)).build();
++        final CompletableFuture<HttpResponse<String>> future = HTTP.sendAsync(request, HttpResponse.BodyHandlers.ofString());
++        this.pending = future;
++        future.whenComplete(this::answer);
++    }
++
++    private synchronized void answer(final HttpResponse<String> response, final Throwable error) {
++        if (this.closed) {
++            return;
++        }
++        if (error != null) {
++            this.fail("NetherNet signaling failed: " + unwrap(error).getClass().getSimpleName());
++        } else if (response.statusCode() / 100 != 2) {
++            this.fail("NetherNet offer returned HTTP " + response.statusCode());
++        } else if (!response.body().startsWith("v=0\r\n") && !response.body().startsWith("v=0\n")) {
++            this.fail("NetherNet signaling did not return an SDP answer");
++        } else if (this.handler != null) {
++            // The transport verifies the answer's identity and DTLS fingerprints.
++            this.handler.onSignal(NetherNetConstants.buildSignalConnectResponse(this.connectionId, response.body()));
++        }
++    }
++
++    private void fail(final String reason) {
++        if (this.failure != null) {
++            this.failure.onFailure(reason);
++        }
++    }
++
++    private URI uri(final boolean secure, final String path) {
++        final String host = secure || this.address.isUnresolved() ? this.address.getHostString() : this.address.getAddress().getHostAddress();
++        return URI.create((secure ? "https://" : "http://") + (host.contains(":") ? "[" + host + "]" : host) + ":" + this.address.getPort() + path);
++    }
++
++    private static boolean certificateFailure(final Throwable error) {
++        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
++            if (cause instanceof CertificateException || cause instanceof CertPathValidatorException) {
++                return true;
++            }
++        }
++        return false;
++    }
++
++    private static Throwable unwrap(final Throwable error) {
++        return error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
++    }
++
++    @Override
++    public synchronized void setSignalHandler(final String connectionId, final SignalHandler handler) {
++        this.connectionId = connectionId;
++        this.handler = handler;
++    }
++
++    @Override
++    public synchronized void removeSignalHandler(final String connectionId) {
++        if (connectionId.equals(this.connectionId)) {
++            this.handler = null;
++        }
++    }
++
++    @Override
++    public synchronized void setFailureHandler(final FailureHandler handler) {
++        this.failure = handler;
++    }
++
++    @Override
++    public String getLocalNetworkId() {
++        return this.localNetworkId;
++    }
++
++    @Override
++    public synchronized boolean isActive() {
++        return !this.closed;
++    }
++
++    @Override
++    public synchronized void close() {
++        this.closed = true;
++        this.handler = null;
++        this.failure = null;
++        if (this.pending != null) {
++            this.pending.cancel(true);
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/netty/nethernet/BedrockHttpSignalingTest.java b/src/test/java/net/raphimc/viabedrock/netty/nethernet/BedrockHttpSignalingTest.java
+new file mode 100644
+index 000000000..ed500d130
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/netty/nethernet/BedrockHttpSignalingTest.java
+@@ -0,0 +1,208 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.netty.nethernet;
++
++import com.sun.net.httpserver.HttpServer;
++import com.sun.net.httpserver.HttpsServer;
++import com.sun.net.httpserver.HttpsConfigurator;
++import io.netty.handler.ssl.util.SelfSignedCertificate;
++import javax.net.ssl.SSLContext;
++import javax.net.ssl.KeyManagerFactory;
++import javax.net.ssl.SSLHandshakeException;
++import java.security.KeyStore;
++import java.security.cert.Certificate;
++import org.junit.jupiter.api.Test;
++
++import java.io.IOException;
++import java.net.ConnectException;
++import java.net.ServerSocket;
++import java.net.Socket;
++import java.util.Set;
++import java.util.concurrent.ConcurrentHashMap;
++import java.net.InetSocketAddress;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.ExecutionException;
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.atomic.AtomicInteger;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockHttpSignalingTest {
++
++    @Test
++    void acceptsCapabilityWithoutMetadataAndDeliversOnlyAnSdpAnswer() throws Exception {
++        final HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
++        final AtomicInteger offers = new AtomicInteger();
++        final CompletableFuture<String> received = new CompletableFuture<>();
++        final CompletableFuture<String> failure = new CompletableFuture<>();
++        try (BedrockHttpSignaling signaling = new BedrockHttpSignaling();
++             PlaintextEndpoint endpoint = new PlaintextEndpoint(server.getAddress())) {
++            server.createContext("/v1/join", exchange -> {
++                if (exchange.getRequestMethod().equals("GET")) {
++                    exchange.sendResponseHeaders(200, -1);
++                } else {
++                    assertEquals("/v1/join/" + signaling.getLocalNetworkId(), exchange.getRequestURI().getPath());
++                    assertEquals("application/sdp", exchange.getRequestHeaders().getFirst("Content-Type"));
++                    final byte[] body = exchange.getRequestBody().readAllBytes();
++                    offers.incrementAndGet();
++                    exchange.sendResponseHeaders(200, body.length);
++                    exchange.getResponseBody().write(body);
++                }
++                exchange.close();
++            });
++            server.start();
++            signaling.setSignalHandler("connection", received::complete);
++            signaling.setFailureHandler(failure::complete);
++            assertTrue(signaling.connect(endpoint.address()).get(15, TimeUnit.SECONDS).isEmpty());
++            assertFalse(signaling.usesTrickleIce());
++            final String offer = "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n";
++            signaling.sendDescription("", offer);
++            assertTrue(received.get(5, TimeUnit.SECONDS).endsWith(offer));
++            assertEquals(1, offers.get());
++            assertFalse(failure.isDone());
++            assertThrows(ExecutionException.class, () -> signaling.connect(endpoint.address()).get());
++        } finally {
++            server.stop(0);
++        }
++    }
++
++    @Test
++    void rejectsUnsupportedEndpointsBeforeSendingAnOffer() throws Exception {
++        final HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
++        final AtomicInteger offers = new AtomicInteger();
++        server.createContext("/v1/join", exchange -> {
++            if (exchange.getRequestMethod().equals("POST")) {
++                offers.incrementAndGet();
++            }
++            exchange.sendResponseHeaders(404, -1);
++            exchange.close();
++        });
++        server.start();
++        try (BedrockHttpSignaling signaling = new BedrockHttpSignaling();
++             PlaintextEndpoint endpoint = new PlaintextEndpoint(server.getAddress())) {
++            final ExecutionException refused = assertThrows(ExecutionException.class, () -> signaling.connect(endpoint.address()).get(15, TimeUnit.SECONDS));
++            assertInstanceOf(ConnectException.class, refused.getCause());
++            assertEquals(0, offers.get());
++        } finally {
++            server.stop(0);
++        }
++    }
++
++    @Test
++    void reportsSuccessfulHttpWithoutSdpAsFailureAndCannotReconnectAfterClose() throws Exception {
++        final HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
++        server.createContext("/v1/join", exchange -> {
++            exchange.sendResponseHeaders(200, -1);
++            exchange.close();
++        });
++        server.start();
++        try (BedrockHttpSignaling signaling = new BedrockHttpSignaling();
++             PlaintextEndpoint endpoint = new PlaintextEndpoint(server.getAddress())) {
++            final CompletableFuture<String> received = new CompletableFuture<>();
++            final CompletableFuture<String> failure = new CompletableFuture<>();
++            signaling.setSignalHandler("connection", received::complete);
++            signaling.setFailureHandler(failure::complete);
++            signaling.connect(endpoint.address()).get(15, TimeUnit.SECONDS);
++            signaling.sendDescription("", "v=0\r\n");
++            failure.get(5, TimeUnit.SECONDS);
++            assertFalse(received.isDone());
++            signaling.close();
++            assertFalse(signaling.isActive());
++            assertThrows(ExecutionException.class, () -> signaling.connect(endpoint.address()).get());
++        } finally {
++            server.stop(0);
++        }
++    }
++
++    @Test
++    void refusesAnUntrustedCertificateWithoutPostingAnOffer() throws Exception {
++        final SelfSignedCertificate certificate = new SelfSignedCertificate("localhost");
++        final HttpsServer server = HttpsServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
++        final AtomicInteger requests = new AtomicInteger();
++        try {
++            final KeyStore keys = KeyStore.getInstance(KeyStore.getDefaultType());
++            keys.load(null, null);
++            final char[] password = new char[0];
++            keys.setKeyEntry("endpoint", certificate.key(), password, new Certificate[]{certificate.cert()});
++            final KeyManagerFactory managers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
++            managers.init(keys, password);
++            final SSLContext context = SSLContext.getInstance("TLS");
++            context.init(managers.getKeyManagers(), null, null);
++            server.setHttpsConfigurator(new HttpsConfigurator(context));
++            server.createContext("/v1/join", exchange -> {
++                requests.incrementAndGet();
++                exchange.sendResponseHeaders(200, -1);
++                exchange.close();
++            });
++            server.start();
++            try (BedrockHttpSignaling signaling = new BedrockHttpSignaling()) {
++                final ExecutionException refused = assertThrows(ExecutionException.class, () -> signaling.connect(server.getAddress()).get(15, TimeUnit.SECONDS));
++                assertInstanceOf(SSLHandshakeException.class, refused.getCause());
++                assertEquals(0, requests.get());
++            }
++        } finally {
++            server.stop(0);
++            certificate.delete();
++        }
++    }
++
++    private static final class PlaintextEndpoint implements AutoCloseable {
++        private final ServerSocket listener = new ServerSocket(0, 8, java.net.InetAddress.getLoopbackAddress());
++        private final Set<Socket> sockets = ConcurrentHashMap.newKeySet();
++
++        private PlaintextEndpoint(final InetSocketAddress upstream) throws IOException {
++            Thread.startVirtualThread(() -> {
++                while (!this.listener.isClosed()) {
++                    try {
++                        final Socket socket = this.listener.accept();
++                        this.sockets.add(socket);
++                        Thread.startVirtualThread(() -> this.forward(socket, upstream));
++                    } catch (final IOException ignored) {
++                        break;
++                    }
++                }
++            });
++        }
++
++        private void forward(final Socket client, final InetSocketAddress address) {
++            try (client) {
++                final int first = client.getInputStream().read();
++                if (first == 22) {
++                    client.getOutputStream().write(new byte[]{21, 3, 3, 0, 2, 2, 40});
++                    return;
++                }
++                try (Socket upstream = new Socket(address.getAddress(), address.getPort())) {
++                    upstream.getOutputStream().write(first);
++                    Thread.startVirtualThread(() -> {
++                        try {
++                            client.getInputStream().transferTo(upstream.getOutputStream());
++                        } catch (final IOException ignored) {
++                            // Closing either fixture socket ends its forwarding task.
++                        }
++                    });
++                    upstream.getInputStream().transferTo(client.getOutputStream());
++                }
++            } catch (final IOException ignored) {
++                // Teardown closes sockets that are still waiting for a peer.
++            } finally {
++                this.sockets.remove(client);
++            }
++        }
++
++        private InetSocketAddress address() {
++            return new InetSocketAddress(this.listener.getInetAddress(), this.listener.getLocalPort());
++        }
++
++        @Override
++        public void close() throws IOException {
++            this.listener.close();
++            for (Socket socket : this.sockets) {
++                socket.close();
++            }
++        }
++    }
++
++}
+-- 
+2.55.0
