@@ -106,3 +106,12 @@ It checks finite-animation resets, simultaneous slots, and the uncommanded next-
 Both routes finish in `fixture_raise` with right-arm rotation `(-90, 0, 0)`.
 The complete build passes 993 tests and skips 113 optional tests.
 These checks cover player bodies; custom-actor command scenes and complete visible timing comparisons still require work.
+
+## Resolve the same entity description as core
+
+The server graph reads the core effective description after layer inheritance.
+It retains independent animation and controller definitions from the ordered packs.
+A higher right-arm alias overrides that pose while the lower left alias and root list survive.
+The licensed appearance reader and attachable reader still need separate inheritance checks.
+Direct and ViaProxy hand-entry probes reproduce the target native scale and both bone translations.
+The core resolver is independently reviewable in `0087-inherit-client-entity-descriptions-across-layers.patch`.

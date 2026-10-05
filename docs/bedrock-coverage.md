@@ -1323,25 +1323,27 @@ This section supersedes the missing hand-view costume selection described above 
 
 ## Live first-person geometry origin
 
-**Implemented:** The hand root converts the hierarchy's 24-pixel Y origin to the native mesh origin.
-It uses local eye height instead of half the entity's collision height.
-This applies to classic, persona, and resolved server costume hierarchies on both routes.
+**Corrected:** Use local eye height for the hand root and preserve the existing bone origin.
+Both native geometry and the converted hierarchy already contain the 24-pixel Y bind origin.
+The earlier extra Y translation counted it twice.
+This correction applies to classic, persona, and resolved server costume hierarchies on both routes.
 
-**Native evidence:** Runtime inspection of the matching standing hand pass reads render offset `1.6200100183486938` and model scale `1/16`.
-The matrix captured immediately after `0x14558dfa1` exposes the origin error that supplied-input tests did not check.
-The portable vertex test compares all eight corners of the fixture cube with that matrix.
-The yaw-zero private root cases pass with the geometry basis conversion accounted for.
-The full dependency build passes 1,002 tests with 115 optional skips and no failures or errors.
+**Native evidence:** The matching standing hand pass reads render offset `1.6200100183486938` and model scale `1/16`.
+Live posed bone matrices retain their native bind origin before the actor root runs.
+The replacement portable test compares all cube corners after both captured bone and actor transforms.
+The earlier corner test omitted the native bone transform and did not establish visible placement.
+Yaw-zero supplied root cases and global death/name transforms pass with the corrected basis.
 
-**Runtime evidence:** The corrected direct and ViaProxy clients accept the server fixture, retain independent hand models, and restore drawing scope.
-The native and Java screenshots still differ in placement, and native omits one fixture draw.
-The root matrix check therefore does not establish complete visible parity.
+**Runtime evidence:** Direct and ViaProxy hand-entry probes select two independent surfaces and reproduce the captured layered poses.
+The packets and selected pack layers are identical between routes.
+These checks establish pose selection, actor scale, hand submission, and scope restoration.
+They do not establish matching raster output.
 
-**Incomplete or unverified:** Trace the remaining draw and placement differences beyond the root matrix.
-Native render-offset changes across poses, scaling, and dimensions remain unverified.
+**Incomplete or unverified:** Projection and final visible placement still differ between native and Java captures.
+Native render-offset changes across poses and dimensions remain unverified.
 Java eye height differs from the captured standing value by about `0.00001` blocks.
 Held items, equipment, persona overlap, and native timing remain open.
-This section supersedes the earlier half-height assumption for the standing hand root.
+This section supersedes the earlier extra-origin adjustment and half-height assumption.
 
 
 ### Resource conversion: shared model geometry
@@ -1420,3 +1422,30 @@ These results narrow the gap but do not establish the complete entity-definition
 No guessed merge rule enters production.
 Native animation inheritance, pose application, and final visible placement still need implementation and comparison on both routes.
 All original coverage requirements remain active.
+
+## Client entity inheritance across pack layers
+
+**Implemented:** ViaBedrock merges client entity description objects by identifier before converter parsing.
+Animation aliases and script fields inherit individually; explicit lists and scalar values replace lower values.
+The add-on samples the same effective description instead of replacing it with the last JSON document.
+This resolves the captured missing lower animation graph on both connection routes.
+
+**Native evidence:** Three isolated Bedrock 1.26.51.1 runs test a lower two-arm graph and a higher player overlay.
+Omitted roots retain both authored poses while an upper scale of `0.875` replaces `0.9375`.
+Overriding only the right alias changes its posed bone to `[8, 15, 10]`.
+The untouched left alias retains `[1, 18, -1]`.
+Both bones already contain the native 24-pixel bind origin.
+
+**Runtime evidence:** Direct and ViaProxy replay the same 75-second packet prefix and accept the same packs.
+Both hand-entry probes reproduce those bone translations, actor scale, two independent surfaces, and scope restoration.
+Their selected scene hash is `0b88897357a050b6ac59888eedf79b4ca25adf873181c2914c885b6bd9443b13`.
+The fixture intentionally has no third-person controller.
+The generic avatar audit therefore reports no third-person draw; the hand probe and transport checks pass separately.
+The prefix preserves selected payload bytes and times, not the full longer recording.
+
+**Incomplete or unverified:** The separate licensed appearance reader still replaces complete entity descriptions.
+Other description fields, duplicate identifiers within a pack, and attachable inheritance need native checks.
+Final projection and visible placement, empty-graph fallback, held items, and complete first-person parity remain open.
+The complete build passes 1,010 tests with 115 optional skips and no failures or errors.
+The new core patch also passes its two tests and Checkstyle on clean upstream with Java 17.
+The original full-coverage goal remains active.

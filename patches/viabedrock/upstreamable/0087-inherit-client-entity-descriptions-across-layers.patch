@@ -1,0 +1,222 @@
+From 1ff79a5dac7f16dcfb8edfcdd41d7fe7eff93c0e Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Mon, 5 Oct 2026 01:46:10 +0200
+Subject: [PATCH] fix(resource-packs): inherit client entity descriptions
+ across layers
+
+Resolve each client entity by identifier across the ordered pack stack. Merge alias dictionaries and script fields before parsing converter data, so a higher layer can override one alias or its scale without discarding lower animation roots. Return independent raw description snapshots for fields outside the converter model.
+
+Live probes of Bedrock 1.26.51.1 build 51061372 confirm that a higher scale overrides the lower scale, omitted animate roots survive, and overriding the right-arm alias retains the lower left-arm alias and its pose. Arrays and scalar values replace their lower values. Parsed data and raw snapshots publish together after validation.
+---
+ build.gradle                                  |  11 ++
+ .../definition/EntityDefinitions.java         |  34 +++++-
+ .../definition/EntityDefinitionsTest.java     | 104 ++++++++++++++++++
+ 3 files changed, 147 insertions(+), 2 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/EntityDefinitionsTest.java
+
+diff --git a/build.gradle b/build.gradle
+index bdd488c83..46c6b480a 100644
+--- a/build.gradle
++++ b/build.gradle
+@@ -87,6 +87,13 @@ repositories {
+ 
+ dependencies {
+     compileOnly "com.viaversion:viaversion-common:5.12.0"
++
++    testImplementation "com.viaversion:viaversion-common:5.12.0"
++    testImplementation "com.google.guava:guava:33.7.1-jre"
++    testImplementation "io.netty:netty-handler:4.2.18.Final"
++    testImplementation "org.junit.jupiter:junit-jupiter:6.1.3"
++    testRuntimeOnly "org.junit.platform:junit-platform-launcher:6.1.3"
++
+     compileOnly "org.yaml:snakeyaml:2.7"
+     compileOnly "com.google.guava:guava:33.7.1-jre"
+     compileOnly "io.netty:netty-handler:4.2.18.Final"
+@@ -153,6 +160,10 @@ def registerToolTask(String name, String toolMainClass, String toolDescription)
+     }
+ }
+ 
++tasks.named("test") {
++    useJUnitPlatform()
++}
++
+ registerToolTask("generateJavaDataEnums", "net.raphimc.viabedrock.tool.generator.JavaDataEnumGenerator",
+     "Generates the java edition data enums from the vanilla client jar. Options: --version, --client-jar")
+ registerToolTask("generateBedrockDataEnums", "net.raphimc.viabedrock.tool.generator.BedrockDataEnumGenerator",
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/EntityDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/EntityDefinitions.java
+index 97452fb10..013bca88b 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/EntityDefinitions.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/EntityDefinitions.java
+@@ -17,6 +17,8 @@
+  */
+ package net.raphimc.viabedrock.api.resourcepack.definition;
+ 
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
+ import com.viaversion.viaversion.util.Key;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+@@ -33,14 +35,24 @@ import java.util.logging.Level;
+ public class EntityDefinitions {
+ 
+     private final Map<String, EntityDefinition> entities = new HashMap<>();
++    private final Map<String, JsonObject> descriptions = new HashMap<>();
+ 
+     public EntityDefinitions(final ResourcePackStorage resourcePackStorage) {
+         for (ResourcePack pack : resourcePackStorage.getPackStackBottomToTop()) {
+             for (String entityPath : pack.content().getFilesDeep("entity/", ".json")) {
+                 try {
+-                    final BedrockEntityData entityData = BedrockEntityParser.parse(pack.content().getString(entityPath));
+-                    final String identifier = Key.namespaced(entityData.getIdentifier());
++                    final JsonObject document = JsonParser.parseString(pack.content().getString(entityPath)).getAsJsonObject();
++                    final JsonObject entity = document.getAsJsonObject("minecraft:client_entity");
++                    if (entity == null) {
++                        continue;
++                    }
++                    final JsonObject description = entity.getAsJsonObject("description");
++                    final String identifier = Key.namespaced(description.get("identifier").getAsString());
++                    final JsonObject merged = merge(this.descriptions.get(identifier), description);
++                    entity.add("description", merged);
++                    final BedrockEntityData entityData = BedrockEntityParser.parse(document.toString());
+                     this.entities.put(identifier, new EntityDefinition(identifier, entityData));
++                    this.descriptions.put(identifier, merged);
+                 } catch (final Throwable e) {
+                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to parse entity definition " + entityPath + " in pack " + pack.key(), e);
+                 }
+@@ -52,6 +64,24 @@ public class EntityDefinitions {
+         return this.entities.get(identifier);
+     }
+ 
++    /** Returns an independent snapshot of the effective description, including fields absent from the converter data model. */
++    public JsonObject getDescription(final String identifier) {
++        final JsonObject description = this.descriptions.get(identifier);
++        return description == null ? null : description.deepCopy();
++    }
++
++    private static JsonObject merge(final JsonObject lower, final JsonObject higher) {
++        final JsonObject merged = lower == null ? new JsonObject() : lower.deepCopy();
++        for (final var entry : higher.entrySet()) {
++            final var inherited = merged.get(entry.getKey());
++            final var replacement = entry.getValue();
++            // Aliases and script fields inherit by key. Authored lists and scalar values replace the lower value.
++            merged.add(entry.getKey(), inherited != null && inherited.isJsonObject() && replacement.isJsonObject()
++                    ? merge(inherited.getAsJsonObject(), replacement.getAsJsonObject()) : replacement.deepCopy());
++        }
++        return merged;
++    }
++
+     public Map<String, EntityDefinition> entities() {
+         return Collections.unmodifiableMap(this.entities);
+     }
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/EntityDefinitionsTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/EntityDefinitionsTest.java
+new file mode 100644
+index 000000000..41846ada1
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/definition/EntityDefinitionsTest.java
+@@ -0,0 +1,104 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.api.resourcepack.definition;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class EntityDefinitionsTest {
++
++    @Test
++    void partialOverlayRetainsUnchangedAliasesAndScriptRoots() {
++        final JsonObject lower = description();
++        final JsonObject aliases = new JsonObject();
++        aliases.addProperty("right", "animation.test.right");
++        aliases.addProperty("left", "animation.test.left");
++        lower.add("animations", aliases);
++        final JsonObject scripts = new JsonObject();
++        final JsonArray roots = new JsonArray();
++        roots.add("right");
++        roots.add("left");
++        scripts.add("animate", roots);
++        scripts.addProperty("scale", .9375);
++        lower.add("scripts", scripts);
++        final JsonObject higher = description();
++        final JsonObject override = new JsonObject();
++        override.addProperty("right", "animation.test.overlay_right");
++        higher.add("animations", override);
++        final JsonObject higherScripts = new JsonObject();
++        higherScripts.addProperty("scale", .875);
++        higher.add("scripts", higherScripts);
++        final var entities = new ResourcePackStorage(List.of(pack(higher), pack(lower))).getEntities();
++        final var effective = entities.getDescription("test:actor");
++        assertEquals("animation.test.overlay_right", entities.get("test:actor").entityData().getAnimations().get("right"));
++        assertEquals("animation.test.left", entities.get("test:actor").entityData().getAnimations().get("left"));
++        assertEquals(roots, effective.getAsJsonObject("scripts").get("animate"));
++        assertEquals(.875, effective.getAsJsonObject("scripts").get("scale").getAsDouble());
++        effective.getAsJsonObject("scripts").remove("animate");
++        assertEquals(roots, entities.getDescription("test:actor").getAsJsonObject("scripts").get("animate"));
++        assertEquals(.9375, lower.getAsJsonObject("scripts").get("scale").getAsDouble());
++        assertNull(entities.getDescription("test:missing"));
++    }
++
++    @Test
++    void explicitEmptyArrayReplacesInheritedRootsAndPreservesOtherScriptFields() {
++        final JsonObject lower = description();
++        final JsonObject lowerScripts = new JsonObject();
++        final JsonArray roots = new JsonArray();
++        roots.add("pose");
++        lowerScripts.add("animate", roots);
++        lowerScripts.addProperty("scale", .5);
++        lower.add("scripts", lowerScripts);
++        final JsonObject higher = description();
++        final JsonObject higherScripts = new JsonObject();
++        higherScripts.add("animate", new JsonArray());
++        higher.add("scripts", higherScripts);
++        final var entities = new ResourcePackStorage(List.of(pack(higher), pack(lower))).getEntities();
++        final var scripts = entities.getDescription("test:actor").getAsJsonObject("scripts");
++        assertTrue(scripts.getAsJsonArray("animate").isEmpty());
++        assertEquals(.5, scripts.get("scale").getAsDouble());
++    }
++
++    private static JsonObject description() {
++        final JsonObject description = new JsonObject();
++        description.addProperty("identifier", "test:actor");
++        return description;
++    }
++
++    private static ResourcePack pack(final JsonObject description) {
++        final var content = new InMemoryContent();
++        content.putString("manifest.json", "{\"format_version\":2,\"header\":{\"uuid\":\"" + UUID.randomUUID() + "\",\"version\":[1,0,0],\"name\":\"test\"}}");
++        final JsonObject entity = new JsonObject();
++        entity.add("description", description);
++        final JsonObject document = new JsonObject();
++        document.addProperty("format_version", "1.10.0");
++        document.add("minecraft:client_entity", entity);
++        content.putJson("entity/actor.json", document);
++        return new ResourcePack(content);
++    }
++
++}
+-- 
+2.55.0

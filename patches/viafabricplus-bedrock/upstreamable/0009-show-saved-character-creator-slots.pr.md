@@ -1734,19 +1734,20 @@ Costumes and equipped items use the same implementation.
 
 ### Live hand geometry origin
 
-The converted `ModelPart` hierarchy places its root Y origin at pixel 24.
-Native mesh coordinates start at pixel zero.
-Apply that geometry basis conversion after the actor root and use the local eye height for drawing.
-This fixes the missing origin adjustment and replaces the earlier half-height input.
+Use local eye height for the actor root.
+Native posed bones and the converted `ModelPart` hierarchy already contain the same 24-pixel Y bind origin.
+Remove the extra translation that counted this origin twice.
+The earlier corner comparison omitted the native bone transform and was insufficient evidence.
 
-Runtime inspection captures the matrix immediately after `0x14558dfa1` in the matching native hand pass.
-A portable test checks eight converted fixture vertices against that captured matrix, including camera Z conversion.
-The yaw-zero private root cases pass with geometry basis conversion accounted for in the comparison.
-The dependency build passes 1,002 tests with 115 optional skips and no failures or errors.
+Live Bedrock 1.26.51.1 probes capture both posed bone matrices and the actor root after `0x14558dfa1`.
+The corrected portable test compares all corners of two authored cubes using both transforms.
+Supplied yaw-zero root cases and global death/name cases also pass without the extra translation.
 
-Direct and ViaProxy accepted-pack probes retain two distinct hand submissions and scope restoration.
-The visible comparison still differs, and native omits one fixture draw.
-Those remaining draw and placement differences require tracing beyond the root matrix.
+Direct and ViaProxy hand-entry probes select two distinct model submissions, preserve scale 0.875, and restore scopes.
+With layered server definitions, their right `[8, 15, 10]` and left `[1, 18, -1]` bone translations match native.
+The shared server graph obtains its effective description from the core layer resolver.
+
+Projection and final raster placement still need comparison with matched view settings.
 Native render-offset changes across poses and dimensions remain unverified.
-Java eye height also differs from the captured standing value by about `0.00001` blocks.
-Runtime records, fixture assets, and native screenshots remain private.
+Java eye height differs from the captured standing value by about `0.00001` blocks.
+Fixture assets, native runtime records, and screenshots remain private.

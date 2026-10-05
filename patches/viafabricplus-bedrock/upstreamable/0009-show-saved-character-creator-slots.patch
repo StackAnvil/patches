@@ -1,4 +1,4 @@
-From d46435fcdd2e57943a2337fd304fde9f3b442b52 Mon Sep 17 00:00:00 2001
+From e68c9bde93a10328d42b3b7e6d8dd78eb43645db Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1510,13 +1510,14 @@ scripts. Include original skin surfaces when the drawing pass requests them,
 and preserve independent controller visibility, texture, UV, and lighting.
 Server costumes and equipped models use the same selector in later patches.
 
-Convert the ModelPart hierarchy origin when submitting first-person actor
-geometry. ModelPart roots use pixel 24 as their Y origin, while the native
-mesh starts at zero. Keep this basis conversion after the actor root matrix
-and use the local eye height instead of half the collision height. A live
-1.26.51.1 hand pass uses render height 1.620010 and model scale 1/16; the live
-matrix and converted coordinates expose the missing origin adjustment that supplied matrix inputs
-did not test. Pose-dependent native offset lifecycle remains unverified.
+Use local eye height when submitting first-person actor geometry. Live
+Bedrock 1.26.51.1 posed bone matrices already contain the same 24-pixel Y
+bind origin as ModelPart. Remove the extra translation that counted this
+origin twice. The earlier corner check omitted the native bone transform.
+Portable comparisons now apply captured bone and actor matrices to all cube
+corners. Direct and ViaProxy hand-entry probes match the layered right-arm
+[8,15,10] and left-arm [1,18,-1] translations and scale 0.875. Projection,
+final visible placement, and pose-dependent offset lifecycle remain open.
 ---
  .gitignore                                    |    4 +-
  .../kotlin/base.settings.settings.gradle.kts  |    3 +
@@ -1740,7 +1741,7 @@ did not test. Pose-dependent native offset lifecycle remains unverified.
  .../bedrock/render/BedrockActorStateTest.java |  134 +
  .../render/BedrockAnimatedModelTest.java      |   87 +
  .../render/BedrockBoneTransformTest.java      |   69 +
- .../render/BedrockFirstPersonActorTest.java   |  110 +
+ .../render/BedrockFirstPersonActorTest.java   |  117 +
  .../render/BedrockFirstPersonCameraTest.java  |   86 +
  .../render/BedrockFirstPersonInputTest.java   |   97 +
  .../BedrockFirstPersonProjectionTest.java     |   88 +
@@ -1750,7 +1751,7 @@ did not test. Pose-dependent native offset lifecycle remains unverified.
  .../render/BedrockPlayerModelTest.java        |  100 +
  .../render/BedrockViewBobbingTest.java        |   93 +
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 232 files changed, 41836 insertions(+), 110 deletions(-)
+ 232 files changed, 41843 insertions(+), 110 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -26552,7 +26553,7 @@ index 0000000..3841693
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonActor.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonActor.java
 new file mode 100644
-index 0000000..a834cc1
+index 0000000..ef058c3
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonActor.java
 @@ -0,0 +1,35 @@
@@ -26575,8 +26576,8 @@ index 0000000..a834cc1
 +        final var matrix = new Matrix4f().translation(0, -heightOffset, 0)
 +                .scale(-1, 1, -1).mul(global).scale(-scriptScale.x, -scriptScale.y, scriptScale.z);
 +        if (!skipOffset) matrix.translate(0, modelScale * -24F - 1F / 128F, 0);
-+        // Converted ModelPart roots place Y=0 at pixel 24; native geometry starts at pixel 0.
-+        return matrix.scale(modelScale * 16F).translate(0, -24F / 16F, 0);
++        // Native and converted bones already contain the 24-pixel bind origin.
++        return matrix.scale(modelScale * 16F);
 +    }
 +
 +    static Matrix4f global(final int deathTicks, final float frameAlpha, final String name, final float height) {
@@ -45051,10 +45052,10 @@ index 0000000..6d6690a
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonActorTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonActorTest.java
 new file mode 100644
-index 0000000..a3a1694
+index 0000000..129fcbd
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockFirstPersonActorTest.java
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,117 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -45078,7 +45079,7 @@ index 0000000..a3a1694
 +        final var matrix = BedrockFirstPersonActor.root(.9F, 1F / 16F, new Vector3f(1), false, new Matrix4f());
 +        final var pivot = matrix.transformPosition(new Vector3f(5F / 16F, 26F / 16F, 0));
 +        assertEquals(5F / 16F, pivot.x);
-+        assertEquals(1.5078125F - .9F - 2F / 16F, pivot.y, .000001F);
++        assertEquals(1.5078125F - .9F - 26F / 16F, pivot.y, .000001F);
 +        assertEquals(0, pivot.z);
 +        final var near = matrix.transformPosition(new Vector3f(0, 0, 12F / 16F));
 +        assertEquals(-12F / 16F, near.z);
@@ -45086,19 +45087,26 @@ index 0000000..a3a1694
 +
 +    @Test
 +    void matchesVisibleGeometryAgainstTheLiveNativeHandMatrix() {
-+        // Captured after the native root pass in 1.26.51.1: camera-space native pixels.
-+        final var nativeRoot = new Matrix4f().scaling(-.05859375F, -.05859375F, .05859375F)
-+                .setTranslation(0, -.20643579959869385F, 0);
++        // Standing actor and posed bone matrices captured in Bedrock 1.26.51.1.
++        final var nativeRoot = new Matrix4f().scaling(-.0546875F, -.0546875F, .0546875F)
++                .setTranslation(0, -.30067408084869385F, 0);
 +        final var convertedRoot = BedrockFirstPersonActor.root(1.6200100183486938F, 1F / 16F,
-+                new Vector3f(.9375F), false, new Matrix4f());
-+        for (final float x : new float[]{4, 8}) for (final float y : new float[]{8, 12})
-+            for (final float z : new float[]{16, 20}) {
-+                final var nativePoint = nativeRoot.transformPosition(new Vector3f(-x, -y, z));
-+                final var convertedPoint = convertedRoot.transformPosition(new Vector3f(x, 24F - y, z).div(16F));
-+                assertEquals(nativePoint.x, convertedPoint.x, .000001F);
-+                assertEquals(nativePoint.y, convertedPoint.y, .000001F);
-+                assertEquals(-nativePoint.z, convertedPoint.z, .000001F);
-+            }
++                new Vector3f(.875F), false, new Matrix4f());
++        final var nativeBones = new Vector3f[]{new Vector3f(8, 15, 10), new Vector3f(1, 18, -1)};
++        final var origins = new float[]{-8, 4};
++        for (int bone = 0; bone < nativeBones.length; bone++) {
++            final var pivot = nativeBones[bone];
++            for (final float x : new float[]{origins[bone], origins[bone] + 4})
++                for (final float y : new float[]{-12, -8}) for (final float z : new float[]{16, 20}) {
++                    final var posedPixel = new Vector3f(x, y, z).add(pivot);
++                    final var nativePoint = nativeRoot.transformPosition(new Vector3f(posedPixel));
++                    final var convertedPoint = convertedRoot.transformPosition(new Vector3f(posedPixel).div(16F));
++                    // The Java camera faces the opposite X/Z basis from the native hand pass.
++                    assertEquals(-nativePoint.x, convertedPoint.x, .000001F);
++                    assertEquals(nativePoint.y, convertedPoint.y, .000001F);
++                    assertEquals(-nativePoint.z, convertedPoint.z, .000001F);
++                }
++        }
 +    }
 +
 +    @Test
@@ -45111,7 +45119,7 @@ index 0000000..a3a1694
 +        final var skipped = BedrockFirstPersonActor.root(.9F, .125F, new Vector3f(2, -3, 4), true, new Matrix4f());
 +        final var expanded = skipped.transformPosition(new Vector3f(1, 2.5F, 3));
 +        assertEquals(4, expanded.x);
-+        assertEquals(5.1F, expanded.y, .000001F);
++        assertEquals(14.1F, expanded.y, .000001F);
 +        assertEquals(-24, expanded.z);
 +    }
 +
@@ -45122,7 +45130,7 @@ index 0000000..a3a1694
 +        final var dying = BedrockFirstPersonActor.global(21, 0, "Dinnerbone", 1.8F);
 +        final var root = BedrockFirstPersonActor.root(.9F, 1F / 16F, new Vector3f(1), false, dying);
 +        final var point = root.transformPosition(new Vector3f(0, 24F / 16F, 0));
-+        assertEquals(.3921875F, point.x, .000001F);
++        assertEquals(1.8921875F, point.x, .000001F);
 +        assertEquals(-.9F, point.y, .000001F);
 +        assertEquals(0, point.z, .000001F);
 +        assertEquals(new Matrix4f(), BedrockFirstPersonActor.global(0, 0, "dinnerbone", 1.8F));
@@ -45160,7 +45168,7 @@ index 0000000..a3a1694
 +            final var position = row.getAsJsonArray("position");
 +            final var actual = new Matrix4f().set(input).translate(position.get(0).getAsFloat(), position.get(1).getAsFloat(), position.get(2).getAsFloat())
 +                    .mul(BedrockFirstPersonActor.root(row.get("height").getAsFloat(), row.get("model_scale").getAsFloat(), scale, row.get("skip_offset").getAsBoolean(), new Matrix4f()))
-+                    .scale(1F / 16F).translate(0, 24F, 0).get(new float[16]);
++                    .scale(1F / 16F).get(new float[16]);
 +            for (int i = 0; i < 16; i++) assertEquals(row.getAsJsonArray("result").get(i).getAsFloat(), actual[i], .00001F);
 +        }
 +    }
