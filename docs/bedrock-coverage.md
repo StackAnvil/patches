@@ -2802,8 +2802,8 @@ Both material controls submit forward draws; improved-transparency stages remain
 Screenshots show the custom lobby models and hotbar icons, alongside overlapping labels and the Java tutorial toast.
 These are complete saved-scene replays, not a new live-server join or a native image/timing comparison.
 
-**Remaining:** Native reset boundaries across animation and particle components, complete actor/world contexts, and flipbook evaluation order need further comparisons.
-The missing-variable arithmetic discrepancy is corrected in the next section.
+**Remaining:** Native reset boundaries across animation and particle components and complete actor/world contexts need further comparisons.
+The following sections correct missing-variable arithmetic and flipbook evaluation order.
 All other coverage requirements remain active.
 
 ## Missing Molang values and fault propagation
@@ -2864,5 +2864,72 @@ Current Java evaluation returns the assigned value, so broader assignment-result
 The private contradictory assignment fixtures remain available for this work and are excluded from the verified validity comparison.
 An unsupported diagnostic boundary interrupted a `sqrt(-1)` reader probe, so that interruption does not establish its native result.
 
-Complete frame reset boundaries, actor/world contexts, arrays, runtime diagnostics, flipbook order, and native image and timing parity remain open.
+Complete frame reset boundaries, actor/world contexts, arrays, runtime diagnostics, and native image and timing parity remain open.
+The following section corrects the sampled flipbook reader and evaluation order.
 All other coverage requirements remain active.
+
+## Flipbook field types and evaluation order
+
+**Evidence:** The pinned Bedrock 1.26.51.1 reader treats flipbook size and step as constant numeric vectors.
+Base coordinates and frame count accept Molang.
+The matching updater evaluates size first, then frame count, base V, base U, and custom direction.
+An omitted frame rate means zero.
+A present null flipbook section retains the enabled component with default values.
+A present section of another invalid type disables flipbook playback and ignores ordinary UV expressions.
+
+Texture dimensions require integral JSON values and clamp values below two to one.
+Floating-point JSON values, including `2.0`, retain one and produce a reader diagnostic.
+Constant vector fields recover each invalid component independently.
+Flipbook numeric readers accept booleans as zero or one; flag readers require booleans.
+Missing required fields and rejected Molang expressions retain their declared defaults.
+Compiler rejection does not always produce an SDK log; the client reports the rejection explicitly.
+
+The [Mojang particle reference](https://mojang.github.io/bedrock-samples/Particles.html) describes which flipbook fields accept Molang.
+The matching build's exported schema and executable establish the defaults, typed recovery, and updater order.
+Private native execution covers 104 declarations and 520 component samples.
+The native JSON reader, expression compiler, VM, component reader, updater, registries, and variable-store cleanup execute unchanged.
+The harness supplies allocation, CRT operations, locks, service markers, diagnostics, and SDK boundaries.
+CRT `roundf` and `fmodf` run as supplied functions at their call boundaries.
+Age and lifetime enter the native variable map as controlled numeric samples; no complete actor or world exists in this probe.
+
+**Implemented:** The add-on stores flipbook size and step as floats, separate from expression programs.
+It uses native defaults and recovery, preserves integer texture dimensions, and selects the flipbook branch by field presence.
+Ignored fields cannot parse, execute, or mutate shared temporaries.
+Frame count and base coordinates evaluate in native order within the existing core evaluation group.
+Ordinary UV evaluation keeps its previous order.
+Source expression limits remain unchanged.
+This client change affects particle rendering; ViaProxy carries the same resource definitions through its existing transport.
+
+**Verified tests:** All four projects build with 1,121 passing Java tests, 75 optional skips, and no failures or errors.
+Core Checkstyle passes.
+The new reference matches all 104 reader states and 520 direction, size, and UV samples.
+The earlier 492 numeric frame comparisons also pass, including rounding, looping, lifetime stretching, and velocity thresholds.
+The 133 earlier particle expression declarations and 665 samples remain enabled.
+Targeted regressions cover shared order, successive samples, typed recovery, ignored expressions, and unchanged expression bounds.
+
+Enabling the older scheduling references exposed three fixtures that assumed absent variables were zero.
+Their native probes supplied expression callbacks rather than executing Molang.
+The Java fixtures now explicitly initialize those supplied counters or coalesce the unavailable source value.
+These changes preserve the scheduling and dispatch assertions without changing production missing-value semantics.
+
+
+**Verified runtime:** Complete 240-second direct and ViaProxy replays preserve the CubeCraft scene hash `ede0e43b2874418cbb6b62135898efe0553009307d33fecd0f258383643d5d83`.
+Both retain all 311 skin updates and pass transport and rendering checks.
+Each route loads 95 flipbook definitions, 20 earlier direction and sharing definitions, and two material controls.
+All 117 effects start through production resource loading, simulation, and visual extraction.
+Reader metadata and 475 controlled samples from the loaded components match the native reference on each route.
+Real playback also preserves the expected shared temporary value in each custom direction.
+Neither final route reports an active capacity rejection or observer error.
+Both material controls submit forward draws; improved-transparency stages remain unverified in these runs.
+
+An initial larger ViaProxy fixture batch reached the unchanged 128-asset cache limit and rejected its final effect.
+The final batch retains room for the real scene assets.
+It omits three nonfinite-UV cases and six additional texture-dimension cases; all nine remain covered by the 104-case native test.
+The production cache and pending-load limits remain unchanged.
+
+Reviewed screenshots show custom lobby models, banners, the hanging cube, and hotbar icons on both routes.
+Overlapping labels and the Java tutorial toast remain visible.
+These are complete saved-scene replays, not fresh live-server joins or native image and timing comparisons.
+
+**Remaining:** Other billboard fields and reader errors, complete frame reset boundaries, embedded assignment results, actor/world contexts, and visible particle parity need further work.
+The full protocol, gameplay, editor, account, skin, persona, audio, UI, and platform requirements remain active.

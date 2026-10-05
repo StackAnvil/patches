@@ -2694,3 +2694,30 @@ Each route records one expected start cancellation during resource reload.
 Both controls submit forward draws; improved transparency remains unverified in this run.
 Screenshots retain custom lobby models, the hanging cube, hotbar icons, overlapping labels, and the Java tutorial toast.
 These saved-scene checks do not establish a fresh live-server join or native image and timing parity.
+
+## Native flipbook reader and component order
+
+The client stores flipbook size and step as constant floats, separate from base-coordinate and frame-count Molang programs.
+Frame count evaluates before base V and base U within the shared core group.
+The reader uses zero FPS by default, recovers typed fields independently, and preserves native integral texture dimensions.
+A present invalid flipbook section ignores ordinary UV expressions; null retains the enabled component with defaults.
+Rejected expressions recover, while source length, node, and depth limits still fail explicitly.
+
+The [coverage ledger](../../../docs/bedrock-coverage.md#flipbook-field-types-and-evaluation-order) records the matching build, reader behavior, and execution boundaries.
+The matching native reader/compiler/VM/updater passes 104 declarations and 520 samples.
+The 492 earlier numeric frame samples and 133 expression declarations also pass.
+All four builds pass with 1,121 Java tests, 75 optional skips, and no failures or errors.
+Core Checkstyle passes.
+Older scheduling fixtures now initialize their supplied counters or coalesce an unavailable source field explicitly.
+Their native expression callbacks do not establish Molang evaluation behavior.
+
+
+Complete 240-second direct and ViaProxy CubeCraft replays preserve the unchanged scene payload and all 311 skin updates.
+Each starts 95 flipbook definitions, 20 earlier direction and sharing definitions, and two material controls through production loading and playback.
+Reader states and 475 controlled samples from the loaded components match the native reference on each route.
+Both final runs report no active capacity rejection or observer error.
+The runtime batch excludes three nonfinite-UV cases and six additional dimension cases; the full native unit comparison retains them.
+An initial oversized fixture batch reached the unchanged asset-cache limit; reducing the test batch leaves room for real scene assets.
+Both material controls submit forward draws.
+Improved transparency, complete actor/world contexts, native images, and timing remain unverified.
+Reviewed screenshots retain custom lobby models, banners, the hanging cube, hotbar icons, overlapping labels, and the Java tutorial toast.
