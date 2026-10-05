@@ -2563,5 +2563,51 @@ Both routes retain the expected thresholds, UV defaults, diagnostics, and sample
 The same runs complete forward rendering and all three improved-transparency stages for translucent and additive particles.
 These checks establish packaged behavior and complete scene transport, without proving native image parity.
 
-**Remaining:** Typed schema dispatch, malformed Molang expressions, non-finite custom axes, other component reader errors, complete interpolation, and native visible comparisons remain unverified.
+**Remaining:** The expression and numeric-axis behavior verified below closes part of this reader gap. Typed schema dispatch, other component errors, interpolation, and native visible comparisons remain unverified.
 The other material, protocol, inventory, gameplay, UI, skin, account, and platform requirements remain active.
+
+
+## Custom particle expression recovery
+
+**Evidence:** The target 1.26.51.1 array reader independently processes each direction axis.
+A rejected expression becomes zero, while valid neighboring axes and subsequent UV settings survive.
+Numeric axes retain their converted float value, including overflow to infinity.
+
+A private probe executes the native JSON reader, constructor, array reader, Molang parser, and billboard sampler.
+Seven declarations produce 35 sampled results.
+Numeric and addition controls evaluate to two and three.
+Empty expressions produce zero.
+Malformed controls include an unmatched parenthesis and a missing right operand.
+Large numeric inputs cover finite values and float overflow.
+
+The harness supplies allocation, exact CRT operations, decimal conversion, and successful single-thread lock operations.
+Native thread-guard initialization executes unchanged.
+The optional SDK observer is absent, while a non-mutating hook records diagnostic calls.
+Frees and exit registrations remain supplied process boundaries.
+Sampling supplies only particle age and lifetime lookup.
+
+Return-expression evaluation is outside the completed probe.
+
+**Implemented:** Custom direction axes now retain native numeric overflow.
+A Molang syntax rejection replaces only its own axis with zero and reports a loading diagnostic.
+Expression length, nesting, and node limits retain their existing rejection behavior.
+The parser reports nesting limits separately from syntax errors so recovery cannot bypass those limits.
+Other particle, actor, and animation fields retain their existing parsing behavior.
+
+**Verified tests:** An emitter test verifies per-axis syntax recovery and normalized visual directions after loading.
+A limit test verifies that long, deeply nested, and complex expressions still fail their existing gates.
+A private-reference test matches all seven native declarations and 35 sampled directions and UV results.
+The targeted suites pass 28 tests, with two unrelated private Molang references skipped.
+All four projects build with 1,048 passing Java tests, 120 optional skips, and no failures or errors.
+
+**Verified runtime:** Complete direct and ViaProxy replays preserve the CubeCraft scene hash `ede0e43b2874418cbb6b62135898efe0553009307d33fecd0f258383643d5d83`.
+Both retain all 311 skin updates and pass transport and rendering checks.
+Eight direction fixtures load through the production resource library, including both malformed-expression controls.
+The malformed controls retain their UV settings, allocate rendering resources, create particles, and expose the expected recovered direction.
+No particle loading, initialization, or observer errors occur.
+
+Both runs also complete forward rendering and all three improved-transparency stages for translucent and additive particles.
+These checks establish packaged behavior through both routes, without proving native visible image parity.
+
+**Remaining:** Complete expression admission, lexer error recovery, SDK runtime context, typed schema dispatch, interpolation, and native visible comparisons remain unverified.
+All other coverage requirements remain active.
