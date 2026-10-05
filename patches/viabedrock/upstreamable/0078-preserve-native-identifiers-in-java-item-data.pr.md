@@ -312,3 +312,48 @@ It did not execute complete block-to-item construction.
 Complete network construction, block-to-item construction, native name remapping, restriction registry resolution, and renderer lifetime remain incomplete or unverified.
 Allocator, CRT, TLS, and registry boundaries remained supplied where the probes required them.
 These results establish construction rules at specific boundaries, not complete first-person behavior or visible parity.
+
+
+### Native block-to-item construction research
+
+**Verified research:** The actual block constructor and replacement setter passed 108,432 cases in Bedrock 1.26.51.1, build 51061372.
+The probe executed numeric lookup, registry wrappers, name lookup, empty alias-table paths, user-data copies, assignment, and destruction.
+These cases execute the constructor itself.
+The captured inventory supplied 2,621 canonical names and internal IDs, including 545 names from server-defined namespaces.
+Registry objects, item objects, weak cells, and tables were reconstructed test inputs.
+
+| Construction checks | Passing cases |
+| --- | --- |
+| Every legacy block-ID bit pattern, with count one | 65,536 |
+| Captured internal IDs across sixteen count boundaries | 41,936 |
+| Typed user data, auxiliary boundaries, empty and missing items | 624 |
+| Replacement of an existing stack through the full setter | 336 |
+
+**ID conversion:** A legacy block ID below 256 supplies the same internal item ID.
+Otherwise, the constructor uses `255 - legacyId`, then interprets the low sixteen bits as a signed internal ID.
+These IDs differ from Bedrock network item IDs.
+An unresolved nonzero ID clears the count and raw auxiliary value.
+ID zero follows a separate valid-empty path and can retain a nonzero count without an item reference.
+
+**Counts:** The constructor clamps a nonpositive signed 32-bit count to zero, then stores the low byte.
+A positive count of 256 therefore becomes zero.
+A resulting zero count triggers native invalidation before the constructor copies optional user data.
+The probes cover signed limits, byte boundaries, and larger positive counts.
+They do not establish these rules for every network descriptor constructor.
+
+**Data and ownership:** The block constructor initializes raw auxiliary bits to zero and retains the supplied block definition for a nonempty result.
+Optional user data becomes a separate native compound, even when the resulting stack has zero count.
+Tests cover all eleven tag types, empty compounds, absent compounds, and preservation of the original data.
+The replacement setter constructs a temporary stack, replaces the existing stack, and destroys the temporary stack.
+Tested item and context reference counts return to their starting values after destruction.
+
+**Boundaries:** Numeric and canonical name tables use the captured inventory.
+Alias tables remain empty test inputs; this does not verify the live alias registry or its construction.
+The final admission check uses a supplied context with its feature gate disabled.
+TLS initialization, allocation, CRT operations, and clock values remain supplied.
+Fixtures do not contain nested charged items or fully initialized item-component objects.
+Executable bytes, emulation programs, and reference outputs remain private.
+
+**Incomplete:** Production still uses Java hand-item classification and decoded wire snapshots.
+Complete network-descriptor construction, live alias and restriction resolution, component lifecycle, and renderer lifetime remain incomplete or unverified.
+These constructor checks do not establish complete visible timing or first-person parity.
