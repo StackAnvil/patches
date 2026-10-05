@@ -1512,3 +1512,41 @@ These controlled runtime checks establish query binding, not native swap timing 
 **Validation:** The dependency build and Java suites pass 1,013 tests with 115 optional skips and no failures or errors.
 The focused hand input suite also passes with native height and arm-offset fixtures enabled.
 The full coverage goal remains active.
+
+
+## Native hand height and Java swap cooldown
+
+**Implemented:** Loaded native appearance graphs now raise retained hands toward height one without the Java attack-delay multiplier.
+Animated replacements continue to lower the hands toward zero.
+The change applies only when the local skin texture matches the loaded graph.
+Missing, pending, failed, and mismatched appearances retain ordinary Java behavior.
+The existing item classifier, busy-hand branch, and replacement threshold remain unchanged.
+
+**Native evidence:** The matching Bedrock 1.26.51.1 executable, build 51061372, updates both heights with a maximum step of 0.4.
+Native function `1447af310` targets zero for its animated-replacement classification and one for its other classifications.
+Execution of its arithmetic instructions covers 900 combinations of initial heights and independent hand classifications.
+Minecraft 26.3 instead multiplies the retained main-hand target by the cube of `getItemSwapScale(1)`.
+That method derives its scale from the item swap ticker and attack strength delay.
+The add-on changes that return value inside the hand tick only for matching native appearances.
+It retains the original call and does not change attack strength or inventory state.
+
+**Incomplete or unverified:** Native item comparison rules, busy-hand behavior, replacement thresholds, complete swap timing, and final held-item pixels need further comparisons.
+The native instruction results establish height arithmetic, not complete item classification or visible parity.
+Licensed executables, arithmetic inputs, and runtime probes remain private.
+The original full Bedrock coverage goal remains active.
+
+
+**Runtime verification:** Direct and ViaProxy clients each pass all 900 reference cases through Minecraft's actual hand tick with Java swap scale zero.
+Their old hand heights retain the previous values for interpolation.
+Both routes also pass four fallback cases: missing appearance, mismatched texture, pending graph, and failed graph.
+The existing two-model submission, layered poses, rendered-item queries, and scope restoration still pass.
+The controlled fixtures use matching stacks, equivalent copied stacks, and animated replacements.
+They do not establish the classifier for every native item pair.
+The generic third-person audit reports no avatar submission because the fixture defines only first-person controllers.
+The hand-specific probes provide separate evidence.
+
+**Validation:** The dependency build passes 1,013 Java tests with 115 optional skips and no failures or errors.
+The full add-on stack replays all 23 patches.
+
+Both clients reach playable spawn, load the converted packs, and complete the unchanged 75-second scene prefix.
+These checks establish transport and hand behavior for this fixture, not complete visual parity.
