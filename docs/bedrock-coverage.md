@@ -40,7 +40,7 @@ These comparisons establish the tested Linux routes; other transports and platfo
 ## Protocol inventory
 
 The complete applied source defines 169 inbound packet types.
-There are 111 explicit registrations, 17 explicit cancellations, and 41 automatic fallback cancellations.
+There are 112 explicit registrations, 16 explicit cancellations, and 41 automatic fallback cancellations.
 These counts describe source registration, not feature completion.
 The inventory excludes commented enum entries and includes transition registrations.
 One declared packet, `STONECUTTER_SET_RECIPE` (355), is absent from the matching protocol 2193 schema.
@@ -162,7 +162,7 @@ The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and
 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
-| U1 | Presets, instructions, splines, shake, and aim assistance | Incomplete | Core resolves fades, FOV transitions, and default camera shake. The add-on renders their camera effects. Presets, movement, target tracking, splines, attachments, aim assistance, custom shake parameters, local FOV modifiers, and broader lifecycle comparisons remain incomplete. |
+| U1 | Presets, instructions, splines, shake, and aim assistance | Incomplete | Core retains received presets and resolves optional-field inheritance. It also resolves fades, FOV transitions, and default camera shake, which the add-on renders. Preset activation and rendering, movement, target tracking, splines, attachments, aim assistance, custom shake parameters, local FOV modifiers, and broader lifecycle comparisons remain incomplete. |
 | U2 | Fog and HUD visibility | Incomplete | Core retains all target HUD restrictions and transports them through direct connections and ViaProxy. The add-on applies individual Java HUD restrictions and preserves local settings on reset. Fog, missing native widgets, and remaining visual comparisons are incomplete. |
 | U3 | Texture animations, toasts, credits, store requests, and inventory preferences | Incomplete | Implement target packet behavior and verify native presentation. |
 | U4 | Dynamic JSON UI and widgets | Incomplete | Extend static sidebar support with expression evaluation and applicable widgets. |
@@ -3189,6 +3189,73 @@ This checks the production client setting against the inspected native handler; 
 
 **Remaining:** Custom preset shake parameters, native random initialization equivalence, pauses, transfers, late subscriptions, and broader lifecycle behavior need comparisons.
 Camera presets, transforms, target tracking, splines, attachments, fog, and aim assistance remain incomplete.
+
+
+## Received presets and camera movement research, October 5, 2026
+
+**Implemented:** Core handles `CAMERA_PRESETS` (198) and retains every protocol-2193 field in the connection storage.
+The registry preserves received instruction indexes and resolves optional fields through declared parents.
+Forward references work without recursion, including the maximum supported depth.
+Explicit false and zero values override ancestors.
+An aim-assist object inherits as a whole rather than merging its children.
+Starting-rotation flags and values remain those of the child, outside ordinary optional inheritance.
+Activation behavior for those flags remains incomplete.
+
+Unknown roots, missing parents, and cycles remain unresolved and produce a diagnostic.
+The registry never substitutes a free camera for them or shifts valid indexes.
+Duplicate names reject a replacement atomically and preserve the previous table.
+That policy protects connection state; native duplicate-name behavior remains unverified.
+Counts are bounded before allocation.
+
+**Verified wire evidence:** Local, CubeCraft, and authored custom tables contain six, four, and eight presets respectively.
+Their payload sizes are 337, 231, and 493 bytes.
+The Java codec and [pinned Gophertunnel codec](https://github.com/Sandertv/gophertunnel/blob/80c811b6186016b3860c358368cfa47e507f26e9/minecraft/protocol/camera.go) consume every field and reproduce all three payloads exactly.
+Seven targeted tests pass with all three private fixtures, without skipped tests.
+These results establish decoding and registry behavior, not camera parity.
+
+All four stack builds pass, along with `bun run check` and the replay audit regression test.
+The audit copies preset bytes before decoder ownership ends and compares them with the retained table after processing.
+It writes private core-state reports without changing the captured packets.
+Direct session `2026-10-05T21-39-12.934Z-replay-scene` and ViaProxy session `2026-10-05T21-41-49.343Z-replay-scene` retain identical reports.
+Both contain all eight presets, no unresolved parents, and the received payload hash `2659ced7bbb9d184225909a66426c3ff1466b7371158cf07a4b4e929e326eca4`.
+The resolved child retains inherited position and pitch, overridden height and yaw, player-listener selection, and false player effects.
+
+Both complete replays preserve the native scene hash and pass transport and existing skin-rendering checks.
+They contain all nine camera instructions and produce no camera preset errors.
+These checks establish preset handling through both routes, without claiming translated camera movement or views.
+
+The custom capture uses the matching server and native client on an owned local connection.
+Session `2026-10-05T21-31-07.997Z-record-local` reaches spawn and retains all nine camera instructions.
+Its scene hash is `e259410a9b65876a63a4805e4a5ce3804c0f5fcb711dd2f5d2df500ebd9fba2e`.
+The child preset overrides height, yaw, listener selection, and player effects while inheriting the other authored pose values.
+Reviewed native frames show distinct custom views, an eased transition, and the built-in perspectives.
+The authored fixture required `cameras/presets/` and the target schema's `listener` field.
+An earlier fixture failed to load; it supplies no custom inheritance evidence.
+
+Native resolver `1409f28e0` supplies the executable evidence for ordinary optional inheritance.
+The native blend updater at `146786500` supplies 4,608 samples across all 32 easing modes.
+Cases include moving targets, parent movement, yaw wraparound, near-vertical rotation, immediate durations, and endpoint completion.
+The private probe authors component storage and supplies imported math functions.
+It executes the actual blend arithmetic and native easing functions.
+
+The updater interpolates Euler angles and reconstructs a quaternion.
+Yaw follows the shortest arc.
+After the first frame, position starts from the previous rendered pose plus the parent-position change.
+The next interpolation factor accounts for the previously completed easing amount.
+Overshoot remains intact, and endpoint completion copies the target pose and rendering fields.
+During a blend, other rendering fields remain those of the previous output camera.
+Nine additional native samples verify retention during a blend and target-field copying after immediate or completed transitions.
+
+An independent private model reproduces position and FOV exactly in those samples.
+Its largest quaternion-component difference is `0.0000000298023223876953125`.
+The comparison uses observed native easing factors to isolate pose arithmetic.
+It does not establish Windows CRT bit identity, command setup, frame scheduling, or production Java movement behavior.
+The previous native easing comparisons remain separate evidence for easing functions.
+
+**Remaining:** Preset activation, resolved pose transport, camera movement, controls, audio listeners, and player effects need production integration.
+Both translated routes still need visible camera comparisons.
+This change does not claim that the custom native views render in the add-on.
+All original protocol, inventory, presentation, gameplay, rendering, skin, account, asset, and platform requirements remain active.
 The native samples use authored permutations; they do not claim identical random trajectories across clients.
 Complete-record delivery and local-avatar rendering do not establish native animation or skin visual parity.
 The full protocol, gameplay, editor, account, skin, persona, audio, UI, asset, and platform requirements remain active.

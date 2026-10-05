@@ -1,5 +1,6 @@
 package com.enderdash.agent.replay.fabric;
 
+import com.enderdash.agent.replay.CameraPresetAudit;
 import com.enderdash.agent.replay.PacketJournal;
 import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.connection.UserConnection;
@@ -69,7 +70,9 @@ public final class FabricRecorder {
             }
 
             @Override public void channelRead(ChannelHandlerContext ctx, Object message) throws Exception {
+                final byte[] presets;
                 try {
+                    presets = CameraPresetAudit.capture(message);
                     record(true, message);
                     if (replayIdentity != null && message instanceof ByteBuf buffer) {
                         ByteBuf packet = buffer.duplicate();
@@ -85,6 +88,11 @@ public final class FabricRecorder {
                 }
                 catch (Exception error) { ReferenceCountUtil.release(message); ctx.close(); throw error; }
                 super.channelRead(ctx, message);
+                if (presets != null) {
+                    ViaDecodeHandler decoder = ctx.pipeline().get(ViaDecodeHandler.class);
+                    if (decoder == null) throw new IOException("Replay connection has no ViaVersion decoder for camera observation");
+                    CameraPresetAudit.afterPacket(decoder.connection(), presets, directory);
+                }
             }
 
             @Override public void write(ChannelHandlerContext ctx, Object message, ChannelPromise promise) throws Exception {

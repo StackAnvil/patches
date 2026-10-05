@@ -65,9 +65,11 @@ public final class RecordingPlugin extends ViaProxyPlugin {
                 savePacks();
             }
             @Override public void channelRead(ChannelHandlerContext ctx, Object message) throws Exception {
-                try { record(true, message); }
+                final byte[] presets;
+                try { presets = CameraPresetAudit.capture(message); record(true, message); }
                 catch (Exception error) { io.netty.util.ReferenceCountUtil.release(message); ctx.close(); throw error; }
                 super.channelRead(ctx, message);
+                CameraPresetAudit.afterPacket(connection.getUserConnection(), presets, directory);
                 savePacks();
             }
             @Override public void write(ChannelHandlerContext ctx, Object message, ChannelPromise promise) throws Exception {

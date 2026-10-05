@@ -42,7 +42,7 @@ Full stack builds and rendered connection checks are recorded in the coverage le
 
 ## Remaining work
 
-Fade and FOV behavior are applied. Presets, camera movement, target tracking, splines, attachments, and aim assistance remain incomplete.
+Fade and FOV behavior are applied. Preset rendering, camera movement, target tracking, splines, attachments, and aim assistance remain incomplete.
 Native local FOV modifiers, late context changes, pauses, transfers, and broader lifecycle behavior need further comparisons. Retaining a decoded instruction does not establish camera state or behavioral parity.
 
 ## Camera shake
@@ -71,3 +71,49 @@ Seven targeted tests cover overlap, decay, caps, stop, expiry, transport, contin
 Private fixtures compare eight authored noise samples and twelve native queue updates.
 Native recordings, executable data, and assets remain private.
 Rendered route checks and their limits are recorded in the coverage ledger.
+
+## Received camera presets
+
+Core now handles packet 198 and retains all protocol-2193 preset fields in the connection storage.
+Instruction indexes refer to the received list, including unresolved entries.
+The local six-preset table and CubeCraft's four-preset table assign different indexes to third-person cameras.
+The implementation resolves names through the received table rather than a fixed built-in index map.
+
+The [pinned Gophertunnel codec](https://github.com/Sandertv/gophertunnel/blob/80c811b6186016b3860c358368cfa47e507f26e9/minecraft/protocol/camera.go) supplies an independent wire reference.
+Local, CubeCraft, and authored custom tables contain 337, 231, and 493 bytes respectively.
+Both codecs consume every field and reproduce each payload exactly.
+The custom capture contains eight presets and nine camera instructions.
+Its child supplies only height, yaw, player-listener selection, and an explicit false player-effects value.
+
+Native resolver `1409f28e0` inherits missing optional fields through the nearest ancestors.
+An explicit false or zero remains an override.
+An aim-assist object inherits as a whole, without merging its optional children.
+Starting-rotation flags and values remain those of the child, outside ordinary optional inheritance.
+These retained flags still need camera activation behavior.
+
+The resolver supports forward references without recursion.
+Cycles, missing ancestors, and unrecognized roots remain unresolved and produce a diagnostic.
+Duplicate names reject the replacement atomically, preserving the previous table.
+That duplicate policy protects the state; native duplicate-name behavior remains unverified.
+Counts are bounded before allocation, and unresolved entries never shift instruction indexes.
+
+Seven targeted tests pass, including all three private wire fixtures.
+All four stack builds pass.
+Complete direct and ViaProxy replays retain identical eight-preset tables and resolved child values.
+Their scene hashes match the native capture, and transport and existing skin-rendering checks pass.
+The replay audit regression test covers buffer ownership and detection of an unhandled table.
+This change establishes decoding and inheritance state in core.
+Preset activation, pose transport, rendering, controls, audio-listener application, and player effects remain incomplete.
+
+## Native movement research
+
+The private probe executes 4,608 samples through native blend updater `146786500` across all 32 easing modes.
+Cases include moving targets, parent movement, yaw wraparound, near-vertical rotation, immediate durations, and endpoint completion.
+Imported math functions and authored component storage form the probe boundary.
+The probe executes the target blend arithmetic and native easing functions.
+
+An independent private model compares position and FOV exactly and quaternion components within `0.0000000298023223876953125`.
+That comparison uses the observed native easing factor to isolate pose arithmetic.
+It does not establish Windows CRT bit identity or production Java movement behavior.
+Nine additional native samples verify that other rendering fields remain unchanged during blending and copy from the target after completion.
+Visible native captures confirm authored custom views and eased transitions, but translated rendering still needs implementation and comparisons.

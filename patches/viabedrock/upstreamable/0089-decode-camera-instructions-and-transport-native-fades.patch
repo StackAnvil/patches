@@ -1,13 +1,13 @@
-From e83730e8724a26bc4e4c436d0eff36142dbcd2ee Mon Sep 17 00:00:00 2001
+From 1a5fd08a40eeacb6373b8a52812da329aa6d93f6 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 21:41:41 +0200
-Subject: [PATCH] feat(camera): resolve server fades, FOV transitions and shake
+Subject: [PATCH] feat(camera): resolve server presets and camera effects
 
 Protocol 2193 carries independent optional camera fields, including named
 spline references, little-endian signed actor IDs and string-encoded FOV
 and keyframe easing. Decode every instruction field before applying the
 fade, retain the decoded instruction for integrations, and bound spline
-allocations. Presets, movement and splines remain separate implementation gaps.
+allocations. Camera movement and splines remain rendering gaps.
 
 Resolve overlapping fades in core and send versioned timeline snapshots
 to subscribed clients after joining and channel registration. Late
@@ -38,6 +38,20 @@ the codec, lifecycle and world-space position versus pitch/yaw rotation.
 Private execution probes compare queue updates and authored noise inputs.
 Live native camera arguments confirm frequency 10, amplitude five degrees
 in radians and noise multiplier four. No proprietary assets are embedded.
+
+Decode the complete protocol-2193 preset table, preserve wire indexes,
+and resolve optional fields through the nearest declared ancestors.
+Keep false and zero overrides, whole aim-assist objects, and each child's
+starting-rotation flags distinct from ordinary inheritance. Resolve only
+received built-in roots; report missing parents, cycles and unknown roots
+without inventing free cameras. Reject duplicate names atomically.
+
+Matching local, CubeCraft and authored custom captures establish three
+different preset tables and byte-identical independent codec results.
+The pinned client resolver at 1409f28e0 establishes ordinary inheritance.
+Tests cover forward references, maximum depth, malformed counts and
+optional overrides. Rendering, activation, controls and late camera pose
+transport remain incomplete; retaining presets does not claim parity.
 ---
  .../viabedrock/api/model/CameraEase.java      | 140 +++++++++++++
  .../viabedrock/api/model/CameraFadeState.java |  95 +++++++++
@@ -49,17 +63,20 @@ in radians and noise multiplier four. No proprietary assets are embedded.
  .../api/model/CameraShakeTimeline.java        | 119 +++++++++++
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
  .../protocol/model/CameraInstruction.java     | 191 ++++++++++++++++++
- .../protocol/packet/CameraPackets.java        |  83 ++++++++
+ .../protocol/model/CameraPreset.java          | 163 +++++++++++++++
+ .../protocol/model/CameraPresetRegistry.java  | 108 ++++++++++
+ .../protocol/packet/CameraPackets.java        | 101 +++++++++
  .../protocol/packet/JoinPackets.java          |   2 +
  .../protocol/packet/MultiStatePackets.java    |   2 +
- .../protocol/packet/UnhandledPackets.java     |   2 -
- .../storage/CameraEffectsStorage.java         | 169 ++++++++++++++++
+ .../protocol/packet/UnhandledPackets.java     |   3 -
+ .../storage/CameraEffectsStorage.java         | 179 ++++++++++++++++
  .../protocol/task/EntityTrackerTickTask.java  |   5 +
  .../api/model/CameraFadeTimelineTest.java     | 117 +++++++++++
  .../api/model/CameraFovTimelineTest.java      | 132 ++++++++++++
  .../api/model/CameraShakeTimelineTest.java    | 178 ++++++++++++++++
  .../protocol/model/CameraInstructionTest.java |  81 ++++++++
- 20 files changed, 1822 insertions(+), 2 deletions(-)
+ .../protocol/model/CameraPresetTest.java      | 179 ++++++++++++++++
+ 23 files changed, 2300 insertions(+), 3 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraEase.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraFadeState.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraFadeTimeline.java
@@ -69,12 +86,15 @@ in radians and noise multiplier four. No proprietary assets are embedded.
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraShakeState.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraShakeTimeline.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/CameraInstruction.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/CameraPreset.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/CameraPresetRegistry.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/CameraPackets.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorage.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraFadeTimelineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraFovTimelineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraShakeTimelineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/CameraInstructionTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/CameraPresetTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CameraEase.java b/src/main/java/net/raphimc/viabedrock/api/model/CameraEase.java
 new file mode 100644
@@ -1201,12 +1221,295 @@ index 000000000..418e62231
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/CameraPreset.java b/src/main/java/net/raphimc/viabedrock/protocol/model/CameraPreset.java
+new file mode 100644
+index 000000000..669ae9e5a
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/CameraPreset.java
+@@ -0,0 +1,163 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.model.CameraInstruction.Vec2;
++import net.raphimc.viabedrock.protocol.model.CameraInstruction.Vec3;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.function.BiConsumer;
++import java.util.function.Function;
++
++/** Protocol 2193 presets. Optional false and zero values remain distinct from absence. */
++public record CameraPreset(String name, String parent, Float posX, Float posY, Float posZ,
++                           Float rotX, Float rotY, Float rotationSpeed, Boolean snapToTarget,
++                           Vec2 horizontalRotationLimit, Vec2 verticalRotationLimit, Boolean continueTargeting,
++                           Float trackingRadius, Vec2 viewOffset, Vec3 entityOffset, Float radius,
++                           Float minYawLimit, Float maxYawLimit, Integer audioListener, Boolean playerEffects,
++                           AimAssist aimAssist, Integer controlScheme, boolean applyInheritedStartingRotation,
++                           Vec2 startingRotation) {
++
++    public static final int MAX_PRESETS = 4096;
++    public static final Type<CameraPreset> TYPE = new Type<>(CameraPreset.class) {
++        @Override
++        public CameraPreset read(final ByteBuf b) {
++            return new CameraPreset(string(b), string(b), optional(b, ByteBuf::readFloatLE),
++                    optional(b, ByteBuf::readFloatLE), optional(b, ByteBuf::readFloatLE),
++                    optional(b, ByteBuf::readFloatLE), optional(b, ByteBuf::readFloatLE),
++                    optional(b, ByteBuf::readFloatLE), optional(b, ByteBuf::readBoolean),
++                    optional(b, CameraPreset::vec2), optional(b, CameraPreset::vec2),
++                    optional(b, ByteBuf::readBoolean), optional(b, ByteBuf::readFloatLE),
++                    optional(b, CameraPreset::vec2), optional(b, CameraPreset::vec3),
++                    optional(b, ByteBuf::readFloatLE), optional(b, ByteBuf::readFloatLE),
++                    optional(b, ByteBuf::readFloatLE), optional(b, v -> (int) v.readUnsignedByte()),
++                    optional(b, ByteBuf::readBoolean), optional(b, v -> new AimAssist(
++                            optional(v, CameraPreset::string), optional(v, ByteBuf::readIntLE),
++                            optional(v, CameraPreset::vec2), optional(v, ByteBuf::readFloatLE))),
++                    optional(b, v -> (int) v.readUnsignedByte()), b.readBoolean(), optional(b, CameraPreset::vec2));
++        }
++
++        @Override
++        public void write(final ByteBuf b, final CameraPreset p) {
++            BedrockTypes.STRING.write(b, p.name);
++            BedrockTypes.STRING.write(b, p.parent);
++            optional(b, p.posX, ByteBuf::writeFloatLE);
++            optional(b, p.posY, ByteBuf::writeFloatLE);
++            optional(b, p.posZ, ByteBuf::writeFloatLE);
++            optional(b, p.rotX, ByteBuf::writeFloatLE);
++            optional(b, p.rotY, ByteBuf::writeFloatLE);
++            optional(b, p.rotationSpeed, ByteBuf::writeFloatLE);
++            optional(b, p.snapToTarget, ByteBuf::writeBoolean);
++            optional(b, p.horizontalRotationLimit, CameraPreset::vec2);
++            optional(b, p.verticalRotationLimit, CameraPreset::vec2);
++            optional(b, p.continueTargeting, ByteBuf::writeBoolean);
++            optional(b, p.trackingRadius, ByteBuf::writeFloatLE);
++            optional(b, p.viewOffset, CameraPreset::vec2);
++            optional(b, p.entityOffset, CameraPreset::vec3);
++            optional(b, p.radius, ByteBuf::writeFloatLE);
++            optional(b, p.minYawLimit, ByteBuf::writeFloatLE);
++            optional(b, p.maxYawLimit, ByteBuf::writeFloatLE);
++            optional(b, p.audioListener, ByteBuf::writeByte);
++            optional(b, p.playerEffects, ByteBuf::writeBoolean);
++            optional(b, p.aimAssist, (v, a) -> {
++                optional(v, a.preset, (out, value) -> BedrockTypes.STRING.write(out, value));
++                optional(v, a.targetMode, ByteBuf::writeIntLE);
++                optional(v, a.angle, CameraPreset::vec2);
++                optional(v, a.distance, ByteBuf::writeFloatLE);
++            });
++            optional(b, p.controlScheme, ByteBuf::writeByte);
++            b.writeBoolean(p.applyInheritedStartingRotation);
++            optional(b, p.startingRotation, CameraPreset::vec2);
++        }
++    };
++
++    public static final Type<List<CameraPreset>> LIST_TYPE = new Type<>(List.class) {
++        @Override
++        public List<CameraPreset> read(final ByteBuf b) {
++            final int count = BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(b);
++            if (count < 0 || count > MAX_PRESETS) {
++                throw new IllegalArgumentException("Too many camera presets");
++            }
++            final List<CameraPreset> result = new ArrayList<>(count);
++            for (int i = 0; i < count; i++) {
++                result.add(TYPE.read(b));
++            }
++            return List.copyOf(result);
++        }
++
++        @Override
++        public void write(final ByteBuf b, final List<CameraPreset> presets) {
++            if (presets.size() > MAX_PRESETS) {
++                throw new IllegalArgumentException("Too many camera presets");
++            }
++            BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(b, presets.size());
++            for (final CameraPreset preset : presets) {
++                TYPE.write(b, preset);
++            }
++        }
++    };
++
++    /** Starting-rotation flags belong to the child, outside ordinary optional-field inheritance. */
++    public CameraPreset inherit(final CameraPreset p) {
++        return new CameraPreset(this.name, this.parent, first(this.posX, p.posX), first(this.posY, p.posY),
++                first(this.posZ, p.posZ), first(this.rotX, p.rotX), first(this.rotY, p.rotY),
++                first(this.rotationSpeed, p.rotationSpeed), first(this.snapToTarget, p.snapToTarget),
++                first(this.horizontalRotationLimit, p.horizontalRotationLimit),
++                first(this.verticalRotationLimit, p.verticalRotationLimit), first(this.continueTargeting, p.continueTargeting),
++                first(this.trackingRadius, p.trackingRadius), first(this.viewOffset, p.viewOffset),
++                first(this.entityOffset, p.entityOffset), first(this.radius, p.radius),
++                first(this.minYawLimit, p.minYawLimit), first(this.maxYawLimit, p.maxYawLimit),
++                first(this.audioListener, p.audioListener), first(this.playerEffects, p.playerEffects),
++                first(this.aimAssist, p.aimAssist), first(this.controlScheme, p.controlScheme),
++                this.applyInheritedStartingRotation, this.startingRotation);
++    }
++
++    private static <T> T first(final T child, final T parent) {
++        return child != null ? child : parent;
++    }
++
++    private static String string(final ByteBuf b) {
++        final String value = BedrockTypes.STRING.read(b);
++        if (value.length() > 1024) {
++            throw new IllegalArgumentException("Camera preset string exceeds 1024 characters");
++        }
++        return value;
++    }
++
++    private static Vec2 vec2(final ByteBuf b) {
++        return new Vec2(b.readFloatLE(), b.readFloatLE());
++    }
++
++    private static Vec3 vec3(final ByteBuf b) {
++        return new Vec3(b.readFloatLE(), b.readFloatLE(), b.readFloatLE());
++    }
++
++    private static void vec2(final ByteBuf b, final Vec2 v) {
++        b.writeFloatLE(v.x()).writeFloatLE(v.y());
++    }
++
++    private static void vec3(final ByteBuf b, final Vec3 v) {
++        b.writeFloatLE(v.x()).writeFloatLE(v.y()).writeFloatLE(v.z());
++    }
++
++    private static <T> T optional(final ByteBuf b, final Function<ByteBuf, T> read) {
++        return b.readBoolean() ? read.apply(b) : null;
++    }
++
++    private static <T> void optional(final ByteBuf b, final T value, final BiConsumer<ByteBuf, T> write) {
++        b.writeBoolean(value != null);
++        if (value != null) {
++            write.accept(b, value);
++        }
++    }
++
++    public record AimAssist(String preset, Integer targetMode, Vec2 angle, Float distance) { }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/CameraPresetRegistry.java b/src/main/java/net/raphimc/viabedrock/protocol/model/CameraPresetRegistry.java
+new file mode 100644
+index 000000000..3b777b88b
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/CameraPresetRegistry.java
+@@ -0,0 +1,108 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import java.util.ArrayDeque;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++
++/** Resolves received names without changing their instruction indexes or inventing missing parents. */
++public final class CameraPresetRegistry {
++
++    public static final CameraPresetRegistry EMPTY = new CameraPresetRegistry(List.of());
++    private final List<CameraPreset> presets;
++    private final Resolved[] resolved;
++    private final List<String> unresolved;
++
++    public CameraPresetRegistry(final List<CameraPreset> presets) {
++        if (presets.size() > CameraPreset.MAX_PRESETS) {
++            throw new IllegalArgumentException("Too many camera presets");
++        }
++        this.presets = List.copyOf(presets);
++        this.resolved = new Resolved[presets.size()];
++        final Map<String, Integer> indexes = new HashMap<>();
++        final List<List<Integer>> children = new ArrayList<>(presets.size());
++        for (int i = 0; i < presets.size(); i++) {
++            if (indexes.putIfAbsent(presets.get(i).name(), i) != null) {
++                throw new IllegalArgumentException("Duplicate camera preset: " + presets.get(i).name());
++            }
++            children.add(new ArrayList<>());
++        }
++        final ArrayDeque<Integer> ready = new ArrayDeque<>();
++        for (int i = 0; i < presets.size(); i++) {
++            final CameraPreset preset = presets.get(i);
++            if (preset.parent().isEmpty()) {
++                final Base base = Base.fromName(preset.name());
++                if (base != null) {
++                    this.resolved[i] = new Resolved(base, preset);
++                    ready.addLast(i);
++                }
++            } else {
++                final Integer parent = indexes.get(preset.parent());
++                if (parent != null) {
++                    children.get(parent).add(i);
++                }
++            }
++        }
++        while (!ready.isEmpty()) {
++            final int parent = ready.removeFirst();
++            for (final int child : children.get(parent)) {
++                this.resolved[child] = new Resolved(this.resolved[parent].base,
++                        presets.get(child).inherit(this.resolved[parent].preset));
++                ready.addLast(child);
++            }
++        }
++        final List<String> unresolved = new ArrayList<>();
++        for (int i = 0; i < presets.size(); i++) {
++            if (this.resolved[i] == null) {
++                unresolved.add(presets.get(i).name());
++            }
++        }
++        this.unresolved = List.copyOf(unresolved);
++    }
++
++    public List<CameraPreset> presets() {
++        return this.presets;
++    }
++
++    public List<String> unresolved() {
++        return this.unresolved;
++    }
++
++    public Resolved get(final long instructionIndex) {
++        return instructionIndex >= 0 && instructionIndex < this.resolved.length
++                ? this.resolved[(int) instructionIndex] : null;
++    }
++
++    public record Resolved(Base base, CameraPreset preset) { }
++
++    public enum Base {
++        FIRST_PERSON("minecraft:first_person"),
++        THIRD_PERSON("minecraft:third_person"),
++        THIRD_PERSON_FRONT("minecraft:third_person_front"),
++        FREE("minecraft:free"),
++        FOLLOW_ORBIT("minecraft:follow_orbit"),
++        FIXED_BOOM("minecraft:fixed_boom");
++
++        private final String name;
++
++        Base(final String name) {
++            this.name = name;
++        }
++
++        private static Base fromName(final String name) {
++            for (final Base base : values()) {
++                if (base.name.equals(name)) {
++                    return base;
++                }
++            }
++            return null;
++        }
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/CameraPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/CameraPackets.java
 new file mode 100644
-index 000000000..439569804
+index 000000000..103315455
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/CameraPackets.java
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,101 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1223,12 +1526,30 @@ index 000000000..439569804
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.CameraShakeAction;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.CameraShakeType;
 +import net.raphimc.viabedrock.protocol.model.CameraInstruction;
++import net.raphimc.viabedrock.protocol.model.CameraPreset;
++import net.raphimc.viabedrock.protocol.model.CameraPresetRegistry;
 +import net.raphimc.viabedrock.protocol.storage.CameraEffectsStorage;
 +import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 +
 +public final class CameraPackets {
 +
 +    public static void register(final BedrockProtocol protocol) {
++        protocol.registerClientbound(ClientboundBedrockPackets.CAMERA_PRESETS, null, wrapper -> {
++            wrapper.cancel();
++            final var presets = wrapper.read(CameraPreset.LIST_TYPE);
++            if (wrapper.read(Types.REMAINING_BYTES).length != 0) {
++                throw new IllegalArgumentException("Unexpected camera preset fields");
++            }
++            try {
++                final CameraPresetRegistry registry = new CameraPresetRegistry(presets);
++                wrapper.user().get(CameraEffectsStorage.class).setPresets(registry);
++                if (!registry.unresolved().isEmpty()) {
++                    ViaBedrock.getPlatform().getLogger().warning("Unresolved camera presets: " + registry.unresolved());
++                }
++            } catch (final IllegalArgumentException exception) {
++                ViaBedrock.getPlatform().getLogger().warning("Ignoring invalid camera presets: " + exception.getMessage());
++            }
++        });
 +        protocol.registerClientbound(
 +                ClientboundBedrockPackets.CAMERA_SHAKE,
 +                null,
@@ -1324,10 +1645,10 @@ index 2508d029f..58450f532 100644
              if (channels.contains(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
                  ViaBedrockUtilityInterface.confirmPresence(wrapper.user());
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java
-index 172699ee1..f06d1a5a3 100644
+index 172699ee1..20818509d 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java
-@@ -34,13 +34,11 @@ public final class UnhandledPackets {
+@@ -34,13 +34,10 @@ public final class UnhandledPackets {
          protocol.cancelClientbound(ClientboundBedrockPackets.LAB_TABLE); // Not relevant (Education Edition)
          protocol.cancelClientbound(ClientboundBedrockPackets.EDUCATION_SETTINGS); // Not relevant (Education Edition)
          protocol.cancelClientbound(ClientboundBedrockPackets.CODE_BUILDER); // Not relevant (Education Edition)
@@ -1336,17 +1657,17 @@ index 172699ee1..f06d1a5a3 100644
          protocol.cancelClientbound(ClientboundBedrockPackets.EDU_URI_RESOURCE); // Not relevant (Education Edition)
          protocol.cancelClientbound(ClientboundBedrockPackets.SCRIPT_MESSAGE); // Not relevant (Education Edition)
          protocol.cancelClientbound(ClientboundBedrockPackets.LESSON_PROGRESS); // Not relevant (Education Edition)
-         protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_PRESETS); // Not possible in Java Edition
+-        protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_PRESETS); // Not possible in Java Edition
 -        protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_INSTRUCTION); // Not possible in Java Edition
          protocol.cancelClientbound(ClientboundBedrockPackets.CURRENT_STRUCTURE_FEATURE); // Useless
          protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_AIM_ASSIST); // Not possible in Java Edition
          protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_AIM_ASSIST_PRESETS); // Not possible in Java Edition
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorage.java
 new file mode 100644
-index 000000000..866978a26
+index 000000000..4e39db769
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorage.java
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,179 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1370,6 +1691,7 @@ index 000000000..866978a26
 +import net.raphimc.viabedrock.api.model.CameraShakeTimeline;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.model.CameraInstruction;
++import net.raphimc.viabedrock.protocol.model.CameraPresetRegistry;
 +
 +import java.util.concurrent.ThreadLocalRandom;
 +
@@ -1385,6 +1707,7 @@ index 000000000..866978a26
 +    private long shakeSequence;
 +    private boolean joined;
 +    private CameraInstruction lastInstruction;
++    private CameraPresetRegistry presets = CameraPresetRegistry.EMPTY;
 +
 +    public CameraEffectsStorage(final UserConnection user) {
 +        super(user);
@@ -1392,6 +1715,14 @@ index 000000000..866978a26
 +
 +    public CameraInstruction lastInstruction() {
 +        return this.lastInstruction;
++    }
++
++    public CameraPresetRegistry presets() {
++        return this.presets;
++    }
++
++    public void setPresets(final CameraPresetRegistry presets) {
++        this.presets = presets;
 +    }
 +
 +    public void apply(final CameraInstruction instruction) {
@@ -2068,6 +2399,191 @@ index 000000000..91c678497
 +            }
 +        }
 +        assertEquals(7, count);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/CameraPresetTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/CameraPresetTest.java
+new file mode 100644
+index 000000000..fae8a1166
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/CameraPresetTest.java
+@@ -0,0 +1,179 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.model.CameraInstruction.Vec2;
++import net.raphimc.viabedrock.protocol.model.CameraInstruction.Vec3;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.junit.jupiter.api.Assumptions.assumeTrue;
++
++class CameraPresetTest {
++
++    @Test
++    void optionalFieldsAndUnknownNumericEnumsSurviveWireRoundtrip() {
++        final var full = full("example:full", "minecraft:free");
++        final var empty = empty("minecraft:free", "");
++        final var buffer = Unpooled.buffer();
++        try {
++            final var expected = List.of(full, empty);
++            CameraPreset.LIST_TYPE.write(buffer, expected);
++            assertEquals(expected, CameraPreset.LIST_TYPE.read(buffer));
++            assertFalse(buffer.isReadable());
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void inheritanceResolvesForwardParentsAndPreservesWireIndexes() {
++        final var child = empty("example:child", "example:parent");
++        final var parent = full("example:parent", "minecraft:free");
++        final var registry = new CameraPresetRegistry(List.of(child, parent, empty("minecraft:free", "")));
++        final var inherited = registry.get(0).preset();
++        assertEquals(CameraPresetRegistry.Base.FREE, registry.get(0).base());
++        assertEquals(child.name(), inherited.name());
++        assertEquals(child.parent(), inherited.parent());
++        assertEquals(parent.posX(), inherited.posX());
++        assertEquals(parent.posY(), inherited.posY());
++        assertEquals(parent.posZ(), inherited.posZ());
++        assertEquals(parent.rotX(), inherited.rotX());
++        assertEquals(parent.rotY(), inherited.rotY());
++        assertEquals(parent.rotationSpeed(), inherited.rotationSpeed());
++        assertEquals(parent.snapToTarget(), inherited.snapToTarget());
++        assertEquals(parent.horizontalRotationLimit(), inherited.horizontalRotationLimit());
++        assertEquals(parent.verticalRotationLimit(), inherited.verticalRotationLimit());
++        assertEquals(parent.continueTargeting(), inherited.continueTargeting());
++        assertEquals(parent.trackingRadius(), inherited.trackingRadius());
++        assertEquals(parent.viewOffset(), inherited.viewOffset());
++        assertEquals(parent.entityOffset(), inherited.entityOffset());
++        assertEquals(parent.radius(), inherited.radius());
++        assertEquals(parent.minYawLimit(), inherited.minYawLimit());
++        assertEquals(parent.maxYawLimit(), inherited.maxYawLimit());
++        assertEquals(parent.audioListener(), inherited.audioListener());
++        assertEquals(parent.playerEffects(), inherited.playerEffects());
++        assertEquals(parent.aimAssist(), inherited.aimAssist());
++        assertEquals(parent.controlScheme(), inherited.controlScheme());
++        assertEquals(child.applyInheritedStartingRotation(), inherited.applyInheritedStartingRotation());
++        assertNull(inherited.startingRotation());
++        assertTrue(registry.unresolved().isEmpty());
++        assertNull(registry.get(-1));
++        assertNull(registry.get(0xFFFFFFFFL));
++        assertNull(registry.get(3));
++    }
++
++    @Test
++    void childFalseZeroAndWholeAimAssistObjectOverrideAncestors() {
++        final var parent = full("example:parent", "minecraft:free");
++        final var aim = new CameraPreset.AimAssist(null, null, null, null);
++        final var child = new CameraPreset("example:child", parent.name(), 0F, null, null, null, null,
++                0F, false, null, null, false, 0F, null, null, 0F, null, null,
++                0, false, aim, 0, true, new Vec2(5, 6));
++        final var registry = new CameraPresetRegistry(List.of(child, parent, empty("minecraft:free", "")));
++        final var resolved = registry.get(0).preset();
++        assertEquals(0F, resolved.posX());
++        assertEquals(parent.posY(), resolved.posY());
++        assertEquals(0F, resolved.rotationSpeed());
++        assertEquals(false, resolved.snapToTarget());
++        assertEquals(false, resolved.continueTargeting());
++        assertEquals(0F, resolved.trackingRadius());
++        assertEquals(0F, resolved.radius());
++        assertEquals(0, resolved.audioListener());
++        assertEquals(false, resolved.playerEffects());
++        assertEquals(aim, resolved.aimAssist());
++        assertEquals(0, resolved.controlScheme());
++        assertTrue(resolved.applyInheritedStartingRotation());
++        assertEquals(child.startingRotation(), resolved.startingRotation());
++    }
++
++    @Test
++    void brokenDependenciesDoNotShiftValidIndexesOrInventFreeCameras() {
++        final var registry = new CameraPresetRegistry(List.of(empty("example:a", "example:b"),
++                empty("minecraft:free", ""), empty("example:b", "example:a"),
++                empty("example:missing", "example:absent"), empty("example:root", ""),
++                empty("example:child", "example:root")));
++        assertEquals(CameraPresetRegistry.Base.FREE, registry.get(1).base());
++        assertEquals(5, registry.unresolved().size());
++        for (final int index : new int[]{0, 2, 3, 4, 5}) {
++            assertNull(registry.get(index));
++        }
++        assertThrows(IllegalArgumentException.class, () -> new CameraPresetRegistry(
++                List.of(empty("minecraft:free", ""), empty("minecraft:free", ""))));
++    }
++
++    @Test
++    void maximumDepthResolvesWithoutRecursiveStackGrowth() {
++        final List<CameraPreset> presets = new ArrayList<>();
++        for (int i = 0; i < CameraPreset.MAX_PRESETS - 1; i++) {
++            presets.add(empty("example:" + i, i == CameraPreset.MAX_PRESETS - 2 ? "minecraft:free" : "example:" + (i + 1)));
++        }
++        presets.add(full("minecraft:free", ""));
++        final var registry = new CameraPresetRegistry(presets);
++        assertEquals(CameraPresetRegistry.Base.FREE, registry.get(0).base());
++        assertEquals(presets.getLast().posY(), registry.get(0).preset().posY());
++        assertTrue(registry.unresolved().isEmpty());
++    }
++
++    @Test
++    void rejectsOversizedCountsBeforeAllocating() {
++        final var buffer = Unpooled.buffer();
++        try {
++            BedrockTypes.UNSIGNED_VAR_INT.writePrimitive(buffer, Integer.MAX_VALUE);
++            assertThrows(IllegalArgumentException.class, () -> CameraPreset.LIST_TYPE.read(buffer));
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void independentNativeAndServerFixturesConsumeEveryFieldAndPreserveBytes() throws Exception {
++        final String fixtures = System.getenv("STACKANVIL_NATIVE_CAMERA_PRESETS");
++        assumeTrue(fixtures != null);
++        int count = 0;
++        for (final String source : fixtures.split(java.io.File.pathSeparator)) {
++            final byte[] bytes = Files.readAllBytes(Path.of(source));
++            final var input = Unpooled.wrappedBuffer(bytes);
++            final var output = Unpooled.buffer();
++            try {
++                final var presets = CameraPreset.LIST_TYPE.read(input);
++                assertFalse(input.isReadable());
++                assertTrue(new CameraPresetRegistry(presets).unresolved().isEmpty());
++                CameraPreset.LIST_TYPE.write(output, presets);
++                final byte[] encoded = new byte[output.readableBytes()];
++                output.readBytes(encoded);
++                assertArrayEquals(bytes, encoded);
++                count++;
++            } finally {
++                input.release();
++                output.release();
++            }
++        }
++        assertTrue(count >= 3, "Supply local, CubeCraft, and custom inheritance fixtures");
++    }
++
++    private static CameraPreset empty(final String name, final String parent) {
++        return new CameraPreset(name, parent, null, null, null, null, null, null, null,
++                null, null, null, null, null, null, null, null, null, null, null,
++                null, null, false, null);
++    }
++
++    private static CameraPreset full(final String name, final String parent) {
++        return new CameraPreset(name, parent, -3.5F, 80F, 5F, 15F, -170F, .75F, true,
++                new Vec2(-180, 180), new Vec2(-90, 90), true, 50F, new Vec2(1, 2),
++                new Vec3(3, 4, 5), 10F, -170F, 170F, 255, true,
++                new CameraPreset.AimAssist("example:assist", Integer.MIN_VALUE, new Vec2(30, 40), 5F),
++                255, true, new Vec2(25, 35));
 +    }
 +
 +}

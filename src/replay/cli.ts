@@ -91,7 +91,8 @@ async function buildFabricRecorder(jar: string, build: string): Promise<string> 
   const source = join(root, "src/replay/fabric/com/enderdash/agent/replay/fabric");
   const files = [...new Bun.Glob("**/*.java").scanSync(source)].map((file) => join(source, file));
   await execute("javac", ["-proc:none", "-cp", `${jar}${delimiter}${mixin}`, "-d", classes,
-    join(root, "src/replay/java/com/enderdash/agent/replay/PacketJournal.java"), ...files]);
+    join(root, "src/replay/java/com/enderdash/agent/replay/PacketJournal.java"),
+    join(root, "src/replay/java/com/enderdash/agent/replay/CameraPresetAudit.java"), ...files]);
   await writeFile(join(classes, "fabric.mod.json"), JSON.stringify({ schemaVersion: 1, id: "stackanvil_recorder", version: "1.0.0",
     name: "StackAnvil private replay recorder", environment: "client", mixins: ["stackanvil-recorder.mixins.json"],
     depends: { "viafabricplus-bedrock": "*" } }), { mode: 0o600 });
