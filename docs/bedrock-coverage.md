@@ -3377,6 +3377,38 @@ Its configuration was corrected before further tests.
 The external persistent BDS configuration also enables strict movement, pending its next restart.
 The existing external process has not been restarted.
 
+Official BDS and the pinned native client remain the primary movement references.
+Boar is experimental. Investigate its flags before assigning a StackAnvil movement defect.
+Track possible Boar bugs separately, and retain real-server interoperability tests.
+This fixture does not establish that CubeCraft uses Boar.
+
 Installation and startup checks do not establish movement parity.
 Native baselines, both connection routes, prediction errors, anticheat violations, setbacks, and complete movement cases remain to verify.
 Walking, sprinting, sneaking, jumps, falls, collision, steps, climbing, fluids, effects, attributes, knockback, vehicles, latency, and corrections remain in scope.
+
+## Custom-block condition preparation, October 6, 2026
+
+**Implemented and verified locally:** Core compiles each definition's permutation conditions once per connection.
+State queries and returned component overlays remain independent between evaluations.
+The thirteen targeted tests include all sixty-four boolean face combinations using one compiled definition.
+Core Checkstyle and complete CubeConverter, ViaBedrock, and ViaProxy builds pass.
+
+A private Geyser 2.11.3 fixture reproduced repeated ten-second transport timeouts before this change.
+Thread dumps and a CPU profile show custom-block condition reparsing on the Netty client thread.
+Log timestamps place this preparation interval at roughly fourteen seconds.
+The converter's millisecond timing excludes this preceding block-state work.
+
+The revised fixture reaches a visible world and retains the connection through the full 120-second capture.
+It records local-player initialization, continuing input, and reciprocal network latency responses.
+Walking and jumping remain visible while the server retains the player.
+The preparation interval drops to roughly three seconds in this run.
+These coarse timings describe one local fixture and do not establish a general speedup.
+
+Boar debug output contains prediction offsets that need native comparison.
+This run verifies joining and basic input; it does not establish movement parity or classify Boar offsets as client defects.
+Official strict BDS, native baselines, direct connections, CubeCraft, larger stacks, Windows, and macOS remain to verify.
+
+The recorder now defers its camera-preset audit until the custom-block pack gate drains.
+Earlier observer exceptions came from comparing intentionally queued packets with undecoded core state.
+Recordings also require gameplay acknowledgments and reject early exits or logged disconnections.
+A spawn notification followed by a disconnected loading screen no longer passes the recording command.

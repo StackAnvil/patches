@@ -1,4 +1,4 @@
-From 777cc81be76fe63d11d4c26185b11eba2f813f34 Mon Sep 17 00:00:00 2001
+From 368d87adeb08a4f9538c4358ff8fddbab47698fc Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:38:26 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -151,7 +151,7 @@ a capture before attributing its exact failure to this case.
  .../api/model/CustomBlockVisual.java          |  26 +
  .../definition/BlockCullingDefinitions.java   |  86 +++
  .../definition/BlockDefinitions.java          |  17 +-
- .../definition/CustomBlockDefinition.java     |  57 ++
+ .../definition/CustomBlockDefinition.java     |  73 +++
  .../definition/ModelDefinitions.java          |   7 +
  .../definition/TextureDefinitions.java        |  54 ++
  .../http/ConvertedResourcePackCache.java      |  12 +-
@@ -159,7 +159,7 @@ a capture before attributing its exact failure to this case.
  .../protocol/packet/JoinPackets.java          |  30 +-
  .../protocol/packet/ResourcePackPackets.java  |  44 +-
  .../protocol/packet/VoxelShapePackets.java    |  35 ++
- .../protocol/rewriter/BlockStateRewriter.java |  60 +-
+ .../protocol/rewriter/BlockStateRewriter.java |  71 ++-
  .../rewriter/ResourcePackRewriter.java        |   2 +
  .../CustomBlockCullingCompiler.java           | 162 ++++++
  .../resourcepack/CustomBlockModel.java        | 549 ++++++++++++++++++
@@ -173,7 +173,7 @@ a capture before attributing its exact failure to this case.
  .../api/model/CustomBlockPropertiesTest.java  |  66 +++
  .../http/ConvertedResourcePackCacheTest.java  |  28 +
  .../rewriter/CustomBlockBoneGeometryTest.java | 177 ++++++
- .../CustomBlockModelSelectionTest.java        | 393 +++++++++++++
+ .../CustomBlockModelSelectionTest.java        | 400 +++++++++++++
  .../CustomBlockPlaneGeometryTest.java         | 170 ++++++
  .../CustomBlockCullingCompilerTest.java       | 140 +++++
  .../CustomBlockMaterialVisibilityTest.java    | 106 ++++
@@ -181,7 +181,7 @@ a capture before attributing its exact failure to this case.
  .../protocol/storage/ChunkTrackerTest.java    |  23 +
  .../storage/CustomBlockPackStorageTest.java   | 169 ++++++
  .../storage/VoxelShapeRegistryTest.java       | 130 +++++
- 35 files changed, 3809 insertions(+), 22 deletions(-)
+ 35 files changed, 3843 insertions(+), 22 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockCulling.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockVisual.java
@@ -708,10 +708,10 @@ index e15aef6f1..bc698fc3a 100644
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/CustomBlockDefinition.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/CustomBlockDefinition.java
 new file mode 100644
-index 000000000..a260c3f80
+index 000000000..2cac120f6
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/CustomBlockDefinition.java
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,73 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -724,22 +724,40 @@ index 000000000..a260c3f80
 +import com.viaversion.nbt.tag.StringTag;
 +import com.viaversion.nbt.tag.Tag;
 +import net.raphimc.viabedrock.api.util.MoLangEngine;
++import org.redlance.mocha.parser.ast.Expression;
 +import org.redlance.mocha.runtime.Scope;
 +import org.redlance.mocha.runtime.value.Function;
 +import org.redlance.mocha.runtime.value.MutableObjectBinding;
 +import org.redlance.mocha.runtime.value.Value;
 +
 +import java.io.IOException;
++import java.util.ArrayList;
++import java.util.List;
 +import java.util.Map;
 +
 +/** Resolves component overlays against one concrete state without modifying server definitions. */
 +public final class CustomBlockDefinition {
 +
-+    private CustomBlockDefinition() {
++    private final CompoundTag base;
++    private final List<Permutation> permutations;
++
++    public CustomBlockDefinition(final CompoundTag definition) throws IOException {
++        this.base = definition.get("components") instanceof CompoundTag components ? components.copy() : new CompoundTag();
++        final List<Permutation> compiled = new ArrayList<>();
++        final ListTag<CompoundTag> source = definition.getListTag("permutations", CompoundTag.class);
++        if (source != null) {
++            for (CompoundTag permutation : source) {
++                if (permutation.get("condition") instanceof StringTag condition) {
++                    compiled.add(new Permutation(MoLangEngine.parse(condition.getValue()),
++                            permutation.get("components") instanceof CompoundTag overlay ? overlay.copy() : null));
++                }
++            }
++        }
++        this.permutations = List.copyOf(compiled);
 +    }
 +
-+    public static CompoundTag resolve(final CompoundTag definition, final CompoundTag states) throws IOException {
-+        final CompoundTag components = definition.get("components") instanceof CompoundTag base ? base.copy() : new CompoundTag();
++    public CompoundTag resolve(final CompoundTag states) {
++        final CompoundTag components = this.base.copy();
 +        final Scope scope = Scope.create();
 +        final MutableObjectBinding queries = new MutableObjectBinding();
 +        final Function<Void> property = (context, arguments) -> {
@@ -753,19 +771,17 @@ index 000000000..a260c3f80
 +        scope.set("query", queries);
 +        scope.set("q", queries);
 +        scope.readOnly(true);
-+        final ListTag<CompoundTag> permutations = definition.getListTag("permutations", CompoundTag.class);
-+        if (permutations != null) {
-+            for (CompoundTag permutation : permutations) {
-+                if (permutation.get("condition") instanceof StringTag condition
-+                        && MoLangEngine.eval(scope, condition.getValue()).getAsNumber() != 0
-+                        && permutation.get("components") instanceof CompoundTag overlay) {
-+                    for (Map.Entry<String, Tag> component : overlay) {
-+                        components.put(component.getKey(), component.getValue().copy());
-+                    }
++        for (Permutation permutation : this.permutations) {
++            if (MoLangEngine.eval(scope, permutation.condition()).getAsNumber() != 0 && permutation.components() != null) {
++                for (Map.Entry<String, Tag> component : permutation.components()) {
++                    components.put(component.getKey(), component.getValue().copy());
 +                }
 +            }
 +        }
 +        return components;
++    }
++
++    private record Permutation(List<Expression> condition, CompoundTag components) {
 +    }
 +
 +}
@@ -1148,7 +1164,7 @@ index 000000000..9c9d66373
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
-index 2cb4a79b6..80324f7ec 100644
+index 2cb4a79b6..599957ffd 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
 @@ -29,11 +29,16 @@ import net.raphimc.viabedrock.ViaBedrock;
@@ -1185,7 +1201,7 @@ index 2cb4a79b6..80324f7ec 100644
  
          final Map<String, CompoundTag> effectiveBlockProperties = new HashMap<>();
          for (BlockProperties blockProperty : blockProperties) {
-@@ -153,6 +159,43 @@ public class BlockStateRewriter implements StorableObject {
+@@ -153,6 +159,54 @@ public class BlockStateRewriter implements StorableObject {
          }
  
          bedrockBlockStates.addAll(customBlockStates);
@@ -1195,13 +1211,24 @@ index 2cb4a79b6..80324f7ec 100644
 +            final Map<VisualKey, Integer> sharedVisuals = new HashMap<>();
 +            final List<BedrockBlockState> orderedCustomStates = customBlockStates.stream()
 +                    .sorted(Comparator.comparing(BlockState::toBlockStateString)).toList();
++            final Map<String, CustomBlockDefinition> compiledDefinitions = new HashMap<>();
++            for (Map.Entry<String, CompoundTag> entry : effectiveBlockProperties.entrySet()) {
++                try {
++                    compiledDefinitions.put(entry.getKey(), new CustomBlockDefinition(entry.getValue()));
++                } catch (final Exception e) {
++                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to compile custom block " + entry.getKey(), e);
++                }
++            }
 +            for (BedrockBlockState customState : orderedCustomStates) {
 +                if (visuals.size() == carriers.size()) {
 +                    break;
 +                }
 +                try {
-+                    final CompoundTag components = CustomBlockDefinition.resolve(effectiveBlockProperties.get(customState.namespacedIdentifier()),
-+                            customState.blockStateTag().getCompoundTag("states"));
++                    final CustomBlockDefinition definition = compiledDefinitions.get(customState.namespacedIdentifier());
++                    if (definition == null) {
++                        continue;
++                    }
++                    final CompoundTag components = definition.resolve(customState.blockStateTag().getCompoundTag("states"));
 +                    final int carrier = carriers.get(visuals.size());
 +                    final CustomBlockVisual visual = CustomBlockModel.compile(resourcePackStorage, customState.toBlockStateString(), carrier, components);
 +                    if (visual != null) {
@@ -1229,7 +1256,7 @@ index 2cb4a79b6..80324f7ec 100644
          bedrockBlockStates.sort((a, b) -> HashedPaletteComparator.INSTANCE.compare(a.namespacedIdentifier(), b.namespacedIdentifier()));
  
          for (int i = 0; i < bedrockBlockStates.size(); i++) {
-@@ -172,6 +215,8 @@ public class BlockStateRewriter implements StorableObject {
+@@ -172,6 +226,8 @@ public class BlockStateRewriter implements StorableObject {
              if (bedrockToJavaBlockStates.containsKey(bedrockBlockState)) {
                  final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(bedrockBlockState));
                  this.blockStateIdMappings.put(bedrockId, javaId);
@@ -1238,7 +1265,7 @@ index 2cb4a79b6..80324f7ec 100644
              } else {
                  ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing bedrock -> java block state mapping: " + bedrockBlockState.toBlockStateString());
                  final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(BedrockBlockState.INFO_UPDATE));
-@@ -221,6 +266,15 @@ public class BlockStateRewriter implements StorableObject {
+@@ -221,6 +277,15 @@ public class BlockStateRewriter implements StorableObject {
          return this.blockStateIdMappings.get(bedrockBlockStateId);
      }
  
@@ -1254,7 +1281,7 @@ index 2cb4a79b6..80324f7ec 100644
      public int waterlog(final int javaBlockStateId) {
          if (BedrockProtocol.MAPPINGS.getJavaPreWaterloggedBlockStates().contains(javaBlockStateId)) {
              return javaBlockStateId;
-@@ -238,4 +292,8 @@ public class BlockStateRewriter implements StorableObject {
+@@ -238,4 +303,8 @@ public class BlockStateRewriter implements StorableObject {
          return this.blockStateTags.get(bedrockBlockStateId);
      }
  
@@ -3186,10 +3213,10 @@ index 000000000..a347e5aa6
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
 new file mode 100644
-index 000000000..b5a14e399
+index 000000000..f1900e15d
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
-@@ -0,0 +1,393 @@
+@@ -0,0 +1,400 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3318,15 +3345,21 @@ index 000000000..b5a14e399
 +        final ListTag<CompoundTag> permutations = new ListTag<>(CompoundTag.class);
 +        permutations.add(permutation("q.block_state('lit') == true", overlay));
 +        definition.put("permutations", permutations);
++        final CustomBlockDefinition compiled = new CustomBlockDefinition(definition);
 +        final CompoundTag states = new CompoundTag();
 +        states.putByte("lit", (byte) 1);
-+        final CustomBlockVisual lit = CustomBlockModel.compile(storage, "test:block[lit=true]", 2, CustomBlockDefinition.resolve(definition, states));
++        final CustomBlockVisual lit = CustomBlockModel.compile(storage, "test:block[lit=true]", 2, compiled.resolve(states));
 +        assertEquals(0, lit.lightDampening());
 +        assertEquals(12, lit.lightEmission());
 +        states.putByte("lit", (byte) 0);
-+        final CustomBlockVisual unlit = CustomBlockModel.compile(storage, "test:block[lit=false]", 3, CustomBlockDefinition.resolve(definition, states));
++        final CustomBlockVisual unlit = CustomBlockModel.compile(storage, "test:block[lit=false]", 3, compiled.resolve(states));
 +        assertEquals(defaultVisual.lightDampening(), unlit.lightDampening());
 +        assertEquals(defaultVisual.lightEmission(), unlit.lightEmission());
++        states.putByte("lit", (byte) 1);
++        final CompoundTag repeated = compiled.resolve(states);
++        assertEquals(12, repeated.getCompoundTag("minecraft:light_emission").getNumberTag("emission").asInt());
++        repeated.getCompoundTag("minecraft:light_emission").putInt("emission", 0);
++        assertEquals(12, compiled.resolve(states).getCompoundTag("minecraft:light_emission").getNumberTag("emission").asInt());
 +    }
 +
 +    @Test
@@ -3370,7 +3403,7 @@ index 000000000..b5a14e399
 +        permutations.add(permutation("query.block_property('part') == 'left'", wrong));
 +        definition.put("permutations", permutations);
 +
-+        final CompoundTag resolved = CustomBlockDefinition.resolve(definition, states);
++        final CompoundTag resolved = new CustomBlockDefinition(definition).resolve(states);
 +        assertEquals("geometry.middle", resolved.getCompoundTag("minecraft:geometry").getStringTag("identifier").getValue());
 +        assertEquals(1, resolved.getCompoundTag("minecraft:transformation").getIntTag("RY").asInt());
 +        assertEquals("geometry.test", definition.getCompoundTag("components").getCompoundTag("minecraft:geometry").getStringTag("identifier").getValue());
@@ -3513,12 +3546,13 @@ index 000000000..b5a14e399
 +            permutations.add(permutation(condition.toString(), overlay));
 +        }
 +        definition.put("permutations", permutations);
++        final CustomBlockDefinition compiled = new CustomBlockDefinition(definition);
 +        for (int mask = 0; mask < 64; mask++) {
 +            final CompoundTag states = new CompoundTag();
 +            for (int bit = 0; bit < faces.size(); bit++) {
 +                states.putByte(faces.get(bit), (byte) ((mask >>> bit) & 1));
 +            }
-+            assertEquals(mask, CustomBlockDefinition.resolve(definition, states).getIntTag("face_mask").asInt());
++            assertEquals(mask, compiled.resolve(states).getIntTag("face_mask").asInt());
 +        }
 +    }
 +

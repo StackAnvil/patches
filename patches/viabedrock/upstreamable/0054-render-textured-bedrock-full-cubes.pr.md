@@ -146,3 +146,19 @@ Core now omits empty physical boxes before and after transformation, while prese
 Metadata canonicalizes empty boxes and keeps strict checks for nonfinite or inverted bounds.
 Tests cover each empty axis, rotation, metadata round trips, and cache identity.
 The reported server's exact bounds still need a capture. This fix does not establish that its complete pack converts correctly.
+
+## Compile block conditions once
+
+A local Geyser 2.11.3 fixture with Boar reproduces a transport timeout during block-state preparation.
+The profile samples the Netty client thread inside custom-block condition parsing throughout a roughly fourteen-second preparation interval.
+The following resource-pack conversion takes milliseconds; its timing excludes the preceding palette work.
+
+Core now compiles each definition's permutation conditions once for the connection.
+Every concrete state receives a fresh query scope and copied component overlays.
+Condition order, overlay precedence, and per-evaluation temporary variables remain unchanged.
+Invalid definitions produce one compilation diagnostic rather than reparsing for each state.
+
+The targeted thirteen-test suite checks all sixty-four boolean face states with one compiled definition.
+It also checks returning to an earlier state and mutating a returned overlay without changing later resolutions.
+Core Checkstyle and the complete CubeConverter, ViaBedrock, and ViaProxy builds pass.
+Live fixture timing and platform verification are recorded in the coverage ledger.
