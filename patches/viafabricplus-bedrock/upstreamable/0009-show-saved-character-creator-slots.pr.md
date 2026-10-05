@@ -2136,3 +2136,59 @@ Real registry resolution, legacy saved IDs, full saved-tag construction, item-sp
 The saved-tag findings do not establish normalization for every inbound network item.
 These results narrow the production design.
 They do not claim a completed native classifier.
+
+### Native registry dispatch and Education-item loading research
+
+**Verified research:** A live Bedrock 1.26.51.1 client reached the CubeCraft lobby with its resource packs loaded.
+The selected registry contained 2,621 distinct item names, internal IDs, and item objects.
+Of these definitions, 545 had server-defined namespaces.
+The numeric and name tables each contained those 2,621 definitions.
+The other two inspected name-lookup tables were empty in this snapshot.
+
+The live numeric lookup, name lookup, registry wrapper, default classifier, and hand-tick code matched the inspected executable bytes.
+This comparison covered five selected code ranges in build 51061372.
+It did not compare the complete running image.
+Raw registry data, component trees, screenshots, and executable bytes remain private.
+
+| Captured virtual method | Definitions | Selected behavior |
+| --- | --- | --- |
+| Hand-swap classifier | 2,620 default, 1 shield | The shield uses its specialized classifier |
+| Relevant-metadata predicate | 2,619 default, 1 filled map, 1 firework star | Map and firework-star predicates retain their existing specialized paths |
+| Method after loading | 2,449 default, 172 specialized | Six specialized methods cover Education items, leaves, decorated pots, and banners |
+| Maximum-damage getter | 2,097 field, 524 component | Component definitions resolve the `minecraft:durability` entry |
+
+The specialized loading methods cover 119 element items and 46 other Education items.
+Glow sticks and sparklers share another method.
+Three leaf items, decorated pots, and banners account for the remaining five definitions.
+These counts describe this initialized registry, including its server definitions.
+They do not establish dispatch for every possible server or registry configuration.
+
+**Verified numeric lookup:** The actual native lookup passed 65,546 inputs against a reconstructed table of the captured internal IDs.
+The probe covered every 16-bit input and ten additional truncation boundaries.
+Lookup interprets the low 16 bits as a signed ID and rejects zero and minus one.
+Resolved weak references gained exactly one tested reference.
+The hash table, weak cells, TLS, and empty fallback were initialized by the probe.
+Bedrock network item IDs require a separate mapping.
+
+**Verified maximum damage:** Both native getter methods passed for all 2,621 captured definitions.
+The component cases used 524 captured object trees and executed the native component lookup.
+The field cases used 2,097 captured maximum-damage fields.
+Seventeen component definitions had nonzero maximum damage in this snapshot.
+TLS initialization guards and CRT operations were supplied.
+Complete registry construction and lifecycle verification remain open.
+
+**Verified Education loading:** The native glow-stick and sparkler method passed 66,256 cases.
+Tests covered every raw auxiliary bit pattern, block-derived auxiliary values, all eleven existing `Damage` types, and preservation of other user-data keys.
+An existing `Damage` key skips the migration.
+Otherwise, the method writes Int `Damage` from bits 6 through 12 of the effective auxiliary value.
+It retains auxiliary bits selected by `0xe03f`, then clamps a nonpositive signed result to zero.
+This method differs from the previously tested default durability migration.
+
+The Education probe executed native lookup, compound allocation, Int-tag insertion, and comparison.
+Allocator, CRT, and registry boundaries remained supplied.
+The 134,423 new instruction-execution cases exclude the live dispatch inventory and selected code-range comparisons.
+
+**Incomplete:** Production still uses Java hand-item classification and decoded wire snapshots.
+Native name remapping, restriction registry resolution, other specialized loading methods, complete saved-tag construction, and renderer lifetime remain incomplete or unverified.
+These results establish broader dispatch evidence and additional construction rules.
+They do not establish complete network-item normalization, visible timing, or first-person parity.
