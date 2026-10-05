@@ -40,6 +40,18 @@ For Windows and macOS launcher tests on a Linux host, use the [manual platform t
 
 ## Run join integration tests
 
+The Geyser fixture installs the checksum-pinned [Boar extension](https://github.com/opencollab-incubator/Boar) from `integration/geyser.json`.
+Startup requires its enabled-extension message before client tests begin.
+Keep its checks enabled and do not grant test players `boar.exempt`.
+Boar provides an additional movement check; a clean result does not prove native movement parity.
+The suite also enables `server-authoritative-movement-strict=true` in its owned BDS copies.
+It does not restart an external server or change its running configuration.
+
+Movement verification must cover direct and ViaProxy connections, with a native client baseline.
+Record walking, sprinting, sneaking, jumps, falls, collisions, steps, climbing, fluids, effects, knockback, vehicles, latency, and corrections.
+Retain server prediction errors, setbacks, violations, and disconnects as failures to investigate.
+Do not disable checks to make a case pass.
+
 The local join suite starts fresh servers on temporary ports. It launches the Java and Bedrock clients on a private Xvfb display with silent audio. Each case waits for a player spawn in the server log. Then it checks that the client stays connected for 20 seconds. Each Java route runs with plain StackAnvil and with the full Fabulously Optimized modpack. The Java server case also summons a vanilla interaction entity near the player. The suite downloads the Minecraft 26.3 server from Mojang and checks its published hash.
 
 The test modpack is the official Fabulously Optimized 15.0.0 alpha.3 `.mrpack` for Minecraft 26.3. The archive and its version lock are in [`integration/modpacks/`](../integration/modpacks/). The installer reads the pack manifest, downloads every client file, checks its SHA-512 hash, and installs the pack overrides. It adds the patched StackAnvil mods to a separate Prism instance. The pack's own Fabric loader version is used. The plain instance stays separate so the tests can catch pack-specific failures. Fabulously Optimized includes Iris, Sodium, and other client mods. The pack is under its [BSD-3-Clause license](../integration/modpacks/FABULOUSLY-OPTIMIZED-LICENSE.md).

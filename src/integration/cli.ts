@@ -136,6 +136,7 @@ async function javaServer(dir: string, geyser = false): Promise<{ child: ChildPr
   if (geyser) {
     await waitForLog(log, /\[StackAnvil Java Probe\] ready/, child);
     await waitForLog(log, /\[StackAnvil Geyser Probe\] ready/, child);
+    await waitForLog(log, /Enabled extension Boar/, child);
     await waitForLog(log, /Started Geyser on.*127\.0\.0\.1/, child);
   }
   return { child, log, port, bedrockPort };
@@ -156,7 +157,7 @@ async function bedrockServer(dir: string, source: string, name: string, entityPr
   let changed = properties;
   for (const [key, value] of Object.entries({ "server-name": "StackAnvil Integration", "server-port": String(port),
     "server-portv6": String(port + 1), "level-name": "integration-world", "online-mode": "false", "allow-list": "false",
-    "allow-cheats": "true", "enable-lan-visibility": "false" })) {
+    "allow-cheats": "true", "enable-lan-visibility": "false", "server-authoritative-movement-strict": "true" })) {
     changed = set(changed, key, value);
   }
   if (entityProbe) {

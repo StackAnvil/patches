@@ -86,9 +86,9 @@ async function files(dir: string, suffix: string): Promise<string[]> {
   return paths.flat();
 }
 
-export async function buildJavaProbe(): Promise<{ paper: string; geyser: string; viaversion: string; plugin: string; extension: string }> {
+export async function buildJavaProbe(): Promise<{ paper: string; geyser: string; viaversion: string; boar: string; plugin: string; extension: string }> {
   await mkdir(cache, { recursive: true, mode: 0o700 });
-  const [paper, geyser, viaversion] = await Promise.all([artifact("paper"), artifact("geyser"), artifact("viaversion")]);
+  const [paper, geyser, viaversion, boar] = await Promise.all([artifact("paper"), artifact("geyser"), artifact("viaversion"), artifact("boar")]);
   const runtime = join(cache, `paper-${pins.artifacts.paper.sha256}`);
   await mkdir(runtime, { recursive: true });
   // Paperclip resolves and verifies the API and runtime dependencies of this pinned server.
@@ -103,7 +103,7 @@ export async function buildJavaProbe(): Promise<{ paper: string; geyser: string;
     await execute("jar", ["--create", "--file", join(cache, `${module}.jar`), "-C", classes, ".",
       "-C", join(source, module, "resources"), "."], { cwd: root });
   }
-  return { paper, geyser, viaversion, plugin: join(cache, "plugin.jar"), extension: join(cache, "extension.jar") };
+  return { paper, geyser, viaversion, boar, plugin: join(cache, "plugin.jar"), extension: join(cache, "extension.jar") };
 }
 
 export function geyserConfig(port: number): string {
@@ -135,6 +135,7 @@ export async function installJavaProbe(home: string, port: number): Promise<stri
     await cp(file, join(plugins, `${name}.jar`));
   }
   await cp(artifacts.extension, join(geyserHome, "extensions", "StackAnvilProbe.jar"));
+  await cp(artifacts.boar, join(geyserHome, "extensions", "Boar.jar"));
   await cp(join(source, "custom_mappings"), join(geyserHome, "custom_mappings"), { recursive: true });
   await writeFile(join(geyserHome, "config.yml"), geyserConfig(port));
   const pack = join(cache, "resource_pack");

@@ -3357,3 +3357,26 @@ These observations verify route delivery and listener integration, but exclude n
 **Remaining:** Native eye-height provenance, vehicles, death, listener activation timing, and audible panning remain unverified.
 The Java eye position is a client integration input, not proof of native player-coordinate parity.
 Native first/third-person poses, player effects, follow cameras, splines, fog, and aim assistance remain incomplete.
+
+## Strict movement test fixtures, October 6, 2026
+
+G1 remains incomplete. The goal now requires native movement comparisons on direct and ViaProxy routes.
+Authoritative movement state, simulation, and correction handling belong in ViaBedrock core.
+The add-on supplies additional local input and prediction when client integration requires it.
+
+The Geyser fixture installer now downloads the checksum-pinned Boar `2.0.1-SNAPSHOT-949deba` extension.
+It requires Boar's enabled message during server startup.
+The local Paper/Geyser test server confirms that Boar loads with its default checks enabled.
+No test player receives the exemption permission.
+See [Boar's source and scope](https://github.com/opencollab-incubator/Boar).
+
+Integration BDS copies now enable `server-authoritative-movement-strict=true`.
+A separate local BDS 1.26.51.1 instance starts with that setting and NetherNet transport.
+The first attempt retained an older RakNet configuration and reported that this build requires NetherNet.
+Its configuration was corrected before further tests.
+The external persistent BDS configuration also enables strict movement, pending its next restart.
+The existing external process has not been restarted.
+
+Installation and startup checks do not establish movement parity.
+Native baselines, both connection routes, prediction errors, anticheat violations, setbacks, and complete movement cases remain to verify.
+Walking, sprinting, sneaking, jumps, falls, collision, steps, climbing, fluids, effects, attributes, knockback, vehicles, latency, and corrections remain in scope.
