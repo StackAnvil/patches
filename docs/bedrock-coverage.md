@@ -1846,3 +1846,33 @@ The full stacks replay all 90 core patches and 23 add-on patches.
 Complete item-use timing and final held-item pixels still require native comparisons.
 The extra snapshot's memory, bandwidth, and conversion costs remain unmeasured.
 Private fixtures, packet bytes, and diagnostics remain outside the repository.
+
+
+## Resource conversion: parallel embedded libraries
+
+**Implemented:** Core reuses its bounded ZIP writer for large native sound, caption, particle, and actor libraries.
+Library headers remain first, and layer order, empty layers, resource limits, and decoder formats remain compatible.
+Shared language tables now parse atomically during simultaneous cold pack preparation.
+The previous cache can throw `ConcurrentModificationException` when connections load definitions concurrently.
+
+**Measured:** The five-pack CubeCraft fixture includes 42 licensed image layers from Bedrock 1.26.51.1.
+Java 25 uses four available processors and a 2 GiB heap on Linux.
+Eight conversions exclude two warm-ups.
+Median rewrite plus memory ZIP packaging decreases from 1584 ms to 1177 ms, about 26 percent.
+Two simultaneous conversions improve from 1924 ms to 1473 ms per pair, about 23 percent.
+
+**Verified:** Decoded libraries preserve every resource and entry order.
+The complete output retains 15,823 original entries and 786 shared parents with equivalent resolved Java models.
+Targeted tests cover header placement, large archive decoding, empty layers, determinism, and concurrent language lookup.
+All four projects build with 1,026 passing Java tests, no failures or errors, and 118 optional skips.
+See the [library compression notes](../patches/viabedrock/upstreamable/0015-scale-play-sound-coordinates.pr.md#compress-entries-within-large-native-libraries).
+
+**Remaining:** Larger stacks, macOS, Windows, full reloads, and complete joining-time measurements remain unverified.
+Each large library uses at most four workers and temporary compressed storage.
+These phase improvements do not prevent every timeout; transport liveness remains necessary during acquisition and other waits.
+
+
+**Runtime evidence:** Fresh disk-cache replays pass complete transport and rendering checks through direct and ViaProxy connections.
+Both routes load two newly converted packs and preserve the complete recorded scene hash and all 216 skin updates.
+No unresolved model or block errors occur.
+These checks establish loading regressions, not complete native visual parity or faster joining.

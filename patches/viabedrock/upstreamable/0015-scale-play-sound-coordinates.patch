@@ -1,4 +1,4 @@
-From 5faf80ea5c76465d2d714052e5ce831f41b7bff7 Mon Sep 17 00:00:00 2001
+From 428fc5800f1fc42e6ec7f5fc19de61a813b774e9 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 19:48:51 +0200
 Subject: [PATCH] feat(effects): transport native resources and sound commands
@@ -108,6 +108,14 @@ Submit independent native sound, caption, particle and actor archives to
 the existing conversion executor separately. Preserve resource layer
 order, provenance and deterministic archive contents while avoiding a
 single serial task on the conversion critical path.
+
+Use the shared bounded ZIP compressor for large embedded native libraries.
+Serial compression of the largest library dominates resource rewriting
+after model deduplication. Keep the header first, sorted paths per source
+pack, empty layer indexes, resource limits and the existing decoder format.
+Small libraries keep the sequential path; large libraries own temporary
+compressed storage and at most four workers. Old cached libraries remain
+readable because decoded resources and metadata do not change.
 ---
  build.gradle                                  |   6 +
  .../api/model/NativeBlockIdentifiers.java     | 144 +++++++++++
@@ -118,7 +126,7 @@ single serial task on the conversion critical path.
  .../api/model/SoundPlaybackMessage.java       |  76 ++++++
  .../api/resourcepack/NativeActorLibrary.java  | 102 ++++++++
  .../resourcepack/NativeParticleLibrary.java   |  40 +++
- .../resourcepack/NativeResourceArchive.java   | 157 ++++++++++++
+ .../resourcepack/NativeResourceArchive.java   | 147 +++++++++++
  .../api/resourcepack/NativeSoundLibrary.java  |  56 +++++
  .../api/resourcepack/SoundTranslations.java   |  52 ++++
  .../api/resourcepack/WaveSound.java           | 228 ++++++++++++++++++
@@ -136,6 +144,7 @@ single serial task on the conversion critical path.
  .../api/model/SoundCaptionsTest.java          |  80 ++++++
  .../api/model/SoundListenerRangeTest.java     |  27 +++
  .../resourcepack/NativeActorLibraryTest.java  | 130 ++++++++++
+ .../NativeResourceArchiveTest.java            |  51 ++++
  .../resourcepack/SoundTranslationsTest.java   |  46 ++++
  .../api/resourcepack/WaveSoundTest.java       | 182 ++++++++++++++
  .../protocol/model/PlaySoundTest.java         |  66 +++++
@@ -144,7 +153,7 @@ single serial task on the conversion critical path.
  .../protocol/packet/PlaySoundPacketsTest.java |  88 +++++++
  .../protocol/packet/SoundUpdateTest.java      |  79 ++++++
  .../storage/NativeBlockSectionTest.java       |  54 +++++
- 35 files changed, 2635 insertions(+), 71 deletions(-)
+ 36 files changed, 2676 insertions(+), 71 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockIdentifiers.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockSection.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeBlockView.java
@@ -164,6 +173,7 @@ single serial task on the conversion critical path.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/SoundCaptionsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/SoundListenerRangeTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/NativeActorLibraryTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/NativeResourceArchiveTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/SoundTranslationsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/WaveSoundTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/PlaySoundTest.java
@@ -946,10 +956,10 @@ index 000000000..a92747977
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeResourceArchive.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeResourceArchive.java
 new file mode 100644
-index 000000000..20a308fbd
+index 000000000..5ec56a5b8
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/NativeResourceArchive.java
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,147 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -958,6 +968,7 @@ index 000000000..20a308fbd
 +package net.raphimc.viabedrock.api.resourcepack;
 +
 +import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.resourcepack.content.ResourcePackZipWriter;
 +import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 +
 +import java.io.ByteArrayOutputStream;
@@ -972,10 +983,8 @@ index 000000000..20a308fbd
 +import java.util.Map;
 +import java.util.TreeSet;
 +import java.util.function.Predicate;
-+import java.util.zip.Deflater;
 +import java.util.zip.ZipEntry;
 +import java.util.zip.ZipInputStream;
-+import java.util.zip.ZipOutputStream;
 +
 +/** Bounded deterministic archives retain every source pack index, including empty packs. */
 +final class NativeResourceArchive {
@@ -988,16 +997,15 @@ index 000000000..20a308fbd
 +    static byte[] encode(final List<Content> packs, final Predicate<String> permitted,
 +                         final List<String> paths, final List<String> extensions) throws IOException {
 +        final List<Map<String, byte[]>> selected = select(packs, permitted, paths, extensions);
-+        final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-+        try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
-+            zip.setLevel(Deflater.BEST_SPEED);
-+            put(zip, "header", ByteBuffer.allocate(12).putInt(1).putInt(ProtocolConstants.BEDROCK_PROTOCOL_VERSION).putInt(selected.size()).array());
-+            for (int index = 0; index < selected.size(); index++) {
-+                for (final var file : selected.get(index).entrySet()) {
-+                    put(zip, index + "/" + file.getKey(), file.getValue());
-+                }
++        final List<ResourcePackZipWriter.Entry> entries = new ArrayList<>();
++        entries.add(new ResourcePackZipWriter.Entry("header", ByteBuffer.allocate(12).putInt(1).putInt(ProtocolConstants.BEDROCK_PROTOCOL_VERSION).putInt(selected.size()).array()));
++        for (int index = 0; index < selected.size(); index++) {
++            for (final var file : selected.get(index).entrySet()) {
++                entries.add(new ResourcePackZipWriter.Entry(index + "/" + file.getKey(), file.getValue()));
 +            }
 +        }
++        final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
++        ResourcePackZipWriter.write(entries, bytes);
 +        return bytes.toByteArray();
 +    }
 +
@@ -1093,14 +1101,6 @@ index 000000000..20a308fbd
 +                throw new IOException("Invalid native resource path");
 +            }
 +        }
-+    }
-+
-+    private static void put(final ZipOutputStream zip, final String path, final byte[] bytes) throws IOException {
-+        final ZipEntry entry = new ZipEntry(path);
-+        entry.setTime(0);
-+        zip.putNextEntry(entry);
-+        zip.write(bytes);
-+        zip.closeEntry();
 +    }
 +
 +    private NativeResourceArchive() {
@@ -2550,6 +2550,63 @@ index 000000000..0f2e78008
 +            zip.closeEntry();
 +        }
 +        NativeActorLibrary.decode(new ByteArrayInputStream(bytes.toByteArray()));
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/NativeResourceArchiveTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/NativeResourceArchiveTest.java
+new file mode 100644
+index 000000000..3c77ca2d0
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/NativeResourceArchiveTest.java
+@@ -0,0 +1,51 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack;
++
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
++import org.junit.jupiter.api.Test;
++
++import java.io.ByteArrayInputStream;
++import java.util.List;
++import java.util.Random;
++import java.util.zip.ZipInputStream;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeResourceArchiveTest {
++
++    @Test
++    void largeArchivesPreserveHeadersEmptyLayersAndOverrideOrder() throws Exception {
++        final byte[] data = new byte[3 * 1024 * 1024];
++        new Random(2193).nextBytes(data);
++        final Content lower = new InMemoryContent();
++        final Content upper = new InMemoryContent();
++        lower.put("textures/a.png", data);
++        lower.put("textures/b.png", new byte[data.length]);
++        upper.put("textures/a.png", data.clone());
++        upper.put("textures/empty.png", new byte[0]);
++        final List<Content> packs = List.of(lower, new InMemoryContent(), upper);
++        final byte[] archive = NativeResourceArchive.encode(packs, path -> path.startsWith("textures/"), List.of(), List.of(".png"));
++        final var decoded = NativeResourceArchive.decode(new ByteArrayInputStream(archive), path -> path.startsWith("textures/"));
++        assertEquals(3, decoded.size());
++        assertTrue(decoded.get(1).isEmpty());
++        for (int index = 0; index < packs.size(); index++) {
++            assertEquals(packs.get(index).getFilesDeep("", "").size(), decoded.get(index).size());
++            for (final String path : packs.get(index).getFilesDeep("", "")) {
++                assertArrayEquals(packs.get(index).get(path), decoded.get(index).get(path));
++            }
++        }
++        try (var zip = new ZipInputStream(new ByteArrayInputStream(archive))) {
++            for (final String name : List.of("header", "0/textures/a.png", "0/textures/b.png", "2/textures/a.png", "2/textures/empty.png")) {
++                assertEquals(name, zip.getNextEntry().getName());
++            }
++            assertNull(zip.getNextEntry());
++        }
++        assertArrayEquals(archive, NativeResourceArchive.encode(packs, path -> path.startsWith("textures/"), List.of(), List.of(".png")));
 +    }
 +
 +}

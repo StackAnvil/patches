@@ -147,7 +147,7 @@ This supplies resources for client rendering. It does not supply missing custom 
 
 Sound, caption, particle, and actor archives now use separate tasks in the existing conversion pool.
 The encoders retain their pack order, provenance, and format.
-This change adds no executor or worker pool.
+The first optimization used only the existing conversion pool.
 
 A private CubeCraft conversion profile uses five server packs and 42 matching licensed image layers.
 The process uses Java 25, four available processors, and a 2 GiB heap on Linux.
@@ -166,3 +166,47 @@ That existing limitation is separate from the byte-identical ZIP writer comparis
 The actor, sound, and particle codec suites and both Checkstyle tasks pass before the remaining stack applies.
 The complete stack builds with 982 passing Java tests, no failures or errors, and 113 optional skips.
 Model generation remains a large source of allocations and needs separate profiling before further changes.
+
+
+## Compress entries within large native libraries
+
+The shared ZIP writer now compresses entries within large embedded libraries in parallel.
+It retains the header first, ordered source layers, sorted paths within each layer, empty layers, and all decoded resource bytes.
+The existing limits and decoder format remain unchanged.
+Previously cached libraries remain readable.
+
+Archives below 8 MiB and single-processor hosts retain sequential compression.
+Each larger archive uses at most four workers and owns its temporary compressed files.
+The writer joins workers before cleanup, including after interruption and failed output.
+The [Apache API](https://commons.apache.org/proper/commons-compress/apidocs/org/apache/commons/compress/archivers/zip/ParallelScatterZipCreator.html) describes ordering and executor ownership.
+
+The benchmark uses the existing five-pack CubeCraft fixture with 42 licensed image layers from Bedrock 1.26.51.1.
+Java 25 uses four available processors and a 2 GiB heap on Linux.
+Eight conversions exclude two warm-ups in each separate baseline and production process.
+Median rewrite time decreases from 902 ms to 425 ms, about 53 percent.
+Median rewrite plus memory ZIP packaging decreases from 1584 ms to 1177 ms, about 26 percent.
+
+Two simultaneous conversions run eight times, excluding two warm-ups.
+Median completion time per pair decreases from 1924 ms to 1473 ms, about 23 percent.
+The baseline primes language tables because simultaneous cold loads expose its existing cache race.
+The production run starts with cold language tables and completes every pair.
+
+The complete output retains 15,823 original entries and 786 shared geometry parents.
+Decoded libraries preserve every resource, header, and entry order.
+Resolved Java models remain equivalent after normalizing existing identity-based element names and JSON property order.
+The complete ZIP grows from 78,179,655 bytes to 78,190,024 bytes, about 0.01 percent.
+ZIP metadata changes, while library resources and decoder formats retain their meanings.
+
+Targeted tests cover large archive decoding, empty layers, override order, deterministic output, and header placement.
+The shared writer tests retain interruption, cleanup, failed output, retry, and output ownership coverage.
+All four projects build with 1,026 passing Java tests, no failures or errors, and 118 optional skips.
+
+These measurements exclude downloads, licensed acquisition, prompts, client reloads, and joining times.
+Parallel libraries add temporary disk traffic and compressed storage during rewriting.
+Larger stacks, macOS, Windows, and complete joining-time measurements remain unverified.
+
+
+Fresh disk-cache replays pass complete transport and rendering checks through direct and ViaProxy connections.
+Both routes load two newly converted packs and preserve the complete recorded scene hash.
+All 216 recorded skin updates remain unchanged, with no unresolved model or block errors.
+These checks establish conversion and loading regressions, not complete native visual parity or faster joining.

@@ -1,4 +1,4 @@
-From 156b2d9824a6c68ab27b7496017a8e208acd6adc Mon Sep 17 00:00:00 2001
+From 061cb8eec212ade5b1642955a9d763409c5f23bf Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:52:24 +0200
 Subject: [PATCH] perf(resource-packs): cache converted packs by content
@@ -71,10 +71,21 @@ have the same meanings. No resource-format revision is needed for this
 packaging change. The parallel path consumes temporary disk space and has
 more allocation than the sequential writer; it does not replace RakNet
 liveness while acquisition, prompts, downloads, or client reloads are slow.
+
+Expose the same bounded ZIP writer for ordered resource archives. Keep
+caller ordering so embedded library headers precede indexed resources,
+while ordinary converted packs retain sorted paths. Reuse failure cleanup
+and worker ownership instead of maintaining another parallel compressor.
+
+Make shared language parsing atomic for concurrent pack preparation.
+Bundled Content instances are reused across connections; HashMap
+computeIfAbsent races during concurrent cold definition loads and can
+throw ConcurrentModificationException. Retain one immutable parsed table
+per path without serializing unrelated language paths.
 ---
  build.gradle                                  |  11 +
- .../api/resourcepack/content/Content.java     |  24 +-
- .../content/ResourcePackZipWriter.java        | 172 ++++++++++
+ .../api/resourcepack/content/Content.java     |  27 +-
+ .../content/ResourcePackZipWriter.java        | 178 +++++++++++
  .../http/ConvertedResourcePackCache.java      | 253 +++++++++++++++
  .../http/ConverterDataManifest.java           |  74 +++++
  .../http/ResourcePackHttpServer.java          | 145 ++++-----
@@ -86,15 +97,17 @@ liveness while acquisition, prompts, downloads, or client reloads are slow.
  .../impl/InMemoryResourcePackProvider.java    |  34 +-
  .../impl/NoOpResourcePackProvider.java        |  11 +-
  .../storage/ResourcePackLoadStateTracker.java |  62 ++--
- .../content/ResourcePackZipWriterTest.java    | 135 ++++++++
+ .../content/ContentLanguageCacheTest.java     |  65 ++++
+ .../content/ResourcePackZipWriterTest.java    | 154 +++++++++
  .../http/ConvertedResourcePackCacheTest.java  | 255 +++++++++++++++
  .../ResourcePackClientResponseTest.java       |  74 +++++
  .../ResourcePackLoadStateTrackerTest.java     |  43 +++
- 18 files changed, 1453 insertions(+), 260 deletions(-)
+ 19 files changed, 1545 insertions(+), 261 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConverterDataManifest.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/ResourcePackClientResponse.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentLanguageCacheTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriterTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/ResourcePackClientResponseTest.java
@@ -130,10 +143,10 @@ index b081953c4..0596643a6 100644
  
  def registerToolTask(String name, String toolMainClass, String toolDescription) {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
-index 622e99d2e..1682dee07 100644
+index 622e99d2e..3862ea512 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/Content.java
-@@ -26,13 +26,11 @@ import java.awt.image.BufferedImage;
+@@ -26,17 +26,16 @@ import java.awt.image.BufferedImage;
  import java.io.ByteArrayInputStream;
  import java.io.ByteArrayOutputStream;
  import java.io.IOException;
@@ -141,6 +154,7 @@ index 622e99d2e..1682dee07 100644
  import java.io.UncheckedIOException;
  import java.nio.charset.StandardCharsets;
  import java.util.*;
++import java.util.concurrent.ConcurrentHashMap;
  import java.util.stream.Collectors;
 -import java.util.zip.Deflater;
 -import java.util.zip.ZipEntry;
@@ -148,7 +162,12 @@ index 622e99d2e..1682dee07 100644
  
  public abstract class Content {
  
-@@ -161,18 +159,14 @@ public abstract class Content {
+-    private final Map<String, Map<String, String>> langCache = new HashMap<>();
++    private final Map<String, Map<String, String>> langCache = new ConcurrentHashMap<>();
+ 
+     public abstract List<String> getFilesShallow(final String path, final String extension);
+ 
+@@ -161,18 +160,14 @@ public abstract class Content {
      }
  
      public byte[] toZip() throws IOException {
@@ -177,10 +196,10 @@ index 622e99d2e..1682dee07 100644
      public static class LazyImage {
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java
 new file mode 100644
-index 000000000..d9c21a1c2
+index 000000000..c84695ba8
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriter.java
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,178 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -222,7 +241,7 @@ index 000000000..d9c21a1c2
 +import java.util.zip.ZipOutputStream;
 +
 +/** Compresses large archives in parallel while preserving entry order and bounded working storage. */
-+final class ResourcePackZipWriter {
++public final class ResourcePackZipWriter {
 +
 +    private static final long PARALLEL_THRESHOLD = 8 * 1024 * 1024;
 +
@@ -232,12 +251,17 @@ index 000000000..d9c21a1c2
 +    static void write(final Content content, final OutputStream output) throws IOException {
 +        try (output) {
 +            final List<Entry> entries = new ArrayList<>();
-+            long bytes = 0;
 +            for (final String path : content.getFilesDeep("", "").stream().sorted().toList()) {
-+                final byte[] data = content.get(path);
-+                entries.add(new Entry(path, data));
-+                bytes += data.length;
++                entries.add(new Entry(path, content.get(path)));
 +            }
++            write(entries, output);
++        }
++    }
++
++    /** Writes entries in caller order, bounds compression workers and closes the supplied output. */
++    public static void write(final List<Entry> entries, final OutputStream output) throws IOException {
++        try (output) {
++            final long bytes = entries.stream().mapToLong(entry -> entry.data().length).sum();
 +            final int workers = Math.min(4, Runtime.getRuntime().availableProcessors());
 +            if (workers > 1 && entries.size() > 1 && bytes >= PARALLEL_THRESHOLD) {
 +                writeParallel(entries, output, Path.of(System.getProperty("java.io.tmpdir")), workers);
@@ -299,7 +323,8 @@ index 000000000..d9c21a1c2
 +        }
 +    }
 +
-+    record Entry(String path, byte[] data) {
++    /** Entry bytes remain owned by the caller and must not change during the write. */
++    public record Entry(String path, byte[] data) {
 +    }
 +
 +    /** Removes late-created worker files after the executor has terminated, including on failed writes. */
@@ -1625,12 +1650,83 @@ index f7f550941..47cf78aef 100644
      }
  
  }
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentLanguageCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentLanguageCacheTest.java
+new file mode 100644
+index 000000000..c0f072f08
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ContentLanguageCacheTest.java
+@@ -0,0 +1,65 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.content;
++
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.CountDownLatch;
++import java.util.concurrent.Executors;
++import java.util.concurrent.Future;
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.atomic.AtomicInteger;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class ContentLanguageCacheTest {
++
++    @Test
++    void concurrentConnectionsShareOneImmutableParsedTable() throws Exception {
++        final int connections = 8;
++        final CountDownLatch started = new CountDownLatch(connections);
++        final AtomicInteger reads = new AtomicInteger();
++        final InMemoryContent content = new InMemoryContent() {
++            @Override
++            public List<String> getLines(final String path) {
++                reads.incrementAndGet();
++                try {
++                    if (!started.await(5, TimeUnit.SECONDS)) {
++                        throw new IllegalStateException();
++                    }
++                } catch (final InterruptedException interrupted) {
++                    Thread.currentThread().interrupt();
++                    throw new IllegalStateException(interrupted);
++                }
++                return List.of("a=first", "a=last", "b=value ## comment", "## ignored");
++            }
++        };
++        final var executor = Executors.newFixedThreadPool(connections);
++        try {
++            final List<Future<Map<String, String>>> tables = new ArrayList<>();
++            for (int index = 0; index < connections; index++) {
++                tables.add(executor.submit(() -> {
++                    started.countDown();
++                    return content.getLang("texts/en_US.lang");
++                }));
++            }
++            final Map<String, String> first = tables.get(0).get(5, TimeUnit.SECONDS);
++            assertEquals(Map.of("a", "last", "b", "value"), first);
++            for (final var table : tables) {
++                assertSame(first, table.get(5, TimeUnit.SECONDS));
++            }
++            assertEquals(1, reads.get());
++            assertThrows(UnsupportedOperationException.class, () -> first.clear());
++        } finally {
++            executor.shutdownNow();
++            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriterTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriterTest.java
 new file mode 100644
-index 000000000..a4966951e
+index 000000000..80638cd70
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/content/ResourcePackZipWriterTest.java
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,154 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
@@ -1653,15 +1749,18 @@ index 000000000..a4966951e
 +import org.junit.jupiter.api.Test;
 +import org.junit.jupiter.api.io.TempDir;
 +
++import java.io.ByteArrayInputStream;
 +import java.io.ByteArrayOutputStream;
 +import java.io.IOException;
 +import java.io.OutputStream;
 +import java.nio.file.Files;
 +import java.nio.file.Path;
++import java.util.ArrayList;
 +import java.util.Arrays;
 +import java.util.List;
 +import java.util.Random;
 +import java.util.zip.ZipFile;
++import java.util.zip.ZipInputStream;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
@@ -1701,6 +1800,22 @@ index 000000000..a4966951e
 +                    assertArrayEquals(entries.get(i).data(), input.readAllBytes());
 +                }
 +            }
++        }
++    }
++
++    @Test
++    void orderedArchivesKeepTheHeaderBeforeIndexedEntries() throws Exception {
++        final var entries = new ArrayList<ResourcePackZipWriter.Entry>();
++        entries.add(new ResourcePackZipWriter.Entry("header", new byte[]{1}));
++        entries.addAll(entries());
++        final ByteArrayOutputStream output = new ByteArrayOutputStream();
++        ResourcePackZipWriter.write(entries, output);
++        try (var zip = new ZipInputStream(new ByteArrayInputStream(output.toByteArray()))) {
++            for (final var entry : entries) {
++                assertEquals(entry.path(), zip.getNextEntry().getName());
++                assertArrayEquals(entry.data(), zip.readAllBytes());
++            }
++            assertNull(zip.getNextEntry());
 +        }
 +    }
 +

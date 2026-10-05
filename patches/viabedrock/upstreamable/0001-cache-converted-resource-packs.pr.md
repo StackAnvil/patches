@@ -141,3 +141,19 @@ Both routes convert and load two packs with the parallel ZIP backend.
 The complete scene hash remains unchanged, all 216 recorded skins retain their bytes, and no unresolved model or block errors occur.
 The generated archives contain 15,601 and 15,959 entries.
 These checks establish packaging and loading regressions, not complete native visual parity or faster joining.
+
+
+## Ordered libraries and concurrent language tables
+
+The bounded writer also accepts entries in caller order for embedded native libraries.
+A regression verifies that library headers precede indexed resource entries.
+Ordinary converted packs retain sorted paths.
+Both paths use the same compression, output ownership, and failure cleanup rules.
+
+Shared source content now caches language tables with atomic concurrent lookup.
+Two simultaneous cold definition loads previously reproduce a `ConcurrentModificationException` in the shared `HashMap`.
+Eight concurrent consumers now receive the same immutable table after one parse.
+Unrelated language paths can parse independently.
+
+The owning patch applies alone to its pinned upstream base and passes 18 tests and both Checkstyle tasks.
+See the [native library benchmark](0015-scale-play-sound-coordinates.pr.md#compress-entries-within-large-native-libraries) for measured conversion gains.
