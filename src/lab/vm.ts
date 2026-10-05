@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { root } from "../model.ts";
 import { artifact, bundlePrism } from "../prism.ts";
 import { displayEnv } from "./display.ts";
-import { clickPointer, keyEvents, withNamedQmp, type QmpCommand } from "./qmp.ts";
+import { clickPointer, keyEvents, validateHoldMs, withNamedQmp, type QmpCommand } from "./qmp.ts";
 
 const execute = promisify(execFile);
 const vmRoot = join(root, ".stackanvil", "lab", "vms");
@@ -297,15 +297,19 @@ export async function vmMain(args: string[]): Promise<void> {
     return;
   }
   if (action === "key") {
-    if (rest.length !== 1) throw new Error("Usage: bun run lab vm key <guest> <qcode+chord>");
+    if (rest.length < 1 || rest.length > 2) throw new Error("Usage: bun run lab vm key <guest> <qcode+chord> [hold-ms]");
+    const holdMs = Number(rest[1] ?? 100);
+    validateHoldMs(holdMs);
     const keys = keyEvents(rest[0]!);
-    await control(spec, (command) => command("send-key", { keys, "hold-time": 100 }));
+    await control(spec, (command) => command("send-key", { keys, "hold-time": holdMs }));
     return;
   }
   if (action === "click") {
-    if (rest.length < 2 || rest.length > 3) throw new Error("Usage: bun run lab vm click <guest> <x> <y> [left|right|middle]");
+    if (rest.length < 2 || rest.length > 4) throw new Error("Usage: bun run lab vm click <guest> <x> <y> [left|right|middle] [hold-ms]");
     const button = rest[2] ?? "left";
-    await control(spec, (command) => clickPointer(command, Number(rest[0]), Number(rest[1]), button));
+    const holdMs = Number(rest[3] ?? 100);
+    validateHoldMs(holdMs);
+    await control(spec, (command) => clickPointer(command, Number(rest[0]), Number(rest[1]), button, holdMs));
     return;
   }
   throw new Error("Usage: bun run lab vm <doctor|prepare|start|status|stop|view|screenshot|key|click|artifacts|serve> [windows|macos] [arguments]");

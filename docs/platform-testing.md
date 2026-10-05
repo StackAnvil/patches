@@ -97,7 +97,8 @@ A prepared directory retains its release. Changing the release does not replace 
 Guests start with SPICE on a local Unix socket and no viewer.
 The lab sends input directly to the guest's QMP socket after checking its unique VM identity.
 A screenshot contains the guest display, even when no viewer is open.
-The click command holds the button for 100 milliseconds so guests can sample the press before release.
+Click and key commands hold input for 100 milliseconds by default.
+For slow software rendering, use a longer hold time, up to 2,000 milliseconds.
 
 ```bash
 bun run lab vm status windows
@@ -106,6 +107,8 @@ bun run lab vm key windows ret
 bun run lab vm key windows ctrl+alt+delete
 bun run lab vm click windows 0.50 0.60
 bun run lab vm click windows 0.50 0.60 right
+bun run lab vm click macos 0.50 0.60 left 1000
+bun run lab vm key macos ret 1000
 bun run lab vm view windows
 ```
 
@@ -252,4 +255,26 @@ See [ci.yml](../.github/workflows/ci.yml) and [persona-helpers.yml](../.github/w
 
 Local verification covers profile preservation, QMP framing and errors, validated input, restricted artifact sharing, and a Quickemu control smoke test.
 The smoke test boots a disposable disk without a guest OS. It verifies screenshot and input commands, not Windows or macOS application behavior.
-Windows and macOS installation, fresh Store approval, launcher comparisons, and game joins still require guest or physical-machine evidence.
+## Guest results, October 6, 2026
+
+Both installed guests launched Minecraft 26.3 through Prism 11.1.1 with Temurin 25.0.4.1+1 and the current add-on.
+Each guest ran ViaProxy locally and joined CubeCraft with an accepted converted resource pack.
+Screenshots show the lobby, custom NPCs, banners, item icons, and sidebar.
+Private logs retain conversion progress and thread samples.
+
+| Guest | Graphics | Observed conversion interval |
+| --- | --- | --- |
+| Windows 11 Enterprise evaluation, build 26100 | Mesa llvmpipe 26.2.4 | 1,198 milliseconds |
+| macOS Sonoma 14.8.9, build 23J631 | Apple Software Renderer, OpenGL 4.1 | 1,278 milliseconds |
+
+These intervals cover conversion only. They exclude preparation, account refresh, pack approval, resource reload, and world loading.
+The Windows first attempt disconnected during world loading. A retry reached the lobby and retained server traffic for more than five minutes.
+The first macOS attempt used an unavailable local proxy; the next attempt reached the lobby after the proxy started.
+
+The Windows guest needed the official VC++ runtime and an application-local Mesa deployment for SDL and LWJGL.
+Its default graphics route aborted before the game menu.
+Use [Mesa's Windows deployment instructions](https://github.com/pal1000/mesa-dist-win) for a software renderer.
+Both guests need long input holds during slow rendering.
+Software graphics establish functional coverage only, without hardware performance claims.
+
+Fresh Store approval, passkeys, Modrinth, the official launcher with Fabric, direct Bedrock connections, Apple Silicon, and movement parity remain unverified.

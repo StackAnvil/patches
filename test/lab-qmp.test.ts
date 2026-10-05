@@ -81,8 +81,16 @@ test("guest clicks keep the button pressed across input sampling frames", async 
     }
     socket.write(JSON.stringify({ id: request.id, return: {} }) + "\n");
   }, async (path) => {
-    await withQmp(path, (command) => clickPointer(command, 0.5, 0.5, "left"));
+    await withQmp(path, (command) => clickPointer(command, 0.5, 0.5, "left", 150));
   });
   expect(events.map((event) => event.down)).toEqual([true, false]);
-  expect(events[1]!.time - events[0]!.time).toBeGreaterThanOrEqual(90);
+  expect(events[1]!.time - events[0]!.time).toBeGreaterThanOrEqual(140);
+});
+
+test("invalid click durations leave the button untouched", async () => {
+  let calls = 0;
+  for (const duration of [0, 2001, 1.5, NaN, Infinity]) {
+    await expect(clickPointer(async () => { calls++; }, 0.5, 0.5, "left", duration)).rejects.toBeInstanceOf(Error);
+  }
+  expect(calls).toBe(0);
 });

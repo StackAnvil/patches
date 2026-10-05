@@ -85,12 +85,19 @@ export function pointerEvents(x: number, y: number, button: string): Record<stri
   ];
 }
 
-export async function clickPointer(command: QmpCommand, x: number, y: number, button: string): Promise<void> {
+export async function clickPointer(command: QmpCommand, x: number, y: number, button: string, holdMs = 100): Promise<void> {
+  validateHoldMs(holdMs);
   await command("input-send-event", { events: pointerEvents(x, y, button) });
   try {
     // Guests can sample input once per frame and miss an immediate press/release.
-    await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    await new Promise<void>((resolve) => setTimeout(resolve, holdMs));
   } finally {
     await command("input-send-event", { events: [{ type: "btn", data: { button, down: false } }] });
+  }
+}
+
+export function validateHoldMs(holdMs: number): void {
+  if (!Number.isInteger(holdMs) || holdMs < 1 || holdMs > 2000) {
+    throw new Error("Input hold time must be an integer from 1 to 2000 milliseconds.");
   }
 }
