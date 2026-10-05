@@ -2427,7 +2427,7 @@ A private observer reads existing emitter and asset state without sampling visua
 ViaProxy's live opaque and alpha pipelines confirm culling, depth writes, disabled blending, and disabled alpha writes.
 These checks establish graph loading and lifecycle behavior, without proving complete native draw timing or visible parity.
 
-**Remaining:** Additive particles, other material families, missing textures on visible effects, complete fog, and lighting still need implementation or native comparisons.
+**Remaining:** Additive visible parity, other material families, missing textures on visible effects, complete fog, and lighting still need implementation or native comparisons.
 Native opaque shader selection, complete effect timing, actor-event behavior, and visible parity remain unverified.
 All other skin, account, inventory, gameplay, protocol, UI, and platform requirements remain active.
 
@@ -2465,7 +2465,7 @@ A private observer reads raw direction and population fields without sampling vi
 These checks verify graph loading and simulation, without proving native visible orientation, timing, or blending.
 
 **Remaining:** Complete reader defaults, invalid-input behavior, interpolation, and visible native comparisons remain open.
-Additive materials, complete fog, lighting, and the other coverage requirements remain active.
+Additive visible comparisons, complete fog, lighting, and the other coverage requirements remain active.
 
 The additive investigation identifies separate alpha-factor inheritance in the target material parser.
 Omitted alpha factors inherit color factors only when the corresponding color factor is explicitly supplied.
@@ -2474,4 +2474,49 @@ A private executable probe passes 192 presence, override, inheritance, and write
 Its factor reader supplies declared bytes and presence flags.
 Native field selection, inheritance, and write-mask calculations execute unchanged.
 Constructor defaults, factor-name decoding, material inheritance, and final GPU state remain outside that probe.
-This evidence guides the next material implementation and does not establish additive rendering parity.
+This evidence supports the material implementation below and does not establish additive rendering parity.
+
+
+## Translucent and additive particle materials
+
+**Evidence:** The matching licensed `particles.material` disables culling and depth writes for `particles_blend`.
+The native material constructor initializes color factors to `SourceAlpha` and `OneMinusSrcAlpha`.
+Its alpha factors are `One` and `OneMinusSrcAlpha`.
+A private executable probe verifies those fields and the initializer's nine factor names and codes.
+This probe supplies allocation and map insertion, while native field and string construction execute unchanged.
+The earlier 192-case parser probe verifies explicit factor inheritance and overrides.
+
+`particles_add` inherits the translucent state and explicitly selects `SourceAlpha` and `One` for color.
+The parser copies those factors into omitted alpha factors.
+The matching Particle Transparent SM60 fragment retains the texture/tint alpha product without an alpha cutoff.
+It interpolates RGB fog twice with the same parameters.
+Material inheritance, RenderDragon selection, and final native GPU output remain outside these executable probes.
+
+**Implemented:** Visible additive effects now load through the existing particle asset path.
+Both translucent materials use native forward blend factors, two-sided rendering, and disabled depth writes.
+The fragment preserves low-alpha pixels and evaluates both fog interpolations before transparency accumulation.
+
+Separate Java depth-bounds, transmittance, and accumulation pipelines retain the renderer's stage targets and bindings.
+Additive particles contribute color without reducing transmittance or recording opaque depth bounds.
+The depth-bounds stage preserves particles below Java's usual alpha cutoff.
+Opaque and alpha-test particles retain their existing state and fragment behavior.
+
+**Verified tests:** Two targeted tests verify forward blend factors, culling, depth writes, stage bindings, target states, and pipeline registration.
+All four projects build with 1,043 passing Java tests, 118 optional skips, and no failures or errors.
+A private NVIDIA GPU probe passes 1,440 pixel cases using the production fragment and matching Java includes.
+Cases cover both materials, low alpha, independent tint and modulator alpha, both face directions, and fog interpolation.
+They also exercise each transparency stage, including additive transmittance exclusion and non-occluding depth bounds.
+
+The probe supplies raster state and zero scene absorption.
+These checks verify isolated formulas and integration contracts, without establishing complete native image parity.
+
+
+**Verified runtime:** Complete direct and ViaProxy replays preserve the CubeCraft scene hash `ede0e43b2874418cbb6b62135898efe0553009307d33fecd0f258383643d5d83`.
+Both retain all 311 recorded skin updates and pass transport and rendering checks.
+A private fixture loads two authored effects through the production resource library and playback path.
+Both effects allocate render resources, create particles, and complete draw calls in forward rendering and all three improved-transparency stages.
+The fixture switches renderer modes during each replay and retries after the initial world transition.
+These checks establish packaged integration through both connection routes, without proving complete native pixel or timing parity.
+
+**Remaining:** Native fog parameter mapping, cross-texture ordering, overlapping transparency, material selection, lighting, and other material families remain unverified or incomplete.
+The other protocol, inventory, gameplay, UI, skin, account, and platform requirements remain active.
