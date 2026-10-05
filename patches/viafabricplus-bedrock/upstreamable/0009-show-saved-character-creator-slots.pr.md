@@ -1774,3 +1774,35 @@ The isolated color masks establish placement within one pixel for this standing 
 World lighting and HUD timing differ, so this comparison does not establish full color or scene parity.
 Rotations, movement, death, equipment, persona overlap, and other dimensions still require native comparisons.
 Captures and probe data remain private.
+
+
+### Rendered hands during item swaps
+
+First-person graphs now read retained item stacks from `FirstPersonHandsAndItemsRenderState`.
+The avatar's ordinary render state still supplies third-person rendered stacks.
+Equipped names, charge state, and use durations retain their separate inventory inputs.
+Hand submission copies the actor frame before replacing item queries, so the changes do not escape that scope.
+
+Minecraft 26.3 retains previous stacks while its swap animation lowers the hands.
+The [official item-name query](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/molangreference/examples/molangconcepts/queryfunctions/query_get_equipped_item_name?view=minecraft-bedrock-stable) distinguishes equipped and currently rendered items through its second argument.
+Earlier execution of the matching Bedrock 1.26.51.1 callback verifies its argument handling and raw-name resolution.
+This change supplies the actual first-person stacks to that existing query implementation.
+
+An expression-driven bone test samples retained, replaced, and empty main-hand stacks, plus an independent offhand transition.
+It checks equipped-name selection, charge state, duration, and preservation of the actor frame.
+The target executable height and arm-offset fixtures still pass with the expanded hand input.
+
+Native swap timing, native held-item transforms, first-person equipment, and full visible item parity remain incomplete or unverified.
+
+**Runtime verification:** Direct and ViaProxy replays reach spawn and load the same selected 75-second packet prefix.
+The production hand-frame sampler passes 12 query checks on direct connections and 18 through ViaProxy.
+The controlled states retain a bow, replace it with a crossbow, and clear it while equipped inventory remains unchanged.
+The ViaProxy probe explicitly checks all three rendered names, including the empty name.
+Both probes check independent offhand inputs and scope restoration.
+The existing two-surface hand submission and layered pose checks still pass through Minecraft's hand entry.
+The generic third-person audit reports no avatar draw because this fixture defines only first-person controllers.
+These controlled runtime checks establish query binding, not native swap timing or final held-item pixels.
+
+**Validation:** The dependency build and Java suites pass 1,013 tests with 115 optional skips and no failures or errors.
+The focused hand input suite also passes with native height and arm-offset fixtures enabled.
+The full coverage goal remains active.

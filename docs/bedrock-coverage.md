@@ -1482,3 +1482,33 @@ The full Bedrock coverage goal remains active.
 **Validation:** The complete build passes 1,012 tests with 115 optional skips and no failures or errors.
 The focused licensed graph suite passes all 26 tests with assets enabled.
 The independent core patch passes three tests and Checkstyle on Java 17.
+
+
+## First-person rendered item inputs
+
+**Implemented:** First-person graphs read rendered names from Minecraft's retained hand stacks during item swaps.
+The avatar render state continues to supply third-person rendered stacks.
+Equipped names, charge state, and active-use durations keep their separate inventory inputs.
+The hand input copies the actor frame and restores submission scope.
+
+**Evidence:** Minecraft 26.3 retains previous stacks in `FirstPersonHandsAndItemsRenderState` during swap animation.
+The official Molang item-name query distinguishes rendered items from equipped items.
+The matching Bedrock callback's argument and raw-name behavior has separate executable fixtures.
+A new bone-playback test checks distinct retained, replaced, and empty main-hand poses plus independent offhand selection.
+It also checks equipped charge and duration bindings and the unchanged actor frame.
+
+**Incomplete or unverified:** Native swap timing, held-item drawing transforms, first-person equipment, and full visual item parity still need native comparisons.
+The original full-coverage goal remains active.
+
+**Runtime verification:** Direct and ViaProxy replays reach spawn and load the same selected 75-second packet prefix.
+The production hand-frame sampler passes 12 query checks on direct connections and 18 through ViaProxy.
+The controlled states retain a bow, replace it with a crossbow, and clear it while equipped inventory remains unchanged.
+The ViaProxy probe explicitly checks all three rendered names, including the empty name.
+Both probes check independent offhand inputs and scope restoration.
+The existing two-surface hand submission and layered pose checks still pass through Minecraft's hand entry.
+The generic third-person audit reports no avatar draw because this fixture defines only first-person controllers.
+These controlled runtime checks establish query binding, not native swap timing or final held-item pixels.
+
+**Validation:** The dependency build and Java suites pass 1,013 tests with 115 optional skips and no failures or errors.
+The focused hand input suite also passes with native height and arm-offset fixtures enabled.
+The full coverage goal remains active.
