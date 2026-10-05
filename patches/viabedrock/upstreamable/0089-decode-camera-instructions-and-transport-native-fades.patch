@@ -1,14 +1,13 @@
-From 2f401857e77c2b0df6c772c3638142b94e68c7bb Mon Sep 17 00:00:00 2001
+From e83730e8724a26bc4e4c436d0eff36142dbcd2ee Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 5 Oct 2026 21:41:41 +0200
-Subject: [PATCH] feat(camera): decode instructions and resolve server fades
- and FOV transitions
+Subject: [PATCH] feat(camera): resolve server fades, FOV transitions and shake
 
 Protocol 2193 carries independent optional camera fields, including named
 spline references, little-endian signed actor IDs and string-encoded FOV
 and keyframe easing. Decode every instruction field before applying the
 fade, retain the decoded instruction for integrations, and bound spline
-allocations. Presets, movement, splines and shake remain separate implementation gaps.
+allocations. Presets, movement and splines remain separate implementation gaps.
 
 Resolve overlapping fades in core and send versioned timeline snapshots
 to subscribed clients after joining and channel registration. Late
@@ -27,33 +26,54 @@ to subscribed rendering clients. Retain the local projection symbolically
 when core lacks client context. Live commands capture the rendered client
 projection; clear captures its normal projection. Native 1.26.51.1 updater
 and easing probes supply private comparison fixtures for targeted tests.
+
+Decode CameraShake packet 159 and preserve separate concurrent queues,
+summed intensity capped at four, overlap decay and global stop. Share the
+resumable queue and continuous simplex sampler with rendering clients.
+Keep the queues current without a subscriber and send sequenced commands
+and snapshots through ordinary Java payloads, including ViaProxy.
+
+The pinned 1.26.51.1 executable and an eight-packet native capture establish
+the codec, lifecycle and world-space position versus pitch/yaw rotation.
+Private execution probes compare queue updates and authored noise inputs.
+Live native camera arguments confirm frequency 10, amplitude five degrees
+in radians and noise multiplier four. No proprietary assets are embedded.
 ---
  .../viabedrock/api/model/CameraEase.java      | 140 +++++++++++++
  .../viabedrock/api/model/CameraFadeState.java |  95 +++++++++
  .../api/model/CameraFadeTimeline.java         |  91 +++++++++
  .../viabedrock/api/model/CameraFovState.java  | 133 ++++++++++++
  .../api/model/CameraFovTimeline.java          |  67 ++++++
+ .../api/model/CameraShakeNoise.java           |  77 +++++++
+ .../api/model/CameraShakeState.java           | 138 +++++++++++++
+ .../api/model/CameraShakeTimeline.java        | 119 +++++++++++
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
  .../protocol/model/CameraInstruction.java     | 191 ++++++++++++++++++
- .../protocol/packet/CameraPackets.java        |  34 ++++
+ .../protocol/packet/CameraPackets.java        |  83 ++++++++
  .../protocol/packet/JoinPackets.java          |   2 +
  .../protocol/packet/MultiStatePackets.java    |   2 +
- .../protocol/packet/UnhandledPackets.java     |   1 -
- .../storage/CameraEffectsStorage.java         | 110 ++++++++++
+ .../protocol/packet/UnhandledPackets.java     |   2 -
+ .../storage/CameraEffectsStorage.java         | 169 ++++++++++++++++
+ .../protocol/task/EntityTrackerTickTask.java  |   5 +
  .../api/model/CameraFadeTimelineTest.java     | 117 +++++++++++
  .../api/model/CameraFovTimelineTest.java      | 132 ++++++++++++
+ .../api/model/CameraShakeTimelineTest.java    | 178 ++++++++++++++++
  .../protocol/model/CameraInstructionTest.java |  81 ++++++++
- 15 files changed, 1197 insertions(+), 1 deletion(-)
+ 20 files changed, 1822 insertions(+), 2 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraEase.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraFadeState.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraFadeTimeline.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraFovState.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraFovTimeline.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraShakeNoise.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraShakeState.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CameraShakeTimeline.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/CameraInstruction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/CameraPackets.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorage.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraFadeTimelineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraFovTimelineTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CameraShakeTimelineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/CameraInstructionTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CameraEase.java b/src/main/java/net/raphimc/viabedrock/api/model/CameraEase.java
@@ -612,6 +632,358 @@ index 000000000..910478b71
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CameraShakeNoise.java b/src/main/java/net/raphimc/viabedrock/api/model/CameraShakeNoise.java
+new file mode 100644
+index 000000000..cf85907fd
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/CameraShakeNoise.java
+@@ -0,0 +1,77 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import java.util.Random;
++
++/** Two-dimensional simplex noise with independent shuffled axes. */
++final class CameraShakeNoise {
++
++    private static final float SKEW = (float) ((Math.sqrt(3) - 1) / 2);
++    private static final float UNSKEW = (float) ((3 - Math.sqrt(3)) / 6);
++    private static final int[][] GRADIENTS = {
++        {1, 1}, {-1, 1}, {1, -1}, {-1, -1}, {1, 0}, {-1, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1},
++        {0, 1}, {0, -1}
++    };
++    private final int[][] permutations = new int[3][512];
++
++    CameraShakeNoise(final long seed) {
++        final Random random = new Random(seed);
++        for (final int[] p : this.permutations) {
++            for (int i = 0; i < 256; i++) {
++                p[i] = i;
++            }
++            for (int i = 0; i < 256; i++) {
++                final int j = i + random.nextInt(256 - i);
++                final int old = p[i];
++                p[i] = p[j];
++                p[j] = old;
++                p[i + 256] = p[i];
++            }
++        }
++    }
++
++    float sample(final int axis, final float x, final float y) {
++        return sample(this.permutations[axis], x, y);
++    }
++
++    static float sample(final int[] permutation, final float x, final float y) {
++        final float skew = (x + y) * SKEW;
++        final int i = floor(x + skew);
++        final int j = floor(y + skew);
++        final float unskew = (i + j) * UNSKEW;
++        final float x0 = x - (i - unskew);
++        final float y0 = y - (j - unskew);
++        final int i1 = x0 > y0 ? 1 : 0;
++        final int j1 = 1 - i1;
++        final int ii = i & 255;
++        final int jj = j & 255;
++        return (corner(permutation[ii + permutation[jj]], x0, y0)
++                        + corner(
++                                permutation[ii + i1 + permutation[jj + j1]],
++                                (x0 - i1) + UNSKEW,
++                                (y0 - j1) + UNSKEW)
++                        + corner(
++                                permutation[ii + 1 + permutation[jj + 1]],
++                                x0 - 1 + UNSKEW + UNSKEW,
++                                y0 - 1 + UNSKEW + UNSKEW))
++                * 70;
++    }
++
++    private static int floor(final float value) {
++        return (int) value - (value <= 0 ? 1 : 0);
++    }
++
++    private static float corner(final int gradient, final float x, final float y) {
++        final float weight = (.5F - x * x) - y * y;
++        if (weight < 0) {
++            return 0;
++        }
++        final int[] g = GRADIENTS[gradient % GRADIENTS.length];
++        return (y * g[1] + x * g[0]) * weight * weight * weight * weight;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CameraShakeState.java b/src/main/java/net/raphimc/viabedrock/api/model/CameraShakeState.java
+new file mode 100644
+index 000000000..f528abdf6
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/CameraShakeState.java
+@@ -0,0 +1,138 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++
++import io.netty.buffer.ByteBuf;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Objects;
++
++/** A sequenced command and a resumable snapshot of the native shake queues. */
++public record CameraShakeState(long sequence, float elapsed, Snapshot snapshot, Command command) {
++
++    public static final String CHANNEL = "viabedrock:camera_shake";
++    public static final int MAX_EVENTS = 8192;
++    public static final Type<CameraShakeState> TYPE =
++            new Type<>(CameraShakeState.class) {
++                @Override
++                public CameraShakeState read(final ByteBuf b) {
++                    if (Types.VAR_INT.readPrimitive(b) != 1) {
++                        throw new IllegalArgumentException(
++                                "Unsupported camera shake payload version");
++                    }
++                    final long sequence = b.readLong();
++                    final float elapsed = b.readFloat();
++                    final long seed = b.readLong();
++                    final float phase = b.readFloat();
++                    final float positional = b.readFloat();
++                    final float rotational = b.readFloat();
++                    final int count = Types.VAR_INT.readPrimitive(b);
++                    if (count < 0 || count > MAX_EVENTS) {
++                        throw new IllegalArgumentException("Invalid camera shake event count");
++                    }
++                    final List<Event> events = new ArrayList<>(count);
++                    for (int i = 0; i < count; i++) {
++                        events.add(new Event(b.readUnsignedByte(), b.readFloat(), b.readFloat()));
++                    }
++                    final Command command =
++                            b.readBoolean()
++                                    ? new Command(
++                                            b.readBoolean(),
++                                            b.readUnsignedByte(),
++                                            b.readFloat(),
++                                            b.readFloat())
++                                    : null;
++                    if (b.isReadable()) {
++                        throw new IllegalArgumentException(
++                                "Unexpected camera shake payload fields");
++                    }
++                    return new CameraShakeState(
++                            sequence,
++                            elapsed,
++                            new Snapshot(seed, phase, positional, rotational, events),
++                            command);
++                }
++
++                @Override
++                public void write(final ByteBuf b, final CameraShakeState s) {
++                    Types.VAR_INT.writePrimitive(b, 1);
++                    b.writeLong(s.sequence)
++                            .writeFloat(s.elapsed)
++                            .writeLong(s.snapshot.seed)
++                            .writeFloat(s.snapshot.phase)
++                            .writeFloat(s.snapshot.positional)
++                            .writeFloat(s.snapshot.rotational);
++                    Types.VAR_INT.writePrimitive(b, s.snapshot.events.size());
++                    for (final Event e : s.snapshot.events) {
++                        b.writeByte(e.type).writeFloat(e.intensity).writeFloat(e.remaining);
++                    }
++                    b.writeBoolean(s.command != null);
++                    if (s.command != null) {
++                        b.writeBoolean(s.command.stop)
++                                .writeByte(s.command.type)
++                                .writeFloat(s.command.intensity)
++                                .writeFloat(s.command.duration);
++                    }
++                }
++            };
++
++    public CameraShakeState {
++        if (sequence < 0 || !Float.isFinite(elapsed) || elapsed < 0) {
++            throw new IllegalArgumentException("Invalid camera shake timing");
++        }
++        Objects.requireNonNull(snapshot);
++    }
++
++    private static void validate(final int type, final float intensity, final float duration) {
++        if (type < 0
++                || type > 1
++                || !Float.isFinite(intensity)
++                || intensity <= 0
++                || !Float.isFinite(duration)
++                || duration <= 0) {
++            throw new IllegalArgumentException("Invalid camera shake event");
++        }
++    }
++
++    public record Snapshot(
++            long seed, float phase, float positional, float rotational, List<Event> events) {
++        public static final Snapshot EMPTY = new Snapshot(0, 0, 0, 0, List.of());
++
++        public Snapshot {
++            events = List.copyOf(events);
++            if (!Float.isFinite(phase)
++                    || phase < 0
++                    || !Float.isFinite(positional)
++                    || positional < 0
++                    || positional > 4
++                    || !Float.isFinite(rotational)
++                    || rotational < 0
++                    || rotational > 4
++                    || events.size() > MAX_EVENTS) {
++                throw new IllegalArgumentException("Invalid camera shake snapshot");
++            }
++        }
++    }
++
++    public record Event(int type, float intensity, float remaining) {
++        public Event {
++            validate(type, intensity, remaining);
++        }
++    }
++
++    public record Command(boolean stop, int type, float intensity, float duration) {
++        public Command {
++            if (!stop) {
++                validate(type, intensity, duration);
++            }
++        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CameraShakeTimeline.java b/src/main/java/net/raphimc/viabedrock/api/model/CameraShakeTimeline.java
+new file mode 100644
+index 000000000..de12b9311
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/CameraShakeTimeline.java
+@@ -0,0 +1,119 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.api.model.CameraShakeState.Command;
++import net.raphimc.viabedrock.api.model.CameraShakeState.Event;
++import net.raphimc.viabedrock.api.model.CameraShakeState.Snapshot;
++
++import java.util.ArrayList;
++import java.util.List;
++
++/** Native queue updates shared by proxies and rendering clients. */
++public final class CameraShakeTimeline {
++
++    private static final float FREQUENCY = 10;
++    private static final float AMPLITUDE = 5F * ((float) Math.PI / 180F);
++    private static final float NOISE_MULTIPLIER = 4;
++    private final List<Event> events = new ArrayList<>();
++    private long seed;
++    private float phase;
++    private float positional;
++    private float rotational;
++    private CameraShakeNoise noise;
++
++    public void apply(final Command command, final long seed) {
++        if (command.stop()) {
++            this.clear();
++            return;
++        }
++        if (this.events.size() >= CameraShakeState.MAX_EVENTS) {
++            throw new IllegalArgumentException("Too many camera shake events");
++        }
++        if (this.events.isEmpty()) {
++            this.seed = seed;
++            this.noise = new CameraShakeNoise(seed);
++        }
++        this.events.add(new Event(command.type(), command.intensity(), command.duration()));
++    }
++
++    public void clear() {
++        this.events.clear();
++        this.phase = this.positional = this.rotational = 0;
++        this.noise = null;
++    }
++
++    public Snapshot snapshot() {
++        return new Snapshot(this.seed, this.phase, this.positional, this.rotational, this.events);
++    }
++
++    public void restore(final Snapshot state) {
++        this.events.clear();
++        this.events.addAll(state.events());
++        this.seed = state.seed();
++        this.phase = state.phase();
++        this.positional = state.positional();
++        this.rotational = state.rotational();
++        this.noise = this.events.isEmpty() ? null : new CameraShakeNoise(this.seed);
++    }
++
++    public void advance(final double seconds) {
++        if (!Double.isFinite(seconds) || seconds < 0) {
++            throw new IllegalArgumentException("Invalid camera shake elapsed time");
++        }
++        if (this.events.isEmpty()) {
++            return;
++        }
++        float positionSum = 0;
++        float rotationSum = 0;
++        for (final Event event : this.events) {
++            if (event.type() == 0) {
++                positionSum += event.intensity();
++            } else {
++                rotationSum += event.intensity();
++            }
++        }
++        this.positional =
++                Math.max(Math.max(0, this.positional - (float) seconds), Math.min(4, positionSum));
++        this.rotational =
++                Math.max(Math.max(0, this.rotational - (float) seconds), Math.min(4, rotationSum));
++        if (this.positional > 0 || this.rotational > 0) {
++            this.phase = (float) (this.phase + seconds);
++        }
++        for (int i = this.events.size() - 1; i >= 0; i--) {
++            final Event e = this.events.get(i);
++            final float remaining = (float) (e.remaining() - seconds);
++            if (remaining <= 0) {
++                this.events.remove(i);
++            } else {
++                this.events.set(i, new Event(e.type(), e.intensity(), remaining));
++            }
++        }
++        if (this.events.isEmpty()) {
++            this.clear();
++        }
++    }
++
++    public Offset offset(final int type) {
++        if (type < 0 || type > 1) {
++            throw new IllegalArgumentException("Invalid camera shake type");
++        }
++        if (this.noise == null) {
++            return Offset.ZERO;
++        }
++        final float intensity = type == 0 ? this.positional : this.rotational;
++        final float scale = AMPLITUDE * NOISE_MULTIPLIER * intensity;
++        return new Offset(
++                this.noise.sample(0, this.phase * NOISE_MULTIPLIER, FREQUENCY) * scale,
++                this.noise.sample(1, this.phase * NOISE_MULTIPLIER, FREQUENCY) * scale,
++                this.noise.sample(2, this.phase * NOISE_MULTIPLIER, FREQUENCY) * scale);
++    }
++
++    public record Offset(float x, float y, float z) {
++        public static final Offset ZERO = new Offset(0, 0, 0);
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 index 6c96820f3..9537f7adf 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
@@ -831,10 +1203,10 @@ index 000000000..418e62231
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/CameraPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/CameraPackets.java
 new file mode 100644
-index 000000000..03d4612a1
+index 000000000..439569804
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/CameraPackets.java
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,83 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -843,27 +1215,76 @@ index 000000000..03d4612a1
 +package net.raphimc.viabedrock.protocol.packet;
 +
 +import com.viaversion.viaversion.api.type.Types;
-+import net.raphimc.viabedrock.protocol.BedrockProtocol;
++
 +import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.api.model.CameraShakeState;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.CameraShakeAction;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.CameraShakeType;
 +import net.raphimc.viabedrock.protocol.model.CameraInstruction;
 +import net.raphimc.viabedrock.protocol.storage.CameraEffectsStorage;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 +
 +public final class CameraPackets {
 +
 +    public static void register(final BedrockProtocol protocol) {
-+        protocol.registerClientbound(ClientboundBedrockPackets.CAMERA_INSTRUCTION, null, wrapper -> {
-+            wrapper.cancel();
-+            final CameraInstruction instruction = wrapper.read(CameraInstruction.TYPE);
-+            if (wrapper.read(Types.REMAINING_BYTES).length != 0) {
-+                throw new IllegalArgumentException("Unexpected camera instruction fields");
-+            }
-+            try {
-+                wrapper.user().get(CameraEffectsStorage.class).apply(instruction);
-+            } catch (final IllegalArgumentException exception) {
-+                ViaBedrock.getPlatform().getLogger().warning("Ignoring invalid camera effect: " + exception.getMessage());
-+            }
-+        });
++        protocol.registerClientbound(
++                ClientboundBedrockPackets.CAMERA_SHAKE,
++                null,
++                wrapper -> {
++                    wrapper.cancel();
++                    final float intensity = wrapper.read(BedrockTypes.FLOAT_LE);
++                    final float duration = wrapper.read(BedrockTypes.FLOAT_LE);
++                    final int type = wrapper.read(Types.UNSIGNED_BYTE);
++                    final int action = wrapper.read(Types.UNSIGNED_BYTE);
++                    if (wrapper.read(Types.REMAINING_BYTES).length != 0) {
++                        throw new IllegalArgumentException("Unexpected camera shake fields");
++                    }
++                    if (action == CameraShakeAction.Stop.getValue()) {
++                        wrapper.user()
++                                .get(CameraEffectsStorage.class)
++                                .applyShake(new CameraShakeState.Command(true, 0, 0, 0));
++                    } else if (action == CameraShakeAction.Add.getValue()
++                            && CameraShakeType.getByValue(type) != null
++                            && Float.isFinite(intensity)
++                            && intensity > 0
++                            && Float.isFinite(duration)
++                            && duration > 0) {
++                        try {
++                            wrapper.user()
++                                    .get(CameraEffectsStorage.class)
++                                    .applyShake(
++                                            new CameraShakeState.Command(
++                                                    false, type, intensity, duration));
++                        } catch (final IllegalArgumentException exception) {
++                            ViaBedrock.getPlatform()
++                                    .getLogger()
++                                    .warning(
++                                            "Ignoring invalid camera shake: "
++                                                    + exception.getMessage());
++                        }
++                    }
++                });
++        protocol.registerClientbound(
++                ClientboundBedrockPackets.CAMERA_INSTRUCTION,
++                null,
++                wrapper -> {
++                    wrapper.cancel();
++                    final CameraInstruction instruction = wrapper.read(CameraInstruction.TYPE);
++                    if (wrapper.read(Types.REMAINING_BYTES).length != 0) {
++                        throw new IllegalArgumentException("Unexpected camera instruction fields");
++                    }
++                    try {
++                        wrapper.user().get(CameraEffectsStorage.class).apply(instruction);
++                    } catch (final IllegalArgumentException exception) {
++                        ViaBedrock.getPlatform()
++                                .getLogger()
++                                .warning(
++                                        "Ignoring invalid camera effect: "
++                                                + exception.getMessage());
++                    }
++                });
 +    }
 +
 +    private CameraPackets() { }
@@ -903,10 +1324,16 @@ index 2508d029f..58450f532 100644
              if (channels.contains(ViaBedrockUtilityInterface.CONFIRM_CHANNEL)) {
                  ViaBedrockUtilityInterface.confirmPresence(wrapper.user());
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java
-index 172699ee1..45e5de53c 100644
+index 172699ee1..f06d1a5a3 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/UnhandledPackets.java
-@@ -40,7 +40,6 @@ public final class UnhandledPackets {
+@@ -34,13 +34,11 @@ public final class UnhandledPackets {
+         protocol.cancelClientbound(ClientboundBedrockPackets.LAB_TABLE); // Not relevant (Education Edition)
+         protocol.cancelClientbound(ClientboundBedrockPackets.EDUCATION_SETTINGS); // Not relevant (Education Edition)
+         protocol.cancelClientbound(ClientboundBedrockPackets.CODE_BUILDER); // Not relevant (Education Edition)
+-        protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_SHAKE); // Not possible in Java Edition
+         protocol.cancelClientbound(ClientboundBedrockPackets.PLAYER_FOG); // Not possible in Java Edition
+         protocol.cancelClientbound(ClientboundBedrockPackets.EDU_URI_RESOURCE); // Not relevant (Education Edition)
          protocol.cancelClientbound(ClientboundBedrockPackets.SCRIPT_MESSAGE); // Not relevant (Education Edition)
          protocol.cancelClientbound(ClientboundBedrockPackets.LESSON_PROGRESS); // Not relevant (Education Edition)
          protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_PRESETS); // Not possible in Java Edition
@@ -916,10 +1343,10 @@ index 172699ee1..45e5de53c 100644
          protocol.cancelClientbound(ClientboundBedrockPackets.CAMERA_AIM_ASSIST_PRESETS); // Not possible in Java Edition
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorage.java
 new file mode 100644
-index 000000000..00714b892
+index 000000000..866978a26
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/CameraEffectsStorage.java
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,169 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -933,13 +1360,18 @@ index 000000000..00714b892
 +import com.viaversion.viaversion.api.protocol.packet.State;
 +import com.viaversion.viaversion.api.type.Types;
 +import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++
++import net.raphimc.viabedrock.api.model.CameraEase;
 +import net.raphimc.viabedrock.api.model.CameraFadeState;
 +import net.raphimc.viabedrock.api.model.CameraFadeTimeline;
-+import net.raphimc.viabedrock.api.model.CameraEase;
 +import net.raphimc.viabedrock.api.model.CameraFovState;
 +import net.raphimc.viabedrock.api.model.CameraFovTimeline;
++import net.raphimc.viabedrock.api.model.CameraShakeState;
++import net.raphimc.viabedrock.api.model.CameraShakeTimeline;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.model.CameraInstruction;
++
++import java.util.concurrent.ThreadLocalRandom;
 +
 +public final class CameraEffectsStorage extends StoredObject {
 +
@@ -948,6 +1380,9 @@ index 000000000..00714b892
 +    private final CameraFovTimeline fov = new CameraFovTimeline();
 +    private long fovUpdatedAt;
 +    private long fovSequence;
++    private final CameraShakeTimeline shake = new CameraShakeTimeline();
++    private long shakeUpdatedAt;
++    private long shakeSequence;
 +    private boolean joined;
 +    private CameraInstruction lastInstruction;
 +
@@ -963,8 +1398,12 @@ index 000000000..00714b892
 +        this.lastInstruction = instruction;
 +        final CameraFovState.Command fovCommand;
 +        if (instruction.fieldOfView() != null) {
-+            fovCommand = new CameraFovState.Command(instruction.fieldOfView().value(), instruction.fieldOfView().easeTime(),
-+                    CameraEase.fromName(instruction.fieldOfView().easeType()), instruction.fieldOfView().clear());
++            fovCommand =
++                    new CameraFovState.Command(
++                            instruction.fieldOfView().value(),
++                            instruction.fieldOfView().easeTime(),
++                            CameraEase.fromName(instruction.fieldOfView().easeType()),
++                            instruction.fieldOfView().clear());
 +        } else if (Boolean.TRUE.equals(instruction.clear())) {
 +            fovCommand = new CameraFovState.Command(0, 0, CameraEase.LINEAR, true);
 +        } else {
@@ -979,7 +1418,10 @@ index 000000000..00714b892
 +        if (fovCommand != null) {
 +            final long now = System.nanoTime();
 +            this.fov.advance(elapsed(this.fovUpdatedAt, now));
-+            final var rendered = this.fov.state().active() ? this.fov.state().current() : CameraFovState.Value.LOCAL;
++            final var rendered =
++                    this.fov.state().active()
++                            ? this.fov.state().current()
++                            : CameraFovState.Value.LOCAL;
 +            this.fov.apply(fovCommand, rendered, CameraFovState.Value.LOCAL);
 +            this.fovUpdatedAt = now;
 +            this.fovSequence++;
@@ -994,11 +1436,48 @@ index 000000000..00714b892
 +    public void sendSnapshot() {
 +        this.sendFade();
 +        this.sendFov(null);
++        this.tickShake();
++        this.sendShake(null);
++    }
++
++    public void applyShake(final CameraShakeState.Command command) {
++        this.tickShake();
++        this.shake.apply(command, ThreadLocalRandom.current().nextLong());
++        this.shakeUpdatedAt = System.nanoTime();
++        this.shakeSequence++;
++        this.sendShake(command);
++    }
++
++    public void tickShake() {
++        final long now = System.nanoTime();
++        this.shake.advance(
++                this.shakeUpdatedAt == 0
++                        ? 0
++                        : Math.max(0, (now - this.shakeUpdatedAt) / 1_000_000_000D));
++        this.shakeUpdatedAt = now;
++    }
++
++    private void sendShake(final CameraShakeState.Command command) {
++        if (!this.canSend(CameraShakeState.CHANNEL)) {
++            return;
++        }
++        final PacketWrapper packet =
++                PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
++        packet.write(Types.STRING, CameraShakeState.CHANNEL);
++        packet.write(
++                CameraShakeState.TYPE,
++                new CameraShakeState(
++                        this.shakeSequence,
++                        elapsed(this.shakeUpdatedAt, System.nanoTime()),
++                        this.shake.snapshot(),
++                        command));
++        packet.send(BedrockProtocol.class);
 +    }
 +
 +    private void sendFade() {
 +        if (this.canSend(CameraFadeState.CHANNEL)) {
-+            final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
++            final PacketWrapper packet =
++                    PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
 +            packet.write(Types.STRING, CameraFadeState.CHANNEL);
 +            packet.write(CameraFadeState.TYPE, this.fade.snapshot(this.elapsed(System.nanoTime())));
 +            packet.send(BedrockProtocol.class);
@@ -1009,15 +1488,22 @@ index 000000000..00714b892
 +        if (!this.canSend(CameraFovState.CHANNEL)) {
 +            return;
 +        }
-+        final PacketWrapper packet = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
++        final PacketWrapper packet =
++                PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, this.user());
 +        packet.write(Types.STRING, CameraFovState.CHANNEL);
-+        packet.write(CameraFovState.TYPE, new CameraFovState(this.fovSequence,
-+                elapsed(this.fovUpdatedAt, System.nanoTime()), this.fov.state(), command));
++        packet.write(
++                CameraFovState.TYPE,
++                new CameraFovState(
++                        this.fovSequence,
++                        elapsed(this.fovUpdatedAt, System.nanoTime()),
++                        this.fov.state(),
++                        command));
 +        packet.send(BedrockProtocol.class);
 +    }
 +
 +    private boolean canSend(final String channel) {
-+        return this.joined && this.user().getProtocolInfo().getServerState() == State.PLAY
++        return this.joined
++                && this.user().getProtocolInfo().getServerState() == State.PLAY
 +                && this.user().get(ChannelStorage.class).hasChannel(channel);
 +    }
 +
@@ -1030,6 +1516,29 @@ index 000000000..00714b892
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/task/EntityTrackerTickTask.java b/src/main/java/net/raphimc/viabedrock/protocol/task/EntityTrackerTickTask.java
+index 5729504a5..0ec7a2cef 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/task/EntityTrackerTickTask.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/task/EntityTrackerTickTask.java
+@@ -21,6 +21,7 @@ import com.viaversion.viaversion.api.Via;
+ import com.viaversion.viaversion.api.connection.UserConnection;
+ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.CameraEffectsStorage;
+ 
+ public class EntityTrackerTickTask implements Runnable {
+ 
+@@ -36,6 +37,10 @@ public class EntityTrackerTickTask implements Runnable {
+ 
+                     try {
+                         entityTracker.tick();
++                        final CameraEffectsStorage camera = info.get(CameraEffectsStorage.class);
++                        if (camera != null) {
++                            camera.tickShake();
++                        }
+                     } catch (final Throwable e) {
+                         BedrockProtocol.kickForIllegalState(info, "Error ticking entity tracker. See console for details.", e);
+                     }
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CameraFadeTimelineTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CameraFadeTimelineTest.java
 new file mode 100644
 index 000000000..26a5c62ba
@@ -1288,6 +1797,190 @@ index 000000000..abd3da7cb
 +
 +    private static float toDegrees(final Value value) {
 +        return value.radians() / CameraFovState.DEGREES_TO_RADIANS;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CameraShakeTimelineTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CameraShakeTimelineTest.java
+new file mode 100644
+index 000000000..428d36758
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/CameraShakeTimelineTest.java
+@@ -0,0 +1,178 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.junit.jupiter.api.Assumptions.assumeTrue;
++
++import com.google.gson.JsonParser;
++
++import io.netty.buffer.Unpooled;
++
++import org.junit.jupiter.api.Test;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.stream.IntStream;
++
++class CameraShakeTimelineTest {
++
++    @Test
++    void overlapDecaysAndFinalExpiryRemovesBothOffsets() {
++        final var t = new CameraShakeTimeline();
++        t.apply(add(0, .7F, 8), 42);
++        t.advance(.05);
++        t.apply(add(0, 1.2F, 2), 42);
++        t.apply(add(1, .3F, 4), 42);
++        t.advance(.05);
++        t.advance(1);
++        t.advance(1);
++        assertEquals(1.9F, t.snapshot().positional(), .000001F);
++        assertEquals(2, t.snapshot().events().size());
++        t.advance(.05);
++        assertEquals(1.85F, t.snapshot().positional(), .000001F);
++        assertEquals(.3F, t.snapshot().rotational(), .000001F);
++        t.advance(1.5);
++        assertEquals(.7F, t.snapshot().positional(), .000001F);
++        t.advance(6);
++        assertTrue(t.snapshot().events().isEmpty());
++        assertEquals(CameraShakeTimeline.Offset.ZERO, t.offset(0));
++        assertEquals(CameraShakeTimeline.Offset.ZERO, t.offset(1));
++    }
++
++    @Test
++    void capDoesNotDiscardIndependentEventsAndStopClearsBothQueues() {
++        final var t = new CameraShakeTimeline();
++        t.apply(add(0, 3, 8), 12);
++        t.apply(add(0, 3, 2), 12);
++        t.apply(add(1, 2, 4), 12);
++        t.advance(.05);
++        assertEquals(4, t.snapshot().positional());
++        assertEquals(2, t.snapshot().rotational());
++        assertEquals(3, t.snapshot().events().size());
++        t.apply(new CameraShakeState.Command(true, 1, Float.NaN, Float.NaN), 99);
++        assertTrue(t.snapshot().events().isEmpty());
++        assertEquals(CameraShakeTimeline.Offset.ZERO, t.offset(0));
++        t.apply(add(0, 1, 2), 99);
++        t.advance(.25);
++        assertEquals(.25F, t.snapshot().phase());
++    }
++
++    @Test
++    void snapshotRoundTripRetainsNoiseAndRemainingLifetime() {
++        final var original = new CameraShakeTimeline();
++        original.apply(add(0, .7F, 8), 1234);
++        original.apply(add(1, .3F, 4), 1234);
++        original.advance(1);
++        final var state = new CameraShakeState(3, .25F, original.snapshot(), null);
++        final var b = Unpooled.buffer();
++        try {
++            CameraShakeState.TYPE.write(b, state);
++            final var decoded = CameraShakeState.TYPE.read(b);
++            assertEquals(state, decoded);
++            final var restored = new CameraShakeTimeline();
++            restored.restore(decoded.snapshot());
++            original.advance(.25);
++            restored.advance(decoded.elapsed());
++            assertEquals(original.snapshot(), restored.snapshot());
++            assertEquals(original.offset(0), restored.offset(0));
++            assertEquals(original.offset(1), restored.offset(1));
++            CameraShakeState.TYPE.write(
++                    b, new CameraShakeState(4, 0, original.snapshot(), add(1, .2F, 3)));
++            assertEquals(add(1, .2F, 3), CameraShakeState.TYPE.read(b).command());
++        } finally {
++            b.release();
++        }
++    }
++
++    @Test
++    void rejectsInvalidInputWithoutChangingActiveState() {
++        final var t = new CameraShakeTimeline();
++        t.apply(add(0, 1, 3), 42);
++        t.advance(.5);
++        final var before = t.snapshot();
++        for (final float value : new float[] {0, -1, Float.NaN, Float.POSITIVE_INFINITY}) {
++            assertThrows(IllegalArgumentException.class, () -> add(0, value, 1));
++            assertThrows(IllegalArgumentException.class, () -> add(0, 1, value));
++        }
++        assertThrows(IllegalArgumentException.class, () -> add(2, 1, 1));
++        assertThrows(IllegalArgumentException.class, () -> t.advance(Double.NaN));
++        assertEquals(before, t.snapshot());
++    }
++
++    @Test
++    void noiseIsContinuousAndAxesAreIndependent() {
++        final var t = new CameraShakeTimeline();
++        t.apply(add(0, 1, 3), 19);
++        t.advance(.4);
++        final var before = t.offset(0);
++        t.advance(.0001);
++        final var after = t.offset(0);
++        assertNotEquals(before.x(), before.y());
++        assertNotEquals(before.y(), before.z());
++        assertEquals(before.x(), after.x(), .002F);
++        assertEquals(before.y(), after.y(), .002F);
++        assertEquals(before.z(), after.z(), .002F);
++    }
++
++    @Test
++    void targetNativeNoiseSamplesMatch() throws Exception {
++        final String source = System.getenv("STACKANVIL_NATIVE_CAMERA_SHAKE_NOISE");
++        assumeTrue(source != null);
++        final var data =
++                JsonParser.parseString(Files.readString(Path.of(source))).getAsJsonObject();
++        final var entries = data.getAsJsonArray("permutation");
++        final int[] permutation =
++                IntStream.range(0, 512).map(i -> entries.get(i & 255).getAsInt()).toArray();
++        for (final var entry : data.getAsJsonArray("samples")) {
++            final var row = entry.getAsJsonObject();
++            assertEquals(
++                    row.get("value").getAsFloat(),
++                    CameraShakeNoise.sample(
++                            permutation, row.get("x").getAsFloat(), row.get("y").getAsFloat()),
++                    .000001F);
++        }
++    }
++
++    @Test
++    void targetNativeQueueUpdatesMatch() throws Exception {
++        final String source = System.getenv("STACKANVIL_NATIVE_CAMERA_SHAKE_QUEUE");
++        assumeTrue(source != null);
++        final var rows = JsonParser.parseString(Files.readString(Path.of(source))).getAsJsonArray();
++        final var t = new CameraShakeTimeline();
++        t.apply(add(0, .7F, 8), 42);
++        double previous = 0;
++        for (int i = 0; i < rows.size(); i++) {
++            if (i == 1) {
++                t.apply(add(0, 1.2F, 2), 42);
++                t.apply(add(1, .3F, 4), 42);
++            }
++            final var row = rows.get(i).getAsJsonObject();
++            final double time = row.get("time").getAsDouble();
++            t.advance(time - previous);
++            previous = time;
++            final var state = t.snapshot();
++            for (int type = 0; type < 2; type++) {
++                final int kind = type;
++                assertEquals(
++                        row.getAsJsonArray("queueSizes").get(type).getAsInt(),
++                        state.events().stream().filter(e -> e.type() == kind).count());
++            }
++            // The native component is removed when both queues become empty.
++            if (!state.events().isEmpty()) {
++                assertEquals(row.get("phase").getAsFloat(), state.phase(), .000001F);
++                assertEquals(row.get("position").getAsFloat(), state.positional(), .000001F);
++                assertEquals(row.get("rotation").getAsFloat(), state.rotational(), .000001F);
++            }
++        }
++    }
++
++    private static CameraShakeState.Command add(
++            final int type, final float intensity, final float duration) {
++        return new CameraShakeState.Command(false, type, intensity, duration);
 +    }
 +
 +}

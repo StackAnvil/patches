@@ -23,11 +23,33 @@ The core compares numeric timelines with the matching Bedrock 1.26.51.1 executab
 
 ## Remaining work
 
-This patch does not implement camera transforms, splines, shake, fog, or aim assistance. Native opaque screenshots verify the overlay below the HUD. Partial opacity, exact frame timing, hidden-HUD behavior, and broader lifecycle comparisons remain unverified.
+Preset movement, splines, fog, and aim assistance remain incomplete. Native opaque screenshots verify the overlay below the HUD. Partial opacity, exact frame timing, hidden-HUD behavior, and broader lifecycle comparisons remain unverified.
 
 FOV snapshots retain elapsed progress. Historical local projection changes during an unsubscribed interval remain unverified.
 Native local modifiers, first-person integration, pauses, transfers, and broader lifecycle comparisons remain incomplete.
 
 Supplemental ordinary-clear playback restores local FOV on both routes.
-The direct fixture passes broader rendering checks. The uncached ViaProxy fixture fails skin installation and geometry checks.
-Those limitations remain recorded in the coverage ledger; the complete CubeCraft fixture passes rendering on both routes.
+The earlier ViaProxy report had stale skin audit data and an omitted private avatar marker.
+Corrected ordinary-clear replays pass transport and rendering on both routes.
+Unavailable built-in animation assets remain a separate gap, as recorded in the coverage ledger.
+
+## Camera shake
+
+Subscribe to `viabedrock:camera_shake` through direct connections and ViaProxy.
+Use the shared queue and sampler after ordinary camera alignment, before projection and culling.
+Apply position offsets in world space and rotation offsets to pitch and yaw.
+Entity aim and outbound movement stay independent of the rendered camera.
+
+The native Allow Camera Shake preference defaults to enabled.
+Disabling it hides existing shake and ignores new additions.
+Stop still clears the retained state.
+Disconnect and level teardown release the queues.
+
+Core owns packet decoding, queue rules, seed transport, and noise.
+The add-on supplies its clock, local preference, and camera transforms.
+Camera rendering requires neither a Store session nor a local game installation.
+
+The default player-camera path has native codec and numeric evidence.
+A complete direct replay changes the local preference during overlapping and strong shake commands.
+It verifies hidden rendering, ignored additions, retained event lifetimes, re-enable, and stop.
+Native preference-toggle screenshots, custom preset parameters, late registration, pauses, transfers, and first-person item integration need additional native comparisons.

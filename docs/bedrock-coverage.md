@@ -40,7 +40,7 @@ These comparisons establish the tested Linux routes; other transports and platfo
 ## Protocol inventory
 
 The complete applied source defines 169 inbound packet types.
-There are 110 explicit registrations, 18 explicit cancellations, and 41 automatic fallback cancellations.
+There are 111 explicit registrations, 17 explicit cancellations, and 41 automatic fallback cancellations.
 These counts describe source registration, not feature completion.
 The inventory excludes commented enum entries and includes transition registrations.
 One declared packet, `STONECUTTER_SET_RECIPE` (355), is absent from the matching protocol 2193 schema.
@@ -162,7 +162,7 @@ The [codec notes](../patches/viabedrock/deferred/0022-define-bedrock-request-and
 
 | ID | Requirement | Status | Remaining evidence or work |
 | --- | --- | --- | --- |
-| U1 | Presets, instructions, splines, shake, and aim assistance | Incomplete | Core resolves fades and FOV transitions. The add-on renders both through direct connections and ViaProxy. Presets, transforms, target tracking, splines, attachments, shake, aim assistance, local FOV modifiers, and broader lifecycle comparisons remain incomplete. |
+| U1 | Presets, instructions, splines, shake, and aim assistance | Incomplete | Core resolves fades, FOV transitions, and default camera shake. The add-on renders their camera effects. Presets, movement, target tracking, splines, attachments, aim assistance, custom shake parameters, local FOV modifiers, and broader lifecycle comparisons remain incomplete. |
 | U2 | Fog and HUD visibility | Incomplete | Core retains all target HUD restrictions and transports them through direct connections and ViaProxy. The add-on applies individual Java HUD restrictions and preserves local settings on reset. Fog, missing native widgets, and remaining visual comparisons are incomplete. |
 | U3 | Texture animations, toasts, credits, store requests, and inventory preferences | Incomplete | Implement target packet behavior and verify native presentation. |
 | U4 | Dynamic JSON UI and widgets | Incomplete | Extend static sidebar support with expression evaluation and applicable widgets. |
@@ -3137,3 +3137,58 @@ Reviewed final screenshots show the local avatar on both routes.
 **Remaining:** Complete-record delivery and renderer submission do not establish native animation or visual parity.
 Both offline clients still report unavailable built-in animation assets.
 Account-independent cached asset use, animation playback, remote players, lifecycle behavior, and the full coverage goal remain incomplete.
+
+
+## Server camera shake, October 5, 2026
+
+**Implemented:** Core decodes positional and rotational additions and global stop commands.
+It owns the queues, clock, resumable snapshots, and shared noise model.
+The versioned `viabedrock:camera_shake` channel carries the same state through direct connections and ViaProxy.
+The add-on applies world-space translation and pitch/yaw changes before camera projection and culling.
+It preserves player aim and adds no roll.
+The local “Allow camera shake” setting defaults to enabled.
+
+**Target evidence:** The owned native capture contains eight packet-159 commands from Bedrock 1.26.51.1, build 51061372.
+Each carries two little-endian floats, then type and action bytes.
+The native handler clears both queues for stop, regardless of its type byte.
+Separate queues sum overlapping intensities with a cap of four.
+After an overlapping event expires, intensity decreases toward the remaining sum at one unit per second.
+Removing the final event removes the effect immediately.
+
+The target sampler uses continuous two-dimensional simplex noise with three shuffled axes.
+Live arguments establish default frequency 10, amplitude five degrees in radians, and noise multiplier four.
+The multiplier scales the phase coordinate and output amplitude.
+The frequency supplies the other noise coordinate.
+Private numeric probes compare eight authored noise samples and twelve actual native queue updates.
+Seven targeted tests pass with both private fixtures supplied.
+All four projects pass the complete build.
+No executable, raw recording, game assets, or local installation paths enter production.
+
+**Verified runtime paths:** Reviewed native frames show overlapping translation, strong rotation, and the cleared view.
+Complete 120-second direct and ViaProxy replays preserve the captured scene without payload changes.
+Its scene hash is `176cb2fa3bd4406a4a9d230e21d13fdfb48914511ab90127f7e2e204571031fc`.
+Both pass transport and broader rendering checks, including both complete skin records and native local-avatar rendering.
+Direct session `2026-10-05T21-13-17.971Z-replay-scene` records 928 camera samples.
+ViaProxy session `2026-10-05T21-15-33.220Z-replay-scene` records 924 samples.
+Each receives the initial snapshot and all eight commands without camera audit errors.
+
+Measured camera offsets follow the shared noise model on both routes.
+The maximum position difference is below 0.00000015 blocks.
+The maximum pitch/yaw difference is below 0.000008 degrees.
+Player aim remains unchanged, and the final camera returns to its normal position and rotation.
+Reviewed direct screenshots show overlap, strong rotation, and clearing.
+These results verify the captured local-server path; they do not establish fresh CubeCraft behavior.
+
+**Verified local preference:** Direct session `2026-10-05T21-18-46.264Z-replay-scene` changes the setting during the captured commands.
+The complete replay passes transport and broader rendering checks with the same scene hash.
+Disabled frames retain normal camera position and angles while existing event lifetimes advance.
+An overlapping positional addition and a strong rotational addition received while disabled are ignored.
+Re-enabling retains the earlier positional event and accepts the next rotational addition.
+Global stop clears the retained state, and subsequent enabled additions work.
+This checks the production client setting against the inspected native handler; native preference-toggle screenshots remain unverified.
+
+**Remaining:** Custom preset shake parameters, native random initialization equivalence, pauses, transfers, late subscriptions, and broader lifecycle behavior need comparisons.
+Camera presets, transforms, target tracking, splines, attachments, fog, and aim assistance remain incomplete.
+The native samples use authored permutations; they do not claim identical random trajectories across clients.
+Complete-record delivery and local-avatar rendering do not establish native animation or skin visual parity.
+The full protocol, gameplay, editor, account, skin, persona, audio, UI, asset, and platform requirements remain active.

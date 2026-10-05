@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Implement server fades and shared FOV transition rules in core. Keep the target instruction fields available to integrations that implement the remaining camera behavior.
+Implement server fades, shared FOV transitions, and camera shake in core. Keep the target instruction fields available to integrations that implement the remaining camera behavior.
 
 ## Target evidence
 
@@ -42,5 +42,32 @@ Full stack builds and rendered connection checks are recorded in the coverage le
 
 ## Remaining work
 
-Fade and FOV behavior are applied. Presets, camera movement, target tracking, splines, attachments, shake, and aim assistance remain incomplete.
+Fade and FOV behavior are applied. Presets, camera movement, target tracking, splines, attachments, and aim assistance remain incomplete.
 Native local FOV modifiers, late context changes, pauses, transfers, and broader lifecycle behavior need further comparisons. Retaining a decoded instruction does not establish camera state or behavioral parity.
+
+## Camera shake
+
+The pinned server emitted eight packet-159 messages during an owned native capture.
+Each contains little-endian intensity and duration floats, then type and action bytes.
+The [matching Gophertunnel codec](https://github.com/Sandertv/gophertunnel/blob/80c811b6186016b3860c358368cfa47e507f26e9/minecraft/protocol/packet/camera_shake.go) provides an independent wire reference.
+Stop clears both queues, regardless of its type byte.
+
+Native handler `14131c3a0`, component initialization `14136a0d0`, and updater `144898310` establish separate queues and lifecycle rules.
+Overlapping intensities sum with a cap of four.
+When an event expires while another remains, intensity decreases toward the remaining sum at one unit per second.
+Removing the last event removes the component immediately.
+
+Native sampler `149743610` uses continuous two-dimensional simplex noise with three shuffled axes.
+The application at `1466fcc70` adds position offsets in world space and changes pitch and yaw without adding roll.
+Live arguments from `142415e20` establish the player camera defaults: frequency 10, amplitude five degrees in radians, and noise multiplier four.
+The native schema names these fields at `14d342410`.
+
+Core retains the queues and advances their time on its connection event loop.
+The versioned `viabedrock:camera_shake` payload carries sequenced commands and resumable state.
+Late subscribers receive the remaining lifetime and noise seed.
+Invalid additions preserve active state; unknown actions do not create effects.
+
+Seven targeted tests cover overlap, decay, caps, stop, expiry, transport, continuity, and invalid inputs.
+Private fixtures compare eight authored noise samples and twelve native queue updates.
+Native recordings, executable data, and assets remain private.
+Rendered route checks and their limits are recorded in the coverage ledger.
