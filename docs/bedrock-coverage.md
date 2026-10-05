@@ -1520,17 +1520,18 @@ The full coverage goal remains active.
 Animated replacements continue to lower the hands toward zero.
 The change applies only when the local skin texture matches the loaded graph.
 Missing, pending, failed, and mismatched appearances retain ordinary Java behavior.
-The existing item classifier, busy-hand branch, and replacement threshold remain unchanged.
+The later [native hand lifecycle](#native-hand-height-and-retained-item-lifecycle) also replaces the busy-hand branch and copy threshold.
+Item classification still uses Java comparison rules.
 
 **Native evidence:** The matching Bedrock 1.26.51.1 executable, build 51061372, updates both heights with a maximum step of 0.4.
 Native function `1447af310` targets zero for its animated-replacement classification and one for its other classifications.
 Execution of its arithmetic instructions covers 900 combinations of initial heights and independent hand classifications.
 Minecraft 26.3 instead multiplies the retained main-hand target by the cube of `getItemSwapScale(1)`.
 That method derives its scale from the item swap ticker and attack strength delay.
-The add-on changes that return value inside the hand tick only for matching native appearances.
-It retains the original call and does not change attack strength or inventory state.
+The add-on now selects the complete native height update for matching native appearances.
+The fallback retains Java updates, and attack strength and inventory state remain unchanged.
 
-**Incomplete or unverified:** Native item comparison rules, busy-hand behavior, replacement thresholds, complete swap timing, and final held-item pixels need further comparisons.
+**Incomplete or unverified:** Native item comparison rules, complete swap timing, and final held-item pixels need further comparisons.
 The native instruction results establish height arithmetic, not complete item classification or visible parity.
 Licensed executables, arithmetic inputs, and runtime probes remain private.
 The original full Bedrock coverage goal remains active.
@@ -1620,9 +1621,9 @@ The native comparison functions run directly, with a trampoline for indirect-cal
 The private client reaches playable spawn and completes the inventory capture.
 Owned lab processes stop normally, and the existing shared lab processes remain running.
 
-**Incomplete:** Production still uses the Java classifier, busy-hand branch, and replacement threshold.
+**Incomplete:** Production still uses Java item comparison to select retain, update, or animate.
 The original Bedrock comparison context, shield classifier integration, complete item dispatch, and final swap pixels need implementation and verification.
-The native replacement threshold and selected-slot cache also need complete lifecycle comparisons.
+The selected-slot cache and complete native item comparisons still need lifecycle implementation and verification.
 Executable exports, synthetic inputs, memory probes, and packet captures remain private.
 
 
@@ -1741,3 +1742,46 @@ The shield item classifier still uses Java replacement rules.
 Held-item transforms and final shield pixels need native comparisons.
 This implementation closes the timer arithmetic and query binding gaps, not complete shield or first-person parity.
 Executable exports, instruction fixtures, memory probes, captures, and runtime diagnostics remain private.
+
+
+## Native hand height and retained-item lifecycle
+
+**Implemented:** Core supplies the native equip-height update and retained-item copy decision for each hand.
+The update targets zero for animated replacement and one for retain or immediate update.
+It advances each height by at most 0.4 and preserves the previous height for interpolation.
+Immediate updates copy regardless of height.
+Other classifications copy at height 0.1 inclusively, with the native unordered-float behavior.
+
+The add-on uses that update only when the local skin texture matches a loaded native appearance graph.
+It copies retained stacks after the height update and keeps them independent from equipped stacks.
+The native path omits Java's hands-busy branch and attack-delay multiplier.
+Missing, pending, failed, and mismatched appearances retain the complete Java tick.
+The obsolete cooldown-only mixin and scale helper are removed.
+
+**Native evidence:** Bedrock 1.26.51.1 build 51061372 supplies the target hand-update instructions.
+An instruction probe covers 2,304 combinations of heights and independent hand classifications.
+Its values include signed zero, negative heights, out-of-range heights, NaN, and infinities.
+Another 24 cases cover the exact copy threshold, adjacent float values, and immediate updates.
+The probe observes and skips native stack-copy calls, rather than emulate their contents.
+The target update contains no Java hands-busy or attack-delay branch.
+
+**Verified:** Core tests cover update sequences, retained interpolation values, inclusive copy boundaries, and exceptional float inputs.
+The private instruction fixture matches all 2,304 update cases and 24 threshold cases.
+Direct and ViaProxy runtime checks each match 4,608 cases through Minecraft's actual hand tick, with busy hands enabled and disabled.
+Those checks compare retained stack contents, copy decisions, and independence from equipped stacks.
+They also preserve all four Java fallback modes while hands are busy.
+
+Both routes retain the 900 height cases, 64 blocking cases, 2,700 shield bob cases, and existing hand rendering checks.
+Both reach playable spawn, load the converted packs, and preserve the complete recorded 75-second scene prefix.
+The generic third-person audit still reports no local avatar submission for the fixture's first-person-only controllers.
+Both CLI runs retain that report through the transport-only option.
+Unavailable built-in assets produce account warnings without preventing the accepted server graphs or hand checks from completing.
+
+**Validation:** The dependency builds and final Java suites pass 1,022 tests, with 115 optional skips and no failures or errors.
+The private native hand-update, shield timeline, and blocking fixtures are enabled in the final suites.
+The full stacks replay all 90 core patches and 23 add-on patches.
+
+**Remaining:** Item classification still uses Java comparison rules to select retain, update, or animate.
+Original Bedrock comparison data, item-specific classifiers, the selected-slot cache, and complete item-use timing need implementation and verification.
+Matching height and copy decisions does not establish final held-item drawing or visible swap parity.
+Reference inputs, executable exports, and runtime probes remain private.

@@ -1818,15 +1818,15 @@ They do not establish the complete native item comparison rules.
 
 Minecraft 26.3 scales its retained main-hand target by the cube of `getItemSwapScale(1)`.
 That method uses the item swap ticker and attack strength delay.
-A wrap operation now returns one inside the hand tick when the local skin texture matches a loaded native appearance graph.
-The original Java call still runs, and attack strength and inventory state remain unchanged.
+The complete native height update now runs when the local skin texture matches a loaded native appearance graph.
+The fallback retains ordinary Java updates, and attack strength and inventory state remain unchanged.
 Missing, pending, failed, and mismatched graphs retain ordinary Java hand behavior.
 Both licensed appearance graphs and server graphs use the existing shared appearance selection.
 
 The [official first-person sample](https://github.com/Mojang/bedrock-samples/blob/main/resource_pack/animations/player_firstperson.animation.json) shows how hand height drives the swap pose.
 Its current branch is a research lead; the matching executable establishes the target arithmetic.
 
-Native item classification, busy-hand behavior, replacement thresholds, full swap timing, held-item drawing, and final visible parity remain incomplete or unverified.
+Native item classification, full swap timing, held-item drawing, and final visible parity remain incomplete or unverified.
 Reference inputs, executable exports, and live probes remain private.
 
 
@@ -1855,7 +1855,7 @@ These checks establish classifier branches, not complete NBT behavior or final s
 A later live watchpoint identifies the successful-block timer, its guard, and its rising-edge behavior.
 The local blocking-start branch and live timestamp write now have matching executable evidence.
 Complete network timing and remote-player lifecycle remain unverified.
-Production still uses the Java classifier and replacement threshold.
+Production still uses Java item comparison, while core supplies the native height update and copy threshold.
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-item-classification-research) records the verified rules and remaining work.
 
 
@@ -1911,3 +1911,30 @@ Both runs retain that report through the transport-only option.
 Unlicensed built-in asset requests log unavailable-account warnings without preventing the accepted server graphs or hand probes from completing.
 Complete network timing, remote-player behavior, pause behavior, shield item classification, and final shield pixels remain incomplete or unverified.
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-shield-blocking-timeline) records the implementation and limits.
+
+
+### Native hand height and retained-copy lifecycle
+
+The matching native appearance now selects a complete hand update through `NativeHandItemState` in core.
+The add-on preserves prior heights, applies independent height updates, and copies retained stacks after the native copy decision.
+The retained stacks remain independent from equipped inventory stacks.
+The native path omits Java hands-busy suppression and attack-delay scaling.
+Absent, pending, failed, or mismatched appearances retain the complete Java update.
+The obsolete cooldown-only mixin and scale helper are removed.
+
+Bedrock 1.26.51.1 build 51061372 supplies 2,304 height-and-copy instruction cases and 24 exact copy boundaries.
+The probe observes and skips native stack-copy calls rather than emulate their internals.
+Direct and ViaProxy runtime checks each match 4,608 cases through Minecraft's actual hand tick with hands busy enabled and disabled.
+They compare old heights, new heights, copy decisions, and retained stack contents.
+All four Java fallback modes retain busy-hand suppression.
+
+Both routes preserve the complete recorded 75-second scene prefix and retain the existing height, blocking, shield bob, and hand rendering checks.
+The generic third-person audit reports no local avatar submission for this fixture's first-person-only controllers.
+Both runs retain that report through the transport-only option.
+Account warnings for unavailable built-in assets do not prevent the accepted server graphs or hand checks from completing.
+The dependency builds and final Java suites pass 1,022 tests, with 115 optional skips and no failures or errors.
+All 23 add-on patches replay successfully.
+
+Item comparison still uses Java selection rules, with full stack equality as the retain case.
+Original Bedrock comparison data, item-specific classifiers, selected-slot timing, and complete visible swap parity remain incomplete or unverified.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-hand-height-and-retained-item-lifecycle) records the evidence and limits.

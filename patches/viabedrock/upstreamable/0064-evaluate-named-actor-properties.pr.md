@@ -151,3 +151,27 @@ Both observe one registry increment for each of 20 active Minecraft ticks and re
 Their private probes supply snapshots and timestamps and restore the registry afterward.
 Complete network timing, client prediction, remote-player lifecycle, pause behavior, shield item classification, and final shield pixels remain separate requirements.
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-shield-blocking-timeline) records the implementation and runtime limits.
+
+
+### Native hand height and retained-item update
+
+`NativeHandItemState` supplies the target equip-height update and retained-item copy decision for one simulation tick.
+The update targets zero for animated replacement and one for retain or immediate update.
+It preserves the previous interpolation height and uses a maximum step of 0.4.
+It copies immediate replacements regardless of height and other classifications at height 0.1 inclusively.
+Native unordered-float arithmetic and copy guards retain their distinct behavior.
+
+Bedrock 1.26.51.1 build 51061372 supplies the matching instructions.
+Private execution covers 2,304 independent two-hand cases and 24 exact copy boundaries, including NaN, infinities, and adjacent float values.
+The probe observes and skips native stack-copy calls rather than emulate their contents.
+Unconditional tests cover replacement sequences, interpolation state, and boundary behavior.
+The optional private fixture compares all instruction results.
+
+The dependency builds and final Java suites pass 1,022 tests, with 115 optional skips and no failures or errors.
+All 90 core patches replay successfully.
+Direct and ViaProxy clients each match 4,608 actual Minecraft hand updates, including busy and ordinary hand states.
+The private probes compare retained copies and preserve all four Java fallback modes.
+
+The add-on supplies rendering integration and retains Java item comparison until the native classifiers are complete.
+This helper does not depend on Minecraft client classes or a local Bedrock installation.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-hand-height-and-retained-item-lifecycle) records runtime evidence and remaining item-classification gaps.

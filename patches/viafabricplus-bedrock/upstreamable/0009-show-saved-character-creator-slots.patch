@@ -1,4 +1,4 @@
-From 3273d568f5c5f68c51f4634e3c3576bc77a3949c Mon Sep 17 00:00:00 2001
+From 38b6b8825e3825b38d9275869d5d9d281b17b0ca Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1547,6 +1547,17 @@ blocking-start timestamp but subtracts the damaged-shield timestamp.
 Actual instruction fixtures cover 120 start branches, 1728 damage branches,
 and 2700 bob calculations. Licensed memory probes and protocol captures
 remain private. Full shield pose and swap parity require separate work.
+
+Use the shared native hand update for matching loaded appearance graphs.
+Replace the cooldown-only hook with a complete height and retained-copy
+lifecycle: preserve prior heights, omit Java hands-busy suppression, and
+copy each retained stack at the native inclusive 0.1 boundary. Keep
+ordinary Java updates when the graph is absent, pending, failed, or mismatched.
+
+Item comparison still uses Java's selection rules and remains an explicit
+gap. Do not claim native item classification or full visible swap parity.
+Core supplies target arithmetic verified against Bedrock 1.26.51.1 build
+51061372. Rendering integration is the only frontend-specific work.
 ---
  .gitignore                                    |    4 +-
  .../kotlin/base.settings.settings.gradle.kts  |    3 +
@@ -1652,7 +1663,7 @@ remain private. Full shield pose and swap parity require separate work.
  .../MixinBedrockFirstPersonBobbing.java       |   29 +
  .../MixinBedrockFirstPersonProjection.java    |   34 +
  .../MixinBedrockFirstPersonVisibility.java    |   58 +
- .../render/MixinBedrockHandItemCooldown.java  |   23 +
+ .../render/MixinBedrockHandItemLifecycle.java |   61 +
  .../MixinBedrockModelPartTransforms.java      |   34 +
  .../render/MixinBedrockWalkingAnimation.java  |   35 +
  .../render/MixinMinecraftSkinLifecycle.java   |   12 +
@@ -1678,7 +1689,7 @@ remain private. Full shield pose and swap parity require separate work.
  .../render/BedrockPlayerAnimationState.java   |   16 +
  .../bedrock/render/BedrockPlayerModel.java    |   43 +
  .../bedrock/render/BedrockPlayerRenderer.java |    7 +-
- .../bedrock/render/BedrockPlayerSkins.java    |  649 ++-
+ .../bedrock/render/BedrockPlayerSkins.java    |  648 ++-
  .../bedrock/render/BedrockViewBobbing.java    |   51 +
  .../render/BedrockWalkingAnimation.java       |   35 +
  .../bedrock/render/NativeActorPayload.java    |   24 +
@@ -1781,7 +1792,7 @@ remain private. Full shield pose and swap parity require separate work.
  .../render/BedrockPlayerModelTest.java        |  100 +
  .../render/BedrockViewBobbingTest.java        |   93 +
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 233 files changed, 42043 insertions(+), 110 deletions(-)
+ 233 files changed, 42080 insertions(+), 110 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -1878,7 +1889,7 @@ remain private. Full shield pose and swap parity require separate work.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFirstPersonBobbing.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFirstPersonProjection.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockFirstPersonVisibility.java
- create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockHandItemCooldown.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockHandItemLifecycle.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockModelPartTransforms.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockWalkingAnimation.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinOptionsEmote.java
@@ -25926,12 +25937,12 @@ index 0000000..f49b977
 +        if (BedrockPlayerSkins.firstPersonActorSubmitted()) callback.cancel();
 +    }
 +}
-diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockHandItemCooldown.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockHandItemCooldown.java
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockHandItemLifecycle.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockHandItemLifecycle.java
 new file mode 100644
-index 0000000..6036802
+index 0000000..e81d979
 --- /dev/null
-+++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockHandItemCooldown.java
-@@ -0,0 +1,23 @@
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockHandItemLifecycle.java
+@@ -0,0 +1,61 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -25939,20 +25950,58 @@ index 0000000..6036802
 + */
 +package com.viaversion.viafabricplus.bedrock.injection.mixin.features.render;
 +
++import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 +import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
-+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
 +import net.minecraft.client.player.FirstPersonHandsAndItems;
 +import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.world.item.ItemStack;
++import net.raphimc.viabedrock.api.model.NativeHandItemState;
 +import org.spongepowered.asm.mixin.Mixin;
-+import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.Unique;
 +
 +@Mixin(FirstPersonHandsAndItems.class)
-+public abstract class MixinBedrockHandItemCooldown {
-+    @WrapOperation(method = "tick", at = @At(value = "INVOKE",
-+            target = "Lnet/minecraft/client/player/LocalPlayer;getItemSwapScale(F)F"))
-+    private float nativeSwapScale(final LocalPlayer player, final float partialTick, final Operation<Float> original) {
-+        return BedrockPlayerSkins.firstPersonSwapScale(player, original.call(player, partialTick));
++public abstract class MixinBedrockHandItemLifecycle {
++    @Shadow private ItemStack mainHandItem;
++    @Shadow private ItemStack offHandItem;
++    @Shadow private float mainHandHeight;
++    @Shadow private float oMainHandHeight;
++    @Shadow private float offHandHeight;
++    @Shadow private float oOffHandHeight;
++
++    @Shadow
++    protected abstract boolean shouldInstantlyReplaceVisibleItem(ItemStack previous, ItemStack current, LocalPlayer player);
++
++    @WrapMethod(method = "tick")
++    private void tickNativeHands(final LocalPlayer player, final Operation<Void> original) {
++        if (!BedrockPlayerSkins.hasNativeFirstPersonAppearance(player)) {
++            original.call(player);
++            return;
++        }
++        final ItemStack main = player.getMainHandItem();
++        final ItemStack off = player.getOffhandItem();
++        final var mainState = NativeHandItemState.advance(this.mainHandHeight, this.classifyJavaReplacement(this.mainHandItem, main, player));
++        final var offState = NativeHandItemState.advance(this.offHandHeight, this.classifyJavaReplacement(this.offHandItem, off, player));
++        this.oMainHandHeight = mainState.previousHeight();
++        this.oOffHandHeight = offState.previousHeight();
++        this.mainHandHeight = mainState.height();
++        this.offHandHeight = offState.height();
++        if (mainState.replaceItem()) {
++            this.mainHandItem = main.copy();
++        }
++        if (offState.replaceItem()) {
++            this.offHandItem = off.copy();
++        }
++    }
++
++    @Unique
++    private NativeHandItemState.Replacement classifyJavaReplacement(final ItemStack previous, final ItemStack current, final LocalPlayer player) {
++        if (ItemStack.matches(previous, current)) {
++            return NativeHandItemState.Replacement.RETAIN;
++        }
++        return this.shouldInstantlyReplaceVisibleItem(previous, current, player)
++                ? NativeHandItemState.Replacement.UPDATE : NativeHandItemState.Replacement.ANIMATE;
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockModelPartTransforms.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockModelPartTransforms.java
@@ -27220,7 +27269,7 @@ index f00c62a..5ddf747 100644
      }
  
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 87aa8e4..1acc0ec 100644
+index 87aa8e4..60525c2 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -19,37 +19,64 @@
@@ -27392,7 +27441,7 @@ index 87aa8e4..1acc0ec 100644
              return null;
          }
          if (appearance.renderer == null || appearance.rendererEpoch != rendererEpoch) {
-@@ -196,13 +262,448 @@ public final class BedrockPlayerSkins {
+@@ -196,13 +262,447 @@ public final class BedrockPlayerSkins {
                  BedrockGeometry.playerModel(surface.geometry().model(), appearance.slim, surface.geometry().meshes()),
                  surface.texture())).toList();
              appearance.renderer = new BedrockPlayerRenderer(rendererContext,
@@ -27619,11 +27668,10 @@ index 87aa8e4..1acc0ec 100644
 +
 +    public record FirstPersonProjection(float nearPlane, float fieldOfView) {}
 +
-+    /** Native hand height has no Java attack-cooldown multiplier when the matching actor graph is loaded. */
-+    public static float firstPersonSwapScale(final net.minecraft.client.player.LocalPlayer player, final float javaScale) {
++    /** Uses native hand updates only for the matching, loaded actor appearance. */
++    public static boolean hasNativeFirstPersonAppearance(final net.minecraft.client.player.LocalPlayer player) {
 +        final var skin = player.getSkin();
-+        if (skin == null || skin.body() == null) return javaScale;
-+        return firstPersonAppearance(player.getUUID(), skin.body().id()) == null ? javaScale : 1F;
++        return skin != null && skin.body() != null && firstPersonAppearance(player.getUUID(), skin.body().id()) != null;
 +    }
 +
 +    private static Appearance firstPersonAppearance(final AvatarRenderState state) {
@@ -27842,7 +27890,7 @@ index 87aa8e4..1acc0ec 100644
      public static AvatarRenderer<?> renderer(final PlayerSkin skin, final float ageInTicks) {
          if (skin == null || skin.body() == null) {
              return null;
-@@ -222,10 +723,49 @@ public final class BedrockPlayerSkins {
+@@ -222,10 +722,49 @@ public final class BedrockPlayerSkins {
      public static Model.Simple previewModel(final Identifier texture) {
          final UUID id = PLAYER_BY_TEXTURE.get(texture);
          final Appearance appearance = id == null ? null : APPEARANCES.get(id);
@@ -27895,7 +27943,7 @@ index 87aa8e4..1acc0ec 100644
      }
  
      /** Supplies the additional animated surfaces in the same pose as a menu's primary skin. */
-@@ -235,14 +775,19 @@ public final class BedrockPlayerSkins {
+@@ -235,14 +774,19 @@ public final class BedrockPlayerSkins {
          if (appearance == null || appearance.surfaces.isEmpty()) return List.of();
          if (appearance.previewSurfaces == null)
              appearance.previewSurfaces = appearance.surfaces.stream().map(surface -> new PreviewSurface(
@@ -27917,7 +27965,7 @@ index 87aa8e4..1acc0ec 100644
  
      public static void rendererContext(final EntityRendererProvider.Context context) {
          BedrockActorResources.clear();
-@@ -271,7 +816,8 @@ public final class BedrockPlayerSkins {
+@@ -271,7 +815,8 @@ public final class BedrockPlayerSkins {
      }
  
      private static Identifier textureId(final UUID playerUuid, final String kind) {
@@ -27927,7 +27975,7 @@ index 87aa8e4..1acc0ec 100644
      }
  
      private static boolean supportedImage(final BufferedImage image) {
-@@ -297,7 +843,10 @@ public final class BedrockPlayerSkins {
+@@ -297,7 +842,10 @@ public final class BedrockPlayerSkins {
  
      static String geometryName(final String resourcePatch, final String binding) {
          try {
@@ -27939,7 +27987,7 @@ index 87aa8e4..1acc0ec 100644
              final var name = geometry.get(binding);
              return name != null && name.isJsonPrimitive() && name.getAsJsonPrimitive().isString()
                  ? name.getAsString() : "";
-@@ -323,7 +872,7 @@ public final class BedrockPlayerSkins {
+@@ -323,7 +871,7 @@ public final class BedrockPlayerSkins {
              final List<BedrockGeometryModel> models = BedrockGeometryModel.fromJson(data);
              final BedrockGeometryModel model = models.stream().filter(value -> value.getIdentifier().equals(name)).findFirst()
                  .orElseGet(() -> models.isEmpty() ? null : models.getFirst());
@@ -27948,7 +27996,7 @@ index 87aa8e4..1acc0ec 100644
          } catch (RuntimeException e) {
              LOGGER.warn("Failed to parse Bedrock player geometry", e);
              return null;
-@@ -350,7 +899,8 @@ public final class BedrockPlayerSkins {
+@@ -350,7 +898,8 @@ public final class BedrockPlayerSkins {
              final Map<Integer, JsonObject> animatedModels = new HashMap<>();
              for (final var entry : models) {
                  final JsonObject model = entry.getAsJsonObject();
@@ -27958,7 +28006,7 @@ index 87aa8e4..1acc0ec 100644
                  if (name.equals(identifier)) {
                      if (body != null) {
                          return null;
-@@ -389,7 +939,8 @@ public final class BedrockPlayerSkins {
+@@ -389,7 +938,8 @@ public final class BedrockPlayerSkins {
                  final JsonObject model = animatedModels.get(type);
                  final var animation = animationByType.get(type);
                  if (model == null) {
@@ -27968,7 +28016,7 @@ index 87aa8e4..1acc0ec 100644
                          return null;
                      }
                      continue;
-@@ -404,7 +955,8 @@ public final class BedrockPlayerSkins {
+@@ -404,7 +954,8 @@ public final class BedrockPlayerSkins {
                  BedrockGeometry.playerModel(parsed, false, meshes);
                  surfaces.add(new Surface(parsed, Map.copyOf(meshes), animation));
              }
@@ -27978,7 +28026,7 @@ index 87aa8e4..1acc0ec 100644
                  if (!coverage.getOrDefault(part, false)) {
                      return null;
                  }
-@@ -415,7 +967,7 @@ public final class BedrockPlayerSkins {
+@@ -415,7 +966,7 @@ public final class BedrockPlayerSkins {
                  return null;
              }
              BedrockGeometry.playerModel(parsedBody, false, bodyMeshes);
@@ -27987,7 +28035,7 @@ index 87aa8e4..1acc0ec 100644
          } catch (RuntimeException e) {
              LOGGER.warn("Failed to parse Bedrock persona geometry", e);
              return null;
-@@ -452,12 +1004,21 @@ public final class BedrockPlayerSkins {
+@@ -452,12 +1003,21 @@ public final class BedrockPlayerSkins {
                      }
                  }
              }
@@ -28012,7 +28060,7 @@ index 87aa8e4..1acc0ec 100644
              }
          }
          return meshes;
-@@ -479,7 +1040,13 @@ public final class BedrockPlayerSkins {
+@@ -479,7 +1039,13 @@ public final class BedrockPlayerSkins {
          return vector;
      }
  
@@ -28027,7 +28075,7 @@ index 87aa8e4..1acc0ec 100644
          Surface face() {
              return this.surfaces.stream().filter(surface -> surface.animation().type() == 1).findFirst().orElse(null);
          }
-@@ -495,13 +1062,23 @@ public final class BedrockPlayerSkins {
+@@ -495,13 +1061,23 @@ public final class BedrockPlayerSkins {
          private final PlayerSkin skin;
          private final long started = System.nanoTime();
          private final Geometry geometry;
@@ -31747,7 +31795,7 @@ index 0000000..a91a83e
 +  "f76b43c4-052c-ec24-bbc9-389f8b612668": "persona_top"
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 2841ed0..7b3fbcc 100644
+index 2841ed0..a05de01 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
 @@ -57,6 +57,15 @@
@@ -31761,7 +31809,7 @@ index 2841ed0..7b3fbcc 100644
 +    "features.render.MixinBedrockFirstPersonVisibility",
 +    "features.render.MixinBedrockFirstPersonBobbing",
 +    "features.render.MixinBedrockFirstPersonProjection",
-+    "features.render.MixinBedrockHandItemCooldown",
++    "features.render.MixinBedrockHandItemLifecycle",
 +    "features.render.MixinBedrockModelPartTransforms",
      "features.render.MixinPlayerSkinWidget",
      "features.render.MixinGuiSkinRenderer",

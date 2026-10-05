@@ -1,4 +1,4 @@
-From 1e133357dca2a8a6614fc161ae68cf0cfff0fd35 Mon Sep 17 00:00:00 2001
+From 6741c23ad3d5ad248ef2d4b8abb67273c9c07dbb Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:22:35 +0200
 Subject: [PATCH] feat(entities): evaluate named actor properties and
@@ -151,6 +151,16 @@ clock. Preserve unsigned elapsed conversion and the native float clamp.
 A licensed native watchpoint confirms the start write and reset. Private
 instruction fixtures cover 120 start branches, 1728 block/damage branches,
 and 2700 bob callback cases. Keep proprietary inputs outside the patch.
+
+Supply the native equip-height and retained-item update in core. Advance
+independent hand heights by at most 0.4 per simulation tick, preserve the
+previous interpolation value, and copy on immediate replacement or at
+height 0.1 inclusively. Target Bedrock 1.26.51.1 build 51061372 has no Java
+hands-busy or attack-cooldown branch in this update.
+
+Match 2304 actual native instruction cases plus 24 exact copy boundaries.
+Observe and skip native stack-copy calls rather than emulate their internals.
+Item classification and complete visible swap parity remain separate work.
 ---
  build.gradle                                  |  11 +-
  .../main/groovy/viabedrock.checkstyle.gradle  |   8 +-
@@ -158,6 +168,7 @@ and 2700 bob callback cases. Keep proprietary inputs outside the patch.
  .../api/model/NativeActorMessage.java         | 172 ++++++++++++
  .../api/model/NativeActorStates.java          |  81 ++++++
  .../api/model/NativeCustomEntityMessage.java  | 142 ++++++++++
+ .../api/model/NativeHandItemState.java        |  29 ++
  .../api/model/NativeShieldBlockingState.java  |  45 ++++
  .../api/model/entity/CustomEntity.java        | 101 ++++++-
  .../viabedrock/api/model/entity/Entity.java   |  75 ++++++
@@ -173,16 +184,18 @@ and 2700 bob callback cases. Keep proprietary inputs outside the patch.
  .../api/model/NativeActorMessageTest.java     | 126 +++++++++
  .../api/model/NativeActorStatesTest.java      | 110 ++++++++
  .../model/NativeCustomEntityMessageTest.java  | 159 +++++++++++
+ .../api/model/NativeHandItemStateTest.java    |  71 +++++
  .../model/NativeShieldBlockingStateTest.java  |  91 +++++++
  .../CustomEntityMaterialSelectionTest.java    |  65 +++++
  .../CustomEntityModelSelectionTest.java       |   2 +-
  .../api/model/entity/EntityScaleTest.java     | 157 +++++++++++
  .../viabedrock/api/util/MoLangEngineTest.java |  94 +++++++
  .../viabedrock/api/util/MoLangMathTest.java   | 115 ++++++++
- 27 files changed, 2140 insertions(+), 28 deletions(-)
+ 29 files changed, 2240 insertions(+), 28 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeCustomEntityMessage.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeHandItemState.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeShieldBlockingState.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/util/BedrockTrigonometry.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/util/MoLangMath.java
@@ -191,6 +204,7 @@ and 2700 bob callback cases. Keep proprietary inputs outside the patch.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeActorMessageTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeActorStatesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeCustomEntityMessageTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeHandItemStateTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeShieldBlockingStateTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityMaterialSelectionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/EntityScaleTest.java
@@ -681,6 +695,41 @@ index 000000000..e99bbbd44
 +    }
 +
 +    record Remove(UUID uuid) implements NativeCustomEntityMessage {
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeHandItemState.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeHandItemState.java
+new file mode 100644
+index 000000000..09dfb8915
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeHandItemState.java
+@@ -0,0 +1,29 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++/** Native equip height and retained-item update for one simulation tick. */
++public record NativeHandItemState(float previousHeight, float height, boolean replaceItem) {
++
++    public static NativeHandItemState advance(final float height, final Replacement replacement) {
++        final float delta = (replacement == Replacement.ANIMATE ? 0F : 1F) - height;
++        // Native MAXSS selects the lower bound for an unordered delta.
++        final float step = delta > 0.4F ? 0.4F : delta > -0.4F ? delta : -0.4F;
++        final float nextHeight = height + step;
++        return new NativeHandItemState(height, nextHeight, replaces(nextHeight, replacement));
++    }
++
++    public static boolean replaces(final float height, final Replacement replacement) {
++        return replacement == Replacement.UPDATE || height <= 0.1F;
++    }
++
++    public enum Replacement {
++        RETAIN,
++        UPDATE,
++        ANIMATE
 +    }
 +
 +}
@@ -2227,6 +2276,83 @@ index 000000000..3dc6f9c3c
 +        } finally {
 +            buffer.release();
 +        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeHandItemStateTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeHandItemStateTest.java
+new file mode 100644
+index 000000000..ec40fc74c
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeHandItemStateTest.java
+@@ -0,0 +1,71 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++
++import static net.raphimc.viabedrock.api.model.NativeHandItemState.Replacement.*;
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeHandItemStateTest {
++
++    @Test
++    void lowersThenCopiesTheReplacementAndRetainsThePreviousHeight() {
++        final var first = NativeHandItemState.advance(1F, ANIMATE);
++        assertEquals(1F, first.previousHeight());
++        assertEquals(0.6F, first.height());
++        assertFalse(first.replaceItem());
++        final var second = NativeHandItemState.advance(first.height(), ANIMATE);
++        assertFalse(second.replaceItem());
++        final var third = NativeHandItemState.advance(second.height(), ANIMATE);
++        assertTrue(third.replaceItem());
++        final var raised = NativeHandItemState.advance(third.height(), RETAIN);
++        assertEquals(third.height(), raised.previousHeight());
++        assertEquals(0.4F, raised.height());
++        assertFalse(raised.replaceItem());
++    }
++
++    @Test
++    void usesTheInclusiveCopyBoundaryAndImmediateUpdateRegardlessOfHeight() {
++        assertTrue(NativeHandItemState.replaces(0.1F, RETAIN));
++        assertTrue(NativeHandItemState.replaces(Math.nextDown(0.1F), ANIMATE));
++        assertFalse(NativeHandItemState.replaces(Math.nextUp(0.1F), ANIMATE));
++        assertFalse(NativeHandItemState.replaces(Float.NaN, ANIMATE));
++        assertTrue(NativeHandItemState.replaces(Float.NaN, UPDATE));
++        assertTrue(NativeHandItemState.advance(1F, UPDATE).replaceItem());
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_HAND_RETENTION_REFERENCE", matches = ".+")
++    void matchesNativeHeightAndCopyInstructions() throws Exception {
++        final var fixture = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_HAND_RETENTION_REFERENCE"), "native-hand-retention.json"))).getAsJsonObject();
++        for (final var element : fixture.getAsJsonArray("cases")) {
++            final var row = element.getAsJsonObject();
++            for (final String hand : new String[]{"main", "off"}) {
++                final float initial = Float.intBitsToFloat(row.get(hand + "_bits").getAsInt());
++                final var result = NativeHandItemState.advance(initial, NativeHandItemState.Replacement.values()[row.get(hand + "_change").getAsInt()]);
++                assertEquals(row.get(hand + "_bits").getAsInt(), Float.floatToRawIntBits(result.previousHeight()));
++                assertEquals(row.get(hand + "_result").getAsInt(), Float.floatToRawIntBits(result.height()));
++                assertEquals(row.get("copy_" + hand).getAsBoolean(), result.replaceItem());
++            }
++        }
++        for (final var element : fixture.getAsJsonArray("threshold_cases")) {
++            final var row = element.getAsJsonObject();
++            final boolean result = NativeHandItemState.replaces(Float.intBitsToFloat(row.get("height_bits").getAsInt()),
++                    NativeHandItemState.Replacement.values()[row.get("change").getAsInt()]);
++            assertEquals(row.get("copy_main").getAsBoolean(), result);
++            assertEquals(row.get("copy_off").getAsBoolean(), result);
++        }
++        assertEquals(2304, fixture.getAsJsonArray("cases").size());
++        assertEquals(24, fixture.getAsJsonArray("threshold_cases").size());
 +    }
 +
 +}
