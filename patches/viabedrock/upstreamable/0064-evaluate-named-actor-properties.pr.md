@@ -276,3 +276,68 @@ These checks verify packaged integration without establishing native image or ti
 **Remaining:** Complete lexical admission, variable registration, nested control flow, pack-version gates, and SDK world context need further native comparisons.
 The authored runtime controls do not establish native images or animation timing.
 Typed schema dispatch, interpolation, item classification, and all other coverage requirements remain active.
+
+
+## Shared core Molang jumps and float loops
+
+**Evidence:** Bedrock 1.26.51.1 returns through nested selected scopes and stops later statements.
+`break` and `continue` target the nearest active loop.
+Positive fractional loop counts run while their float remainder exceeds zero.
+Counts `0.5`, `1.5`, and `1025` therefore execute once, twice, and 1,025 times.
+The former client floor and 1,024 clamp did not match this target.
+Empty scopes and malformed loop bodies fail compilation.
+
+The [Mojang Molang reference](https://mojang.github.io/bedrock-samples/Molang.html#loop) currently identifies version 1.21.90.3 and describes a 1,024 loop limit.
+The matching 1.26.51.1 VM probes differ, so these changes follow the pinned executable evidence.
+A limit elsewhere in the full live engine remains unverified.
+
+Private probes execute 57 declarations and 285 billboard samples through the target compiler, VM, and component functions.
+Eight declarations use temporary variables to measure mutations and nested jumps.
+For those cases, native registry constructors and registration instructions execute unchanged.
+The previous VM context uses empty native variable vectors.
+Supplied boundaries remain allocation, CRT operations, locks, diagnostics, TLS storage, and the compiler service marker.
+Actor variables, complete world context, and native array iteration remain outside this comparison.
+A private instruction cap interrupted a much larger loop; that interruption does not establish a native execution limit.
+
+**Implemented:** Core compiles jumps and loop calls into private runtime functions before evaluation.
+These functions unwind nested frames while retaining Mocha float arithmetic and property bindings.
+The add-on uses this shared evaluator for numeric and string consumers.
+Its duplicate equality helper, loop clamp, and execution guard are removed.
+Core preserves the existing 16,384-iteration host budget across nested and successive loops, including array iteration.
+This budget bounds untrusted work; it is a compatibility policy rather than verified native behavior.
+Completed mutations remain visible when the budget ends evaluation with zero.
+
+**Verified tests:** All four projects build with 1,061 passing Java tests, 120 optional skips, and no failures or errors.
+Core Checkstyle passes.
+Core evaluation and particle components match all 57 native declarations and 285 direction and UV samples.
+Regression tests cover nested return mutation order, fractional counts, nearest-loop jumps, array bindings, and the shared host budget.
+Both numeric and string client consumers use the same control flow.
+Reader diagnostics are compared against compiler rejection, separately from later VM diagnostics.
+
+Particle starts now release their pending slot before completing the public future.
+Cached completions can invoke callbacks inline; those callbacks must see capacity from work that has already finished.
+The previous ordering could reject chained starts against the 32-slot limit.
+Two regressions exercise 128 nested cached starts with an almost-full queue, runtime failures, and rejected starts.
+The existing pending-start, cached-graph, emitter, and image-memory limits remain in effect.
+
+Early direct runs passed coarse scene checks while several authored starts were rejected.
+A thread sample in an OpenGL draw did not establish a graphics fault.
+The pending-slot completion order was corrected and receives separate regression coverage.
+The private observer also kept scheduling an obsolete fixture queue after a resource reload canceled it.
+That duplicate queue filled the bounded cache; the observer now stops scheduling when its playback generation changes.
+Resource reload cancellation remains expected, and cache capacity is not raised for the test.
+
+**Verified runtime:** Complete 240-second direct and ViaProxy replays preserve the CubeCraft scene hash `ede0e43b2874418cbb6b62135898efe0553009307d33fecd0f258383643d5d83`.
+Both retain all 311 skin updates and pass transport and rendering checks.
+Each route loads 68 authored direction definitions through production loading, simulation, and visual extraction.
+Every reader diagnostic and sampled direction matches its expected state.
+Translucent and additive controls also start, giving 70 distinct authored effects on each route.
+No capacity rejection or observer error occurs in the successful runs.
+The final ViaProxy observer records one expected start cancellation during a resource reload.
+Both routes submit forward draws; improved-transparency stages remain unverified in this run.
+Screenshots show the custom lobby models and hotbar icons, alongside overlapping labels and the Java tutorial toast.
+These saved-scene checks do not establish a new live-server join, native image parity, or animation timing parity.
+
+**Remaining:** Complete grammar admission, actor and world contexts, native array iteration, pack-version gates, and visible animation timing remain unverified or incomplete.
+Runtime diagnostic text also needs comparison.
+All other coverage requirements remain active.

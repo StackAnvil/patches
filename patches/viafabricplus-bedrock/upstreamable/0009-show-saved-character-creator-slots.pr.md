@@ -2612,3 +2612,44 @@ Improved transparency stages were not verified in this parser run.
 Screenshot review confirms custom lobby models and hotbar icons.
 Overlapping labels and the Java tutorial toast remain presentation gaps.
 These checks verify packaged integration without establishing native image or timing parity.
+
+
+## Shared core jumps and native float loop counts
+
+Animation and particle programs now use core control flow and its shared execution budget.
+Nested returns preserve numeric and string results and stop later mutations.
+The pinned native VM executes positive fractional counts and does not clamp a count of 1,025 to 1,024.
+The duplicate client equality helper, loop clamp, and iteration guard are removed.
+AST size and depth limits remain at the client boundary.
+The [coverage ledger](../../../docs/bedrock-coverage.md#shared-core-molang-jumps-and-float-loops) records native evidence, supplied boundaries, and remaining gaps.
+
+**Verified tests:** All four projects build with 1,061 passing Java tests, 120 optional skips, and no failures or errors.
+Core Checkstyle passes.
+Core evaluation and particle components match all 57 native declarations and 285 direction and UV samples.
+Regression tests cover nested return mutation order, fractional counts, nearest-loop jumps, array bindings, and the shared host budget.
+Both numeric and string client consumers use the same control flow.
+Reader diagnostics are compared against compiler rejection, separately from later VM diagnostics.
+
+Particle starts now release their pending slot before completing the public future.
+Cached completions can invoke callbacks inline; those callbacks must see capacity from work that has already finished.
+The previous ordering could reject chained starts against the 32-slot limit.
+Two regressions exercise 128 nested cached starts with an almost-full queue, runtime failures, and rejected starts.
+The existing pending-start, cached-graph, emitter, and image-memory limits remain in effect.
+
+Early direct runs passed coarse scene checks while several authored starts were rejected.
+A thread sample in an OpenGL draw did not establish a graphics fault.
+The pending-slot completion order was corrected and receives separate regression coverage.
+The private observer also kept scheduling an obsolete fixture queue after a resource reload canceled it.
+That duplicate queue filled the bounded cache; the observer now stops scheduling when its playback generation changes.
+Resource reload cancellation remains expected, and cache capacity is not raised for the test.
+
+**Verified runtime:** Complete 240-second direct and ViaProxy replays preserve the CubeCraft scene hash `ede0e43b2874418cbb6b62135898efe0553009307d33fecd0f258383643d5d83`.
+Both retain all 311 skin updates and pass transport and rendering checks.
+Each route loads 68 authored direction definitions through production loading, simulation, and visual extraction.
+Every reader diagnostic and sampled direction matches its expected state.
+Translucent and additive controls also start, giving 70 distinct authored effects on each route.
+No capacity rejection or observer error occurs in the successful runs.
+The final ViaProxy observer records one expected start cancellation during a resource reload.
+Both routes submit forward draws; improved-transparency stages remain unverified in this run.
+Screenshots show the custom lobby models and hotbar icons, alongside overlapping labels and the Java tutorial toast.
+These saved-scene checks do not establish a new live-server join, native image parity, or animation timing parity.
