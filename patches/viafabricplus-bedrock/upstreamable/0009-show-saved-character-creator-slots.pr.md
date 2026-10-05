@@ -2583,3 +2583,32 @@ These checks verify packaged integration without establishing native image or ti
 **Remaining:** Complete lexical admission, complex-expression results, SDK runtime context, typed schema dispatch, interpolation, and native visible comparisons remain unverified or incomplete.
 Core Molang processing still uses a separate parser and needs the same admission review.
 All other coverage requirements remain active.
+
+
+## Consume core Molang parsing and statement results
+
+Animation and particle programs now use ViaBedrock core parsing and evaluation.
+This removes the duplicate client parser and numeric-suffix normalizer.
+Actor queries, variables, and execution limits remain in the client.
+Native constant statement evaluation verifies zero default results, explicit returns, and selected conditional returns.
+The [coverage ledger](../../../docs/bedrock-coverage.md#shared-core-molang-grammar-and-statement-results) records the native boundaries, route tests, and remaining gaps.
+
+
+**Verified tests:** All four projects build with 1,052 passing Java tests, 122 optional skips, and no failures or errors.
+Core Checkstyle also passes.
+The selected core and add-on suites pass 30 tests, with five unrelated optional references skipped.
+Core matches all 41 earlier admission cases and all 25 new constant-statement declarations.
+The particle component test matches all 125 native direction and UV samples, including recovered rejected declarations.
+Tests also preserve variable side effects, reader parsing, string returns, assignment boundaries, and client execution limits.
+
+
+**Verified runtime:** Complete direct and ViaProxy replays preserve the CubeCraft scene hash `ede0e43b2874418cbb6b62135898efe0553009307d33fecd0f258383643d5d83`.
+Both retain all 311 skin updates and pass transport and rendering checks.
+Thirty-six authored direction fixtures load through production resource processing, simulation, and visual extraction on each route.
+All reader diagnostics and sampled direction values match their expected states.
+No particle loading, initialization, or observer errors occur.
+Both routes submit forward draws for translucent and additive particles.
+Improved transparency stages were not verified in this parser run.
+Screenshot review confirms custom lobby models and hotbar icons.
+Overlapping labels and the Java tutorial toast remain presentation gaps.
+These checks verify packaged integration without establishing native image or timing parity.

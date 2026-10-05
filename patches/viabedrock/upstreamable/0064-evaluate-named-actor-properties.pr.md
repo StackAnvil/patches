@@ -228,3 +228,51 @@ Executable bytes, exports, synthetic fixtures, and emulator programs remain priv
 **Incomplete:** Production still uses Java item classification.
 Complete native NBT comparison, resolved restriction hashes, charged-item construction, item dispatch, and renderer lifetime transitions require further verification and implementation.
 The color and selected-slot rules above are verified instruction behavior, not a claim that their production integration is complete.
+
+
+## Shared core Molang grammar and statement results
+
+**Evidence:** The matching Bedrock 1.26.51.1 executable distinguishes simple expression values from complex statement results.
+A trailing semicolon changes `2` from result `2` to result `0`.
+Statement lists return zero unless execution reaches an explicit return.
+The target admits `return 2` without a separator but produces zero, while `return 2;` produces two.
+It rejects a direct return followed by another statement in the same scope.
+Returns inside selected conditional blocks stop later statements.
+Unselected blocks leave execution active.
+
+A private probe executes 25 declarations and 125 billboard samples through the native JSON reader, compiler, VM, and component functions.
+Its previous VM context points to a valid private arena through the target TLS field.
+Allocation, CRT operations, decimal conversion, single-thread locks, diagnostics, and the compiler's service-availability marker remain supplied boundaries.
+The optional SDK observer is absent.
+Native parser decisions and VM instructions execute unchanged.
+Variable symbol registration and complete live world context remain outside this probe.
+
+**Implemented:** ViaBedrock core now owns the shared token parser and statement-result rules.
+Core entity processing and add-on animation and particle programs use that parser.
+The add-on also uses core evaluation for numeric and string consumers.
+The duplicate client parser and core assignment text rewriting are removed.
+Query bindings, actor variables, and execution limits remain with their consumers.
+The false branch of a conditional preserves assignment boundaries instead of assigning through the whole conditional.
+
+**Verified tests:** All four projects build with 1,052 passing Java tests, 122 optional skips, and no failures or errors.
+Core Checkstyle also passes.
+The selected core and add-on suites pass 30 tests, with five unrelated optional references skipped.
+Core matches all 41 earlier admission cases and all 25 new constant-statement declarations.
+The particle component test matches all 125 native direction and UV samples, including recovered rejected declarations.
+Tests also preserve variable side effects, reader parsing, string returns, assignment boundaries, and client execution limits.
+
+
+**Verified runtime:** Complete direct and ViaProxy replays preserve the CubeCraft scene hash `ede0e43b2874418cbb6b62135898efe0553009307d33fecd0f258383643d5d83`.
+Both retain all 311 skin updates and pass transport and rendering checks.
+Thirty-six authored direction fixtures load through production resource processing, simulation, and visual extraction on each route.
+All reader diagnostics and sampled direction values match their expected states.
+No particle loading, initialization, or observer errors occur.
+Both routes submit forward draws for translucent and additive particles.
+Improved transparency stages were not verified in this parser run.
+Screenshot review confirms custom lobby models and hotbar icons.
+Overlapping labels and the Java tutorial toast remain presentation gaps.
+These checks verify packaged integration without establishing native image or timing parity.
+
+**Remaining:** Complete lexical admission, variable registration, nested control flow, pack-version gates, and SDK world context need further native comparisons.
+The authored runtime controls do not establish native images or animation timing.
+Typed schema dispatch, interpolation, item classification, and all other coverage requirements remain active.
