@@ -28,9 +28,9 @@ The target Bedrock 1.26.51.1 controller parser and ENTITY vertex shader establis
 
 ### Molang float runtime
 
-Pin `org.redlance.mochafloats:runtime:6.0.2` and use its parser, lexer, and interpreter modules. The core requires Java 25. Keep the existing string equality, assignment precedence, and property bindings.
+Pin `org.redlance.mochafloats:runtime:6.1.0` from Maven Central and use its parser, lexer, and interpreter modules. The core requires Java 25. Keep the existing string equality, assignment precedence, and property bindings.
 
-Mocha 3.0.1 calculates intermediate values as doubles. A final float cast cannot preserve Bedrock comparisons or repeated assignments. The [official property guide](https://learn.microsoft.com/en-us/minecraft/creator/documents/introductiontoentityproperties) documents float evaluation and the 16.7-million integer boundary. The [fork source](https://github.com/PlayerAnimationLibrary/mochafloats/tree/1a5dc0fc18bb7f8e7237c0de9cb66299362048ab) defines float values and arithmetic.
+Mocha 3.0.1 calculates intermediate values as doubles. A final float cast cannot preserve Bedrock comparisons or repeated assignments. The [official property guide](https://learn.microsoft.com/en-us/minecraft/creator/documents/introductiontoentityproperties) documents float evaluation and the 16.7-million integer boundary. The [MochaFloats project](https://github.com/PlayerAnimationLibrary/mochafloats) defines float values and arithmetic. The [published runtime](https://repo.maven.apache.org/maven2/org/redlance/mochafloats/runtime/6.1.0/runtime-6.1.0.pom) depends on parser and lexer 6.1.0.
 
 Targeted tests cover rounding before comparison, assignments, property inputs, and UV expressions. Full scene comparisons remain required for animation and rendering parity.
 

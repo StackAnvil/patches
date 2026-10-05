@@ -731,11 +731,11 @@ Existing skin and actor rendering gaps remain open.
 
 ### Shared Molang float arithmetic
 
-The core and add-on use MochaFloats 6.0.2 parser, lexer, and interpreter modules. ViaBedrock and ViaProxy now require Java 25. The add-on already requires that version. ViaProxy no longer builds a Java 8 artifact.
+The core and add-on use MochaFloats 6.1.0 parser, lexer, and interpreter modules from Maven Central. ViaBedrock and ViaProxy now require Java 25. The add-on already requires that version. ViaProxy no longer builds a Java 8 artifact.
 
 Intermediate arithmetic, numeric constants, assignments, and numeric bindings use floats. This corrects conditions that previously compared double results before the final float conversion. Tests exercise the 16.7-million integer boundary, fractional equality, variable updates, property inputs, and controller UV values.
 
-The [official property guide](https://learn.microsoft.com/en-us/minecraft/creator/documents/introductiontoentityproperties) documents float evaluation. The [pinned fork source](https://github.com/PlayerAnimationLibrary/mochafloats/tree/1a5dc0fc18bb7f8e7237c0de9cb66299362048ab) supplies the float runtime. Host extensions retain string equality, precedence, typed packet variables, easing functions, and execution limits.
+The [official property guide](https://learn.microsoft.com/en-us/minecraft/creator/documents/introductiontoentityproperties) documents float evaluation. The [published MochaFloats runtime](https://repo.maven.apache.org/maven2/org/redlance/mochafloats/runtime/6.1.0/runtime-6.1.0.pom) supplies the float runtime. Host extensions retain string equality, precedence, typed packet variables, easing functions, and execution limits.
 
 This migration does not establish complete Molang, animation, particle, or visual parity. Native comparisons of additional operators, standard math functions, and rendered scenes remain required.
 
