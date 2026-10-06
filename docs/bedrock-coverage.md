@@ -5864,3 +5864,50 @@ The complete core and add-on stacks replay and build successfully against the pi
 Core checks pass with 684 tests passing and 19 optional skips.
 Add-on checks pass with 478 tests passing and 114 optional skips.
 These checks verify compilation and the named tests; live flight remains unverified.
+
+
+## Confirmed rocket boost and frame identity (October 6, 2026)
+
+**Implemented:** Core decodes `MOVEMENT_EFFECT` and retains each known effect on its target actor.
+The handler preserves the effect ID, signed duration, and unsigned server tick bits.
+It transports these fields through direct and ViaProxy connections to registered add-on clients.
+Late channel registration receives the retained confirmations with their original timing.
+
+Prediction transport revision 7 includes a completed client frame identity.
+Core binds accepted frames to the exact ticks sent in `PLAYER_AUTH_INPUT` and retains 512 bindings.
+The add-on applies confirmed glide boosts against that binding, including elapsed frames before receipt.
+Missing bindings never create a new countdown at receipt time.
+Older confirmations cannot replace newer actor effects.
+Actor removal and disconnect clear the add-on state.
+
+The shared `GlideMovement` calculator now includes the native rocket impulse before drag.
+The native function sums the complete impulse before it adds entering motion.
+The add-on suppresses Java's separate local rocket impulse to prevent duplicate acceleration and random lifespan timing.
+
+**Verified within scope:** Target protocol 2193 metadata orders runtime ID, effect ID, duration, and tick.
+Its tick description identifies the last processed input tick for players and controlled vehicles.
+The matching executable's packet vtable `14e862850` resolves packet ID 318 and fields at offsets `30`, `38`, `3c`, and `40`.
+The production Java calculator matches all 8,732 native boosted and unboosted execution cases exactly.
+Fixtures supply CRT remainder, the regenerated sine table, status slots, and valid or absent boost components.
+Native instructions perform boost admission, angle reconstruction, velocity arithmetic, damping, and fall-distance stores.
+
+Native helper `142fe8990` and countdown callback `1490daf80` pass 216 controlled duration cases.
+These cases establish native effect generation and countdown with no prediction history or outbound packet target.
+They do not establish the full incoming confirmation or correction path.
+Java tests cover numeric boost regressions, packet translation, codec boundaries, frame eviction, late expiry, unsigned tick ordering, and connection cleanup.
+
+**Incomplete:** Dolphin and geyser effects have retained core state and transport, but their native physics still need implementation.
+Ordinary Java clients retain the confirmations in core and do not receive the add-on physics.
+Speculative rocket admission, missing or evicted frame bindings, prediction history, and correction replay remain open.
+Late confirmation changes subsequent velocity but does not replay the earlier trajectory.
+
+**Unverified:** Native phase scheduling, deadline boundaries during actual flight, collisions, item rejection, and repeated rocket use need trajectory comparisons.
+Live native, direct, ViaProxy, strict-BDS, Boar, CubeCraft, and platform comparisons remain required.
+The GPU guard and occupied private display remain in place.
+All original coverage groups and the complete complex gameplay matrix remain part of the goal.
+
+The complete core and add-on stacks replay and build against the pinned ViaFabricPlus artifact.
+Core checks pass with 691 tests passing and 19 optional skips.
+Add-on checks pass with 478 tests passing and 114 optional skips.
+Checkstyle passes for both stacks.
+These checks verify compilation and the named tests; live flight and correction replay remain unverified.

@@ -785,3 +785,30 @@ The complete core and add-on stacks replay and build successfully against the pi
 Core checks pass with 684 tests passing and 19 optional skips.
 Add-on checks pass with 478 tests passing and 114 optional skips.
 These checks verify compilation and the named tests; live flight remains unverified.
+
+
+## Confirmed rocket boosts and frame identities
+
+Core now decodes `MOVEMENT_EFFECT` into retained actor state and the versioned `viabedrock:movement_effect` payload.
+The target protocol 2193 schema and native packet vtable `14e862850` establish the field order and packet ID 318.
+Prediction revision 7 includes a completed frame identity.
+Core retains 512 exact input-tick bindings and preserves original timing in late channel snapshots.
+The shared timeline rejects older confirmations and never resets an unmapped or expired boost to receipt time.
+
+The native calculator applies the confirmed boost before damping.
+It sums the full impulse before adding entering velocity.
+The production Java calculation matches all 8,732 boosted and unboosted native cases exactly.
+Fixtures supply CRT remainder, a regenerated sine table, status slots, and valid or absent boost components.
+Native instructions perform admission, angle reconstruction, arithmetic, damping, and fall-distance stores.
+The add-on applies this shared calculation and suppresses the separate Java rocket impulse for its local Bedrock player.
+
+Native effect generation and countdown match 216 controlled cases without prediction history or an outbound packet target.
+Full incoming confirmation handling, phase ordering, speculative rocket use, rejection, and trajectory replay remain unverified or incomplete.
+Dolphin and geyser physics and ordinary Java fallback remain incomplete.
+The [coverage ledger](../../../docs/bedrock-coverage.md#confirmed-rocket-boost-and-frame-identity-october-6-2026) retains all live route and platform requirements.
+
+The complete core and add-on stacks replay and build against the pinned ViaFabricPlus artifact.
+Core checks pass with 691 tests passing and 19 optional skips.
+Add-on checks pass with 478 tests passing and 114 optional skips.
+Checkstyle passes for both stacks.
+These checks verify compilation and the named tests; live flight and correction replay remain unverified.
