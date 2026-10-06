@@ -50,7 +50,7 @@ After the gameplay cases, the runner restarts the Java client and checks that it
 
 ## Complex gameplay
 
-Run the BDS suite for ranged use, slowing terrain, water movement, and creative flight:
+Run the 29-case BDS suite for ranged use, projectile combat, slowing terrain, fluids, and creative flight:
 
 ```bash
 bun run test:integration -- --route java-bedrock --gameplay-complex
@@ -72,14 +72,39 @@ The Java/Geyser probe does not implement these new fixtures; the runner rejects 
 | `powder-snow-boots` | Remain on powder snow with leather boots | At least ten samples and no descent through the surface. |
 | `water-forward` | Hold forward while submerged | At least ten water samples and 0.6 blocks of forward travel. |
 | `creative-flight-ascend` | Toggle flight and hold jump | At least ten flight samples and ascent above one block. |
+| `bow-short-release` | Release after a short draw | One consumed arrow and an owned projectile after a draw of at most twelve server ticks. |
+| `bow-water-release` | Draw and release while submerged | A valid shot and at least ten water samples during use. |
+| `bow-hit`, `crossbow-hit` | Fire at a stationary cow | The owned arrow hits the fixture target, causes damage, and lowers its health. |
+| `crossbow-cancel` | Change slot during loading | A witnessed slot change, no completed load, no projectile, and unchanged ammunition. |
+| `crossbow-no-ammo` | Attempt to load without arrows | No projectile or ammunition change. Compare with the positive loading case. |
+| `splash-potion-speed` | Throw a swiftness potion downward | One consumed potion, its owned impact, and a later speed effect with positive duration. |
+| `lingering-potion-slowness` | Throw a lingering slowness potion downward | The matching impact, a nearby cloud, and a later slowness effect. |
+| `fireball-hit`, `small-fireball-hit` | Remain in the firing lane | A natural ghast or blaze shot hits the player and causes health loss. |
+| `fireball-dodge`, `small-fireball-dodge` | Move aside after launch | A shot on a collision course passes the original player position without contact or damage. |
+| `fireball-reflect` | Attack after launch | The player's attack changes projectile ownership and reverses its motion without player damage. |
+| `water-current` | Remain idle in flowing water | At least ten flowing-water samples and downstream displacement. |
+| `lava-forward` | Hold forward with fire resistance | At least ten lava samples and forward displacement. |
+| `bubble-column-up`, `bubble-column-down` | Remain idle above soul sand or magma | At least ten bubble-column samples and displacement in the column's direction. |
 
 Ranged observations include event ticks, remaining use duration, ammunition counts, projectile IDs, and sampled projectile speed.
 The Script API reports `useDuration` as remaining ticks, not elapsed charge time.
-The movement cases retain up to 200 position, velocity, water, flight, and grounded frames.
+The movement cases retain up to 200 position, velocity, fluid, flight, and grounded frames.
+Fluid samples include the block type and liquid depth where available.
+Projectile combat retains bounded trajectories, native collision bounds, ownership, attacks, impacts, and damage.
+The start event waits for a natural shot before the Java driver begins its response.
+It allows twenty seconds for a shot on a collision course.
+Off-course shots are removed, and the shooter stops after the selected shot.
+This isolates one incoming projectile from the blaze's random burst spread.
+This collision-course check belongs to the test fixture; it does not replace production movement physics.
 These server observations support diagnosis and later native comparison.
-They do not prove local trajectory accuracy, charge formulas, damage, potion effects, or correction replay.
+They do not prove local trajectory accuracy, complete charge or damage formulas, potion duration scaling, or correction replay.
 
-All new live cases remain unverified until the lab can run them.
+The target headless BDS accepts the fixture APIs and passes the large and small fireball hit controls.
+All 29 fixture preparations pass on that server.
+Native packet probes also pass the splash-speed and lingering-slowness effect checks.
+Bow and crossbow target damage and large-fireball reflection also pass these server controls.
+These probes use a synthetic protocol client, not the translated Java client.
+Java input, client rendering, native client comparisons, and direct or ViaProxy gameplay remain unverified for the new cases.
 The [complex gameplay matrix](bedrock-complex-gameplay.md) retains the remaining combat, flight, mount, inventory, fluid, and network requirements.
 
 ## Resource pack conversion

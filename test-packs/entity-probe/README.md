@@ -68,15 +68,16 @@ The offhand placement and rocket cases require native Bedrock 1.26.51.1 behavior
 
 ## Complex gameplay
 
-The opt-in complex suite adds bows, crossbows, thrown potions, powder snow, water movement, and creative flight:
+The opt-in complex suite adds ranged use and hits, potion effects, fireball interactions, powder snow, fluids, and creative flight:
 
 ```bash
 bun run test:integration -- --route java-bedrock --gameplay-complex
 ```
 
-The [probe guide](../../docs/bedrock-test-packs.md#complex-gameplay) lists its twelve cases and observation limits.
+The [probe guide](../../docs/bedrock-test-packs.md#complex-gameplay) lists its 29 cases and observation limits.
 The [coverage matrix](../../docs/bedrock-complex-gameplay.md) tracks the broader movement and combat requirements.
-These fixtures need live verification against the pinned target.
+Headless BDS probes verify selected server controls.
+Translated Java gameplay and native client comparisons remain required.
 The published Script API 2.9.0 types check the complex fixture code during `bun run check`.
 
 ## Update the catalog

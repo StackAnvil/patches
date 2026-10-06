@@ -114,17 +114,17 @@ Keep authoritative state, packet construction, item requests, and corrections in
 Use the add-on where native input, local physics, or presentation requires client integration.
 Retain ordinary Java and ViaProxy coverage where standard translation suffices.
 
-## Runnable first suite
+## Runnable suite
 
-Run the twelve new BDS cases:
+Run the 29 BDS cases:
 
 ```bash
 bun run test:integration -- --route java-bedrock --gameplay-complex
 ```
 
 The [probe guide](bedrock-test-packs.md#complex-gameplay) describes their assertions and limits.
-They check ranged use, powder snow, water movement, and creative ascent.
-They are the first executable subset of this matrix.
+They check ranged use and hits, potion effects, fireball interactions, powder snow, fluid movement, and creative ascent.
+They are an executable subset of this matrix.
 The existing portable gameplay sweep remains separate.
 The Java/Geyser fixture does not implement the new cases yet.
 
@@ -162,3 +162,36 @@ The [inventory patch notes](../patches/viabedrock/deferred/0003-translate-server
 The headless screen-opening attempt timed out.
 Native screen behavior and live Java or ViaProxy transfers remain unverified.
 The full mount and movement matrix above remains required.
+
+### Ranged combat and fluid fixtures, October 6, 2026
+
+**Implemented:** Seventeen additional cases bring the opt-in suite to 29.
+They cover short bow draws, submerged bow use, bow and crossbow target damage, crossbow cancellation and empty ammunition.
+They also cover splash speed, lingering slowness, large and small fireball hit and dodge controls, large-fireball reflection, currents, lava, and both bubble-column directions.
+
+Potion checks pair the owned projectile and impact with its effect.
+Lingering checks also require a nearby cloud.
+Target damage must identify the same arrow that hit the target.
+Fireball checks require an incoming shot on a collision course using the server's actual collision bounds.
+An idle player, unrelated damage, a missed shot, or an unrelated attack cannot satisfy the respective positive assertions.
+Fixtures close their observers after verification, replacement, or reset.
+Preparation clears prior fire damage, and asynchronous start actions cannot attach to a different fixture.
+
+**Target evidence:** Isolated headless BDS 1.26.51.1 confirms the potion effect and delivery registries.
+All 29 fixture preparations pass on the target server.
+It rejects direct Script API spawning of vanilla fireballs, so the fixtures use natural ghast and blaze shots.
+Both hit controls pass with owned trajectories, player contact, and matching damage.
+Native packet probes pass the splash-speed and lingering-slowness assertions, including consumption, impacts, effects, and the lingering cloud.
+They also pass bow and crossbow target hits and large-fireball reflection.
+Reflection records the player attack, the new projectile owner, and outgoing motion.
+The TypeScript check, pack build, and all 135 tooling tests pass.
+
+The synthetic probe needed the loading-screen completion and interaction initialization packets before normal gameplay worked.
+ViaBedrock already sends those packets during joining.
+An inventory resynchronization supplied the probe's current held item before item use.
+These probe corrections do not establish a new production joining fix.
+
+**Unverified:** The synthetic protocol client does not exercise Java translation, local physics, rendering, or input timing.
+Full Java, native client, direct, and ViaProxy comparisons remain required.
+Detailed charge, damage, potion radius and duration, small-fireball reflection, enchantments, correction replay, and mixed movement cases remain open.
+The current-boot GPU guard and occupied private display remain in place.

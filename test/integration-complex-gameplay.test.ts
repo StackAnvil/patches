@@ -1,24 +1,25 @@
 import { expect, mock, test } from "bun:test";
-import type { Player } from "@minecraft/server";
+import type { Entity, Player } from "@minecraft/server";
 import type { RangedObservation } from "../src/integration/ranged-observation.ts";
 
 const callbacks = new Map<string, (event: any) => void>();
 const pending: (() => void)[] = [];
 let sample: () => void;
 const signal = (name: string) => ({ subscribe(callback: (event: any) => void) { callbacks.set(name, callback); } });
-const player = { name: "ProbePlayer", selectedSlotIndex: 0 } as Player;
+const player = { name: "ProbePlayer", id: "player", selectedSlotIndex: 0 } as Player;
 mock.module("@minecraft/server", () => ({
-  EquipmentSlot: {}, GameMode: {}, ItemStack: class {},
+  EquipmentSlot: {}, GameMode: {}, ItemStack: class {}, Potions: {},
   system: { currentTick: 10, run(callback: () => void) { pending.push(callback); },
     runInterval(callback: () => void) { sample = callback; } },
   world: { getAllPlayers: () => [player], afterEvents: Object.fromEntries(
-    ["itemStartUse", "itemReleaseUse", "itemCompleteUse", "itemStopUse", "itemUse", "entitySpawn"]
+    ["itemStartUse", "itemReleaseUse", "itemCompleteUse", "itemStopUse", "itemUse", "entitySpawn",
+      "projectileHitBlock", "projectileHitEntity", "effectAdd", "entityHitEntity", "entityHurt"]
       .map((name) => [name, signal(name)])) },
 }));
 const { registerComplexGameplay } = await import("../test-packs/entity-probe/src/complex-gameplay.ts");
 type Context = Parameters<typeof registerComplexGameplay>[0];
 let active: ReturnType<Context["getActive"]>;
-registerComplexGameplay({ define() {}, getActive: () => active,
+registerComplexGameplay({ define() {}, getActive: () => active, tagEntity() {},
   prepareArena: async () => {}, inventory: () => { throw new Error("Unused fixture setup"); },
   equipment: () => { throw new Error("Unused fixture setup"); }, countItem: () => 0,
   blockAt: () => { throw new Error("Unused fixture setup"); }, position: () => ({ x: 0, y: 0, z: 0 }) });
@@ -81,4 +82,68 @@ test("hotbar samples record transitions without duplicating stationary frames", 
   sample();
   expect(ranged.slots).toMatchObject([{ slot: 0 }, { slot: 1 }]);
   Object.assign(player, { selectedSlotIndex: 0 });
+});
+
+test("impact and effect observations exclude other players and close with their fixture", () => {
+  const ranged = prepareObservation();
+  ranged.impacts = [];
+  ranged.effects = [];
+  const impact = callbacks.get("projectileHitBlock")!;
+  const effect = callbacks.get("effectAdd")!;
+  const hit = { projectile: { id: "potion" }, source: { id: player.id }, location: { x: 0, y: 0, z: 0 } };
+  impact({ ...hit, source: { id: "other-player" } });
+  effect({ entity: { typeId: "minecraft:player", name: "OtherPlayer" }, effect: { typeId: "minecraft:speed", duration: 100, amplifier: 0 } });
+  expect(ranged.impacts).toHaveLength(0);
+  expect(ranged.effects).toHaveLength(0);
+  impact(hit);
+  effect({ entity: { ...player, typeId: "minecraft:player" }, effect: { typeId: "minecraft:speed", duration: 100, amplifier: 0 } });
+  expect(ranged.impacts).toHaveLength(1);
+  expect(ranged.effects).toHaveLength(1);
+  active!.fixture.closed = true;
+  impact(hit);
+  effect({ entity: { ...player, typeId: "minecraft:player" }, effect: { typeId: "minecraft:speed", duration: 100, amplifier: 0 } });
+  expect(ranged.impacts).toHaveLength(1);
+  expect(ranged.effects).toHaveLength(1);
+});
+
+test("clouds require an owned nearby impact and cannot leak through deferred callbacks", () => {
+  const ranged = prepareObservation();
+  ranged.clouds = [];
+  ranged.impacts = [{ id: "potion", tick: 10, location: { x: 0, y: 0, z: 0 } }];
+  const cloud = () => callbacks.get("entitySpawn")!({ entity: { id: "cloud", typeId: "minecraft:area_effect_cloud", location: { x: 0, y: 0, z: 0 } } });
+  cloud(); pending.shift()!();
+  expect(ranged.clouds).toHaveLength(0);
+  ranged.projectiles.push({ id: "potion", tick: 9, type: "minecraft:lingering_potion", speed: 0.5 });
+  cloud(); pending.shift()!();
+  expect(ranged.clouds).toHaveLength(1);
+  cloud(); prepareObservation(); pending.shift()!();
+  expect(ranged.clouds).toHaveLength(1);
+});
+
+test("the incoming control selects an owned collision course and removes only its off-course shots", () => {
+  let removedShots = 0;
+  let stoppedShooter = 0;
+  const incoming = { playerId: player.id, shooterId: "shooter", type: "minecraft:fireball", start: { x: 0, y: 0, z: 0 },
+    end: { x: 0, y: 0, z: 0 }, forward: { x: 0, y: 0, z: 1 },
+    playerBounds: { center: { x: 0, y: 0.9, z: 0 }, extent: { x: 0.3, y: 0.9, z: 0.3 } },
+    healthBefore: 20, healthAfter: 20, frames: [], attacks: [], hits: [], damage: [] };
+  active = { playerName: player.name, fixture: { incoming,
+    shooter: { remove: () => stoppedShooter++ } as unknown as Entity } };
+  function shot(owner: string, x: number) {
+    callbacks.get("entitySpawn")!({ entity: { id: "shot", typeId: incoming.type,
+      getComponent: () => ({ owner: { id: owner } }), getVelocity: () => ({ x: 0, y: 0, z: -0.5 }),
+      getAABB: () => ({ center: { x, y: 1, z: 8 }, extent: { x: 0.5, y: 0.5, z: 0.5 } }),
+      remove: () => removedShots++ } });
+    pending.shift()!();
+  }
+  shot("another-shooter", 0);
+  expect(removedShots).toBe(0);
+  expect(incoming.frames).toHaveLength(0);
+  shot("shooter", 3);
+  expect(removedShots).toBe(1);
+  expect(stoppedShooter).toBe(0);
+  shot("shooter", 0);
+  expect(incoming.frames).toHaveLength(1);
+  expect(stoppedShooter).toBe(1);
+  expect(removedShots).toBe(1);
 });

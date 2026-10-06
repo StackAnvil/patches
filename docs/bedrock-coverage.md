@@ -5714,7 +5714,7 @@ The current-boot GPU guard continues to prevent fresh native comparisons.
 The Java/Geyser probe does not yet implement the complex fixtures.
 These checks establish neither live gameplay parity nor anticheat compatibility.
 
-**Source gaps:** Horse screens reject mule entities and expose no chest storage.
+**Source gaps:** The initial audit found unsupported mule screens and chest storage, addressed by the core implementation below.
 Predicted mounts are limited to Java boats and abstract horses.
 Spear animation context does not model attack reach or relative-speed conditions.
 The pending prediction sample does not supply coherent frame history and world-state replay.
@@ -5744,3 +5744,37 @@ CubeConverter and the complete ViaBedrock build pass, including Checkstyle, 672 
 Native UI behavior, live translated requests, shift-clicks, rejection recovery, reopen and destruction cases, other mount types, and direct or ViaProxy comparisons remain unverified.
 Probe processes stopped cleanly; the occupied lab display and native GPU guard were preserved.
 The broader complex gameplay matrix and all eight original coverage groups remain requirements.
+
+## Ranged combat and fluid fixture expansion (October 6, 2026)
+
+**Implemented:** The complex gameplay suite now contains 29 cases, adding seventeen executable scenarios.
+The [probe guide](bedrock-test-packs.md#complex-gameplay) lists their inputs and assertions.
+They cover short and submerged bow draws, bow and crossbow target damage, crossbow cancellation and empty ammunition.
+They also cover splash speed, lingering slowness, natural fireball hits, dodging, reflection, water currents, lava movement, and both bubble-column directions.
+
+Projectile controls use the server's actual collision bounds to reject shots that would miss an idle player.
+Reflection requires the player's attack, ownership change, and outgoing motion.
+Target damage identifies the same projectile that hit the fixture target.
+Potion effects follow an owned impact; lingering cases also require its nearby cloud.
+Observer tests reject unrelated players, projectiles, damage, stale frames, and deferred callbacks from prior fixtures.
+Preparation clears earlier fire damage, and start actions cannot restart or attach to another fixture.
+
+**Target evidence:** The isolated official BDS is version 1.26.51.1, build 51061372, protocol 2193 with strict movement enabled.
+Script API 2.9.0 exposes matching potion registries and actual entity collision bounds.
+Vanilla fireballs reject direct Script API spawning, so fixtures use natural ghast and blaze shots.
+The fixed adjacent [ghast](https://github.com/Mojang/bedrock-samples/blob/46ba6ea985fb5a92d79a9419198f10dda14c199d/behavior_pack/entities/ghast.json) and [blaze](https://github.com/Mojang/bedrock-samples/blob/46ba6ea985fb5a92d79a9419198f10dda14c199d/behavior_pack/entities/blaze.json) definitions identify these shooter flows.
+The [large](https://github.com/Mojang/bedrock-samples/blob/46ba6ea985fb5a92d79a9419198f10dda14c199d/behavior_pack/entities/fireball.json) and [small](https://github.com/Mojang/bedrock-samples/blob/46ba6ea985fb5a92d79a9419198f10dda14c199d/behavior_pack/entities/small_fireball.json) definitions both enable reflection.
+Small-fireball reflection remains a separate required comparison.
+
+**Verified within scope:** Headless BDS controls pass for large and small fireball hits.
+All 29 fixture preparations pass on that server.
+Native packet probes also pass splash-speed and lingering-slowness effects, bow and crossbow target damage, and large-fireball reflection.
+The TypeScript check, pack build, and all 135 tooling tests pass.
+These use a synthetic protocol client, not Java translation or the native graphical client.
+The probe needed loading-screen completion, interaction initialization, and current held-item inventory synchronization.
+ViaBedrock already implements those joining packets; this work does not claim a production joining fix.
+
+**Unverified:** Full client input, local trajectories, native visual baselines, direct and ViaProxy comparisons, fluid movement results, dodging, and anticheat behavior remain required.
+The matrix retains enchantments, detailed damage and charge rules, potion duration and radius, correction replay, and other mixed gameplay cases.
+The current-boot GPU guard and the occupied private display remain in place.
+All eight original coverage groups, CubeCraft interoperability, and actual platform joins remain requirements.

@@ -74,6 +74,7 @@ async function prepareArena(player, gameMode = GameMode.Survival) {
     gear.setEquipment(slot);
   }
   player.setGameMode(gameMode);
+  player.extinguishFire(false);
   player.getComponent("minecraft:health")?.resetToMaxValue();
   player.commandPermissionLevel = CommandPermissionLevel.GameDirectors;
   player.selectedSlotIndex = 0;
@@ -94,8 +95,8 @@ function spawnTarget(player, typeId) {
   return entity;
 }
 
-function define(id, group, prepare, inspect) {
-  scenarios.set(id, { id, group, prepare, inspect });
+function define(id, group, prepare, inspect, start) {
+  scenarios.set(id, { id, group, prepare, inspect, start });
 }
 
 for (const [id, direction] of [["movement-left", -1], ["movement-right", 1]]) {
@@ -322,7 +323,11 @@ function verifyElytraRocket(player, fixture, hand) {
 
 for (const hand of ["offhand", "mainhand"]) {
   define(`${hand}-elytra-rocket`, "equipment", (player) => prepareElytraRocket(player, hand),
-    (player, fixture) => verifyElytraRocket(player, fixture, hand));
+    (player, fixture) => verifyElytraRocket(player, fixture, hand), (player, fixture) => {
+      player.teleport(position(0.5, 50, 0.5),
+        { dimension: arena.dimension, facingLocation: position(0.5, 50, 8.5) });
+      fixture.observation.flightStartTick = system.currentTick;
+    });
 }
 
 define("boat-forward", "movement", async (player) => {
@@ -801,7 +806,8 @@ world.afterEvents.playerSpawn.subscribe((event) => {
 });
 world.afterEvents.playerDimensionChange.subscribe(() => dimensionChanges++);
 
-registerComplexGameplay({ define, prepareArena, inventory, equipment, countItem, blockAt, position, getActive: () => active });
+registerComplexGameplay({ define, prepareArena, inventory, equipment, countItem, blockAt, position, getActive: () => active,
+  tagEntity: (entity) => entity.addTag(ENTITY_TAG) });
 
 export function gameplayIds() {
   return [...scenarios.keys()];
@@ -822,6 +828,7 @@ export async function prepareGameplay(id, run, player) {
     record(id, run, "prepare", "error", { error: "A player must be online." });
     return;
   }
+  if (active?.fixture) active.fixture.closed = true;
   active = undefined;
   try {
     const fixture = await scenario.prepare(player);
@@ -832,16 +839,17 @@ export async function prepareGameplay(id, run, player) {
   }
 }
 
-export function startGameplay(id, run, player) {
+export async function startGameplay(id, run, player) {
   if (!active || active.scenario.id !== id || active.run !== run || active.playerName !== player?.name
-      || !["offhand-elytra-rocket", "mainhand-elytra-rocket"].includes(id)) {
+      || active.fixture.closed || !active.scenario.start || active.started) {
     record(id, run, "start", "error", { error: "The gameplay start scenario is not active for this player and run." });
     return;
   }
+  const current = active;
+  current.started = true;
   try {
-    player.teleport(position(0.5, 50, 0.5),
-      { dimension: arena.dimension, facingLocation: position(0.5, 50, 8.5) });
-    active.fixture.observation.flightStartTick = system.currentTick;
+    await current.scenario.start(player, current.fixture);
+    if (active !== current || current.fixture.closed) throw new Error("The gameplay fixture changed during its start action.");
     record(id, run, "start", "ready", { observed: { location: player.location } });
   } catch (error) {
     record(id, run, "start", "error", { error: String(error) });
@@ -871,6 +879,7 @@ export function verifyGameplay(id, run, player) {
 }
 
 export function resetGameplay() {
+  if (active?.fixture) active.fixture.closed = true;
   active = undefined;
   clearEntities();
 }

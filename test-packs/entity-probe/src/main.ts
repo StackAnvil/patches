@@ -187,7 +187,7 @@ function handle(event) {
       void prepareGameplay(args[0], args[1], currentPlayer(source));
       return;
     case "start":
-      startGameplay(args[0], args[1], currentPlayer(source));
+      void startGameplay(args[0], args[1], currentPlayer(source));
       return;
     case "verify":
       verifyGameplay(args[0], args[1], currentPlayer(source));

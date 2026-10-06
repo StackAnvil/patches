@@ -349,10 +349,17 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
   switch (id) {
     case "bow-release":
     case "bow-no-ammo":
+    case "bow-water-release":
+    case "bow-hit":
       await uiMouse(ui, "right", 1300);
       await Bun.sleep(300);
       return;
+    case "bow-short-release":
+      await uiMouse(ui, "right", 250);
+      await Bun.sleep(300);
+      return;
     case "bow-cancel":
+    case "crossbow-cancel":
       await Promise.all([
         uiMouse(ui, "right", 1300),
         (async () => { await Bun.sleep(500); await uiKey(ui, "2"); })(),
@@ -360,8 +367,10 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
       await Bun.sleep(300);
       return;
     case "crossbow-load":
+    case "crossbow-no-ammo":
     case "crossbow-retain":
     case "crossbow-fire":
+    case "crossbow-hit":
       await uiMouse(ui, "right", 2000);
       await Bun.sleep(300);
       if (id === "crossbow-retain") {
@@ -370,7 +379,7 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
         await uiKey(ui, "1");
         await Bun.sleep(350);
       }
-      if (id !== "crossbow-load") {
+      if (id !== "crossbow-load" && id !== "crossbow-no-ammo") {
         await uiMouse(ui, "right");
         await Bun.sleep(300);
       }
@@ -380,12 +389,34 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
       await uiMouse(ui, "right");
       await Bun.sleep(300);
       return;
+    case "splash-potion-speed":
+    case "lingering-potion-slowness":
+      await uiMouse(ui, "right");
+      await Bun.sleep(1800);
+      return;
     case "powder-snow-sink":
     case "powder-snow-boots":
       await Bun.sleep(1800);
       return;
     case "water-forward":
+    case "lava-forward":
       await ui(["ui", "key-hold", "w", "1800", "--client", "java"]);
+      return;
+    case "water-current":
+    case "bubble-column-up":
+    case "bubble-column-down":
+      await Bun.sleep(1800);
+      return;
+    case "fireball-hit":
+    case "fireball-dodge":
+    case "fireball-reflect":
+    case "small-fireball-hit":
+    case "small-fireball-dodge":
+      if (!start) throw new Error("The projectile start event is unavailable.");
+      await start();
+      if (id.endsWith("dodge")) await ui(["ui", "key-hold", "d", "650", "--client", "java"]);
+      if (id === "fireball-reflect") await uiMouse(ui, "left", 3500);
+      await Bun.sleep(5000);
       return;
     case "creative-flight-ascend":
       await uiKey(ui, "space");
@@ -627,7 +658,7 @@ export async function runGameplayCases(ids: readonly GameplayCaseId[], options: 
         "--output-dir", options.artifactDir]));
       await driveGameplay(id, options.ui, async () => {
         options.server.stdin?.write(`scriptevent vbprobe:start ${id} ${run}\n`);
-        await waitForGameplayEvent(id, run, "start", log, alive);
+        await waitForGameplayEvent(id, run, "start", log, alive, 30_000, 25);
       });
       await Bun.sleep(350);
       screenshots.push(await options.ui(["ui", "screenshot", `gameplay-${id}-${run}-after`, "--client", "java",

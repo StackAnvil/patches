@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { rangedObservationPasses, type RangedObservation } from "../src/integration/ranged-observation.ts";
+import { potionImpactPasses, rangedHitPasses, rangedObservationPasses, type RangedObservation } from "../src/integration/ranged-observation.ts";
 
 function chargedShot(): RangedObservation {
   return { item: "minecraft:bow", ammunition: "minecraft:arrow", initialCount: 4, remainingCount: 3,
@@ -20,9 +20,11 @@ test("a shot requires an ordered use cycle, one moving projectile, and one consu
 });
 
 test("cancelled charging and an empty quiver reject phantom projectiles or consumed ammunition", () => {
-  const cancelled = { ...chargedShot(), remainingCount: 4, projectiles: [], events: [{ action: "start" as const, tick: 10 }] };
+  const cancelled = { ...chargedShot(), remainingCount: 4, projectiles: [], events: [{ action: "start" as const, tick: 10 }],
+    slots: [{ slot: 0, tick: 10 }, { slot: 1, tick: 15 }] };
   expect(rangedObservationPasses("cancel", cancelled)).toBe(true);
   expect(rangedObservationPasses("cancel", { ...cancelled, events: [] })).toBe(false);
+  expect(rangedObservationPasses("cancel", { ...cancelled, slots: [] })).toBe(false);
   expect(rangedObservationPasses("cancel", chargedShot())).toBe(false);
   expect(rangedObservationPasses("empty", { ...cancelled, initialCount: 0, remainingCount: 0 })).toBe(true);
   expect(rangedObservationPasses("empty", { ...chargedShot(), initialCount: 0, remainingCount: 0 })).toBe(false);
@@ -50,4 +52,31 @@ test("thrown potions require a use event and the matching projectile type", () =
   expect(rangedObservationPasses("throw", potion)).toBe(true);
   expect(rangedObservationPasses("throw", { ...potion, projectiles: chargedShot().projectiles })).toBe(false);
   expect(rangedObservationPasses("throw", { ...potion, events: [] })).toBe(false);
+});
+
+test("potion effects require a consumed owned impact, and lingering effects require the nearby cloud", () => {
+  const location = { x: 0, y: 0, z: 0 };
+  const observation: RangedObservation = { item: "minecraft:lingering_potion", ammunition: "minecraft:lingering_potion",
+    initialCount: 1, remainingCount: 0, events: [{ action: "use", tick: 10 }],
+    projectiles: [{ id: "potion", tick: 11, type: "minecraft:lingering_potion", speed: 0.5 }],
+    impacts: [{ id: "potion", tick: 15, location }], effects: [{ tick: 20, type: "minecraft:slowness", duration: 100, amplifier: 0 }],
+    clouds: [{ id: "cloud", tick: 15, location }] };
+  expect(potionImpactPasses(observation, "minecraft:slowness", true)).toBe(true);
+  expect(potionImpactPasses({ ...observation, impacts: [{ id: "another-shot", tick: 15, location }] }, "minecraft:slowness", true)).toBe(false);
+  expect(potionImpactPasses({ ...observation, effects: [{ ...observation.effects![0]!, tick: 9 }] }, "minecraft:slowness", true)).toBe(false);
+  expect(potionImpactPasses({ ...observation, effects: [{ ...observation.effects![0]!, tick: 12 }] }, "minecraft:slowness", true)).toBe(false);
+  expect(potionImpactPasses(observation, "minecraft:speed", true)).toBe(false);
+  expect(potionImpactPasses({ ...observation, clouds: [] }, "minecraft:slowness", true)).toBe(false);
+  expect(potionImpactPasses({ ...observation, clouds: [{ id: "elsewhere", tick: 15, location: { ...location, x: 10 } }] }, "minecraft:slowness", true)).toBe(false);
+  expect(potionImpactPasses({ ...observation, effects: [{ ...observation.effects![0]!, duration: 0 }] }, "minecraft:slowness", true)).toBe(false);
+});
+
+test("ranged hits require damage and contact from the launched arrow against the same target", () => {
+  const shot: RangedObservation = { ...chargedShot(), impacts: [{ id: "owned-arrow", tick: 40, target: "cow", location: { x: 0, y: 0, z: 4 } }],
+    target: { id: "cow", healthBefore: 10, healthAfter: 4, damage: [{ tick: 40, amount: 6, projectile: "owned-arrow" }] } };
+  expect(rangedHitPasses("release", shot)).toBe(true);
+  expect(rangedHitPasses("release", { ...shot, impacts: [] })).toBe(false);
+  expect(rangedHitPasses("release", { ...shot, target: { ...shot.target!, healthAfter: 10 } })).toBe(false);
+  expect(rangedHitPasses("release", { ...shot, target: { ...shot.target!, damage: [{ tick: 40, amount: 6, projectile: "another-arrow" }] } })).toBe(false);
+  expect(rangedHitPasses("release", { ...shot, impacts: [{ ...shot.impacts![0]!, target: "another-cow" }] })).toBe(false);
 });
