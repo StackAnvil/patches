@@ -9,6 +9,8 @@ import { promisify } from "node:util";
 import { Effect } from "effect";
 import { root } from "../model.ts";
 import { artifact } from "../prism.ts";
+import { installModpack } from "../integration/modpack.ts";
+import { configureShaders, graphicsFailures, installGraphicsProfile, readGraphicsLock, type GraphicsProfile } from "../integration/graphics.ts";
 import { activeDisplay, displayEnv, stopDisplay } from "../lab/display.ts";
 import { inspectJournal } from "./journal.ts";
 import { requireNativeOfflineReplay, requireNativeReplayProcessNamespaces, type NativeOfflineProof } from "./native-offline.ts";
@@ -104,7 +106,7 @@ async function buildFabricRecorder(jar: string, build: string): Promise<string> 
   return output;
 }
 
-async function launchJava(directory: string, address: string, client: "addon" | "proxy", recorder: string, account?: string): Promise<{ pid: number; log: string }> {
+async function launchJava(directory: string, address: string, client: "addon" | "proxy", recorder: string, graphics: GraphicsProfile, account?: string): Promise<{ pid: number; log: string }> {
   const isolated = await displayEnv(true);
   if (!isolated) throw new Error("The replay lab requires a private virtual display.");
   const sourceName = process.env.STACKANVIL_REPLAY_INSTANCE ?? "StackAnvil Integration 26.3";
@@ -156,10 +158,22 @@ async function launchJava(directory: string, address: string, client: "addon" | 
   await writeFile(join(config, "viabedrock.yml"), "blob-cache: disabled\npack-cache: disabled\ntranslate-resource-packs: true\n", { mode: 0o600 });
   const mods = join(game, "mods");
   await mkdir(mods, { mode: 0o700 });
+  const managed: string[] = [];
   for (const project of ["viafabricplus", "viafabricplus-bedrock"]) {
     const file = await artifact(project);
     await cp(file, join(mods, basename(file)));
+    managed.push(basename(file));
   }
+  managed.push("stackanvil-recorder.jar");
+  await writeFile(join(instance, ".stackanvil-managed"), JSON.stringify({ files: managed }), { mode: 0o600 });
+  if (graphics === "shaders") await installGraphicsProfile(instance);
+  else if (graphics === "optimized") {
+    await installModpack(instance);
+    await configureShaders(instance);
+  }
+  await writeFile(join(directory, "graphics-profile.json"), `${JSON.stringify({ profile: graphics,
+    ...(graphics === "shaders" ? { lock: await readGraphicsLock() } : {}),
+  }, null, 2)}\n`, { mode: 0o600 });
   await cp(recorder, join(mods, "stackanvil-recorder.jar"));
   await writeFile(join(game, "stackanvil-replay-directory.txt"), directory, { mode: 0o600 });
   const launcherLog = join(directory, "launcher.log");
@@ -277,6 +291,8 @@ async function main(): Promise<void> {
   const seconds = Number(option("--seconds") ?? 120);
   const client = option("--client") ?? (mode === "replay" ? "addon" : "proxy");
   const transportOnly = args.includes("--transport-only");
+  const graphics = args.includes("--shaders") ? "shaders" : args.includes("--modpack") ? "optimized" : "plain";
+  if (client === "native" && graphics !== "plain") throw new Error("--modpack and --shaders require a Java client.");
   if (client !== "addon" && client !== "proxy" && client !== "native") throw new Error("--client must be addon, proxy, or native.");
   const nativeOffline = mode === "replay" && client === "native" ? await requireNativeOfflineReplay() : undefined;
   if (!Number.isInteger(seconds) || seconds < 20 || seconds > 300) throw new Error("--seconds must be between 20 and 300.");
@@ -349,7 +365,7 @@ async function main(): Promise<void> {
       ?? (mode === "record" && input !== "local" ? process.env.STACKANVIL_BEDROCK_ACCOUNT ?? accountDefault : undefined) : undefined;
     const game = client === "native"
       ? await launchNative(directory, bind!, option("--native-home"), mode === "replay" || args.includes("--native-manual-connect"), nativeOffline)
-      : await launchJava(directory, client === "addon" ? target! : `127.0.0.1:${bind}`, client, recorder, assetAccount ? resolve(assetAccount) : undefined);
+      : await launchJava(directory, client === "addon" ? target! : `127.0.0.1:${bind}`, client, recorder, graphics, assetAccount ? resolve(assetAccount) : undefined);
     gamePid = game.pid;
     console.log(`Private ${mode} session: ${directory}`);
     // Keep connection setup separate from the requested gameplay scene.
@@ -387,7 +403,7 @@ async function main(): Promise<void> {
     for (const name of ["saves.json", "viaproxy.yml"]) if (existsSync(join(proxyHome, name))) await chmod(join(proxyHome, name), 0o600);
   }
   const summary = await inspectJournal(join(directory, "packets.sbr"));
-  await writeFile(join(directory, "manifest.json"), `${JSON.stringify({ schema: 1, mode, client, server: mode === "record" ? input : undefined, capturedAt: new Date().toISOString(), summary }, null, 2)}\n`, { mode: 0o600 });
+  await writeFile(join(directory, "manifest.json"), `${JSON.stringify({ schema: 1, mode, client, graphics, server: mode === "record" ? input : undefined, capturedAt: new Date().toISOString(), summary }, null, 2)}\n`, { mode: 0o600 });
   console.log(JSON.stringify(summary, null, 2));
   console.log(`Saved private ${mode} artifacts: ${directory}`);
   if (client === "native" && /Native connection failed:|Native capture failed:/.test(await logText(join(directory, "proxy.log")))) throw new Error("The native recorder failed. Read its private proxy log; this capture is incomplete.");
@@ -396,6 +412,10 @@ async function main(): Promise<void> {
   if (unexpectedClientExit || stopped) throw new Error("The client exited or the run was cancelled before normal cleanup. Read its private client log.");
   if (/Client disconnected with reason:|Failed to handle packet|ReadTimeoutException|(?:Unreported|Reported) exception thrown!|A fatal error has been detected by the Java Runtime Environment|Mixin transformation .* failed|handlerAdded\(\) has thrown/.test(await logText(join(directory, "client.log")))) {
     throw new Error("The client disconnected or failed during the captured session. Read its private client log.");
+  }
+  if (mode === "record" && graphics === "shaders") {
+    const failures = graphicsFailures(await logText(join(directory, "client.log")), (await readGraphicsLock()).shader.filename);
+    if (failures.length) throw new Error(`${failures.join(" ")} Read the private client log.`);
   }
   if (!summary.reachedStartGame || !summary.reachedSpawn) throw new Error("The server did not announce initialization and spawn. Read its private logs and screenshot.");
   if (!hasGameplayAcknowledgments(summary.serverboundIds)) throw new Error("The server announced spawn, but the client did not initialize its player and begin gameplay movement. Read its private logs and screenshot.");
@@ -416,7 +436,8 @@ async function main(): Promise<void> {
     const expected = JSON.parse(stdout) as SceneFeatures;
     const auditFile = join(directory, "render-audit.json");
     const audit = existsSync(auditFile) ? JSON.parse(await readFile(auditFile, "utf8")) as RenderAudit : undefined;
-    const failures = verifyRendering(expected, audit, clientLog, !!original.ids[12]);
+    const failures = [...verifyRendering(expected, audit, clientLog, !!original.ids[12]),
+      ...graphicsFailures(clientLog, graphics === "shaders" ? (await readGraphicsLock()).shader.filename : undefined)];
     await writeFile(join(directory, "verification.json"), JSON.stringify({ transport: "pass", rendering: failures.length ? "fail" : "pass", failures, unregisteredActors: expected.unregisteredActorIdentifiers ?? [], expected }, null, 2), { mode: 0o600 });
     console.log("PASS offline scene transport: playable spawn, complete payloads, and Java resource pack load.");
     if (failures.length) {

@@ -80,7 +80,17 @@ export async function bundlePrism(): Promise<string> {
   return file;
 }
 
+export async function prismProcess(instanceName: string): Promise<number | undefined> {
+  const { stdout } = await execute("ps", ["-eo", "pid=,args="], { maxBuffer: 8 * 1024 * 1024 });
+  for (const line of stdout.split("\n")) {
+    const match = /^\s*(\d+)\s+(.+)$/.exec(line);
+    if (match?.[2]?.includes("org.prismlauncher.EntryPoint") && match[2].includes(instanceName)) return Number(match[1]);
+  }
+  return undefined;
+}
+
 export async function installPrism(instanceName = prismInstance): Promise<string> {
+  if (await prismProcess(instanceName)) throw new Error(`Prism instance ${instanceName} is already running. Close it before changing its mods.`);
   const { directory, version } = await prepareFiles();
   const destination = join(prismHome, instanceName);
   const marker = join(destination, ".stackanvil-managed");

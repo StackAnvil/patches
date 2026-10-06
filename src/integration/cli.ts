@@ -10,18 +10,17 @@ import { promisify } from "node:util";
 import { Effect } from "effect";
 import { activeDisplay, displayEnv, ensureDisplay, stopDisplay } from "../lab/display.ts";
 import { root } from "../model.ts";
-import { artifact, installPrism } from "../prism.ts";
+import { artifact, installPrism, prismProcess } from "../prism.ts";
 import { installEntityProbe, waitForProbe } from "./entity-probe.ts";
 import { allGameplayCaseIds, gameplayCasesForBackend, installProbeGuiScale, runGameplayCases, type GameplayCaseId } from "./gameplay-probe.ts";
 import { convertedGeyserTexturesMatch, geyserBedrockVersion, geyserCaseIds, geyserEntityUpdatesMatch, installJavaProbe } from "./geyser.ts";
 import { convertedPackCount, convertedTextureMatches, installResourceProbe } from "./resource-probe.ts";
 import { connectionFailure, waitForJoin, type JoinRoute } from "./join.ts";
 import { installModpack } from "./modpack.ts";
+import { configureShaders, graphicsFailures, installGraphicsProfile, readGraphicsLock, integrationPrismNames, type GraphicsProfile } from "./graphics.ts";
 
 const execute = promisify(execFile);
 const privateRoot = join(root, ".stackanvil", "integration");
-const plainPrismName = "StackAnvil Integration 26.3";
-const modpackPrismName = "Fabulously Optimized StackAnvil Integration 26.3";
 const captureCli = join(root, "src", "capture", "cli.ts");
 const prismData = join(homedir(), ".var", "app", "org.prismlauncher.PrismLauncher", "data", "PrismLauncher");
 const bdsSource = resolve(process.env.BEDROCK_SERVER_HOME ?? join(homedir(), "bedrock-server"));
@@ -208,11 +207,15 @@ async function viaProxy(dir: string, bedrockPort: number, version: string, trans
   return { child, log, port };
 }
 
-async function preparePrism(modpack: boolean): Promise<{ instance: string; name: string }> {
-  const name = modpack ? modpackPrismName : plainPrismName;
+async function preparePrism(profile: GraphicsProfile): Promise<{ instance: string; name: string }> {
+  const name = integrationPrismNames[profile];
   const instance = await installPrism(name);
-  if (modpack) {
+  if (profile === "shaders") {
+    await installGraphicsProfile(instance);
+    console.log("Testing Fabulously Optimized with the pinned Bedrock shader profile.");
+  } else if (profile === "optimized") {
     const version = await installModpack(instance);
+    await configureShaders(instance);
     console.log(`Testing Fabulously Optimized ${version} with StackAnvil.`);
   } else {
     const mods = join(instance, "minecraft", "mods");
@@ -240,32 +243,21 @@ async function isolatedPrismRoot(dir: string, name: string): Promise<string> {
   return isolated;
 }
 
-async function gameProcess(name: string): Promise<number | undefined> {
-  const { stdout } = await execute("ps", ["-eo", "pid=,args="], { maxBuffer: 8 * 1024 * 1024 });
-  for (const line of stdout.split("\n")) {
-    const match = /^\s*(\d+)\s+(.+)$/.exec(line);
-    if (match?.[2]?.includes("org.prismlauncher.EntryPoint") && match[2].includes(name)) return Number(match[1]);
-  }
-  return undefined;
-}
-
 async function waitForGameProcess(launcher: ChildProcess, log: string, name: string): Promise<number> {
   for (let attempt = 0; attempt < 120; attempt++) {
-    const pid = await gameProcess(name);
+    const pid = await prismProcess(name);
     if (pid) return pid;
     await Bun.sleep(500);
   }
   throw new Error(`Minecraft did not start within 60s (Prism ${alive(launcher.pid) ? "is running" : "has exited"}). Read ${log}.`);
 }
 
-async function javaJoin(route: "java-java" | "java-bedrock" | "java-geyser", modpack: boolean, dir: string,
+async function javaJoin(route: "java-java" | "java-bedrock" | "java-geyser", profile: GraphicsProfile, dir: string,
   target: { port: number; log: string; child: ChildProcess; proxyLog?: string }, entityProbe?: { child: ChildProcess; log: string },
   runEntityProbe = false, gameplayCases: readonly GameplayCaseId[] = [],
   resource?: { variant: "a" | "b"; label: string }, probeFailures?: string[], negativeControls = false): Promise<string> {
-  const name = modpack ? modpackPrismName : plainPrismName;
-  if (await gameProcess(name)) throw new Error(`Prism instance ${name} is already running. Close it before the integration suite changes its mods.`);
-  const { instance } = await preparePrism(modpack);
-  const prismRoot = await isolatedPrismRoot(dir, modpack ? "modpack" : "plain");
+  const { instance, name } = await preparePrism(profile);
+  const prismRoot = await isolatedPrismRoot(dir, profile === "shaders" ? "shaders" : profile === "optimized" ? "modpack" : "plain");
   if (gameplayCases.length) await installProbeGuiScale(instance);
   const serverLogStart = (await textFile(target.log)).length;
   const connectionLogStart = target.proxyLog ? (await textFile(target.proxyLog)).length : 0;
@@ -273,7 +265,7 @@ async function javaJoin(route: "java-java" | "java-bedrock" | "java-geyser", mod
   await rm(clientLog, { force: true });
   const isolated = await displayEnv(true);
   if (!isolated) throw new Error("Integration tests require the private Xvfb display.");
-  const log = join(dir, `${route}-${modpack ? "fabulously-optimized" : "plain"}-launcher.log`);
+  const log = join(dir, `${route}-${profile === "shaders" ? "fabulously-optimized-shaders" : profile === "optimized" ? "fabulously-optimized" : "plain"}-launcher.log`);
   const child = service("flatpak", ["run", "--nosocket=wayland", "--socket=x11", `--filesystem=${join(root, ".stackanvil", "lab")}:ro`,
     `--filesystem=${prismRoot}`,
     `--env=DISPLAY=${isolated.DISPLAY}`, `--env=XAUTHORITY=${isolated.XAUTHORITY}`,
@@ -304,7 +296,10 @@ async function javaJoin(route: "java-java" | "java-bedrock" | "java-geyser", mod
       onJoin: route === "java-java" ? (name) => {
         target.child.stdin?.write(`execute at ${name} run summon minecraft:interaction ~ ~ ~\n`);
       } : undefined });
-    console.log(`PASS ${route}${modpack ? "+fabulously-optimized" : ""}: ${player} joined and remained connected for 20s.`);
+    const renderingFailures = graphicsFailures(await textFile(clientLog),
+      profile === "shaders" ? (await readGraphicsLock()).shader.filename : undefined);
+    if (renderingFailures.length) throw new Error(renderingFailures.join(" "));
+    console.log(`PASS ${route}${profile === "shaders" ? "+fabulously-optimized-shaders" : profile === "optimized" ? "+fabulously-optimized" : ""}: ${player} joined and remained connected for 20s.`);
     if (resource) {
       const log = await textFile(clientLog);
       if (!/Reloading ResourceManager:.*server\//.test(log)) {
@@ -364,6 +359,7 @@ async function javaJoin(route: "java-java" | "java-bedrock" | "java-geyser", mod
       try { process.kill(-child.pid!, "SIGINT"); } catch { /* Already stopped. */ }
     }
     for (let attempt = 0; attempt < 40 && alive(gamePid); attempt++) await Bun.sleep(250);
+    if (existsSync(clientLog)) await writeFile(join(dir, `${route}-${profile === "shaders" ? "shaders" : profile === "optimized" ? "optimized" : "plain"}-${Date.now()}.log`), await readFile(clientLog), { mode: 0o600 });
   }
 }
 
@@ -467,6 +463,8 @@ async function main(): Promise<void> {
   const selected = Bun.argv.slice(2);
   const plainOnly = selected.includes("--plain-only");
   const modpackOnly = selected.includes("--modpack-only");
+  const shaders = selected.includes("--shaders");
+  if (shaders && plainOnly) throw new Error("--shaders requires the Fabulously Optimized client run.");
   if (plainOnly && modpackOnly) throw new Error("Choose --plain-only or --modpack-only, not both.");
   const entityProbe = selected.includes("--entity-probe");
   const resourceProbe = selected.includes("--resource-pack-probe");
@@ -483,6 +481,7 @@ async function main(): Promise<void> {
   if (routes.some((route) => !["java-java", "java-bedrock", "bedrock-bedrock", "java-geyser"].includes(route))) {
     throw new Error("Use --route java-java, java-bedrock, bedrock-bedrock, or java-geyser.");
   }
+  if (shaders && !routes.some((route) => route.startsWith("java-"))) throw new Error("--shaders requires a Java client route.");
   const geyserRoute = routes.includes("java-geyser");
   const gameplayCases: GameplayCaseId[] = [...new Set([
     ...(geyserProbe ? geyserCaseIds : []),
@@ -524,21 +523,21 @@ async function main(): Promise<void> {
     const proxy = proxyBedrock ? await viaProxy(dir, proxyBedrock.port, proxyBedrock.version, proxyBedrock.transport) : undefined;
     for (const route of routes) {
       if (route === "java-java" && java) {
-        if (!modpackOnly) await javaJoin(route, false, dir, java);
-        if (!plainOnly) await javaJoin(route, true, dir, java);
+        if (!modpackOnly) await javaJoin(route, "plain", dir, java);
+        if (!plainOnly) await javaJoin(route, shaders ? "shaders" : "optimized", dir, java);
       } else if (route === "java-geyser" && geyser && geyserProxy) {
         const target = { ...geyserProxy, log: geyser.log, proxyLog: geyserProxy.log };
-        if (!modpackOnly) await javaJoin(route, false, dir, target, geyser, false, gameplayCases, undefined, probeFailures, negativeControls);
+        if (!modpackOnly) await javaJoin(route, "plain", dir, target, geyser, false, gameplayCases, undefined, probeFailures, negativeControls);
         if (gameplayCases.length) {
-          await javaJoin(route, false, dir, target);
+          await javaJoin(route, "plain", dir, target);
           console.log("PASS Geyser reconnect: the Java client rejoined the same Paper world.");
         }
-        if (!plainOnly) await javaJoin(route, true, dir, target);
+        if (!plainOnly) await javaJoin(route, shaders ? "shaders" : "optimized", dir, target);
       } else if (route === "java-bedrock" && proxy && proxyBedrock) {
         let modpackProxy = proxy;
         let modpackBedrock = proxyBedrock;
         const proxyLogStart = (await textFile(proxy.log)).length;
-        const firstClientLog = !modpackOnly ? await javaJoin(route, false, dir, { ...proxy, log: proxyBedrock.log, proxyLog: proxy.log },
+        const firstClientLog = !modpackOnly ? await javaJoin(route, "plain", dir, { ...proxy, log: proxyBedrock.log, proxyLog: proxy.log },
           entityProbe || gameplayCases.length || resourceProbe ? proxyBedrock : undefined, entityProbe, gameplayCases,
           resourceProbe ? { variant: "a", label: "a-first" } : undefined, probeFailures) : "";
         if (resourceProbe && (await textFile(proxy.log)).includes("Missing bedrock -> java block state mapping: stackanvil:resource_probe_block")) {
@@ -548,7 +547,7 @@ async function main(): Promise<void> {
           const firstConversions = convertedPackCount((await textFile(proxy.log)).slice(proxyLogStart) + firstClientLog);
           if (!firstConversions) throw new Error("Resource probe A did not convert its new pack.");
           const repeatStart = (await textFile(proxy.log)).length;
-          const repeatClientLog = await javaJoin(route, false, dir, { ...proxy, log: proxyBedrock.log, proxyLog: proxy.log }, proxyBedrock,
+          const repeatClientLog = await javaJoin(route, "plain", dir, { ...proxy, log: proxyBedrock.log, proxyLog: proxy.log }, proxyBedrock,
             false, [], { variant: "a", label: "a-repeat" });
           const repeatedConversions = convertedPackCount((await textFile(proxy.log)).slice(repeatStart) + repeatClientLog);
           if (repeatedConversions) throw new Error("Resource probe A converted the same content again.");
@@ -565,7 +564,7 @@ async function main(): Promise<void> {
             { variant: "b", run: resourceRun });
           const changedProxy = await viaProxy(dir, changedServer.port, changedServer.version, changedServer.transport, "viaproxy-resource-changed", "viaproxy");
           const changedStart = (await textFile(changedProxy.log)).length;
-          const changedClientLog = await javaJoin(route, false, dir, { ...changedProxy, log: changedServer.log, proxyLog: changedProxy.log }, changedServer,
+          const changedClientLog = await javaJoin(route, "plain", dir, { ...changedProxy, log: changedServer.log, proxyLog: changedProxy.log }, changedServer,
             false, [], { variant: "b", label: "b-changed" });
           const changedConversions = convertedPackCount((await textFile(changedProxy.log)).slice(changedStart) + changedClientLog);
           if (!changedConversions) throw new Error("Resource probe B did not convert changed content.");
@@ -573,10 +572,10 @@ async function main(): Promise<void> {
           modpackProxy = changedProxy;
           modpackBedrock = changedServer;
         } else if (gameplayCases.length) {
-          await javaJoin(route, false, dir, { ...proxy, log: proxyBedrock.log, proxyLog: proxy.log });
+          await javaJoin(route, "plain", dir, { ...proxy, log: proxyBedrock.log, proxyLog: proxy.log });
           console.log("PASS gameplay reconnect: the Java client rejoined the same Bedrock world.");
         }
-        if (!plainOnly) await javaJoin(route, true, dir, { ...modpackProxy, log: modpackBedrock.log, proxyLog: modpackProxy.log });
+        if (!plainOnly) await javaJoin(route, shaders ? "shaders" : "optimized", dir, { ...modpackProxy, log: modpackBedrock.log, proxyLog: modpackProxy.log });
       } else if (route === "bedrock-bedrock" && nativeBedrock) {
         await bedrockJoin(dir, nativeBedrock);
       }

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { inspectPinnedModpack, validatePackIndex } from "../src/integration/modpack.ts";
+import { inspectPinnedModpack, replacePackFiles, validatePackIndex } from "../src/integration/modpack.ts";
 
 const target = { minecraft: "26.3", fabricLoader: "0.19.5" };
 
@@ -32,4 +32,15 @@ test("the pinned modpack archive matches its lock and contains client files", as
   const pack = await inspectPinnedModpack();
   expect(pack.files).toBeGreaterThan(0);
   expect(pack.overrides).toBeGreaterThan(0);
+});
+
+test("replaces a pinned mod without keeping both versions or mutating the baseline", () => {
+  const original = validatePackIndex(index(), target);
+  const replacement = { ...original.files[0]!, path: "mods/replacement.jar" };
+  expect(replacePackFiles(original, { "mods/example.jar": replacement }).files).toEqual([replacement]);
+  expect(original.files).toEqual(index().files);
+  expect(() => replacePackFiles(original, { "mods/missing.jar": replacement })).toThrow();
+  expect(() => replacePackFiles(original, { "mods/example.jar": { ...replacement, path: "../escape.jar" } })).toThrow();
+  original.files.push({ ...replacement });
+  expect(() => replacePackFiles(original, { "mods/example.jar": replacement })).toThrow();
 });

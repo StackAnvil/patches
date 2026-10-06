@@ -24,7 +24,7 @@ interface PackLock {
   source: string;
 }
 
-interface PackFile {
+export interface PackFile {
   path: string;
   downloads: string[];
   hashes: { sha512: string };
@@ -80,7 +80,7 @@ export function validatePackIndex(value: unknown, lock: Pick<PackLock, "minecraf
   return index;
 }
 
-async function verifiedDownload(urls: string[], destination: string, hash: string): Promise<void> {
+export async function verifiedDownload(urls: string[], destination: string, hash: string): Promise<void> {
   if (existsSync(destination) && sha512(new Uint8Array(await readFile(destination))) === hash) return;
   let error: unknown;
   for (const url of urls) {
@@ -143,7 +143,16 @@ async function assertNoPatchedModCollision(file: string, path: string): Promise<
   }
 }
 
-export async function installModpack(instance: string): Promise<string> {
+export function replacePackFiles(index: PackIndex, replacements: Readonly<Record<string, PackFile>>): PackIndex {
+  for (const path of Object.keys(replacements)) {
+    if (!index.files.some((file) => file.path === path)) throw new Error(`The pinned modpack has no replacement target: ${path}`);
+  }
+  return validatePackIndex({ ...index, files: index.files.map((file) => replacements[file.path] ?? file) }, {
+    minecraft: index.dependencies.minecraft!, fabricLoader: index.dependencies["fabric-loader"]!,
+  });
+}
+
+export async function installModpack(instance: string, replacements: Readonly<Record<string, PackFile>> = {}): Promise<string> {
   const { lock, index, entries } = await readPack();
   const packMetadata = join(instance, "mmc-pack.json");
   const component = JSON.parse(await readFile(packMetadata, "utf8")) as {
@@ -159,7 +168,7 @@ export async function installModpack(instance: string): Promise<string> {
   const minecraft = join(instance, "minecraft");
   const marker = join(instance, ".stackanvil-modpack.json");
   const previous = existsSync(marker) ? JSON.parse(await readFile(marker, "utf8")) as InstalledPack : { files: [] };
-  const files = index.files.filter((file) => file.env?.client !== "unsupported");
+  const files = replacePackFiles(index, replacements).files.filter((file) => file.env?.client !== "unsupported");
   const overrides = await packOverrides(entries);
   const incoming = new Map<string, string | Uint8Array>();
   await mkdir(cacheDirectory, { recursive: true, mode: 0o700 });

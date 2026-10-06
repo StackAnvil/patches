@@ -88,6 +88,30 @@ The replay server binds only to loopback. It creates a fresh offline handshake a
 
 The default replay connects the Fabric add-on directly to the local Bedrock replay server. This exercises its native skin and entity renderer. A separate recorder mod exists only in the private test instance.
 
+### Replay with graphics mods and shaders
+
+Use a recording with custom actors or geometry skins to test the shader compatibility path:
+
+```bash
+bun run server-replay replay .stackanvil/replay/<recording> --modpack --seconds 150
+bun run server-replay replay .stackanvil/replay/<recording> --shaders --seconds 150
+```
+
+`--modpack` installs the full pinned Fabulously Optimized pack in the private replay instance with shaders disabled.
+`--shaders` installs that pack with the pinned Iris 1.11.7 and Complementary Reimagined r5.9.3 profile.
+It enables shadows, bloom, light shafts, water reflections, and LambDynamicLights features before launch.
+The profile approximates the look of Vibrant Visuals on Java.
+The host GPU and driver still determine the graphics backend.
+
+The replay installer downloads and verifies the mods; changing `STACKANVIL_REPLAY_INSTANCE` alone does not install its mods.
+These options also work with Java recordings and `--client proxy`.
+They require a Java client and cannot configure the official Bedrock client.
+
+Each Java session saves `graphics-profile.json` alongside its private logs and screenshot.
+The shader replay requires an Iris activation message for the pinned pack.
+Missing Bedrock pipeline overrides and shader compilation errors fail rendering verification, even after a complete scene replay.
+The standard transport checks still apply.
+
 For an official-client reference, run the complete CLI inside a Linux network
 namespace with only loopback routes and cleared capabilities:
 

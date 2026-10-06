@@ -96,3 +96,32 @@ Use `--entity-probe`, `--gameplay-probe`, or `--resource-pack-probe` with `--rou
 The suite creates managed Prism instances named `StackAnvil Integration 26.3` and `Fabulously Optimized StackAnvil Integration 26.3`. It leaves your other instances alone. Server data and logs stay under `.stackanvil/integration/`. Native screenshots and HTTPS flows stay under `.stackanvil/captures/`. The test removes its temporary Bedrock server entry and stops only processes it started. The full join suite needs signed-in game clients. GitHub hosted CI runs the tooling tests and build, but does not run account-based game joins.
 
 The renderer regression from [this client log](https://mclo.gs/r01cqUJ) was a cast from a vanilla entity render state to the Bedrock renderer's state. The feature patch now selects its renderer only for tracked Bedrock actors and accepts a vanilla state safely. A focused Java test calls that failure path directly. The Java server join case also runs with Fabulously Optimized and a vanilla interaction entity in view. The local lab sets SDL3 to use EGL so Iris can start with OpenGL on the private display.
+
+To test with shaders, add `--shaders` to the join command:
+
+```bash
+bun run test:integration -- --route java-bedrock --modpack-only --shaders --reuse-build
+```
+
+The shader run uses the full Fabulously Optimized pack with Iris 1.11.7 and Complementary Reimagined r5.9.3.
+These versions match [the macOS rendering report](https://mclo.gs/er8RPm6).
+The files and SHA-512 checksums are pinned in `integration/modpacks/bedrock-shaders.json`.
+The installer replaces the pack's Iris version, so the instance contains one Iris JAR.
+
+The profile enables the shader's High preset, entity shadows, bloom, light shafts, and water reflections.
+LambDynamicLights uses Fancy mode with entity and held-item lights enabled.
+Both the live configuration and first-launch defaults enable these features.
+This provides a Java approximation for comparisons with Vibrant Visuals; it does not reproduce Bedrock's renderer or the Apple GPU driver.
+
+To prepare the profile without a server join, use:
+
+```bash
+bun run integration:graphics:prepare
+```
+
+This command requires the current client builds in `dist/`.
+It creates `Fabulously Optimized Shaders StackAnvil Integration 26.3` in Prism.
+The standard Fabulously Optimized run explicitly disables shaders.
+The shader run fails if Iris does not activate the pinned pack or reports missing Bedrock pipeline overrides.
+A successful join alone does not prove correct geometry.
+Use [a recorded scene replay](server-replay.md) to exercise custom actors and geometry skins.
