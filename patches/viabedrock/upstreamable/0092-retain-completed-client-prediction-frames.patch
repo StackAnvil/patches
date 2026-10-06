@@ -1,4 +1,4 @@
-From 71c2105ca46564ec2fa19c0c49877e2e8f0f5502 Mon Sep 17 00:00:00 2001
+From c0cedf203523b098f47ab234b7932d079731b4ec Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:28 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -107,33 +107,55 @@ Exercise the shared direction helper across all sixteen cardinal-key
 combinations and six native scalar values. Verify zero movement when both
 axes cancel, cardinal movement when one axis cancels, and normalized
 movement before the scalar is applied. Keep unrelated held flags intact.
+
+Match native ItemUseSlowdownSystem and ItemUseSlowdownApplySystem in the
+pinned 1.26.51.1 executable. The reader at 0x143fd7e10 defaults an absent
+component to .35, but a present component without a modifier to 1F.
+The producer at 0x14c5f5e00 suppresses the component at FLT_EPSILON from 1.
+The consumer at 0x14c60f9a0 squares that modifier before multiplying each
+posture-scaled direction and clears the gameplay input cache. The phase-9
+reset at 0x14c610370 removes the component after each frame.
+
+Translate native item use modifiers and vibrations into Java USE_EFFECTS
+in core, including network and resource-pack definitions. Keep shield
+posture slowdown separate. Revision 6 carries the actual completed item
+use scale so consumption, release, or slot changes cannot reconstruct a
+different scale from the new inventory state. Standard Java clients use
+server USINGITEM state as a fallback. Keep native scalar calculations and
+packet construction in core; the add-on only samples the translated item
+component and applies it after posture input.
 ---
  .../viabedrock/api/model/PlayerPosture.java   |  63 ++++++++
- .../api/model/PlayerPrediction.java           |  79 +++++++++
+ .../api/model/PlayerPrediction.java           |  83 ++++++++++
  .../api/model/SneakingInputState.java         |  21 +++
  .../viabedrock/api/model/SwiftSneakState.java |  25 +++
  .../api/model/entity/ClientPlayerEntity.java  |  21 ++-
+ .../definition/ItemDefinitions.java           |  13 ++
  .../raphimc/viabedrock/api/util/MathUtil.java |   6 +-
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
  .../protocol/model/BedrockItem.java           |  19 +++
- .../protocol/packet/ClientPlayerPackets.java  |  53 ++++--
+ .../protocol/model/ItemUseModifiers.java      |  50 ++++++
+ .../protocol/packet/ClientPlayerPackets.java  |  58 +++++--
  .../protocol/packet/MultiStatePackets.java    |  13 ++
  .../protocol/rewriter/ItemDataRewriter.java   |   7 +-
+ .../protocol/rewriter/ItemRewriter.java       |  19 +++
  .../protocol/storage/PlayerInputStorage.java  |   3 +-
  .../storage/PlayerPredictionStorage.java      |  54 +++++++
  .../api/model/PlayerPostureTest.java          | 152 ++++++++++++++++++
- .../api/model/PlayerPredictionTest.java       | 115 +++++++++++++
+ .../api/model/PlayerPredictionTest.java       | 121 ++++++++++++++
  .../api/model/SneakingInputStateTest.java     |  32 ++++
  .../api/model/SwiftSneakStateTest.java        |  32 ++++
  .../api/util/MathUtilMovementTest.java        |  44 +++++
  .../model/BedrockItemEnchantmentTest.java     |  73 +++++++++
+ .../protocol/model/ItemUseModifiersTest.java  |  55 +++++++
  .../packet/ClientPlayerPacketsTest.java       |  32 +++-
  .../packet/PlayerCorrectionPacketTest.java    | 105 ++++++++++++
- 21 files changed, 912 insertions(+), 38 deletions(-)
+ 25 files changed, 1064 insertions(+), 38 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerPosture.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SneakingInputState.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SwiftSneakState.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiers.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/PlayerPostureTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
@@ -141,6 +163,7 @@ movement before the scalar is applied. Keep unrelated held flags intact.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/SwiftSneakStateTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/util/MathUtilMovementTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/BedrockItemEnchantmentTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiersTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/PlayerPosture.java b/src/main/java/net/raphimc/viabedrock/api/model/PlayerPosture.java
@@ -214,10 +237,10 @@ index 000000000..c66d743c2
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java b/src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java
 new file mode 100644
-index 000000000..398f73d9a
+index 000000000..a32fece13
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,83 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -234,13 +257,13 @@ index 000000000..398f73d9a
 +import java.util.Objects;
 +
 +/** Completed local physics for one Java movement frame, never an authoritative position update. */
-+public record PlayerPrediction(Position3f position, Position3f motion, PlayerPosture posture, boolean horizontalCollision, boolean verticalCollision, boolean groundJump, boolean inWater) {
++public record PlayerPrediction(Position3f position, Position3f motion, PlayerPosture posture, boolean horizontalCollision, boolean verticalCollision, boolean groundJump, boolean inWater, float itemUseScale) {
 +
-+    public static final String CHANNEL = "viabedrock:player_prediction_v5";
++    public static final String CHANNEL = "viabedrock:player_prediction_v6";
 +    public static final Type<PlayerPrediction> TYPE = new Type<>(PlayerPrediction.class) {
 +        @Override
 +        public PlayerPrediction read(final ByteBuf buffer) {
-+            if (Types.VAR_INT.readPrimitive(buffer) != 5
++            if (Types.VAR_INT.readPrimitive(buffer) != 6
 +                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
 +                throw new IllegalArgumentException("Unsupported player prediction");
 +            }
@@ -250,17 +273,18 @@ index 000000000..398f73d9a
 +            if ((flags & ~127) != 0) {
 +                throw new IllegalArgumentException("Invalid player prediction flags");
 +            }
-+            return new PlayerPrediction(position, motion, new PlayerPosture((flags & 1) != 0, (flags & 16) != 0, (flags & 32) != 0), (flags & 2) != 0, (flags & 4) != 0, (flags & 8) != 0, (flags & 64) != 0);
++            return new PlayerPrediction(position, motion, new PlayerPosture((flags & 1) != 0, (flags & 16) != 0, (flags & 32) != 0), (flags & 2) != 0, (flags & 4) != 0, (flags & 8) != 0, (flags & 64) != 0, buffer.readFloat());
 +        }
 +
 +        @Override
 +        public void write(final ByteBuf buffer, final PlayerPrediction value) {
-+            Types.VAR_INT.writePrimitive(buffer, 5);
++            Types.VAR_INT.writePrimitive(buffer, 6);
 +            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
 +            writeVector(buffer, value.position());
 +            writeVector(buffer, value.motion());
 +            buffer.writeByte((value.posture().swimming() ? 1 : 0) | (value.horizontalCollision() ? 2 : 0) | (value.verticalCollision() ? 4 : 0) | (value.groundJump() ? 8 : 0)
 +                    | (value.posture().crawling() ? 16 : 0) | (value.posture().sneaking() ? 32 : 0) | (value.inWater() ? 64 : 0));
++            buffer.writeFloat(value.itemUseScale());
 +        }
 +    };
 +
@@ -268,6 +292,9 @@ index 000000000..398f73d9a
 +        Objects.requireNonNull(posture, "posture");
 +        requireFinite(position);
 +        requireFinite(motion);
++        if (!Float.isFinite(itemUseScale) || itemUseScale < 0F) {
++            throw new IllegalArgumentException("Invalid item-use movement scale");
++        }
 +    }
 +
 +    public boolean matches(final Position3f position) {
@@ -402,6 +429,58 @@ index f69b430bf..ffe76000b 100644
          }
          if (shouldSneak != this.bedrockSneaking) {
              this.addAuthInputData(shouldSneak ? PlayerAuthInputData.StartSneaking : PlayerAuthInputData.StopSneaking);
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java
+index 4c9d776ac..8a5a49326 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/ItemDefinitions.java
+@@ -24,6 +24,7 @@ import com.viaversion.viaversion.util.Key;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
+ import net.raphimc.viabedrock.protocol.model.ItemCooldown;
++import net.raphimc.viabedrock.protocol.model.ItemUseModifiers;
+ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
+ 
+ import java.util.HashMap;
+@@ -44,6 +45,12 @@ public class ItemDefinitions {
+                     final ItemDefinition itemDefinition = new ItemDefinition(identifier);
+                     if (item.has("components")) {
+                         final JsonObject components = item.getAsJsonObject("components");
++                        if (components.has("minecraft:use_modifiers")) {
++                            final JsonObject modifiers = components.getAsJsonObject("minecraft:use_modifiers");
++                            itemDefinition.useModifiers = new ItemUseModifiers(
++                                    modifiers.has("movement_modifier") ? modifiers.get("movement_modifier").getAsFloat() : 1F,
++                                    !modifiers.has("emit_vibrations") || modifiers.get("emit_vibrations").getAsBoolean());
++                        }
+                         if (components.has("minecraft:cooldown")) {
+                             final JsonObject cooldown = components.getAsJsonObject("minecraft:cooldown");
+                             itemDefinition.cooldown = new ItemCooldown(cooldown.get("category").getAsString(),
+@@ -68,6 +75,7 @@ public class ItemDefinitions {
+         final ItemDefinition itemDefinition = new ItemDefinition(identifier);
+         if (tag.get("components") instanceof CompoundTag components) {
+             itemDefinition.cooldown = ItemCooldown.fromNetworkComponents(components);
++            itemDefinition.useModifiers = ItemUseModifiers.fromNetworkComponents(components);
+             if (components.get("item_properties") instanceof CompoundTag itemProperties) {
+                 if (itemProperties.get("minecraft:icon") instanceof CompoundTag icon) {
+                     if (icon.get("textures") instanceof CompoundTag texture) {
+@@ -100,6 +108,7 @@ public class ItemDefinitions {
+         private String iconComponent;
+         private String displayNameComponent;
+         private ItemCooldown cooldown;
++        private ItemUseModifiers useModifiers;
+ 
+         public ItemDefinition(final String identifier) {
+             this.identifier = identifier;
+@@ -117,6 +126,10 @@ public class ItemDefinitions {
+             return this.displayNameComponent;
+         }
+ 
++        public ItemUseModifiers useModifiers() {
++            return this.useModifiers;
++        }
++
+         public ItemCooldown cooldown() {
+             return this.cooldown;
+         }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MathUtil.java b/src/main/java/net/raphimc/viabedrock/api/util/MathUtil.java
 index a760d4c52..e01e27405 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/util/MathUtil.java
@@ -477,8 +556,64 @@ index 77d33f594..54101ffdb 100644
      @Override
      public StructuredDataContainer dataContainer() {
          throw new UnsupportedOperationException();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiers.java b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiers.java
+new file mode 100644
+index 000000000..72b248f9e
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiers.java
+@@ -0,0 +1,50 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.NumberTag;
++import com.viaversion.viaversion.api.minecraft.item.data.UseEffects;
++
++/** Native ItemUseSlowdownSystem produces a modifier; its apply system squares it. */
++public record ItemUseModifiers(float movementModifier, boolean emitVibrations) {
++
++    public static final ItemUseModifiers DEFAULT = new ItemUseModifiers(0.35F, true);
++    public static final ItemUseModifiers NONE = new ItemUseModifiers(1F, true);
++
++    public ItemUseModifiers {
++        if (!Float.isFinite(movementModifier) || !Float.isFinite(movementModifier * movementModifier)) {
++            throw new IllegalArgumentException("Non-finite item-use movement modifier");
++        }
++    }
++
++    public static ItemUseModifiers fromNetworkComponents(final CompoundTag components) {
++        if (!(components.get("minecraft:use_modifiers") instanceof CompoundTag modifiers)) {
++            return DEFAULT;
++        }
++        final float movement = modifiers.get("movement_modifier") instanceof NumberTag value ? value.asFloat() : 1F;
++        final boolean vibrations = !(modifiers.get("emit_vibrations") instanceof NumberTag value) || value.asByte() != 0;
++        return new ItemUseModifiers(movement, vibrations);
++    }
++
++    public boolean allowsSprinting() {
++        // Native omits the slowdown component at this float epsilon boundary.
++        return Math.abs(this.movementModifier - 1F) <= Math.ulp(1F);
++    }
++
++    public float movementScale() {
++        return this.allowsSprinting() ? 1F : this.movementModifier * this.movementModifier;
++    }
++
++    public UseEffects javaComponent() {
++        return new UseEffects(this.allowsSprinting(), this.emitVibrations, this.movementScale());
++    }
++
++    public static Position2f apply(final Position2f input, final float scale) {
++        return new Position2f(input.x() * scale, input.y() * scale);
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index feb36e9b0..83fde77ab 100644
+index feb36e9b0..4dbc87095 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 @@ -38,6 +38,10 @@ import net.raphimc.viabedrock.api.util.MathUtil;
@@ -492,7 +627,15 @@ index feb36e9b0..83fde77ab 100644
  import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
  import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
  import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
-@@ -191,32 +195,27 @@ public final class ClientPlayerPackets {
+@@ -49,6 +53,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
+ import net.raphimc.viabedrock.protocol.data.enums.java.*;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.*;
+ import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.ItemUseModifiers;
+ import net.raphimc.viabedrock.protocol.model.Position2f;
+ import net.raphimc.viabedrock.protocol.model.Position3f;
+ import net.raphimc.viabedrock.protocol.provider.EmoteProvider;
+@@ -191,32 +196,27 @@ public final class ClientPlayerPackets {
              }
          });
          protocol.registerClientbound(ClientboundBedrockPackets.CORRECT_PLAYER_MOVE_PREDICTION, ClientboundPackets26_3.PLAYER_POSITION, wrapper -> {
@@ -529,7 +672,7 @@ index feb36e9b0..83fde77ab 100644
                  }
                  case Vehicle -> {
                      final Entity vehicle = predictedVehicle(wrapper.user().get(EntityTracker.class), clientPlayer);
-@@ -554,12 +553,16 @@ public final class ClientPlayerPackets {
+@@ -554,12 +554,16 @@ public final class ClientPlayerPackets {
          protocol.registerServerbound(ServerboundPackets26_3.CLIENT_TICK_END, ServerboundBedrockPackets.PLAYER_AUTH_INPUT, wrapper -> {
              final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
              final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
@@ -547,7 +690,7 @@ index feb36e9b0..83fde77ab 100644
                  clientPlayer.addAuthInputData(PlayerAuthInputData.StartJumping);
              }
  
-@@ -583,10 +586,10 @@ public final class ClientPlayerPackets {
+@@ -583,10 +587,10 @@ public final class ClientPlayerPackets {
              final PlayerInputStorage playerInput = wrapper.user().get(PlayerInputStorage.class);
              clientPlayer.authInputData().addAll(playerInput.takeButtonEvents());
              clientPlayer.addAuthInputData(PlayerAuthInputData.BlockBreakingDelayEnabled);
@@ -560,7 +703,7 @@ index feb36e9b0..83fde77ab 100644
                  clientPlayer.addAuthInputData(PlayerAuthInputData.HorizontalCollision);
              }
              if (clientPlayer.inputFlags().contains(InputFlag.FORWARD)) {
-@@ -623,9 +626,20 @@ public final class ClientPlayerPackets {
+@@ -623,9 +627,24 @@ public final class ClientPlayerPackets {
                      clientPlayer.setShieldBlockingHand(null);
                  }
              }
@@ -577,13 +720,17 @@ index feb36e9b0..83fde77ab 100644
 +                    wrapper.user().get(InventoryTracker.class).getArmorContainer()
 +                            .getItem(SharedTypes_Legacy_ArmorSlot.Legs.getValue()).enchantmentLevel(Enchant_Type.SwiftSneak));
 +            final float inputScale = slowMovement ? sneakingScale : 1F;
++            final float itemUseScale = completedPrediction ? prediction.itemUseScale()
++                    : vehicle == null && clientPlayer.entityFlags().contains(ActorFlags.USINGITEM)
++                    ? wrapper.user().get(ItemRewriter.class).useModifiers(wrapper.user().get(InventoryTracker.class)
++                            .getInventoryContainer().getSelectedHotbarItem()).movementScale() : 1F;
 +            clientPlayer.updateBedrockSneakingInput(completedPrediction ? prediction.posture().sneaking() : clientPlayer.isSneaking());
  
 -            final Entity vehicle = predictedVehicle(entityTracker, clientPlayer);
              final Position3f inputPosition;
              final Position3f positionDelta;
              if (vehicle != null) {
-@@ -638,8 +652,13 @@ public final class ClientPlayerPackets {
+@@ -638,8 +657,13 @@ public final class ClientPlayerPackets {
                  inputPosition = clientPlayer.position();
                  positionDelta = inputPosition.subtract(prevPosition);
              }
@@ -598,16 +745,16 @@ index feb36e9b0..83fde77ab 100644
                  velocity = positionDelta;
              } else {
                  float dx = positionDelta.x() * 0.98F;
-@@ -662,7 +681,7 @@ public final class ClientPlayerPackets {
+@@ -662,7 +686,7 @@ public final class ClientPlayerPackets {
              wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().x()); // pitch
              wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().y()); // yaw
              wrapper.write(BedrockTypes.POSITION_3F, inputPosition); // predicted player or vehicle position
 -            wrapper.write(BedrockTypes.POSITION_2F, MathUtil.calculateMovementDirections(clientPlayer.authInputData(), clientPlayer.isBedrockSneaking())); // move vector
-+            wrapper.write(BedrockTypes.POSITION_2F, MathUtil.calculateMovementDirections(clientPlayer.authInputData(), inputScale)); // move vector
++            wrapper.write(BedrockTypes.POSITION_2F, ItemUseModifiers.apply(MathUtil.calculateMovementDirections(clientPlayer.authInputData(), inputScale), itemUseScale)); // move vector
              wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().z()); // head yaw
              if (Via.getManager().getProviders().get(EmoteProvider.class).isEmoting(wrapper.user())) {
                  clientPlayer.addAuthInputData(PlayerAuthInputData.Emoting);
-@@ -701,7 +720,7 @@ public final class ClientPlayerPackets {
+@@ -701,7 +725,7 @@ public final class ClientPlayerPackets {
                  wrapper.write(BedrockTypes.VAR_LONG, vehicle.uniqueId());
              }
              wrapper.write(BedrockTypes.POSITION_2F, vehicle != null
@@ -677,6 +824,64 @@ index 7eeeba7a8..fcbf6246b 100644
                              final String javaEnchantmentId = BedrockProtocol.MAPPINGS.getBedrockToJavaEnchantments().get(bedrockId);
  
                              //Update the java item with the enchantment
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
+index 405efe77b..895768f1f 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
+@@ -52,6 +52,7 @@ import net.raphimc.viabedrock.protocol.model.ItemEntry;
+ import net.raphimc.viabedrock.protocol.model.ItemCooldown;
+ import net.raphimc.viabedrock.protocol.model.ItemAnimationData;
+ import net.raphimc.viabedrock.protocol.model.ItemArmorData;
++import net.raphimc.viabedrock.protocol.model.ItemUseModifiers;
+ import net.raphimc.viabedrock.protocol.rewriter.item.BundleItemRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomAttachableResourceRewriter;
+ import net.raphimc.viabedrock.protocol.rewriter.resourcepack.CustomItemTextureResourceRewriter;
+@@ -72,6 +73,7 @@ public class ItemRewriter extends StoredObject {
+ 
+     private final Map<String, ItemAnimationData> animationData = new HashMap<>();
+     private final Map<String, ItemArmorData> armorData = new HashMap<>();
++    private final Map<String, ItemUseModifiers> useModifiers = new HashMap<>();
+ 
+     private final Map<String, ItemCooldown> cooldowns = new HashMap<>(Map.of(
+             "minecraft:ender_pearl", new ItemCooldown("ender_pearl", 1F),
+@@ -103,6 +105,20 @@ public class ItemRewriter extends StoredObject {
+         return this.armorData.getOrDefault(identifier, ItemArmorData.vanilla(identifier));
+     }
+ 
++    public ItemUseModifiers useModifiers(final BedrockItem item) {
++        final String identifier = this.items.inverse().get(item.identifier());
++        if ("minecraft:shield".equals(identifier)) {
++            // Bedrock shields use sneaking rather than ItemInUse slowdown.
++            return ItemUseModifiers.NONE;
++        }
++        final ItemUseModifiers networkModifiers = this.useModifiers.get(identifier);
++        if (networkModifiers != null) {
++            return networkModifiers;
++        }
++        final ItemDefinitions.ItemDefinition definition = this.user().get(ResourcePackStorage.class).getItems().get(identifier);
++        return definition != null && definition.useModifiers() != null ? definition.useModifiers() : ItemUseModifiers.DEFAULT;
++    }
++
+     public ItemRewriter(final UserConnection user, final ItemEntry[] itemEntries) {
+         super(user);
+ 
+@@ -115,6 +131,7 @@ public class ItemRewriter extends StoredObject {
+                     && itemEntry.componentData().get("components") instanceof CompoundTag components) {
+                 this.animationData.put(itemEntry.identifier(), ItemAnimationData.fromNetworkComponents(components));
+                 this.armorData.put(itemEntry.identifier(), ItemArmorData.fromNetworkComponents(components));
++                this.useModifiers.put(itemEntry.identifier(), ItemUseModifiers.fromNetworkComponents(components));
+                 final ItemCooldown cooldown = ItemCooldown.fromNetworkComponents(components);
+                 if (cooldown != null) {
+                     this.cooldowns.put(itemEntry.identifier(), cooldown);
+@@ -269,6 +286,8 @@ public class ItemRewriter extends StoredObject {
+             ITEM_NBT_REWRITERS.get(tag).toJava(this.user(), bedrockItem, javaItem);
+         }
+ 
++        javaItem.dataContainer().set(StructuredDataKey.USE_EFFECTS, this.useModifiers(bedrockItem).javaComponent());
++
+         CustomAttachableResourceRewriter.applyItemModel(this.user().get(ResourcePackStorage.class), identifier, javaItem);
+         javaItem.dataContainer().set(StructuredDataKey.CUSTOM_DATA,
+                 ItemDataRewriter.withBedrockItemData(javaItem.dataContainer().get(StructuredDataKey.CUSTOM_DATA),
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
 index 47c6a05d1..b7ebcb4a8 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
@@ -918,10 +1123,10 @@ index 000000000..8d870a5fb
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
 new file mode 100644
-index 000000000..875125080
+index 000000000..19644acc2
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
-@@ -0,0 +1,115 @@
+@@ -0,0 +1,121 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -946,18 +1151,18 @@ index 000000000..875125080
 +        final var buffer = Unpooled.buffer();
 +        try {
 +            final var frame = new PlayerPrediction(new Position3f(-6.5F, 101.86157F, 1.5F),
-+                    new Position3f(0.125F, -0.022315647F, -0.25F), new PlayerPosture(true, true, true), true, false, true, true);
++                    new Position3f(0.125F, -0.022315647F, -0.25F), new PlayerPosture(true, true, true), true, false, true, true, 0.35F * 0.35F);
 +            PlayerPrediction.TYPE.write(buffer, frame);
 +            assertEquals(frame, PlayerPrediction.TYPE.read(buffer));
 +            assertFalse(buffer.isReadable());
-+            for (final int revision : new int[]{1, 2, 3, 4, 6}) {
++            for (final int revision : new int[]{1, 2, 3, 4, 5, 7}) {
 +                buffer.clear();
 +                Types.VAR_INT.writePrimitive(buffer, revision);
 +                Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
 +                assertThrows(IllegalArgumentException.class, () -> PlayerPrediction.TYPE.read(buffer));
 +            }
 +            buffer.clear();
-+            Types.VAR_INT.writePrimitive(buffer, 5);
++            Types.VAR_INT.writePrimitive(buffer, 6);
 +            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION + 1);
 +            assertThrows(IllegalArgumentException.class, () -> PlayerPrediction.TYPE.read(buffer));
 +        } finally {
@@ -969,14 +1174,18 @@ index 000000000..875125080
 +    void rejectsNonFiniteMotionAndUnknownPoseFlags() {
 +        for (float invalid : new float[]{Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY}) {
 +            assertThrows(IllegalArgumentException.class, () -> new PlayerPrediction(Position3f.ZERO,
-+                    new Position3f(0F, invalid, 0F), PlayerPosture.STANDING, false, false, false, false));
++                    new Position3f(0F, invalid, 0F), PlayerPosture.STANDING, false, false, false, false, 1F));
 +            assertThrows(IllegalArgumentException.class, () -> new PlayerPrediction(
-+                    new Position3f(invalid, 0F, 0F), Position3f.ZERO, PlayerPosture.STANDING, false, false, false, false));
++                    new Position3f(invalid, 0F, 0F), Position3f.ZERO, PlayerPosture.STANDING, false, false, false, false, 1F));
++        }
++        for (float invalid : new float[]{-1F, Float.NaN, Float.POSITIVE_INFINITY}) {
++            assertThrows(IllegalArgumentException.class, () -> new PlayerPrediction(Position3f.ZERO,
++                    Position3f.ZERO, PlayerPosture.STANDING, false, false, false, false, invalid));
 +        }
 +        final var buffer = Unpooled.buffer();
 +        try {
 +            PlayerPrediction.TYPE.write(buffer, frame(Position3f.ZERO, false));
-+            buffer.setByte(buffer.writerIndex() - 1, 128);
++            buffer.setByte(buffer.writerIndex() - 5, 128);
 +            assertThrows(IllegalArgumentException.class, () -> PlayerPrediction.TYPE.read(buffer));
 +        } finally {
 +            buffer.release();
@@ -988,11 +1197,13 @@ index 000000000..875125080
 +        final var buffer = Unpooled.buffer();
 +        try {
 +            for (int flags = 0; flags < 128; flags++) {
-+                final var frame = new PlayerPrediction(Position3f.ZERO, Position3f.ZERO,
-+                        new PlayerPosture((flags & 1) != 0, (flags & 16) != 0, (flags & 32) != 0), (flags & 2) != 0, (flags & 4) != 0, (flags & 8) != 0, (flags & 64) != 0);
-+                PlayerPrediction.TYPE.write(buffer, frame);
-+                assertEquals(frame, PlayerPrediction.TYPE.read(buffer));
-+                buffer.clear();
++                for (float scale : new float[]{0F, 0.35F * 0.35F, 0.25F, 1F}) {
++                    final var frame = new PlayerPrediction(Position3f.ZERO, Position3f.ZERO,
++                            new PlayerPosture((flags & 1) != 0, (flags & 16) != 0, (flags & 32) != 0), (flags & 2) != 0, (flags & 4) != 0, (flags & 8) != 0, (flags & 64) != 0, scale);
++                    PlayerPrediction.TYPE.write(buffer, frame);
++                    assertEquals(frame, PlayerPrediction.TYPE.read(buffer));
++                    buffer.clear();
++                }
 +            }
 +        } finally {
 +            buffer.release();
@@ -1003,7 +1214,7 @@ index 000000000..875125080
 +    void consumesOnlyOneMatchingFrameAndDiscardsTeleportStaleness() {
 +        final var storage = new PlayerPredictionStorage();
 +        final var frame = new PlayerPrediction(new Position3f(0.5F, 101F, 0.5F), Position3f.ZERO,
-+                PlayerPosture.STANDING, false, false, true, false);
++                PlayerPosture.STANDING, false, false, true, false, 1F);
 +        storage.record(frame);
 +        assertEquals(frame, storage.take(frame.position().add(0F, 0.00001F, 0F)));
 +        assertNull(storage.take(frame.position()));
@@ -1033,7 +1244,7 @@ index 000000000..875125080
 +    }
 +
 +    private static PlayerPrediction frame(final Position3f position, final boolean swimming) {
-+        return new PlayerPrediction(position, new Position3f(0F, -0.022315647F, 0F), new PlayerPosture(swimming, false, false), false, false, false, false);
++        return new PlayerPrediction(position, new Position3f(0F, -0.022315647F, 0F), new PlayerPosture(swimming, false, false), false, false, false, false, 1F);
 +    }
 +
 +}
@@ -1239,6 +1450,67 @@ index 000000000..b583a26ec
 +        tag.put("id", new ShortTag((short) type.getValue()));
 +        tag.put("lvl", new ShortTag((short) level));
 +        return tag;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiersTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiersTest.java
+new file mode 100644
+index 000000000..66d8b2e0c
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiersTest.java
+@@ -0,0 +1,55 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class ItemUseModifiersTest {
++
++    @Test
++    void distinguishesAnAbsentComponentFromAnAbsentMovementModifier() {
++        final CompoundTag components = new CompoundTag();
++        assertEquals(ItemUseModifiers.DEFAULT, ItemUseModifiers.fromNetworkComponents(components));
++        final CompoundTag modifiers = new CompoundTag();
++        components.put("minecraft:use_modifiers", modifiers);
++        assertEquals(ItemUseModifiers.NONE, ItemUseModifiers.fromNetworkComponents(components));
++        modifiers.putFloat("movement_modifier", 0.5F);
++        modifiers.putByte("emit_vibrations", (byte) 0);
++        final var parsed = ItemUseModifiers.fromNetworkComponents(components);
++        assertEquals(0.25F, parsed.movementScale());
++        assertFalse(parsed.javaComponent().canSprint());
++        assertFalse(parsed.javaComponent().interactVibrations());
++        assertEquals(parsed.movementScale(), parsed.javaComponent().speedMultiplier());
++    }
++
++    @Test
++    void appliesTheNativeSquaredModifierAfterPostureScaling() {
++        final var slowed = ItemUseModifiers.apply(new Position2f(-0.21213204F, 0.21213204F),
++                ItemUseModifiers.DEFAULT.movementScale());
++        assertEquals(-0.025986174F, slowed.x());
++        assertEquals(0.025986174F, slowed.y());
++        assertEquals(0.122499995F, ItemUseModifiers.DEFAULT.movementScale());
++        assertEquals(0F, new ItemUseModifiers(0F, true).movementScale());
++        assertEquals(0.25F, new ItemUseModifiers(-0.5F, true).movementScale());
++    }
++
++    @Test
++    void omitsSlowdownAtTheNativeEpsilonBoundary() {
++        for (float modifier : new float[]{Math.nextDown(1F), 1F, Math.nextUp(1F)}) {
++            final var value = new ItemUseModifiers(modifier, true);
++            assertTrue(value.allowsSprinting());
++            assertEquals(1F, value.movementScale());
++        }
++        assertFalse(new ItemUseModifiers(Math.nextDown(Math.nextDown(Math.nextDown(1F))), true).allowsSprinting());
++        for (float invalid : new float[]{Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY, Float.MAX_VALUE}) {
++            assertThrows(IllegalArgumentException.class, () -> new ItemUseModifiers(invalid, true));
++        }
 +    }
 +
 +}

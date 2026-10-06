@@ -406,3 +406,55 @@ Both recordings complete join and spawn with protocol 2193.
 Boar comparisons, ordinary Java clients without the add-on, item-use slowdown, and correction history need separate verification.
 Opposing physical directions still need native cancellation in core's direction helper.
 These cases do not establish complete movement parity or Windows/macOS game-join compatibility.
+
+## Native item-use slowdown and completion
+
+Matching 1.26.51.1 executable inspection identifies the native item-use reader at `0x143fd7e10`.
+An absent `minecraft:use_modifiers` component returns `0.35F`.
+A present component without `movement_modifier` returns `1F`.
+Producer `0x14c5f5e00` creates slowdown only outside the float epsilon boundary around one.
+Consumer `0x14c60f9a0` squares the modifier before multiplying each posture-scaled input coordinate.
+The native default therefore produces `0.122499995F`, rather than Java's default `0.2F`.
+The phase-9 reset at `0x14c610370` removes the component after the frame.
+
+The [official component reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/itemreference/examples/itemcomponents/minecraft_use_modifiers?view=minecraft-bedrock-stable) describes movement modifiers and vibrations.
+The matching executable establishes the default, float arithmetic, and application order for this build.
+Core translates network and resource-pack definitions into Java `USE_EFFECTS`.
+Shield blocking retains its separate posture path.
+Ordinary Java clients receive the component and use server item-use state for the auth-input fallback.
+That fallback still needs live verification without the add-on.
+
+The add-on suppresses Java's earlier item-use multiplier on Bedrock connections and applies the translated multiplier after posture input.
+Revision 6 carries the scale actually used by completed local physics through direct connections and ViaProxy.
+Core constructs the packet vector from that sample instead of reconstructing it after consumption or slot changes.
+Codec tests cover all 128 flags with four scales and reject invalid scales and incompatible revisions.
+Three modifier tests cover component defaults, vibration behavior, the native float boundary, and exact coordinate products.
+
+The [matching completion schema](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/completed-using-item-packet/) describes protocol-2193 `COMPLETED_USING_ITEM`.
+Strict-BDS captures confirm its signed little-endian item ID and use-method fields.
+Core now translates matching selected-item completion into Java's `USE_ITEM_COMPLETE` event.
+It preserves authoritative inventory counts and cancels completion for a replaced selected item.
+Seven parameterized packet cases cover use methods, signed IDs, replacement protection, field consumption, and unchanged counts.
+
+All four projects build, and both complete patch stacks replay successfully.
+The build passes 16 converter, 667 core, and 584 add-on test cases, with 133 skips and no failures or errors.
+`bun run check` passes.
+
+Live strict-BDS direct and ViaProxy recordings both reach join and spawn with protocol 2193.
+Each route covers bow charging, diagonals, sneaking, bow and trident release, repeated eating, and a forward control.
+They contain 402 controlled frames each.
+The charging vectors retain the native squared modifier and normalized diagonals.
+Release restores full input on both routes.
+All 240 comparable frames across five cases match exactly in position, motion, movement vectors, and input flags.
+The timed trident release differs by one input frame between routes, so its complete trajectories are not counted as exact matches.
+
+The direct repeated-eating case receives one nonzero correction, compared with four before completion translation.
+ViaProxy receives no corrections during the seven controlled cases.
+Its two zero-velocity corrections occur at fixture teleports outside those cases.
+An additional 101-frame ViaProxy case consumes the last food item, restores full input, and receives no correction.
+The visible hotbar is empty after consumption.
+
+**Incomplete:** Repeated eating still needs native prediction and completion timing research because the direct correction remains.
+Fresh native captures remain required; the current-boot native GPU guard prevents another native launch.
+Custom modifier integration, ordinary Java clients, Boar comparisons, correction history, broader movement, and actual Windows/macOS joins remain requirements.
+These results establish the named calculations and comparisons, not complete native movement parity.

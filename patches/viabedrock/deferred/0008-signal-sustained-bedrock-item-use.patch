@@ -1,20 +1,41 @@
-From 7944b96e60ba9d105397ed7081c6f7c19d549f44 Mon Sep 17 00:00:00 2001
+From 0634723f0288f210dbad2cfa426e454ab7e1055e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 03:58:50 +0200
 Subject: [PATCH] fix(interaction): signal sustained Bedrock item use
 
 Mark food and other charge or consume actions as starting item use in player input. Let the Bedrock server authoritatively update consumed or replacement stacks, matching the captured native air-use transaction shape.
+
+Decode protocol-2193 COMPLETED_USING_ITEM, whose signed little-endian item
+ID and use-method fields are confirmed by the matching Mojang schema and
+strict-BDS captures. Translate matching held-item completion to Java's
+USE_ITEM_COMPLETE entity event. Preserve authoritative inventory counts
+and ignore a completion for a replaced selected item.
+
+The previously discarded completion leaves Java consumption state out of
+phase with BDS and causes corrections during repeated eating. Verify this
+boundary separately from bow charging and release. Packet tests exercise
+signed IDs, use methods, replacement protection, and unchanged counts.
 ---
- .../protocol/packet/InteractionPackets.java   | 21 +++++++++++--
- .../packet/InteractionPacketsTest.java        | 31 +++++++++++++++++++
- 2 files changed, 49 insertions(+), 3 deletions(-)
+ .../protocol/packet/InteractionPackets.java   | 35 ++++++-
+ .../packet/CompletedItemUsePacketTest.java    | 97 +++++++++++++++++++
+ .../packet/InteractionPacketsTest.java        | 31 ++++++
+ 3 files changed, 160 insertions(+), 3 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedItemUsePacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/InteractionPacketsTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-index 2ae3ace9f..189b6b6ea 100644
+index 2ae3ace9f..24ae5ff29 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-@@ -55,10 +55,17 @@ import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
+@@ -43,6 +43,7 @@ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.data.enums.Direction;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ComplexInventoryTransaction_Type;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
++import net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.GameMode;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.InteractionHand;
+ import net.raphimc.viabedrock.protocol.data.enums.java.generated.PlayerActionAction;
+@@ -55,10 +56,17 @@ import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
  import net.raphimc.viabedrock.protocol.types.BedrockTypes;
  
  import java.util.List;
@@ -32,7 +53,7 @@ index 2ae3ace9f..189b6b6ea 100644
      private InteractionPackets() {
      }
  
-@@ -225,7 +232,6 @@ public final class InteractionPackets {
+@@ -225,7 +233,6 @@ public final class InteractionPackets {
              wrapper.read(Types.FLOAT); // yaw
              wrapper.read(Types.FLOAT); // pitch
  
@@ -40,7 +61,7 @@ index 2ae3ace9f..189b6b6ea 100644
              if (javaHand < 0 || javaHand >= InteractionHand.values().length) {
                  wrapper.cancel();
                  return;
-@@ -238,7 +244,9 @@ public final class InteractionPackets {
+@@ -238,7 +245,9 @@ public final class InteractionPackets {
              final ItemRewriter itemRewriter = wrapper.user().get(ItemRewriter.class);
              final String itemIdentifier = itemRewriter.getItems().inverse().get(usedItem.identifier());
              final BedrockInventoryTransaction transaction = beginItemUse(clientPlayer, hand,
@@ -51,7 +72,27 @@ index 2ae3ace9f..189b6b6ea 100644
              if (transaction == null) {
                  wrapper.cancel();
                  if (hand == InteractionHand.OFF_HAND && !"minecraft:shield".equals(itemIdentifier)) {
-@@ -339,6 +347,10 @@ public final class InteractionPackets {
+@@ -330,6 +339,19 @@ public final class InteractionPackets {
+                 }
+             }
+         });
++        protocol.registerClientbound(ClientboundBedrockPackets.COMPLETED_USING_ITEM, ClientboundPackets26_3.ENTITY_EVENT, wrapper -> {
++            final short usedItemId = wrapper.read(BedrockTypes.SHORT_LE);
++            wrapper.read(BedrockTypes.INT_LE); // use method; Java completion is independent of the native method
++            final InventoryTracker inventory = wrapper.user().get(InventoryTracker.class);
++            final BedrockItem heldItem = inventory.getInventoryContainer().getSelectedHotbarItem();
++            if (heldItem.isEmpty() || heldItem.identifier() != usedItemId) {
++                // A completion for a previous selected item must not consume its replacement.
++                wrapper.cancel();
++                return;
++            }
++            wrapper.write(Types.INT, wrapper.user().get(EntityTracker.class).getClientPlayer().javaId());
++            wrapper.write(Types.BYTE, EntityEvent.USE_ITEM_COMPLETE.getValue());
++        });
+         protocol.registerClientbound(ClientboundBedrockPackets.SET_ENTITY_LINK, null, wrapper -> {
+             wrapper.cancel();
+             final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
+@@ -339,6 +361,10 @@ public final class InteractionPackets {
  
      }
  
@@ -62,7 +103,7 @@ index 2ae3ace9f..189b6b6ea 100644
      static void sendPassengerUpdates(final PacketWrapper source, final EntityTracker entityTracker) {
          for (Entity vehicle : entityTracker.drainPassengerUpdates()) {
              final PacketWrapper passengersPacket = PacketWrapper.create(ClientboundPackets26_3.SET_PASSENGERS,
-@@ -360,7 +372,7 @@ public final class InteractionPackets {
+@@ -360,7 +386,7 @@ public final class InteractionPackets {
  
      static BedrockInventoryTransaction beginItemUse(final ClientPlayerEntity player,
              final InteractionHand hand, final int hotbarSlot, final BedrockItem item,
@@ -71,7 +112,7 @@ index 2ae3ace9f..189b6b6ea 100644
          if (item.isEmpty()) {
              return null;
          }
-@@ -372,6 +384,9 @@ public final class InteractionPackets {
+@@ -372,6 +398,9 @@ public final class InteractionPackets {
              return null;
          }
          player.setShieldBlockingHand(null);
@@ -81,6 +122,109 @@ index 2ae3ace9f..189b6b6ea 100644
          return new BedrockInventoryTransaction(
                  0, null, null, ComplexInventoryTransaction_Type.ItemUseTransaction,
                  new InventoryTransactionData.UseItemTransactionData(
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedItemUsePacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedItemUsePacketTest.java
+new file mode 100644
+index 000000000..0641bf591
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedItemUsePacketTest.java
+@@ -0,0 +1,97 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.java.EntityEvent;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
++
++import java.lang.reflect.Proxy;
++import java.util.HashMap;
++import java.util.Map;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class CompletedItemUsePacketTest {
++
++    @ParameterizedTest
++    @ValueSource(ints = {-1, 0, 1, 3, 5, 15, 16})
++    void completesTheMatchingHeldItemWithoutChangingAuthoritativeInventory(final int useMethod) throws Exception {
++        for (short itemId : new short[]{258, -1234}) {
++            for (boolean matching : new boolean[]{false, true}) {
++                final Map<Class<?>, Object> stores = new HashMap<>();
++                final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                        new Class<?>[]{UserConnection.class}, (proxy, method, args) ->
++                                method.getName().equals("get") ? stores.get(args[0]) : null);
++                final EntityTracker entities = new EntityTracker(user);
++                stores.put(EntityTracker.class, entities);
++                final ClientPlayerEntity player = entities.addEntity(new ClientPlayerEntity(user, 1,
++                        UUID.randomUUID(), new PlayerAbilities(1, (byte) 0, (byte) 0)), false);
++                stores.put(InventoryRequestTracker.class, new InventoryRequestTracker(user) {
++                    @Override
++                    public boolean isPredictingClick() {
++                        return true;
++                    }
++                });
++                final InventoryTracker inventory = new InventoryTracker(user);
++                stores.put(InventoryTracker.class, inventory);
++                final BedrockItem held = new BedrockItem(matching ? itemId : itemId + 1);
++                held.setAmount(8);
++                inventory.getInventoryContainer().setItem(0, held);
++                final var input = Unpooled.buffer();
++                final var output = Unpooled.buffer();
++                try {
++                    input.writeShortLE(itemId);
++                    input.writeIntLE(useMethod);
++                    final PacketWrapper packet = new PacketWrapperImpl(ClientboundBedrockPackets.COMPLETED_USING_ITEM, input, user);
++                    new TestProtocol().translate(packet);
++                    assertEquals(!matching, packet.isCancelled());
++                    assertEquals(8, inventory.getInventoryContainer().getSelectedHotbarItem().amount());
++                    assertFalse(input.isReadable());
++                    if (matching) {
++                        packet.writeToBuffer(output);
++                        assertEquals(ClientboundPackets26_3.ENTITY_EVENT.getId(), Types.VAR_INT.readPrimitive(output));
++                        assertEquals(player.javaId(), output.readInt());
++                        assertEquals(EntityEvent.USE_ITEM_COMPLETE.getValue(), output.readByte());
++                        assertFalse(output.isReadable());
++                    }
++                } finally {
++                    input.release();
++                    output.release();
++                }
++            }
++        }
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++        private TestProtocol() {
++            InteractionPackets.register(this);
++        }
++
++        private void translate(final PacketWrapper packet) throws Exception {
++            final var mapping = this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++            mapping.applyType(packet);
++            mapping.handler().handle(packet);
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/InteractionPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/InteractionPacketsTest.java
 new file mode 100644
 index 000000000..0bf1b7059

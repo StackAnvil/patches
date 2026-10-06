@@ -1,4 +1,4 @@
-From d9f432ba9d61d9b37846dd23060b867a5005c314 Mon Sep 17 00:00:00 2001
+From 39416144935c332d6af80eb164ba32cce3ccf3c5 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:53 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -175,21 +175,29 @@ registration 0x14681da00 orders input before the scalar producer and applies
 sneak actions later. Consume the retained component, produce its successor
 from prior posture, then apply the new posture, including idle frames.
 This reproduces startup and release without an elapsed-tick workaround.
+
+Apply the core-translated native USE_EFFECTS multiplier after posture
+input, matching ItemUseSlowdownApplySystem at 0x14c60f9a0 in 1.26.51.1.
+Suppress Java's earlier use multiplier only on Bedrock connections.
+Snapshot the applied scale for the completed frame and transport it on
+revision 6, including ViaProxy. Clear it before each frame, and bypass
+item-use slowdown for passengers. Consuming or replacing the selected
+item later cannot reconstruct a different factor for that frame.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
  .../access/IBedrockPlayerPosture.java         |  14 ++
  .../mixin/features/movement/MixinAvatar.java  |  27 +++
  .../mixin/features/movement/MixinEntity.java  |  25 +--
  .../features/movement/MixinLivingEntity.java  |   7 +
- .../features/movement/MixinLocalPlayer.java   | 162 +++++++++++++++++-
+ .../features/movement/MixinLocalPlayer.java   | 180 +++++++++++++++++-
  .../mixin/features/movement/MixinPlayer.java  |  55 ++++--
  .../input/PlayerPredictionPayload.java        |  24 +++
- .../bedrock/movement/BedrockFluidPhysics.java |  86 ++++++++++
- .../movement/BedrockPlayerPosture.java        |  63 +++++++
+ .../bedrock/movement/BedrockFluidPhysics.java |  86 +++++++++
+ .../movement/BedrockPlayerPosture.java        |  63 ++++++
  .../viafabricplus-bedrock.mixins.json         |   1 +
- .../movement/BedrockFluidPhysicsTest.java     | 121 +++++++++++++
+ .../movement/BedrockFluidPhysicsTest.java     | 121 ++++++++++++
  .../movement/BedrockPlayerPostureTest.java    |  45 +++++
- 13 files changed, 591 insertions(+), 41 deletions(-)
+ 13 files changed, 609 insertions(+), 41 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java
@@ -361,10 +369,10 @@ index 1c9125e..a06c283 100644
      private boolean changeFluidGravityCondition(final LivingEntity instance) {
          return BedrockInputPermissions.isBedrockConnection() ? instance.isSwimming() : instance.isSprinting();
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-index e5a8167..3d17d34 100644
+index e5a8167..9919431 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-@@ -21,22 +21,180 @@
+@@ -21,22 +21,198 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -384,6 +392,8 @@ index e5a8167..3d17d34 100644
 +import net.minecraft.client.player.ClientInput;
  import net.minecraft.client.player.LocalPlayer;
 +import net.minecraft.core.BlockPos;
++import net.minecraft.core.component.DataComponents;
++import net.minecraft.world.item.component.UseEffects;
 +import net.minecraft.core.registries.Registries;
 +import net.minecraft.world.entity.EquipmentSlot;
 +import net.minecraft.world.item.enchantment.EnchantmentHelper;
@@ -427,6 +437,9 @@ index e5a8167..3d17d34 100644
 +    @Unique
 +    private float viaFabricPlusBedrock$sneakingScale = 0.3F;
 +
++    @Unique
++    private float viaFabricPlusBedrock$itemUseScale = 1F;
++
 +    @Override
 +    public PlayerPosture viaFabricPlusBedrock$posture() {
 +        return this.viaFabricPlusBedrock$posture;
@@ -448,6 +461,7 @@ index e5a8167..3d17d34 100644
 +        this.viaFabricPlusBedrock$wasSwimming = this.isSwimming();
 +        this.viaFabricPlusBedrock$inputInWater = this.isInWater();
 +        this.viaFabricPlusBedrock$groundJump = false;
++        this.viaFabricPlusBedrock$itemUseScale = 1F;
 +        if (BedrockInputPermissions.isBedrockConnection()) {
 +            final var swiftSneak = this.level().registryAccess().lookupOrThrow(Registries.ENCHANTMENT).getOrThrow(Enchantments.SWIFT_SNEAK);
 +            this.viaFabricPlusBedrock$sneakingScale = this.viaFabricPlusBedrock$sneakingInput.advance(this.viaFabricPlusBedrock$posture,
@@ -478,9 +492,21 @@ index e5a8167..3d17d34 100644
 +        return this.viaFabricPlusBedrock$sneakingScale;
 +    }
 +
++    @ModifyReturnValue(method = "itemUseSpeedMultiplier", at = @At("RETURN"))
++    private float applyItemUseAfterNativePosture(final float javaScale) {
++        return BedrockInputPermissions.isBedrockConnection() ? 1F : javaScale;
++    }
++
 +    @WrapOperation(method = "modifyInput", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;modifyInputSpeedForSquareMovement(Lnet/minecraft/world/phys/Vec2;)Lnet/minecraft/world/phys/Vec2;"))
 +    private Vec2 retainNativeNormalizedInput(final Vec2 input, final Operation<Vec2> original) {
-+        return BedrockInputPermissions.isBedrockConnection() ? input : original.call(input);
++        if (!BedrockInputPermissions.isBedrockConnection()) {
++            return original.call(input);
++        }
++        // Core translates the squared native modifier into USE_EFFECTS.
++        // Native applies it after posture input and clears it after the frame.
++        this.viaFabricPlusBedrock$itemUseScale = this.isUsingItem() && !this.isPassenger()
++                ? this.getUseItem().getOrDefault(DataComponents.USE_EFFECTS, UseEffects.DEFAULT).speedMultiplier() : 1F;
++        return input.scale(this.viaFabricPlusBedrock$itemUseScale);
 +    }
 +
 +    @ModifyExpressionValue(method = "shouldStopSwimSprinting", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/ClientInput;hasForwardImpulse()Z"))
@@ -534,7 +560,7 @@ index e5a8167..3d17d34 100644
 +                new Position3f((float) player.getX(), (float) player.getY(), (float) player.getZ()),
 +                new Position3f((float) motion.x, (float) motion.y, (float) motion.z),
 +                this.viaFabricPlusBedrock$posture, player.horizontalCollision, player.verticalCollision, this.viaFabricPlusBedrock$groundJump,
-+                this.viaFabricPlusBedrock$inputInWater)));
++                this.viaFabricPlusBedrock$inputInWater, this.viaFabricPlusBedrock$itemUseScale)));
 +    }
  
      @Shadow
