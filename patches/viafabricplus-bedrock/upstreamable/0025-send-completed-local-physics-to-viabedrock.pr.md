@@ -509,3 +509,16 @@ The [coverage ledger](../../../docs/bedrock-coverage.md#native-completion-handle
 Core currently applies metadata immediately and discards its tick.
 Historical state, ordered corrections, and later-input replay remain requirements before local completion can reproduce native timing.
 These findings do not add completion prediction or establish movement parity.
+
+## Correction snapshots and replay scheduling
+
+Matching-build inspection now traces snapshot selection, correction queues, and the installed local-player replay policy.
+Native compares a correction at tick T with captured state from T+1.
+It applies the command to live state and schedules later replay when needed.
+Missing frames follow separate paths; expired ticks are bounded to the earliest stored frame.
+Exact native command and queue emulation passes 2,420 cases.
+Wrapper and local-player replay-policy emulation passes another 3,370 cases.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-correction-snapshots-and-replay-policy-october-6-2026) records target function addresses, boundaries, and fixture limits.
+
+The item-use flag callback previously traced is `DealKineticDamageComponent` cleanup, not proof of ordinary food completion.
+Frame correlation, complete snapshots, and actual later-input simulation remain necessary before this patch can predict local completion.

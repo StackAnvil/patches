@@ -4616,6 +4616,8 @@ The base receiver's empty slot does not establish that native ignores actor meta
 The specialized handler queues metadata with the packet's nonzero server tick through `0x142a1e830`.
 Assignment callback `0x1490464b0` applies the historical flag command and invokes `0x14326d6a0` when the using-item bit changes.
 That client callback removes component `0x6b006dfe` when the bit clears, or refreshes it from the item definition when set.
+The matching executable's component-name string identifies that component as `DealKineticDamageComponent`.
+This callback does not establish ordinary food completion behavior.
 
 Native kernels `0x142dea7a0` and `0x142dea8a0` compare server flags with historical flags before merging into replayed state.
 The first two predicted masks are `0x030010811000011a` and `0x00041018100000e0`.
@@ -4641,3 +4643,50 @@ Local completion remains incomplete until delayed metadata, acknowledgments, inv
 The latest CI passes Ubuntu, Windows, and macOS build/tooling checks.
 Actual Windows and macOS game joins remain unverified.
 All eight coverage groups and the broader movement requirements remain active.
+
+### Native correction snapshots and replay policy, October 6, 2026
+
+**Reference:** Matching-build inspection now traces the correction command, snapshot selection, queue, and local-player replay policy.
+The executable and emulation fixtures remain private.
+These results define the behavior needed for core prediction history.
+
+Command dispatcher `0x142890390` first checks for the corrected frame at server tick T.
+When that frame exists, it compares the command with captured state from T+1.
+Snapshot accessor `0x143297c50` reads actor flags at snapshot offset `0x160` only when presence bit 46 is set.
+The matching component-name string identifies the capture as `MovementDataExtractionUtility::MovementSnapshotComponent`, with storage stride 600 bytes.
+Missing target frames skip historical comparison and use live flags.
+An available frame without a snapshot component also uses live flags for comparison.
+If a captured component lacks its flags presence bit, the command cannot compare those historical flags and applies through its live-state fallback.
+
+The dispatcher always applies the command to live state.
+When the command changes predicted historical flags, it adds the command to the following frame through queue function `0x142bbcd70`.
+If that following frame is absent, it retains the command in the future-correction queue.
+When the target frame is absent, it instead retains the command at the current frame, if available.
+Each flag command retains its computed mask for later replay.
+
+Wrapper `0x142890810` bounds an old server tick to the earliest stored tick.
+For an available historical frame before the current tick, it asks the installed policy whether replay is needed.
+If the policy requests replay, the wrapper marks the following frame as a correction frame, when present.
+This schedules replay; the wrapper does not simulate later inputs itself.
+
+Installer `0x1467eb5c0` selects constructor `0x142890a10` for an actor with `LocalPlayerComponent` in its client branch.
+It bounds configured history capacity to 1 through 1,000 frames before creating ActorHistory at `0x142bbbfc0`.
+The installed policy vtable is `0x14e83a270`.
+Decision function `0x142898240` requests replay for a nonzero command result.
+The separate server branch installs another policy through `0x142890a80`; its replay decision returns false.
+The [SDK enum declaration](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/entity/utilities/AdvanceFrameResult.h) supplies result names as a research lead.
+The target executable establishes the decisions described here.
+
+**Verified within scope:** Exact native command and queue emulation passes 2,420 cases.
+The outer wrapper and local-player replay decision pass another 3,370 cases.
+Cases include all three metadata words, random flags, wrapped ring buffers, expired ticks, missing frames, absent captures, and future corrections.
+Each invocation reaches its return sentinel; selected flags, queue entries, wrapper results, and correction marks match the expected behavior.
+The fixtures use synthetic ECS containers and preallocated queues.
+They exclude allocation ownership, full input and physics replay, and visible native-client behavior.
+
+**Incomplete:** Map snapshot extraction and restoration, captured inputs, and the phase that replays later frames.
+Core must also correlate server ticks with completed client frames before using this policy.
+The existing prediction payload has no frame identifier or complete item-use state.
+Production still applies actor metadata immediately, and local completion remains excluded.
+The latest CI completes its build, tooling, and Ubuntu/Windows/macOS permission jobs successfully.
+Actual Windows/macOS game joins, ViaProxy replay, and all eight coverage groups remain requirements.
