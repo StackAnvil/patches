@@ -99,3 +99,37 @@ The largest vertical position difference is about 0.000031 blocks.
 Both completed route recordings have five corrections during early re-entry in the steeper cases.
 **Incomplete:** Re-entry begins one or two frames early at steeper angles and still receives strict-BDS corrections.
 These changes do not establish full fluid or correction parity.
+
+## Native swimming re-entry condition
+
+Inspection of the matching Windows 1.26.51.1 executable identifies `SwimTriggerSystem` and `PlayerBoundingBoxStateUpdateSystem`.
+The trigger requires head-in-water, sprint intent, and permission to swim.
+For look-direction Y at or above 0.15, it also requires two non-air material probes.
+One probe uses the breathing point supplied by the head-position query.
+The other uses the block above the collision-box center, calculated in single precision.
+The bounding-box system supplies the breathing probe by flooring the interpolated head position.
+The [component declaration](https://github.com/LiteLDev/LeviLamina/blob/main/src/mc/entity/components/PlayerInputRequestComponent.h) corroborates the breathing fields.
+The matching executable establishes their layout and use for this build.
+
+Apply these additional probes when entering swimming after local sprint decisions.
+Preserve the previous completed swimming state for sprint-stop timing.
+Do not use a fixed frame delay or change the eye height to fit the captured trajectory.
+Tests cover the look threshold, both material gates, the standing-box boundary, and negative coordinates.
+Live verification of the revised re-entry behavior follows below.
+
+The native trigger also stops upward swimming when the breathing block becomes air and standing is unobstructed.
+Its angle uses `acos(direction.x² + direction.z²)`, rather than the pitch angle itself.
+It retains swimming at 45 degrees or less by that calculation, or when looking downward.
+A second 35-degree surface exit exposes this distinction: Java's body-water check retains swimming for one extra frame.
+Apply the breathing-block and angle checks before local travel.
+Tests include shallow and steep upward directions, downward directions, and equivalent horizontal orientations.
+
+The completed direct and ViaProxy comparisons each cover 64 frames at all three recorded reference angles.
+Swimming and sprint events match native, including the second surface exit and re-entry.
+Neither route receives a correction during the controlled cases.
+Maximum vertical position difference is about 0.000031 blocks, and maximum horizontal difference is about 0.000008 blocks.
+Motion-component differences remain below 0.000000060 blocks per tick.
+Dependency builds pass with 16 converter tests, 636 core tests, and 607 add-on tests.
+There are no failures or errors; 135 environment-dependent tests skip.
+These results resolve the recorded re-entry gap.
+Other movement directions, blocked standing space, fluid levels, currents, effects, and reconciliation history remain unverified.

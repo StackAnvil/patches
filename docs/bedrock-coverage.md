@@ -3947,3 +3947,46 @@ The existing surface-exit results and remaining correction gaps still apply.
 
 **Automated verification:** All 107 tooling tests, the three replay self-test suites, and `bun run check` pass.
 Live observer output has file mode `0600`.
+
+### Native swimming trigger and repeated surface exits, October 6, 2026
+
+**Reference:** Inspection of the matching Windows 1.26.51.1 executable identifies the native swimming trigger and bounding-box input systems.
+For upward look-direction Y at or above 0.15, swimming starts only when two material probes are non-air.
+The first probe uses the breathing point supplied by the head-position query.
+The second uses the block above the collision-box center, calculated in single precision.
+Head-in-water and sprint intent remain prerequisites.
+The [input component declaration](https://github.com/LiteLDev/LeviLamina/blob/main/src/mc/entity/components/PlayerInputRequestComponent.h) corroborates the breathing fields.
+The matching executable establishes their use for this build.
+
+The native trigger also checks the breathing block when leaving swimming.
+At an unobstructed surface, it stops upward swimming when `acos(direction.x² + direction.z²)` exceeds 45 degrees.
+That calculation differs from the pitch angle.
+It retains swimming for shallower upward directions or downward directions.
+
+**Implemented:** Add the native material probes before entering local swimming.
+Apply the breathing-block and angle checks before travel when leaving swimming, with a standing-space check.
+Keep the previous completed swimming state for sprint decisions.
+Core continues to build auth-input events and apply server corrections on both connection routes.
+The add-on supplies the local physics and completed prediction frame.
+These changes are folded into the existing local-prediction patch.
+
+**Verified:** A first direct run removes the premature re-entry but exposes a second surface exit that still uses Java's body-water condition.
+That run receives two nonzero corrections at 35 degrees.
+The revised run includes the native breathing-block exit check.
+Its direct and ViaProxy comparisons each cover 64 movement frames at the recorded 30-, 35-, and 45-degree angles.
+All swimming and sprint events match the saved native reference, including repeated exits and re-entry.
+Neither route receives a correction during these controlled cases.
+Maximum vertical position differences are about 0.000031 blocks; horizontal differences are about 0.000008 blocks.
+Maximum motion-component differences are below 0.000000060 blocks per tick.
+The direct recording completes join and spawn with 1,518 auth-input frames and one zero-velocity fixture correction.
+The ViaProxy recording completes join and spawn with 2,108 auth-input frames and one zero-velocity fixture correction.
+
+**Automated verification:** Dependency builds pass with 16 converter tests, 636 core tests, and 607 add-on tests.
+There are no failures or errors; 135 tests skip environment-dependent fixtures.
+New tests cover both entry material gates, the look threshold, the body-center boundary, negative coordinates, and the exit angle calculation.
+
+**Incomplete:** These comparisons resolve the recorded early re-entry and repeated-exit corrections.
+They do not establish parity for all movement directions, blocked standing space, other fluid levels, currents, lava, effects, vehicles, or latency.
+Native input permissions, movement history replay, and the rest of the movement matrix remain requirements.
+Fresh native capture and shutdown verification still require the host GPU safety condition to be resolved by a reboot.
+Windows and macOS game joins and real-server verification remain separate requirements.

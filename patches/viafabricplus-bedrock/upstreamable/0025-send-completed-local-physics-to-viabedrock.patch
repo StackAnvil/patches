@@ -1,4 +1,4 @@
-From eebe774970d04ba7e66045bc3e41d90a7625ac70 Mon Sep 17 00:00:00 2001
+From 9a190a97fcb2f14399dc20297d8a0b161daa87c7 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:53 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -36,14 +36,29 @@ inverted AABBs, which moved the water boundary below the box center and
 delayed native surface exits. Avoid the stale visual crawling slowdown
 on that exit frame and retain sprinting in shallow water. Native 1.26.51.1
 protocol 2193 surface captures establish these transitions.
+
+Inspect the matching native SwimTriggerSystem and PlayerBoundingBoxStateUpdateSystem
+to reproduce upward swimming re-entry. Native checks the breathing-point
+material and the block above the single-precision collision-box center when
+look Y is at least 0.15. Gate the local transition with those probes instead
+of fitting an eye height or frame delay to the trajectory. Preserve the
+previous swimming state for the verified sprint-release phase.
+
+Stop upward swimming when the native breathing probe reaches air and
+standing is unobstructed. Reproduce the trigger's acos of the squared
+horizontal direction components instead of using the body-water predicate.
+The first revised strict-BDS run exposed that difference on the second
+surface exit after re-entry. The completed direct comparison now matches
+the native pose and sprint events at all three reference angles without
+corrections during the controlled swimming cases.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |  2 +
- .../mixin/features/movement/MixinEntity.java  | 25 +------
- .../features/movement/MixinLocalPlayer.java   | 75 ++++++++++++++++++-
- .../input/PlayerPredictionPayload.java        | 24 ++++++
- .../bedrock/movement/BedrockFluidPhysics.java | 36 +++++++++
- .../movement/BedrockFluidPhysicsTest.java     | 48 ++++++++++++
- 6 files changed, 186 insertions(+), 24 deletions(-)
+ .../mixin/features/movement/MixinEntity.java  | 25 +-----
+ .../features/movement/MixinLocalPlayer.java   | 88 ++++++++++++++++++-
+ .../input/PlayerPredictionPayload.java        | 24 +++++
+ .../bedrock/movement/BedrockFluidPhysics.java | 58 ++++++++++++
+ .../movement/BedrockFluidPhysicsTest.java     | 83 +++++++++++++++++
+ 6 files changed, 256 insertions(+), 24 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
@@ -132,31 +147,34 @@ index 236c05d..dda48a4 100644
              return box;
          }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-index e5a8167..a0889eb 100644
+index e5a8167..c8959ea 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-@@ -21,22 +21,93 @@
+@@ -21,22 +21,106 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
 +import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 +import com.mojang.authlib.GameProfile;
+ import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import com.viaversion.viafabricplus.bedrock.input.PlayerPredictionPayload;
++import com.viaversion.viafabricplus.bedrock.movement.BedrockFluidPhysics;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 +import net.minecraft.client.multiplayer.ClientLevel;
 +import net.minecraft.client.player.AbstractClientPlayer;
 +import net.minecraft.client.player.ClientInput;
- import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
-+import com.viaversion.viafabricplus.bedrock.input.PlayerPredictionPayload;
-+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+ import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.core.BlockPos;
++import net.minecraft.world.entity.Pose;
 +import net.minecraft.world.phys.Vec3;
 +import net.raphimc.viabedrock.api.model.PlayerPrediction;
 +import net.raphimc.viabedrock.protocol.model.Position3f;
- import net.minecraft.client.player.LocalPlayer;
  import org.spongepowered.asm.mixin.Mixin;
  import org.spongepowered.asm.mixin.Shadow;
 +import org.spongepowered.asm.mixin.Unique;
  import org.spongepowered.asm.mixin.injection.At;
- import org.spongepowered.asm.mixin.injection.Redirect;
 +import org.spongepowered.asm.mixin.injection.Inject;
+ import org.spongepowered.asm.mixin.injection.Redirect;
 +import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  
  @Mixin(LocalPlayer.class)
@@ -201,8 +219,18 @@ index e5a8167..a0889eb 100644
 +    private void updateSwimmingBeforeTravel(final CallbackInfo ci) {
 +        if (BedrockInputPermissions.isBedrockConnection()) {
 +            super.updateSwimming();
++            final boolean breathingInAir = this.level().getBlockState(BlockPos.containing(this.getEyePosition(0F))).isAir();
 +            if (!this.input.hasForwardImpulse()) {
 +                this.setSwimming(false);
++            } else if (this.viaFabricPlusBedrock$wasSwimming && breathingInAir
++                    && !BedrockFluidPhysics.canRemainSwimmingAtSurface(this.getLookAngle())
++                    && this.canPlayerFitWithinBlocksAndEntitiesWhen(Pose.STANDING)) {
++                this.setSwimming(false);
++            } else if (!this.viaFabricPlusBedrock$wasSwimming && this.isSwimming()) {
++                final boolean airAboveBodyCenter = this.level().getBlockState(BedrockFluidPhysics.aboveBodyCenter(this.getBoundingBox())).isAir();
++                if (!BedrockFluidPhysics.canStartSwimming(this.getLookAngle().y, breathingInAir, airAboveBodyCenter)) {
++                    this.setSwimming(false);
++                }
 +            }
 +        }
 +    }
@@ -263,10 +291,10 @@ index 0000000..7b212c2
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java
 new file mode 100644
-index 0000000..160ab8a
+index 0000000..9abadc3
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,58 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2021-2026 the original authors
@@ -290,11 +318,33 @@ index 0000000..160ab8a
 +
 +package com.viaversion.viafabricplus.bedrock.movement;
 +
++import net.minecraft.core.BlockPos;
++import net.minecraft.util.Mth;
 +import net.minecraft.world.phys.AABB;
++import net.minecraft.world.phys.Vec3;
 +
 +public final class BedrockFluidPhysics {
 +
 +    private BedrockFluidPhysics() {
++    }
++
++    public static BlockPos aboveBodyCenter(final AABB box) {
++        // The native trigger calculates its center in single precision before flooring each coordinate.
++        final float x = (float) box.minX + ((float) box.maxX - (float) box.minX) * 0.5F;
++        final float y = (float) box.minY + ((float) box.maxY - (float) box.minY) * 0.5F;
++        final float z = (float) box.minZ + ((float) box.maxZ - (float) box.minZ) * 0.5F;
++        return BlockPos.containing(x, y, z).above();
++    }
++
++    public static boolean canRemainSwimmingAtSurface(final Vec3 look) {
++        final float x = (float) look.x;
++        final float z = (float) look.z;
++        final float angle = (float) Math.acos(x * x + z * z) * Mth.RAD_TO_DEG;
++        return angle <= 45F || look.y <= 0;
++    }
++
++    public static boolean canStartSwimming(final double lookY, final boolean breathingInAir, final boolean airAboveBodyCenter) {
++        return lookY < 0.15F || (!breathingInAir && !airAboveBodyCenter);
 +    }
 +
 +    public static AABB interactionBox(final AABB box) {
@@ -305,10 +355,10 @@ index 0000000..160ab8a
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
 new file mode 100644
-index 0000000..cdd17fe
+index 0000000..e53091e
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,83 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2021-2026 the original authors
@@ -332,13 +382,48 @@ index 0000000..cdd17fe
 +
 +package com.viaversion.viafabricplus.bedrock.movement;
 +
++import net.minecraft.core.BlockPos;
 +import net.minecraft.world.phys.AABB;
++import net.minecraft.world.phys.Vec3;
 +import org.junit.jupiter.api.Test;
 +
 +import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
 +import static org.junit.jupiter.api.Assertions.assertTrue;
 +
 +class BedrockFluidPhysicsTest {
++
++    @Test
++    void surfaceRetentionUsesTheNativeHorizontalDotProduct() {
++        for (final double lookY : new double[]{0, 0.5, 0.54, -0.70710677, -1}) {
++            assertTrue(BedrockFluidPhysics.canRemainSwimmingAtSurface(new Vec3(0, lookY, Math.sqrt(1 - lookY * lookY))));
++        }
++        for (final double lookY : new double[]{0.545, 0.57357644, 0.70710677, 1}) {
++            assertFalse(BedrockFluidPhysics.canRemainSwimmingAtSurface(new Vec3(0, lookY, Math.sqrt(1 - lookY * lookY))));
++        }
++        assertEquals(BedrockFluidPhysics.canRemainSwimmingAtSurface(new Vec3(0.5, 0.6, Math.sqrt(0.39))),
++                BedrockFluidPhysics.canRemainSwimmingAtSurface(new Vec3(Math.sqrt(0.39), 0.6, 0.5)));
++    }
++
++    @Test
++    void upwardSwimmingRequiresBothBreathingAndBodyProbesBelowAir() {
++        for (final double lookY : new double[]{0.15F, 0.5, 0.70710677}) {
++            assertTrue(BedrockFluidPhysics.canStartSwimming(lookY, false, false));
++            assertFalse(BedrockFluidPhysics.canStartSwimming(lookY, true, false));
++            assertFalse(BedrockFluidPhysics.canStartSwimming(lookY, false, true));
++            assertFalse(BedrockFluidPhysics.canStartSwimming(lookY, true, true));
++        }
++        for (final double lookY : new double[]{-1, 0, Math.nextDown(0.15F)}) {
++            assertTrue(BedrockFluidPhysics.canStartSwimming(lookY, true, true));
++        }
++    }
++
++    @Test
++    void standingBodyProbeCrossesTheWaterBoundaryAtTheNativeCenter() {
++        assertEquals(new BlockPos(-7, 105, 15), BedrockFluidPhysics.aboveBodyCenter(new AABB(-6.8, 103.17427, 15.2, -6.2, 104.97427, 15.8)));
++        assertEquals(new BlockPos(-7, 104, 15), BedrockFluidPhysics.aboveBodyCenter(new AABB(-6.8, 103.06353, 15.2, -6.2, 104.86353, 15.8)));
++        assertEquals(new BlockPos(-1, 0, -1), BedrockFluidPhysics.aboveBodyCenter(new AABB(-0.6, -1.9, -0.6, 0, -0.1, 0)));
++    }
 +
 +    @Test
 +    void verticalInsetPreservesTheCenterAndNeverExpandsShortBoxes() {
