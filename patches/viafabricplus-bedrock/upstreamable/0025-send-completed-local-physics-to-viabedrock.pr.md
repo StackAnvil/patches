@@ -522,3 +522,28 @@ The [coverage ledger](../../../docs/bedrock-coverage.md#native-correction-snapsh
 
 The item-use flag callback previously traced is `DealKineticDamageComponent` cleanup, not proof of ordinary food completion.
 Frame correlation, complete snapshots, and actual later-input simulation remain necessary before this patch can predict local completion.
+
+Native capture callback `0x143276a40` and restore kernel `0x14327b7c0` preserve component presence separately from field values.
+Exact native capture and restoration pass 640 cases for movement speed, sneaking, actor flags, and state vectors.
+The fixture supplies existing synthetic storage and substitutes cached component-view discovery.
+Other components, allocation ownership, and full physics replay remain outside that verification.
+The [snapshot reference](../../../docs/bedrock-coverage.md#native-snapshot-capture-and-restoration-october-6-2026) records the target evidence and limits.
+
+## Preserve local item use across metadata updates
+
+The patch prevents `LocalPlayer.onSyncedDataUpdated` from starting or stopping local item use on Bedrock connections.
+Native keeps its active item instance and selected inventory slot separate from actor flags.
+Core metadata remains authoritative; remote players and ordinary Java connections retain their existing behavior.
+
+Strict-BDS recordings reach join and spawn through direct connections and ViaProxy with protocol 2193.
+Each records 200 consecutive active-use frames during repeated eating, without inactive gaps between completions.
+Each receives seven server completions and one equipment update per completion.
+Last-item completion empties the held stack through authoritative updates.
+Early release, slot changes, and server item replacement still stop use before duration expires.
+Bow use also stops on release.
+All four projects build, their patch stacks replay, and the test suites report no failures or errors.
+
+Repeated eating still receives two movement corrections on each route.
+The last-item movement case receives none directly and one through ViaProxy.
+This change does not predict local completion or implement historical replay.
+The [coverage ledger](../../../docs/bedrock-coverage.md#local-item-use-metadata-independence-october-6-2026) records the native function evidence and verification limits.

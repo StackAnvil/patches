@@ -4685,9 +4685,71 @@ Each invocation reaches its return sentinel; selected flags, queue entries, wrap
 The fixtures use synthetic ECS containers and preallocated queues.
 They exclude allocation ownership, full input and physics replay, and visible native-client behavior.
 
-**Incomplete:** Map snapshot extraction and restoration, captured inputs, and the phase that replays later frames.
+**Incomplete:** Finish snapshot extraction and restoration, captured inputs, and the phase that replays later frames.
 Core must also correlate server ticks with completed client frames before using this policy.
 The existing prediction payload has no frame identifier or complete item-use state.
 Production still applies actor metadata immediately, and local completion remains excluded.
 The latest CI completes its build, tooling, and Ubuntu/Windows/macOS permission jobs successfully.
 Actual Windows/macOS game joins, ViaProxy replay, and all eight coverage groups remain requirements.
+
+### Native snapshot capture and restoration, October 6, 2026
+
+**Reference:** Matching-build inspection identifies capture callback `0x143276a40` and restore kernel `0x14327b7c0`.
+Callback-vector getter `0x143281370` installs the capture callback.
+History preparation `0x142bbce80` calls restore wrapper `0x14327b6f0` before additional component callbacks.
+Cached view discovery `0x14327abf0` uses constructor `0x143284430` to resolve component storage.
+The capture uses presence bits to distinguish absent components from stored values.
+
+Four resolved fields are movement speed at `0x50`, sneaking at `0x58`, actor flags at `0x160`, and state vectors at `0x23c`.
+Their presence bits are 17, 19, 46, and 55, respectively.
+Capture can reset its presence bitmap or merge into an existing capture.
+For these fields, restoration copies captured values and preserves live values when the corresponding capture bit is absent.
+
+**Verified within scope:** Emulation runs the exact capture and restore bytes for 640 cases, with no mismatches.
+Cases cover every subset of these four fields, both capture modes, and randomized field values.
+Each invocation reaches its return sentinel.
+The fixture substitutes cached view discovery and supplies existing synthetic ECS storage.
+It excludes other fields, component creation and removal, owned containers, full physics replay, and visible native-client behavior.
+The executable and fixtures remain private.
+
+**Incomplete:** Trace captured inputs, remaining component ownership, and the complete replay phase.
+Preparation function `0x1433dd810` requires bit 0 in the pending-type mask to be set before its inspected rewind path.
+The actor-flag command returns a zero type bitset, so its correction mark alone does not establish an immediate physics rewind.
+Production still needs frame correlation and ordered authoritative updates.
+All eight coverage groups, broader movement, both connection routes, and actual Windows/macOS game joins remain requirements.
+
+### Local item-use metadata independence, October 6, 2026
+
+**Implemented:** Prediction patch 0025 prevents translated actor flags from starting or stopping the local Bedrock player's item-use cycle.
+Java 26.3 normally performs those transitions in `LocalPlayer.onSyncedDataUpdated`.
+Delayed metadata can therefore interrupt a newer local cycle.
+Core still applies authoritative metadata and inventory updates.
+Remote players and ordinary Java sessions retain their existing metadata behavior.
+
+**Reference:** Native start function `0x1401ec3a0` and stop function `0x1401ebb00` maintain an item instance at Actor offset `0x730`.
+The selected container and slot occupy `0x7c8` and `0x7cc`.
+The inspected item-tick path in `0x1401e8570` checks that instance and the selected inventory item.
+This local use state is separate from `ActorDataFlagComponent`.
+The inspected flag-change callback `0x14326d6a0` updates kinetic-damage state.
+These findings explain why Java's local metadata transitions need separate handling.
+
+**Verification:** All four projects build, and their full patch stacks replay.
+The build reports 16 converter, 672 core, and 584 add-on test cases, with 133 skips and no failures or errors.
+`bun run check` passes.
+Direct and ViaProxy recordings reach join and spawn with protocol 2193 on strict BDS.
+Each route records 200 consecutive active-use frames during repeated eating, without inactive gaps between completions.
+Each receives seven server completions, with one equipment update per completion.
+The last-item case empties the held stack through authoritative updates.
+Early release, selected-slot change, and server item replacement cancel local use before duration expires.
+Both routes also stop bow use on release.
+Direct records 314 active-use frames; ViaProxy records 315.
+Each records 11 active frames at zero duration and none with negative duration.
+Both repeated-eating movement cases still receive two corrections.
+The last-item movement case receives none directly and one through ViaProxy.
+These checks establish the metadata separation, not complete native completion or correction parity.
+
+**Incomplete:** This separation does not predict native local completion or replay historical physics.
+Core still applies metadata immediately without its historical tick.
+Additional event consumers, custom items, Boar comparisons, and broader movement remain requirements.
+Fresh native visual comparisons remain unavailable under the current-boot GPU guard.
+Actual Windows/macOS game joins and all eight coverage groups remain requirements.
