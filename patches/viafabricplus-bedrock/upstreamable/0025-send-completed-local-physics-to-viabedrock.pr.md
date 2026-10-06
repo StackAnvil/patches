@@ -595,3 +595,19 @@ The [settings and collision reference](../../../docs/bedrock-coverage.md#native-
 
 Production frame identity, retained settings and world state, ordered corrections, and later-input simulation remain incomplete.
 These findings do not add production reconciliation or establish full movement parity.
+
+## Native collision solver
+
+Matching-build inspection distinguishes collision-shape gathering from actor movement.
+The actor solver resolves Y, X, then Z, visits boxes in reverse order, and snaps contact distances within `0.000001` blocks to zero.
+It maintains separate clipping and overlap-resolution alternatives and uses per-axis overlap limits to select between them.
+Actor movement updates the final bounding box, owned shape boxes, original and resolved speed, and overlap flag.
+
+Exact native contact, movement-sequence, and actor-movement bytes pass 10,288 comparisons against an independent float32 model.
+These kernels execute without substituted code hooks.
+Another 4,096 cases verify overlap-limit configuration, with cached ECS view discovery substituted.
+The [collision solver reference](../../../docs/bedrock-coverage.md#native-collision-solving-and-overlap-limits-october-6-2026) records function evidence, fixture boundaries, and the Java 26.3 difference.
+
+The add-on still uses Java collision solving.
+Native overlap-state producers, stepping, final position updates, and retained-world replay remain incomplete.
+These comparisons do not establish production collision parity or visible native behavior.

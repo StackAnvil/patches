@@ -4752,7 +4752,6 @@ These checks establish the metadata separation, not complete native completion o
 Core still applies metadata immediately without its historical tick.
 Additional event consumers, custom items, Boar comparisons, and broader movement remain requirements.
 Fresh native visual comparisons remain unavailable under the current-boot GPU guard.
-Actual Windows/macOS game joins and all eight coverage groups remain requirements.
 
 ### Native captured inputs and movement replay, October 6, 2026
 
@@ -4925,3 +4924,60 @@ The findings above specify parts of that path; they do not implement production 
 Current CI passes build, tooling, and Ubuntu/Windows/macOS permission jobs.
 Actual Windows/macOS game joins, direct and ViaProxy comparisons, and all eight coverage groups remain requirements.
 Fresh native visual comparisons remain unavailable under the current-boot GPU guard.
+
+### Native collision solving and overlap limits, October 6, 2026
+
+**Reference:** `MoveCollisionSystem` gathers and caches collision shapes.
+Actor movement uses vtable `0x14ea50160`, whose per-entity method `0x149028c70` calls movement kernel `0x1490283a0`.
+That kernel passes three requested moves to solver `0x1482a4890` in Y, X, Z order.
+The solver visits collision boxes in reverse order for each requested move.
+It updates the moving box between axes, then accumulates the resolved displacement and overlap depth.
+
+Contact kernel `0x143327d80` produces separate clipped and overlap-resolution alternatives.
+It snaps contact distances within `0.000001` blocks to zero and ignores stationary boxes without volume.
+When boxes overlap on all axes, it selects the axis with the smallest overlap.
+Ties prefer X over Y, and the selected X/Y axis over Z.
+The movement solver chooses the overlap-resolution alternative only when depth does not exceed that axis's configured limit.
+Ordinary separated-box contact clips both alternatives to the same displacement.
+The [SDK AABB interface](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/world/phys/AABB.h) names the contact operation `clipCollide`.
+The target instructions establish the behavior described here.
+
+Actor movement writes the final box and moves each owned `SubBBsComponent` box by the resolved displacement.
+It preserves the requested displacement as pre-collision speed and writes the resolved speed separately.
+It also records whether accumulated overlap reaches the contact epsilon.
+The [SDK movement-request declaration](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/deps/vanilla_components/MoveRequestComponent.h) agrees with these target field bindings.
+
+**Verified within scope:** Exact contact bytes pass 8,240 cases.
+Exact movement-sequence and actor-movement bytes pass another 1,024 cases each.
+All 10,288 cases match the independently expressed float32 model.
+Cases include distance boundaries, degenerate obstacles, overlap ties, randomized motion, empty and populated collision lists, and different overlap limits.
+Actor cases also verify moved owned boxes, original and resolved speeds, overlap flags, and preservation of unrelated fields.
+These three kernels execute without substituted code hooks.
+Fixtures provide finite boxes and existing buffers.
+They exclude ECS discovery, live shape gathering, invalid-position logging, stepping, final position updates, correction replay, and visible native behavior.
+
+**Overlap configuration:** System `0x149027b80` resolves `DepenetrationComponent` and `MoveRequestComponent`.
+It starts with axis limits of one when bit 3 is set.
+Otherwise, it starts with one only when the retained list is empty and bits 0, 2, and 4 are clear.
+Other cases start with zero.
+It then takes the axis maxima with persistent minimum values and any active temporary override.
+The resulting limits occupy movement-request offsets `0x48` through `0x53`.
+The [SDK depenetration declaration](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/entity/components/DepenetrationComponent.h) identifies the retained list as one-way physics blocks.
+Its enum names supply leads for tracing the flag producers.
+
+Exact configuration bytes pass 4,096 cases with no mismatches.
+Cases cover every combination of the low six bits, empty or populated lists, persistent minima, and active or absent temporary overrides.
+The fixture substitutes cached ECS view construction and supplies existing storage.
+It verifies that only the three request limits change.
+Flag producers, component lifecycle, live one-way blocks, and complete movement remain unverified.
+
+**Production difference:** Java 26.3 `Direction.axisStepOrder` uses Y, Z, X when absolute Z motion exceeds absolute X motion.
+It otherwise uses Y, X, Z.
+The current add-on still uses Java collision solving and does not reproduce all native clipping and overlap behavior above.
+Porting only the axis order would leave float precision, contact epsilon, overlap limits, and actor-box updates incomplete.
+
+**Incomplete:** Trace overlap-state producers, native stepping, and final position updates before integrating the complete collision path.
+Retained world state, frame identity, ordered corrections, and later-input replay remain requirements.
+Current CI passes build, tooling, and Ubuntu/Windows/macOS permission jobs.
+Actual platform joins, direct and ViaProxy native comparisons, broader movement, and all eight coverage groups remain requirements.
+Actual Windows/macOS game joins and all eight coverage groups remain requirements.
