@@ -4760,9 +4760,23 @@ The system first ensures an immutable movement snapshot through `0x14327a6c0`.
 The replay function restores the first corrected frame, then processes retained later inputs.
 For each frame, it applies queued corrections before calling the input's `preApplyInput` method.
 It exposes captured external data, ensures `ActorMovementTickNeededComponent`, performs the movement step, then calls `postApplyInput`.
-The loop stops when a required frame or input is absent.
+The initial scan returns if its first required frame is absent.
+The movement loop requires a captured input for every replayed frame.
+An absent input leaves the loop on the same frame instead of advancing or returning.
 After replay, it restores live external data, records the corrected displacement, and clears pending types and correction markers.
 The previously inspected pending-type gate still applies.
+
+A bounded Unicorn comparison executes this native replay function across 300 valid history layouts.
+It covers ring wraparound, the first corrected frame, queued-command order, and enabled or disabled component-copy callbacks.
+It also verifies external-data replacement, live-pointer restoration, corrected displacement, and removal of pending correction markers.
+Seven early-return cases cover the pending-type gate, absent correction markers, scan limits, an absent first frame, and empty history.
+Three deliberately invalid histories omit an input at different positions.
+Each reaches the 20,000-instruction bound without returning or advancing past that frame.
+These invalid fixtures establish the input invariant; they do not establish a native gameplay defect.
+
+Storage lookup, snapshot restoration, component copying, allocation, and movement callbacks are supplied boundaries in this comparison.
+The movement callback performs synthetic arithmetic to expose ordering and displacement errors.
+This comparison verifies the native loop, not complete world collision, movement physics, or production correction replay.
 
 ClientLevel getter `0x141177ae0`, at vtable slot `0x940`, returns the movement systems object.
 Its vtable `0x14e98a620` selects function `0x1463b0f30` at slot `0x20` during replay.
@@ -6355,3 +6369,40 @@ Fresh native baselines remain blocked by the GPU guard.
 Exact native action timing, historical impulse application, later-frame replay, and the complete movement matrix remain requirements.
 The [complex gameplay record](bedrock-complex-gameplay.md#server-hotbar-selection-during-charging-october-6-2026) describes the fixture boundaries.
 All eight original coverage groups remain required.
+
+### Native velocity-command application, October 6, 2026
+
+**Reference:** Constructor `0x144359a80` creates a 24-byte command with vtable `0x14e8ccaa0` and preserves the supplied velocity's 12 bytes.
+Method `0x144376520` writes those bytes into the historical state vector's velocity at offset 24.
+It leaves the preceding position fields unchanged.
+Immediate method `0x144376500` adapts the Actor's embedded entity context and calls the same writer.
+The command's type method returns 2; its pending-type method writes 1.
+The client handler at `0x141341750` constructs this command from a vector and supplies a nonzero packet tick to the history wrapper.
+Its field layout matches the [target motion schema](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/set-actor-motion-packet/).
+The complete packet-40 dispatcher binding remains unverified.
+
+**Verified within scope:** Exact native construction, type methods, immediate adaptation, and historical writes pass 512 cases without mismatches.
+Cases cover bit preservation, signed zero, sparse-page boundaries, dense-page boundaries, and entity generations.
+Allocator and owning-storage lookup are supplied boundaries.
+Native instructions perform the command dispatch and existing sparse/dense storage access.
+This evidence establishes velocity replacement; it does not establish complete movement physics, world collision, or production replay.
+Full input/world history, correction ordering, both routes, native baselines, and all eight coverage groups remain required.
+
+### Fluid and projectile regression findings, October 6, 2026
+
+**Verified within scope:** Ten terrain, fluid, and potion controls pass strict BDS through both translated routes with the add-on.
+They cover submerged bow use, splash speed, lingering slowness, powder snow with and without leather boots, water/lava travel, currents, and bubbles.
+The direct route also passes large-fireball contact/reflection and small-fireball contact.
+
+**Incomplete:** Both direct dodge controls receive contact and damage.
+Instrumented player samples expose delayed lateral movement near the contact tick.
+ViaProxy encounters a magma death and cannot recover for the five following fireball controls.
+These findings retain reaction timing, delivery latency, death/respawn recovery, and fixture lifecycle as unresolved boundaries.
+An isolated rerun passes contact/reflection controls on both routes, but large-fireball dodging still fails and small-fireball dodging remains unverified.
+The [complex gameplay record](bedrock-complex-gameplay.md#fluid-and-projectile-regression-sweep-october-6-2026) describes the checks and limits.
+
+The dodge contract now requires valid player samples that show movement before the projectile passes.
+All 147 tooling tests, the TypeScript check, and the behavior-pack build pass.
+The sweep's recorders finish normally, and its owned server stops.
+No native visual baseline, full correction replay, anticheat result, or actual Windows/macOS game join is claimed.
+All eight original groups and every applicable gameplay action and edge case remain required.

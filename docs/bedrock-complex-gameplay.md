@@ -595,3 +595,39 @@ These checks verify cancellation and subsequent item use against BDS.
 They do not establish complete native action timing or movement parity.
 Fresh native comparisons remain blocked by the current-boot GPU guard.
 Historical impulses, correction replay, the complete complex matrix, and all eight original coverage groups remain required.
+
+### Fluid and projectile regression sweep, October 6, 2026
+
+A 15-case sweep uses actual input against strict official BDS through direct and ViaProxy connections.
+Both clients have the add-on installed.
+Each route passes submerged bow release, splash speed, lingering slowness, powder-snow sinking, and leather-boot surface support.
+Each also passes forward water and lava movement, idle water currents, and both bubble-column directions.
+These ten controls pass on each route.
+The direct route also passes large-fireball contact, reflection, and small-fireball contact.
+
+The direct route fails both dodge cases after projectile contact and damage.
+A separate instrumented large-fireball case first records player movement nine server ticks after launch.
+It records more than one block of lateral clearance only on the projectile-contact tick.
+This result exposes a reaction-timing boundary; it does not isolate native physics from test-driver and delivery latency.
+The dodge observer now records player positions and velocities after launch.
+Its assertion rejects movement that occurs only after the shot passes, along with stale, unordered, or non-finite samples.
+
+An isolated five-case rerun passes large-fireball contact/reflection and small-fireball contact on both routes.
+Large-fireball dodging still receives contact and damage on each route.
+The direct small-fireball dodge receives no threatening shot within its twenty-second startup bound.
+The proxy recording ends during that case's startup.
+Those small-fireball dodge attempts remain unverified.
+These isolated results do not close the earlier death/respawn recovery gap.
+
+The ViaProxy sweep reaches a magma death after the downward bubble-column case.
+It cannot recover through the next case's preparation and the runner's respawn input.
+The five following fireball cases therefore do not verify their gameplay assertions.
+The private journal records a client-ready respawn request without a subsequent ready-to-spawn reply.
+Recovery after hazardous terrain and the fixture's preparation lifecycle need separate investigation.
+This run does not establish which component causes that recovery failure.
+
+All 147 tooling tests pass, as do the TypeScript check and behavior-pack build.
+The owned sweep server stops and both recorders finish successfully despite failed gameplay assertions.
+Failed dodge and recovery cases remain open.
+Detailed trajectories, native baselines, controlled network conditions, Boar, CubeCraft, actual Windows/macOS joins, and the full gameplay matrix remain required.
+The current-boot GPU guard remains in force, and all eight original coverage groups remain required.
