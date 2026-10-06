@@ -21,3 +21,17 @@ The comparison images remain tied to the exact approved five-artifact snapshot t
 Both replay clients, proxies, services and virtual display are cleaned up. The five artifact hashes match the approved snapshot before and after both captures. Raw replay data, pictures and inspection logs remain private.
 
 After incorporating the newer Dressing Room and world-emote query changes, the final add-on build succeeds. Its full suite passes 458 cases and skips the newly introduced Hover fixture case because the fixture variable was absent. Supplying the existing licensed local fixture and rerunning that exact case passes it too: all 459 cases execute successfully, with no failures or remaining skips. The final artifact retains byte-identical cloud pipeline classes, fog hooks, shaders and rendering-context inputs across twelve entries compared with the replay-tested artifact. The bundle is rebuilt from this final artifact.
+
+The forward native cloud variant now registers the cloud shader family for Iris 1.11.7.
+The shader pack controls cloud shading while active.
+Native OIT stages and classic distance fade remain unchanged for the ordinary renderer.
+The pipeline tests cover this mapping and render-state preservation.
+
+The full add-on build and all nine pipeline mapping/state tests pass.
+The pinned CubeCraft shader replay passes transport and rendering checks with no missing Bedrock pipeline overrides.
+The shader screenshot shows drawable custom actors and supplied player geometry without the corrupt triangles.
+Validation uses the private Linux/NVIDIA lab; macOS/Apple GPU confirmation remains outstanding.
+
+The matching replay without Iris installed also passes transport and rendering verification.
+It preserves all 216 recorded geometry skins, local and remote native submissions, and all 31 custom actor types.
+Its screenshot retains the ordinary first-person arm and drawable actor geometry.

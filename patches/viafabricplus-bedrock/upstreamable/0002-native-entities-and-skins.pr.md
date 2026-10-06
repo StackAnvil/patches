@@ -185,3 +185,33 @@ Four targeted tests cover shared consumers, provenance, empty layers, accepted-s
 The complete add-on suite passes with the matching core and converter dependencies.
 No Store sign-in or direct Bedrock connection is necessary to read accepted assets.
 New converted packs require this matching add-on.
+
+The macOS 26.3 report uses Iris 1.11.7 and Complementary Reimagined r5.9.3.
+The pinned shader replay reproduces missing Bedrock pipeline overrides and corrupt actor geometry.
+Iris extends entity buffers from 36 to 56 bytes per vertex.
+Without an override, the original GPU pipeline still reads the 36-byte layout.
+
+Native actor pipelines now advertise their corresponding entity shader family through an optional Iris mixin.
+Iris selects its world, hand, and shadow programs and creates a GPU pipeline with the extended format.
+Fullbright materials use the eyes shader family.
+The registry preserves each native pipeline and its render state when shaders are disabled or Iris is absent.
+Particle and cloud patches register their corresponding shader families through the same registry.
+
+Shader regression validation on Minecraft 26.3 with Iris 1.11.7, Sodium 0.9.2,
+and Complementary Reimagined r5.9.3 passes on the private Linux/NVIDIA lab.
+Before the change, the complete CubeCraft replay reports missing pipeline
+overrides and large corrupt triangles obscure the scene.
+After the change, transport and rendering verification both pass with no
+missing Bedrock overrides. All 216 geometry skins install unchanged,
+and the renderer submits the local player, remote players, and 31 custom actor types.
+The first-person arm is visible. Images and scene data stay private.
+This validates the shared failure path; a macOS/Apple GPU retest remains outstanding.
+
+The full dependency build passes. The add-on executes 478 tests successfully
+and skips 114 private-fixture cases; all nine pipeline mapping and state tests execute.
+Core executes 664 tests successfully with 19 private-fixture skips; CubeConverter passes all 16 tests.
+The reproduction tooling also passes its 19 focused tests and TypeScript checking.
+
+The matching replay without Iris installed also passes transport and rendering verification.
+It preserves all 216 recorded geometry skins, local and remote native submissions, and all 31 custom actor types.
+Its screenshot retains the ordinary first-person arm and drawable actor geometry.

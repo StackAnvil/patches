@@ -2735,3 +2735,17 @@ An initial oversized fixture batch reached the unchanged asset-cache limit; redu
 Both material controls submit forward draws.
 Improved transparency, complete actor/world contexts, native images, and timing remain unverified.
 Reviewed screenshots retain custom lobby models, banners, the hanging cube, hotbar icons, overlapping labels, and the Java tutorial toast.
+
+Forward native particle materials now register opaque or translucent shader families for Iris.
+The pinned shader replay reports missing particle overrides before this integration.
+The mapping preserves native blending and depth state; shader packs use the forward path.
+Semantic tests cover all four material families and their vertex bindings.
+
+The full add-on build and all nine pipeline mapping/state tests pass.
+The pinned CubeCraft shader replay passes transport and rendering checks with no missing Bedrock pipeline overrides.
+The shader screenshot shows drawable custom actors and supplied player geometry without the corrupt triangles.
+Validation uses the private Linux/NVIDIA lab; macOS/Apple GPU confirmation remains outstanding.
+
+The matching replay without Iris installed also passes transport and rendering verification.
+It preserves all 216 recorded geometry skins, local and remote native submissions, and all 31 custom actor types.
+Its screenshot retains the ordinary first-person arm and drawable actor geometry.
