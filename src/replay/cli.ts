@@ -254,7 +254,8 @@ async function stopAll(gamePid?: number): Promise<void> {
   }
   if (alive(gamePid)) process.kill(gamePid!, "SIGTERM");
   for (const child of children.toReversed()) if (alive(child.pid)) process.kill(-child.pid!, "SIGTERM");
-  const until = Date.now() + 10_000;
+  // Native channel cleanup can wait up to 35 seconds for pending pack downloads.
+  const until = Date.now() + (nativeClient ? 45_000 : 10_000);
   while (Date.now() < until && (alive(gamePid) || children.some((child) => alive(child.pid)))) await Bun.sleep(100);
   if (alive(gamePid)) process.kill(gamePid!, "SIGKILL");
   for (const child of children.toReversed()) if (alive(child.pid)) process.kill(-child.pid!, "SIGKILL");

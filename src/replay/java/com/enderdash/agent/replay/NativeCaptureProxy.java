@@ -6,8 +6,11 @@ import io.jsonwebtoken.Jwts;
 import io.netty.bootstrap.*;
 import io.netty.buffer.*;
 import io.netty.channel.*;
+import io.netty.channel.group.ChannelGroup;
+import io.netty.channel.group.DefaultChannelGroup;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.nio.NioDatagramChannel;
+import io.netty.util.concurrent.ImmediateEventExecutor;
 import net.raphimc.minecraftauth.MinecraftAuth;
 import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
 import net.raphimc.viabedrock.api.util.CryptUtil;
@@ -44,6 +47,7 @@ public final class NativeCaptureProxy {
     private final boolean netherNet;
     private final EventLoopGroup loops;
     private final AtomicBoolean used = new AtomicBoolean();
+    private final ChannelGroup connections = new DefaultChannelGroup(ImmediateEventExecutor.INSTANCE, true);
 
     private NativeCaptureProxy(Path directory, InetSocketAddress target, String account, boolean netherNet, EventLoopGroup loops) {
         this.directory = directory; this.target = target; this.account = account; this.netherNet = netherNet; this.loops = loops;
@@ -73,11 +77,12 @@ public final class NativeCaptureProxy {
                         .childHandler(new ChannelInitializer<Channel>() {
                             @Override protected void initChannel(Channel channel) {
                                 if (!proxy.used.compareAndSet(false, true)) { channel.close(); return; }
+                                proxy.connections.add(channel);
                                 pipeline(channel, true);
                                 channel.pipeline().addLast("native-capture", proxy.new Session());
                             }
                         }).bind("127.0.0.1", Integer.parseInt(args[1])).sync().channel();
-                Runtime.getRuntime().addShutdownHook(new Thread(() -> server.close()));
+                Runtime.getRuntime().addShutdownHook(new Thread(() -> closeCapture(server, proxy.connections, loops), "native-capture-shutdown"));
                 System.out.println("StackAnvil native capture ready on " + server.localAddress());
                 server.closeFuture().sync();
             } finally { loops.shutdownGracefully().sync(); }
@@ -86,6 +91,14 @@ public final class NativeCaptureProxy {
             System.err.println("Native capture failed: " + error.getClass().getSimpleName());
             System.exit(1);
         }
+    }
+
+    static void closeCapture(Channel server, ChannelGroup connections, EventLoopGroup loops) {
+        server.close().syncUninterruptibly();
+        connections.close().awaitUninterruptibly();
+        // Channel close futures can complete before channelInactive finishes pack export.
+        // Keep the JVM alive until those event-loop callbacks and the journal close finish.
+        loops.shutdownGracefully().syncUninterruptibly();
     }
 
     static void pipeline(Channel channel, boolean rakNet) {
@@ -242,6 +255,7 @@ public final class NativeCaptureProxy {
             }
             bootstrap.handler(new ChannelInitializer<Channel>() {
                 @Override protected void initChannel(Channel channel) {
+                    connections.add(channel);
                     pipeline(channel, !netherNet);
                     channel.pipeline().addLast("native-relay", new SimpleChannelInboundHandler<ByteBuf>() {
                         @Override public void channelActive(ChannelHandlerContext ctx) {

@@ -61,6 +61,10 @@ Use `--native-home /absolute/path/to/installation` to select another prepared in
 
 The native client and saved MinecraftAuth account must belong to the same Xbox account. The relay verifies multiplayer tokens against the official issuer's published signing keys and binds native client properties to the authenticated client key. It preserves those properties and authenticates the upstream connection with a fresh session key. It records decrypted packets without translating gameplay. Pack reconstruction checks hashes and decrypts selected assets for replay. Missing bytes from a cached pack fail the capture. Pack parsing errors preserve the raw recording for offline repair. Success requires pack export to finish before shutdown.
 
+The shutdown hook closes active connections and waits for their event-loop cleanup.
+The launcher allows 45 seconds after termination for native cleanup, including the 35-second pack download limit.
+An unfinished pack export still fails the capture and preserves its raw journal.
+
 For NetherNet recordings, the relay connects to the HTTP signaling endpoint with the same authenticated session key.
 The native client connects to the relay over loopback RakNet. Gameplay packet bytes remain untranslated.
 NetherNet uses DTLS. The relay applies the Bedrock AES stream only to RakNet, matching the core transport behavior.

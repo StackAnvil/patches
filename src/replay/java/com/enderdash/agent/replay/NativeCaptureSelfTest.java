@@ -8,9 +8,11 @@ import io.jsonwebtoken.security.Jwks;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.*;
 import io.netty.channel.*;
+import io.netty.channel.group.DefaultChannelGroup;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.channel.socket.nio.NioDatagramChannel;
+import io.netty.util.concurrent.ImmediateEventExecutor;
 import net.raphimc.viabedrock.api.util.CryptUtil;
 import net.raphimc.viabedrock.netty.CompressionCodec;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
@@ -58,8 +60,52 @@ public final class NativeCaptureSelfTest {
         packStackSelection();
         packHttpClose(200);
         packHttpClose(503);
+        captureShutdown();
         if (args.length == 2) smoke(Integer.parseInt(args[0]), Path.of(args[1]));
         System.out.println("PASS native relay JWT claim preservation, trusted multiplayer identity and proof of possession, ECDH, transport framing, and encrypted chunk-pack export" + (args.length == 2 ? ", local backend reached StartGame" : ""));
+    }
+
+    private static void captureShutdown() throws Exception {
+        EventLoopGroup loops = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+        var connections = new DefaultChannelGroup(ImmediateEventExecutor.INSTANCE, true);
+        CountDownLatch exporting = new CountDownLatch(1), finishExport = new CountDownLatch(1);
+        CompletableFuture<Void> exported = new CompletableFuture<>(), stopped = new CompletableFuture<>();
+        Channel server = new Bootstrap().group(loops).channel(NioDatagramChannel.class)
+                .handler(new ChannelInboundHandlerAdapter()).bind("127.0.0.1", 0).sync().channel();
+        Thread closer = null;
+        try {
+            Channel connection = new Bootstrap().group(loops).channel(NioDatagramChannel.class)
+                    .handler(new ChannelInboundHandlerAdapter() {
+                        @Override public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+                            exporting.countDown();
+                            if (!finishExport.await(5, TimeUnit.SECONDS)) throw new AssertionError("Export was not released");
+                            exported.complete(null);
+                            super.channelInactive(ctx);
+                        }
+                    }).bind("127.0.0.1", 0).sync().channel();
+            connections.add(connection);
+            closer = Thread.ofPlatform().start(() -> {
+                try {
+                    NativeCaptureProxy.closeCapture(server, connections, loops);
+                    stopped.complete(null);
+                } catch (Throwable error) { stopped.completeExceptionally(error); }
+            });
+            if (!exporting.await(5, TimeUnit.SECONDS)) throw new AssertionError("Connection cleanup did not start");
+            if (stopped.isDone()) throw new AssertionError("Shutdown returned before pack export finished");
+            finishExport.countDown();
+            stopped.get(10, TimeUnit.SECONDS);
+            if (!exported.isDone() || !loops.isTerminated()) throw new AssertionError("Capture cleanup is incomplete");
+            EmbeddedChannel late = new EmbeddedChannel();
+            connections.add(late);
+            if (late.isOpen()) throw new AssertionError("A late connection survived capture shutdown");
+            late.finishAndReleaseAll();
+        } finally {
+            finishExport.countDown();
+            if (server.isOpen()) server.close().syncUninterruptibly();
+            connections.close().awaitUninterruptibly();
+            loops.shutdownGracefully().syncUninterruptibly();
+            if (closer != null) closer.join(10_000);
+        }
     }
 
     private static void transportFraming(boolean rakNet) throws Exception {
