@@ -5439,8 +5439,57 @@ Another 4,059 requested vertical checks cannot invent properties absent from the
 The fixture supplies the maps, runtime IDs, existing permutations, neighbor components, and block lookup.
 It does not establish the world dispatcher's final block update or native game physics.
 
-**Production incomplete:** Core still derives fence connections from Java identifiers, gate axes, and mapped opacity.
+**Production partial:** Core derives fence connections from Java identifiers, gate axes, mapped opacity, and the verified slab and snow exceptions below.
 Native category masks and enabled faces require real vanilla defaults and matching server evidence before replacing that path.
 The [versioned connection declarations](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/world/level/block/traits/block_trait/Connection.h) identify the shared trait.
 The executable comparisons establish the tested algorithm, with the supplied boundaries described here.
 Full movement, retained world state, correction replay, all other coverage groups, and platform joins remain incomplete.
+
+
+## Native partial-block fence connectivity (October 6, 2026)
+
+**Implemented in core:** Both fence families now connect to double slabs and eight-layer snow.
+Single slabs and thinner snow remain disconnected.
+Java opacity is zero for all these mapped states, which previously rejected the two full-height cases.
+The fix belongs to the existing neighbor-shape patch and its shared chunk refresh path.
+Tests exercise merges, splits, accumulation, and removal for both fence families.
+No add-on changes are needed for this correction.
+
+**Native instructions verified:** The official Windows Bedrock 1.26.51.1 executable identifies three classes through constructor-installed vtables.
+Their virtual component hooks occupy slot `0x390`:
+
+- `FenceGateBlock`: `0x147ac3b70`.
+- `SlabBlock`: `0x14a8af490`.
+- `TopSnowBlock`: `0x1495d8c80`.
+
+This corrects an earlier private lead that assigned the snow hook to slabs.
+The executable SHA-256 remains `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+Versioned SDK declarations support class identification; executable instructions establish the tested behavior.
+
+Writable connection components default to category mask 15 and face mask 63.
+Single slabs clear the category mask; double slabs retain it.
+Snow connects only when height plus one equals its variation count, eight in the target palette.
+Gates use category mask 7 and two opposite faces selected by facing, independently of open state.
+Existing core gate axis handling already matches that rule.
+
+The native fixture executes these hooks, component lookup, source classification, and the direction predicate.
+It covers 4,096 cases: 1,365 slabs, 1,366 snow states, and 1,365 gates.
+State bit positions and unrelated bits vary across cases.
+Native execution reports 6,034 connected directions with zero failures.
+A separate comparison runs the production Java shape code against every native result, with zero mismatches.
+
+Another fixture executes 512 explicit vanilla description-registration slices and verifies their numeric masks and enabled faces without failures.
+Complete per-block name bindings remain unresolved. This is not a verified lookup table for all vanilla blocks.
+Five verified function names and comments were saved through the durable MCP annotation operation.
+A fresh program query confirmed every saved name and comment.
+
+**Remaining:** Fixtures supply initialized TLS and component IDs, writable stores, state maps, permutations, source fence identities, and region lookup.
+They do not execute full block construction, native world initialization, or live movement.
+Other neighboring block classes still need verified registrations and state hooks.
+Ordered collision resolution, retained world state, correction replay, complete movement parity, and platform joins remain incomplete.
+
+**Verification:** The full 95-patch core stack replays successfully.
+The dependency build passes, including Checkstyle.
+Core reports 663 passing tests and 19 skipped tests; CubeConverter reports 16 passing tests.
+No test failures or errors occur. The seven neighbor-shape tests pass.
+This run did not repeat live client or cross-platform join tests.

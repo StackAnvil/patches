@@ -28,6 +28,42 @@ It preserves every expected bound and rejects 257 collapsed boxes, with zero mis
 The fixture supplies the indirect-call guard and security-cookie boundaries.
 
 The native fixtures supply initialized state maps and sufficient vector capacity.
-They do not establish native connectivity production, vector growth, rendered fence meshes, or complete movement parity.
+They do not establish complete vanilla connectivity, vector growth, rendered fence meshes, or complete movement parity.
 The add-on consumes these bounds on direct and ViaProxy sessions through its separate fence integration patch.
 Ordinary Java clients still consume translated Java block states.
+
+## Native partial-block connection rules
+
+Core connects both wooden and nether-brick fences to double slabs and eight-layer snow.
+Single slabs and thinner snow remain disconnected.
+These states have zero mapped Java opacity, so the ordinary full-block check cannot reproduce their native rules.
+Existing gate handling matches the native axis rule, including open gates.
+State transition tests cover slab merges, slab splits, snow accumulation, and snow removal.
+
+The same executable identifies the concrete classes through their constructor-installed vtables and virtual slot `0x390`.
+The slot invokes `FenceGateBlock` at `0x147ac3b70`, `SlabBlock` at `0x14a8af490`, and `TopSnowBlock` at `0x1495d8c80`.
+The versioned [slab declaration](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/world/level/block/SlabBlock.h),
+[snow declaration](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/world/level/block/TopSnowBlock.h),
+and [gate declaration](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/world/level/block/FenceGateBlock.h) support this identification.
+Actual executable instructions establish the behavior.
+
+A private fixture executes those hooks, writable component lookup, and the native connection predicate.
+It covers 1,365 slab cases, 1,366 snow cases, and 1,365 gate cases.
+Packed state positions and unrelated bits vary across cases.
+Production Java matches all 4,096 cases and 6,034 connected directions, without mismatches.
+
+Writable connection components default to category mask 15 and face mask 63.
+Single slabs clear the category mask. Double slabs retain the default.
+Snow enables the default only when its height plus one equals its variation count, eight for the target palette.
+Gates accept category mask 7 and expose two opposite faces selected by facing, independently of open state.
+A separate fixture verifies 512 explicit vanilla connection-description registration slices without mismatches.
+It verifies their numeric masks and faces. Complete per-block name bindings remain unresolved.
+
+These fixtures supply initialized component IDs, component stores, state maps, immutable permutations, and region lookup.
+They do not execute full block construction, world initialization, or live movement.
+Other neighbor classes still need verified defaults and state hooks.
+
+The full 95-patch core stack replays and builds successfully with Checkstyle.
+Core tests report 663 passes, 19 skips, and no failures or errors.
+CubeConverter adds 16 passing tests. All seven neighbor-shape tests pass.
+Live joins and platform tests were not repeated for this core correction.

@@ -1,4 +1,4 @@
-From 6608c7382f0c09d91e87ab15361a295b4bd382ff Mon Sep 17 00:00:00 2001
+From a156f5644c16d0c26b5de5056f7b8332fa8103ba Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 19:22:23 +0200
 Subject: [PATCH] fix(world): render neighbor-dependent block shapes
@@ -16,18 +16,29 @@ The pinned executable SHA-256 is
 Verified FenceBlock vtable 0x14e9fd2d0 identifies the concrete subtype;
 geometry follows 0x147ac0fa0, 0x147ac0db0 and 0x147ac0eb0. Production
 Java bounds match 4096 native cases and 85164 float bit comparisons.
-These fixtures supply connection state and vector capacity. Real native
-connectivity, movement resolution and rendered mesh remain unverified.
+These geometry fixtures supply connection state and vector capacity.
+
+Resolve full snow layers and double slabs explicitly because Java opacity
+is zero for those mapped states. Native class constructors identify
+FenceGateBlock, SlabBlock and TopSnowBlock through vtable slot 0x390.
+Their state hooks at 0x147ac3b70, 0x14a8af490 and 0x1495d8c80 feed the
+connection predicate at 0x145675d50. Single slabs clear the category mask;
+double slabs retain the default. Snow connects only at its full height.
+Gate faces depend on facing and remain independent of open state.
+Production Java matches 4096 native partial-neighbor cases and 6034
+connected directions. Fixtures supply component defaults, state maps and
+region lookup. Complete vanilla registration names, native world
+initialization, movement resolution and rendered mesh remain unverified.
 ---
- .../api/model/BedrockFenceGeometry.java       |  57 ++++++++
+ .../api/model/BedrockFenceGeometry.java       |  57 +++++++
  .../protocol/packet/WorldPackets.java         |  17 +++
- .../protocol/storage/ChunkTracker.java        | 105 +++++++++++++-
- .../storage/ConnectedBlockShapes.java         | 136 ++++++++++++++++++
+ .../protocol/storage/ChunkTracker.java        | 105 ++++++++++++-
+ .../storage/ConnectedBlockShapes.java         | 142 ++++++++++++++++++
  .../storage/RedstoneWireConnections.java      | 134 +++++++++++++++++
- .../api/model/BedrockFenceGeometryTest.java   |  50 +++++++
- .../storage/ConnectedBlockShapesTest.java     |  71 +++++++++
+ .../api/model/BedrockFenceGeometryTest.java   |  50 ++++++
+ .../storage/ConnectedBlockShapesTest.java     |  98 ++++++++++++
  .../storage/RedstoneWireConnectionsTest.java  |  76 ++++++++++
- 8 files changed, 643 insertions(+), 3 deletions(-)
+ 8 files changed, 676 insertions(+), 3 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/BedrockFenceGeometry.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapes.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/RedstoneWireConnections.java
@@ -321,10 +332,10 @@ index 10b5d1890..0680a9fdd 100644
                  for (int i = 0; i < ChunkSection.SIZE; i++) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapes.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapes.java
 new file mode 100644
-index 000000000..228640469
+index 000000000..462e3807b
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapes.java
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,142 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -407,6 +418,12 @@ index 000000000..228640469
 +        if (adjacent.identifier().endsWith("_fence_gate")) {
 +            final Direction gateFacing = Direction.from(adjacent.properties().get("facing"));
 +            return gateFacing != null && gateFacing.axis() != direction.axis();
++        }
++        if (adjacent.identifier().endsWith("_slab")) {
++            return "double".equals(adjacent.properties().get("type"));
++        }
++        if ("snow".equals(adjacent.identifier())) {
++            return "8".equals(adjacent.properties().get("layers"));
 +        }
 +        return fullBlock.test(adjacent);
 +    }
@@ -659,10 +676,10 @@ index 000000000..6d5c118b4
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapesTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapesTest.java
 new file mode 100644
-index 000000000..fbce6be32
+index 000000000..aecbece4a
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapesTest.java
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,98 @@
 +package net.raphimc.viabedrock.protocol.storage;
 +
 +import com.viaversion.viaversion.api.minecraft.BlockPosition;
@@ -670,6 +687,7 @@ index 000000000..fbce6be32
 +import org.junit.jupiter.api.Test;
 +
 +import java.util.HashMap;
++import java.util.List;
 +import java.util.Map;
 +
 +import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -714,6 +732,32 @@ index 000000000..fbce6be32
 +
 +        this.blocks.put(new BlockPosition(1, 64, 0), nether);
 +        assertEquals("true", this.shape(nether).properties().get("east"));
++    }
++
++    @Test
++    void slabMergesAndSplitsRefreshBothFenceFamilies() {
++        for (final String identifier : new String[]{"oak_fence", "nether_brick_fence"}) {
++            BlockState fence = BlockState.fromString(identifier);
++            final BlockState slab = BlockState.fromString("minecraft:oak_slab");
++            for (final var transition : List.of(Map.entry("bottom", false), Map.entry("double", true), Map.entry("top", false))) {
++                this.blocks.put(new BlockPosition(1, 64, 0), slab.withProperty("type", transition.getKey()));
++                fence = this.shape(fence);
++                assertEquals(Boolean.toString(transition.getValue()), fence.properties().get("east"));
++            }
++        }
++    }
++
++    @Test
++    void snowConnectsOnlyAfterItsEighthLayerAndRefreshesAfterRemoval() {
++        for (final String identifier : new String[]{"oak_fence", "nether_brick_fence"}) {
++            BlockState fence = BlockState.fromString(identifier);
++            final BlockState snow = BlockState.fromString("minecraft:snow");
++            for (final var transition : List.of(Map.entry(1, false), Map.entry(7, false), Map.entry(8, true), Map.entry(7, false))) {
++                this.blocks.put(new BlockPosition(1, 64, 0), snow.withProperty("layers", Integer.toString(transition.getKey())));
++                fence = this.shape(fence);
++                assertEquals(Boolean.toString(transition.getValue()), fence.properties().get("east"));
++            }
++        }
 +    }
 +
 +    @Test
