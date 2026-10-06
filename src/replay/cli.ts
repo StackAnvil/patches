@@ -98,7 +98,7 @@ async function buildFabricRecorder(jar: string, build: string): Promise<string> 
     name: "StackAnvil private replay recorder", environment: "client", mixins: ["stackanvil-recorder.mixins.json"],
     depends: { "viafabricplus-bedrock": "*" } }), { mode: 0o600 });
   await writeFile(join(classes, "stackanvil-recorder.mixins.json"), JSON.stringify({ required: true,
-    package: "com.enderdash.agent.replay.fabric.mixin", compatibilityLevel: "JAVA_25", client: ["MixinPacketCodec", "MixinPlayerSkins", "MixinRenderStore", "MixinCustomEntity", "MixinCustomActorFrame", "MixinHeldItemLight", "MixinReplayCamera", "MixinPlayerFrame"] }), { mode: 0o600 });
+    package: "com.enderdash.agent.replay.fabric.mixin", compatibilityLevel: "JAVA_25", client: ["MixinPacketCodec", "MixinPlayerSkins", "MixinRenderStore", "MixinCustomEntity", "MixinCustomActorFrame", "MixinHeldItemLight", "MixinReplayCamera", "MixinPlayerFrame", "MixinMovementAudit"] }), { mode: 0o600 });
   const output = join(build, "fabric-recorder.jar");
   await execute("jar", ["--create", "--file", output, "-C", classes, "."]);
   return output;

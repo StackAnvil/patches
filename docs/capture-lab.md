@@ -94,6 +94,18 @@ The UI command can send input to both Bedrock and Java clients without taking fo
 
 For skin behavior, see [the Bedrock skin flow](skin-flow.md). It explains what HTTPS captures show, what gameplay packets carry, and why Character Creator skins still need renderer work.
 
+### Observe local movement phases
+
+Fabric replay recordings save `movement-audit.jsonl` in the private recording directory.
+The observer samples the local player before `aiStep`, before input application, and after travel at `sendChanges`.
+Each row includes the tick, position, motion, pose, fluid state, eye height, and collision axes.
+Compare these phases with the packet journal to locate changes that occur before or after physics.
+
+The observer does not change movement or input.
+It records at most 18,000 samples and uses the same private file permissions as the packet journal.
+An observation error stops this observer without interrupting the game.
+Keep this file private because its positions can reveal world activity.
+
 ## Validate recorded joins
 
 Use `server-replay record local --target 127.0.0.1:port --client proxy` for a local RakNet server.
