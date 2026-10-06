@@ -6078,3 +6078,61 @@ Both complete Java stacks replay and build against the pinned ViaFabricPlus arti
 Core passes 700 tests with 19 optional skips; the add-on passes 478 tests with 114 optional skips.
 CubeConverter passes 16 tests, and ViaProxy builds with the shared current calculator embedded.
 The TypeScript check, pack build, and all 135 tooling tests pass.
+
+
+### Native collision contacts after rounded teleports, October 6, 2026
+
+**Reproduced:** A strict-BDS channel-wall recording reaches actual spawn and sends 1,423 input frames.
+It has no correction before a controlled teleport to feet Z `7.700000762939453`.
+After that teleport, the server sends 152 corrections back to that position and clears horizontal motion.
+A read-only probe confirms both stone wall blocks and their full collision boxes are present.
+The initial body reaches Z `7.999999821186066`; Java clips an approaching current to about `0.0000001788`.
+After the teleport crosses the face, Java admits the full `0.014` displacement.
+Repeated current updates push the client box further into the wall.
+This reproduction establishes a contact-math failure, rather than missing chunk data.
+
+**Implemented:** Core `CollisionContact` reproduces the clipped-motion output of the target contact kernel `0x143327d80`.
+The target is Bedrock 1.26.51.1, build 51061372, protocol 2193.
+Box coordinates and contact subtraction use float32.
+Distances with absolute value at most `0.000001F` become positive zero before separation tests.
+Only one separated axis can clip motion; two separated axes leave it unchanged.
+Degenerate obstacles and positive overlap retain the requested clipped-motion output.
+The latter still needs the actor solver's separate overlap recovery.
+
+The add-on connects actual voxel-shape queries to this core calculation on Bedrock sessions.
+It visits each separate box and preserves gaps between them.
+Unblocked displacement retains the Java boundary's original double value.
+Other protocol connections retain Java collision queries.
+The same integration applies to direct and ViaProxy clients.
+
+**Verified arithmetic:** Production Java matches 8,270 executions of the pinned native contact kernel with zero float-bit mismatches.
+Cases include all faces, contact thresholds, degenerate obstacles, overlap, randomized boxes, and translated channel-wall bounds.
+The comparison executes the original kernel instructions and does not replace its contact math.
+Three core tests cover face clipping, threshold boundaries, signed zero, corners, and degenerate shapes.
+Two add-on tests cover the rounded channel position and gaps between separate boxes.
+
+**Incomplete:** This integrates contact clipping, not the complete native actor solver.
+Native Y/X/Z sequencing, obstacle order, overlap state and recovery, native box/position finalization, and stepping remain required.
+Per-type block shapes, unloaded boundaries, complete fluid flow and phase rules, correction history, and replay remain required.
+All eight coverage groups, the full complex gameplay matrix, strict-BDS and Boar routes, CubeCraft, and actual platform joins remain in scope.
+The current-boot GPU guard stays active; no native game launch occurs in this investigation.
+
+
+**Direct route:** The rebuilt strict-BDS recording reaches actual spawn, sends 1,427 input frames, and has zero corrections.
+It receives the same controlled rounded teleport and remains blocked by the channel end wall.
+A live read-only query returns zero approaching displacement for both full stone boxes.
+The run contains 22 backward-input frames away from the wall and 22 forward-input frames against it.
+No correction occurs during either window or the surrounding idle frames.
+The backward frames clear horizontal collision; approaching current and forward input retain it at contact.
+
+**Build checks:** The complete core/add-on and ViaProxy stacks replay and build against the pinned ViaFabricPlus artifact.
+Core passes 703 tests with 19 optional skips; the add-on passes 480 tests with 114 optional skips.
+CubeConverter passes all 16 tests, and Checkstyle passes for both Java stacks.
+
+
+**ViaProxy route:** The rebuilt proxy and add-on reach actual strict-BDS spawn and send 1,618 input frames with zero corrections.
+The run receives the same rounded teleport and contains 22 backward-input and 22 forward-input frames.
+The read-only probe confirms both stone wall shapes and their zero approaching displacement.
+Controlled input, current-driven return to the wall, and later stationary frames remain accepted.
+These route checks verify this contact regression, not complete native movement parity.
+The owned temporary BDS and recorder processes stop normally; existing lab servers, display, and audio guard remain running.

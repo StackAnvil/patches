@@ -1,4 +1,4 @@
-From 1a5d9c287f6ed56de6cdbbef2be7a97e6ffb732e Mon Sep 17 00:00:00 2001
+From fb34e0aeb5dcbe1b7d8ccd2e6f2c0c334c35f57e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:28 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -208,7 +208,17 @@ The production Java arithmetic matches all 654 admitted cases exactly.
 Fixtures supply loaded-world/contact observations and per-cell flow vectors;
 flow generation, iteration order, contact policy and scheduling remain open.
 Share this arithmetic with client integration on both connection routes.
+
+Port the native separated-axis contact output into core. Matching
+1.26.51.1 kernel 0x143327d80 rounds box distances in float32 and
+snaps their absolute value at 0.000001F to positive zero. Java
+voxel traversal skips a wall cell after a rounded teleport crosses
+its face, allowing repeated current-driven penetration and strict
+BDS corrections. Share the actual contact rule with client queries.
+Keep actor depenetration, Y/X/Z sequencing, native shape order, and
+step finalization as separate incomplete solver requirements.
 ---
+ .../api/model/CollisionContact.java           |  80 +++++++++
  .../viabedrock/api/model/FluidCurrent.java    |  44 +++++
  .../viabedrock/api/model/GlideMovement.java   |  64 ++++++++
  .../viabedrock/api/model/MovementEffect.java  |  59 +++++++
@@ -235,6 +245,7 @@ Share this arithmetic with client integration on both connection routes.
  .../protocol/storage/EntityTracker.java       |  18 +++
  .../protocol/storage/PlayerInputStorage.java  |   3 +-
  .../storage/PlayerPredictionStorage.java      |  78 +++++++++
+ .../api/model/CollisionContactTest.java       |  60 +++++++
  .../api/model/FluidCurrentTest.java           |  56 +++++++
  .../api/model/GlideMovementTest.java          | 115 +++++++++++++
  .../api/model/MovementEffectTest.java         |  51 ++++++
@@ -252,7 +263,8 @@ Share this arithmetic with client integration on both connection routes.
  .../packet/ClientPlayerPacketsTest.java       |  32 +++-
  .../packet/MovementEffectPacketsTest.java     | 116 +++++++++++++
  .../packet/PlayerCorrectionPacketTest.java    | 105 ++++++++++++
- 43 files changed, 2192 insertions(+), 42 deletions(-)
+ 45 files changed, 2332 insertions(+), 42 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FluidCurrent.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/GlideMovement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/MovementEffect.java
@@ -266,6 +278,7 @@ Share this arithmetic with client integration on both connection routes.
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiers.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPackets.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CollisionContactTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/FluidCurrentTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/GlideMovementTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTest.java
@@ -283,6 +296,92 @@ Share this arithmetic with client integration on both connection routes.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPacketsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java b/src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
+new file mode 100644
+index 000000000..925b0654a
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
+@@ -0,0 +1,80 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.protocol.model.Position3f;
++
++/** Native 1.26.51 separated-axis contact clipping. Actor overlap recovery is a separate operation. */
++public final class CollisionContact {
++
++    private static final float CONTACT_EPSILON = 0.000001F;
++
++    private CollisionContact() {
++    }
++
++    public static Position3f clip(final Box obstacle, final Box moving, final Position3f requested) {
++        int separatedAxis = -1;
++        float gap = 0F;
++        float direction = 0F;
++        for (int axis = 0; axis < 3; axis++) {
++            if (obstacle.max(axis) <= obstacle.min(axis)) {
++                return requested;
++            }
++            final float lower = contactDistance(moving.max(axis) - obstacle.min(axis));
++            final float upper = contactDistance(obstacle.max(axis) - moving.min(axis));
++            if (lower <= 0F || upper <= 0F) {
++                if (separatedAxis != -1) {
++                    return requested;
++                }
++                separatedAxis = axis;
++                gap = lower <= 0F ? lower : upper;
++                direction = lower <= 0F ? -1F : 1F;
++            }
++        }
++        if (separatedAxis == -1) {
++            return requested;
++        }
++        final float speed = switch (separatedAxis) {
++            case 0 -> requested.x();
++            case 1 -> requested.y();
++            default -> requested.z();
++        };
++        if (gap - speed * direction <= 0F) {
++            return requested;
++        }
++        final float clipped = gap * direction;
++        return switch (separatedAxis) {
++            case 0 -> new Position3f(clipped, requested.y(), requested.z());
++            case 1 -> new Position3f(requested.x(), clipped, requested.z());
++            default -> new Position3f(requested.x(), requested.y(), clipped);
++        };
++    }
++
++    private static float contactDistance(final float distance) {
++        return Math.abs(distance) > CONTACT_EPSILON ? distance : 0F;
++    }
++
++    public record Box(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
++
++        private float min(final int axis) {
++            return switch (axis) {
++                case 0 -> this.minX;
++                case 1 -> this.minY;
++                default -> this.minZ;
++            };
++        }
++
++        private float max(final int axis) {
++            return switch (axis) {
++                case 0 -> this.maxX;
++                case 1 -> this.maxY;
++                default -> this.maxZ;
++            };
++        }
++
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/FluidCurrent.java b/src/main/java/net/raphimc/viabedrock/api/model/FluidCurrent.java
 new file mode 100644
 index 000000000..45fe897b6
@@ -1725,6 +1824,72 @@ index 000000000..0418f7c68
 +        }
 +        this.posture = posture;
 +        return transitions;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CollisionContactTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CollisionContactTest.java
+new file mode 100644
+index 000000000..c79bb3f28
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/CollisionContactTest.java
+@@ -0,0 +1,60 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertSame;
++
++class CollisionContactTest {
++
++    @Test
++    void clipsEveryFaceAndPreservesTangentialMotion() {
++        final CollisionContact.Box body = new CollisionContact.Box(0F, 0F, 0F, 1F, 1F, 1F);
++        final CollisionContact.Box[] obstacles = {
++            new CollisionContact.Box(1.25F, 0F, 0F, 2F, 1F, 1F),
++            new CollisionContact.Box(-1F, 0F, 0F, -0.25F, 1F, 1F),
++            new CollisionContact.Box(0F, 1.25F, 0F, 1F, 2F, 1F),
++            new CollisionContact.Box(0F, -1F, 0F, 1F, -0.25F, 1F),
++            new CollisionContact.Box(0F, 0F, 1.25F, 1F, 1F, 2F),
++            new CollisionContact.Box(0F, 0F, -1F, 1F, 1F, -0.25F)
++        };
++        for (int face = 0; face < obstacles.length; face++) {
++            final float speed = face % 2 == 0 ? 0.75F : -0.75F;
++            final int axis = face / 2;
++            final Position3f requested = new Position3f(axis == 0 ? speed : 0.1F, axis == 1 ? speed : 0.2F, axis == 2 ? speed : 0.3F);
++            final Position3f expected = new Position3f(axis == 0 ? speed / 3F : requested.x(), axis == 1 ? speed / 3F : requested.y(), axis == 2 ? speed / 3F : requested.z());
++            assertEquals(expected, CollisionContact.clip(obstacles[face], body, requested));
++            final Position3f away = new Position3f(-requested.x(), -requested.y(), -requested.z());
++            assertSame(away, CollisionContact.clip(obstacles[face], body, away));
++        }
++    }
++
++    @Test
++    void snapsBothSidesOfTheNativeContactThreshold() {
++        final CollisionContact.Box wall = new CollisionContact.Box(0F, 0F, 0F, 1F, 1F, 1F);
++        final Position3f toward = new Position3f(0.014F, 0F, 0F);
++        for (final float depth : new float[]{-0.000001F, -Math.nextDown(0.000001F), 0F, Math.nextDown(0.000001F), 0.000001F}) {
++            final CollisionContact.Box body = new CollisionContact.Box(-1F, 0.1F, 0.1F, depth, 0.9F, 0.9F);
++            assertEquals(0x80000000, Float.floatToRawIntBits(CollisionContact.clip(wall, body, toward).x()));
++        }
++        final float outside = Math.nextUp(0.000001F);
++        assertEquals(outside, CollisionContact.clip(wall, new CollisionContact.Box(-1F, 0.1F, 0.1F, -outside, 0.9F, 0.9F), toward).x());
++        assertSame(toward, CollisionContact.clip(wall, new CollisionContact.Box(-1F, 0.1F, 0.1F, outside, 0.9F, 0.9F), toward));
++    }
++
++    @Test
++    void leavesCornersDegenerateObstaclesAndDeepOverlapToTheActorSolver() {
++        final CollisionContact.Box body = new CollisionContact.Box(0F, 0F, 0F, 1F, 1F, 1F);
++        final Position3f requested = new Position3f(0.5F, -0F, 0.5F);
++        assertSame(requested, CollisionContact.clip(new CollisionContact.Box(1F, 0F, 1F, 2F, 1F, 2F), body, requested));
++        assertSame(requested, CollisionContact.clip(new CollisionContact.Box(1F, 0F, 0F, 1F, 1F, 1F), body, requested));
++        assertSame(requested, CollisionContact.clip(new CollisionContact.Box(0.5F, 0.5F, 0.5F, 2F, 2F, 2F), body, requested));
 +    }
 +
 +}

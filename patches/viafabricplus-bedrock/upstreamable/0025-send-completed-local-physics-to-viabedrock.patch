@@ -1,4 +1,4 @@
-From 768e5ca90c1770d0d299690b52401494dd2ef82e Mon Sep 17 00:00:00 2001
+From 3e086cb2f09404f50eff0b422861730b6be6e16e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:53 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -282,6 +282,16 @@ fully cancelled flows retain entering motion without an unnecessary cast.
 Reset the accumulator on every observation frame and retain Java behavior
 outside Bedrock connections. Per-cell flow generation, cell enumeration,
 mixed-material selection and loaded-world scheduling remain separate gaps.
+
+Use the shared native separated-axis contact rule for Bedrock
+voxel-shape collision queries. Convert each actual shape box to
+float32 without replacing separate boxes with an envelope. A
+rounded teleport can place Java bounds just inside a wall face,
+where Java grid traversal stops clipping current-driven motion.
+Native contact distances within 0.000001F still block that face.
+Preserve unblocked double displacement and the ordinary Java path.
+Native actor overlap recovery, shape ordering, axis sequencing,
+and stepping remain incomplete and are not claimed by this change.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   4 +
  .../access/IBedrockPlayerPosture.java         |  14 ++
@@ -293,25 +303,31 @@ mixed-material selection and loaded-world scheduling remain separate gaps.
  .../features/movement/MixinLivingEntity.java  |  72 +++++++
  .../features/movement/MixinLocalPlayer.java   | 194 +++++++++++++++++-
  .../mixin/features/movement/MixinPlayer.java  |  55 +++--
+ .../features/movement/MixinVoxelShape.java    |  28 +++
  .../bedrock/input/BedrockMovementEffects.java |  72 +++++++
  .../bedrock/input/MovementEffectPayload.java  |  24 +++
  .../input/PlayerPredictionPayload.java        |  24 +++
  .../input/UnderwaterMovementPayload.java      |  24 +++
+ .../movement/BedrockCollisionContacts.java    |  50 +++++
  .../bedrock/movement/BedrockFluidPhysics.java |  86 ++++++++
  .../movement/BedrockPlayerPosture.java        |  63 ++++++
- .../viafabricplus-bedrock.mixins.json         |   2 +
+ .../viafabricplus-bedrock.mixins.json         |   3 +
+ .../BedrockCollisionContactsTest.java         |  39 ++++
  .../movement/BedrockFluidPhysicsTest.java     | 121 +++++++++++
  .../movement/BedrockPlayerPostureTest.java    |  45 ++++
- 19 files changed, 884 insertions(+), 61 deletions(-)
+ 22 files changed, 1002 insertions(+), 61 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinFireworkRocketEntity.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinVoxelShape.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/MovementEffectPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/UnderwaterMovementPayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContacts.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPosture.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContactsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPostureTest.java
 
@@ -1022,6 +1038,40 @@ index 49a37ac..9b2d80b 100644
              instance.setDeltaMovement(instance.getDeltaMovement().x(), 0, instance.getDeltaMovement().z());
              return false;
          }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinVoxelShape.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinVoxelShape.java
+new file mode 100644
+index 0000000..39a52c2
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinVoxelShape.java
+@@ -0,0 +1,28 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
++
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import com.viaversion.viafabricplus.bedrock.movement.BedrockCollisionContacts;
++import net.minecraft.core.Direction;
++import net.minecraft.world.phys.AABB;
++import net.minecraft.world.phys.shapes.VoxelShape;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
++
++@Mixin(VoxelShape.class)
++public abstract class MixinVoxelShape {
++
++    @Inject(method = "collide", at = @At("HEAD"), cancellable = true)
++    private void nativeContactClipping(final Direction.Axis axis, final AABB box, final double distance, final CallbackInfoReturnable<Double> cir) {
++        if (BedrockInputPermissions.isBedrockConnection()) {
++            cir.setReturnValue(BedrockCollisionContacts.collide((VoxelShape) (Object) this, axis, box, distance));
++        }
++    }
++
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java
 new file mode 100644
 index 0000000..143b1f8
@@ -1190,6 +1240,62 @@ index 0000000..8c0bbbb
 +        return TYPE;
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContacts.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContacts.java
+new file mode 100644
+index 0000000..9f16513
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContacts.java
+@@ -0,0 +1,50 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.movement;
++
++import net.minecraft.core.Direction;
++import net.minecraft.world.phys.AABB;
++import net.minecraft.world.phys.shapes.VoxelShape;
++import net.raphimc.viabedrock.api.model.CollisionContact;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++
++public final class BedrockCollisionContacts {
++
++    private BedrockCollisionContacts() {
++    }
++
++    public static double collide(final VoxelShape shape, final Direction.Axis axis, final AABB box, final double distance) {
++        if (distance == 0 || shape.isEmpty()) {
++            return distance;
++        }
++        final CollisionContact.Box moving = nativeBox(box);
++        double result = distance;
++        for (final AABB obstacle : shape.toAabbs()) {
++            final Position3f requested = switch (axis) {
++                case X -> new Position3f((float) result, 0F, 0F);
++                case Y -> new Position3f(0F, (float) result, 0F);
++                case Z -> new Position3f(0F, 0F, (float) result);
++            };
++            final Position3f clipped = CollisionContact.clip(nativeBox(obstacle), moving, requested);
++            if (clipped != requested) {
++                result = switch (axis) {
++                    case X -> clipped.x();
++                    case Y -> clipped.y();
++                    case Z -> clipped.z();
++                };
++                if (result == 0) {
++                    break;
++                }
++            }
++        }
++        return result;
++    }
++
++    private static CollisionContact.Box nativeBox(final AABB box) {
++        return new CollisionContact.Box((float) box.minX, (float) box.minY, (float) box.minZ, (float) box.maxX, (float) box.maxY, (float) box.maxZ);
++    }
++
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java
 new file mode 100644
 index 0000000..d45e6d4
@@ -1352,15 +1458,16 @@ index 0000000..0f102d6
 +
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 794e12a..87040af 100644
+index 794e12a..9af8a39 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -110,11 +110,13 @@
+@@ -110,11 +110,14 @@
      "features.input.MixinMouseHandler",
      "features.input.MixinInputPermissionConnection",
      "features.input.MixinMinecraftInputPermissions",
 +    "features.movement.MixinAvatar",
      "features.movement.MixinEntity",
++    "features.movement.MixinVoxelShape",
      "features.movement.MixinEntityFluidInteraction",
      "features.movement.MixinEntityFluidInteraction_CurrentAccumulator",
      "features.movement.MixinHoneyBlock",
@@ -1369,6 +1476,51 @@ index 794e12a..87040af 100644
      "features.movement.MixinLocalPlayer",
      "features.movement.MixinPlayer",
      "features.sound.MixinBedrockChannelAccess",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContactsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContactsTest.java
+new file mode 100644
+index 0000000..6094186
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContactsTest.java
+@@ -0,0 +1,39 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.movement;
++
++import net.minecraft.core.Direction;
++import net.minecraft.world.phys.AABB;
++import net.minecraft.world.phys.shapes.Shapes;
++import net.minecraft.world.phys.shapes.VoxelShape;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class BedrockCollisionContactsTest {
++
++    @Test
++    void blocksTheRoundedTeleportAtTheFlowingChannelWall() {
++        final VoxelShape wall = Shapes.box(608, 250, 8, 609, 252, 9);
++        final float width = 0.6F;
++        for (final double center : new double[]{7.699999809265137, 7.700000762939453}) {
++            final AABB body = new AABB(608.5 - width / 2D, 250, center - width / 2D, 608.5 + width / 2D, 250 + 1.8F, center + width / 2D);
++            assertEquals(0D, BedrockCollisionContacts.collide(wall, Direction.Axis.Z, body, 0.014), 0D);
++            assertEquals(-0.014, BedrockCollisionContacts.collide(wall, Direction.Axis.Z, body, -0.014));
++        }
++    }
++
++    @Test
++    void retainsGapsBetweenSeparateShapeBoxes() {
++        final VoxelShape posts = Shapes.or(Shapes.box(0, 0, 0, 0.25, 1, 1), Shapes.box(0.75, 0, 0, 1, 1, 1));
++        final AABB throughGap = new AABB(0.3, 0, -1, 0.7, 0.8, -0.1);
++        assertEquals(0.5, BedrockCollisionContacts.collide(posts, Direction.Axis.Z, throughGap, 0.5));
++        final AABB intoPost = new AABB(0.05, 0, -1, 0.2, 0.8, -0.1);
++        assertEquals((double) 0.1F, BedrockCollisionContacts.collide(posts, Direction.Axis.Z, intoPost, 0.5));
++        assertEquals(0.5, BedrockCollisionContacts.collide(Shapes.empty(), Direction.Axis.Z, intoPost, 0.5));
++    }
++
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
 new file mode 100644
 index 0000000..dfed580

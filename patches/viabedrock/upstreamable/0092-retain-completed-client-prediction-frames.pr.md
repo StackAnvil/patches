@@ -431,3 +431,32 @@ That wall/collision/loading gap remains required work; the arithmetic fix does n
 Core passes 700 tests with 19 optional skips; the add-on passes 478 tests with 114 optional skips.
 Both stacks pass replay, build, and Checkstyle. CubeConverter passes 16 tests, and ViaProxy builds with the shared calculator embedded.
 The TypeScript check, pack build, and all 135 tooling tests pass.
+
+
+## Rounded-teleport collision contacts
+
+Core `CollisionContact` now owns the clipped-motion output of native contact kernel `0x143327d80`.
+It uses target 1.26.51.1 float32 bounds and the inclusive contact-distance threshold `0.000001F`.
+The add-on supplies each actual voxel-shape box and applies the result on Bedrock sessions.
+Separate boxes retain their gaps; unblocked motion retains its original Java boundary value.
+
+Production Java matches 8,270 executions of the original native kernel with zero float-bit mismatches.
+Three core tests cover six faces, motion away, signed zero, threshold boundaries, corners, overlap, and degenerate obstacles.
+Two add-on tests cover the rounded channel-wall position and gaps between separate boxes.
+
+The unfixed strict-BDS direct recording has 1,423 input frames and 152 corrections after the controlled rounded teleport.
+A read-only runtime probe confirms the wall and full collision shapes are present while Java admits current-driven penetration.
+The rebuilt direct recording has 1,427 input frames, the same teleport, and zero corrections.
+It includes 22 backward-input frames away from the wall and 22 forward-input frames against it.
+Live shape queries return zero approaching displacement while retaining motion away from the face.
+
+Core passes 703 tests with 19 optional skips; the add-on passes 480 tests with 114 optional skips.
+CubeConverter passes all 16 tests, both Java stacks pass Checkstyle, and the complete core/add-on/ViaProxy stacks replay and build.
+
+Native axis order, obstacle order, overlap recovery and state, final box/position stores, and stepping remain incomplete.
+Complete fluid phases and world shapes, correction replay, Boar, CubeCraft, platform joins, and the full complex gameplay matrix remain required.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-collision-contacts-after-rounded-teleports-october-6-2026) records route evidence and the remaining scope.
+
+The rebuilt ViaProxy comparison also reaches strict-BDS spawn and sends 1,618 input frames with zero corrections.
+It includes the same rounded teleport, 22 backward-input frames, 22 forward-input frames, and later idle current contact.
+Both routes verify this regression; complete native collision and the full gameplay matrix remain required.

@@ -396,3 +396,24 @@ The [coverage ledger](bedrock-coverage.md#liquid-current-accumulation-and-streng
 **Incomplete or unverified:** Per-cell flow generation, native contact gates, cell enumeration, mixed-fluid selection, loading, gravity, and complete native trajectories remain required.
 Respawn corrections, lava travel, bubble columns, geysers, latency, Boar, CubeCraft, and actual platform joins remain separate requirements.
 The complete matrix above remains required.
+
+
+### Rounded-teleport collision contacts, October 6, 2026
+
+**Implemented:** Core shares native separated-axis contact clipping through `CollisionContact`.
+The add-on applies it to each actual voxel-shape box on Bedrock sessions.
+The target's float32 contact threshold prevents a slightly rounded teleport from disabling wall clipping.
+Gaps between separate boxes remain open.
+
+**Verified within scope:** Production Java matches 8,270 original native contact executions with zero float-bit mismatches.
+The strict-BDS direct reproduction changes from 152 corrections to zero after the same rounded teleport.
+The rebuilt case also includes 22 backward-input and 22 forward-input frames without corrections.
+The [coverage ledger](bedrock-coverage.md#native-collision-contacts-after-rounded-teleports-october-6-2026) records the runtime probe and route evidence.
+
+**Incomplete or unverified:** Native axis and obstacle order, overlap recovery, state producers, native box finalization, and steps remain required.
+Complete terrain, fluid, latency, correction replay, Boar, real-server, and platform comparisons remain required.
+The full combat, ranged-use, mount, inventory, and movement matrix above remains in scope.
+
+The rebuilt ViaProxy comparison also reaches strict-BDS spawn and sends 1,618 input frames with zero corrections.
+It includes the same rounded teleport, 22 backward-input frames, 22 forward-input frames, and later idle current contact.
+Both routes verify this regression; complete native collision and the full gameplay matrix remain required.
