@@ -28,5 +28,18 @@ Live direct and ViaProxy strict-BDS comparisons match the native water-idle moti
 Both routes complete jump, fall, and water cases without corrections in the controlled water cases.
 Startup and elevated-teleport corrections remain.
 A ViaProxy sprint-swim case emits one start and one stop event without an additional correction.
-Native and direct swimming comparisons remain to verify.
+A native capture confirms the swimming start and stop values.
+The revised direct and ViaProxy start frames match native; release ordering remains incomplete.
 Fluid currents, lava, effects, vehicle physics, and the remaining movement matrix still need native comparisons.
+
+## Swimming start timing
+
+The native sprint-swim capture emits `StartSprinting` and `StartSwimming` together on the first movement frame.
+The first forward motion is 0.01764 blocks per tick.
+The initial Java sample emits the swimming event one frame later, at motion 0.033516.
+Java updates swimming before `aiStep` computes sprinting.
+Refresh the local swimming state after sprint changes and before fluid travel on Bedrock connections.
+Direct and ViaProxy strict-BDS runs match the native first frame's flags and forward motion without corrections.
+Native emits swimming stop on release and sprint stop on the following frame.
+Java still emits both together and retains horizontal collision on the first release frame.
+Release ordering and collision flags need further comparison and implementation.

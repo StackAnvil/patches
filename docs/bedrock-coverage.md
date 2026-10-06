@@ -3763,10 +3763,33 @@ The initial joining behavior and teleport timing remain open gaps.
 A final reset places the player on the dry floor before each following join.
 
 A ViaProxy sprint-swim test emits one start event (29) and one stop event (30), with no additional correction.
-Native and direct swimming comparisons remain to verify.
+The following section records native and revised direct swimming comparisons.
 Swimming poses, currents, shallow water, lava, effects, vehicles, latency, and the remaining movement matrix still need comparisons.
 
 **Tests:** The full local build passes with 16 converter tests, 628 core tests, and 603 add-on tests.
 Core and add-on suites have 135 skips in total, with no failures or errors.
 Four new tests cover payload validation, protocol revisions, frame consumption, teleport staleness, and swimming edges.
 Both complete stacks replay and pass Checkstyle; `bun run check` passes.
+
+### Native swimming start comparison, October 6, 2026
+
+The raw native recorder completes another strict-BDS reference with 1,513 auth-input frames and visible gameplay.
+A sprint-swim case in the fixture emits start event 29 and stop event 30.
+The native start frame also contains sprint-start event 25 and forward motion 0.01764 blocks per tick.
+Native and ViaProxy forward positions and motion follow the same acceleration sequence within float rounding.
+The initial Java implementation emits its swimming start one frame later, at motion 0.033516.
+
+**Implemented:** The add-on refreshes local swimming state after sprint changes in `aiStep`, before fluid travel.
+Java normally updates swimming before that sprint decision.
+The revised direct start frame matches the native start flags and motion, including zero vertical motion.
+The complete direct recording has no prediction corrections.
+The previous Entity-wide hook remains removed; core still validates samples and constructs auth input.
+The repeated ViaProxy recording also matches the native start flags and first forward motion.
+Both revised route recordings have no prediction corrections.
+
+**Remaining:** Sprint-stop ordering and collision flags differ on release against the fixture wall.
+Native emits swimming-stop event 30 on release, then sprint-stop event 26 on the following frame.
+Java emits both events together and retains horizontal collision on the first release frame.
+The next native frame and Java frame share water-floor vertical motion of -0.005.
+The native reference has one zero-velocity correction from the fixture teleport, outside the swimming case.
+Do not treat the matching start frame, acceleration sequence, or a correction-free case as full swimming parity.

@@ -42,5 +42,6 @@ Live direct and ViaProxy strict-BDS comparisons match the native water-idle moti
 Both routes complete jump, fall, and water cases without corrections in the controlled water cases.
 Startup and elevated-teleport corrections remain.
 A ViaProxy sprint-swim case emits one start and one stop event without an additional correction.
-Native and direct swimming comparisons remain to verify.
+A native sprint-swim capture confirms start event 29 and stop event 30.
+The add-on aligns its start timing with native; release event ordering remains incomplete.
 Remaining movement cases need separate native comparisons.
