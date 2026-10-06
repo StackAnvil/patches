@@ -44,3 +44,30 @@ The barrier and disconnect timeout remain active if the server cannot supply fre
 The report lacks the original server and request log.
 This change fixes a recovery defect, but the original timeout trigger remains unknown.
 The complete core build passes with 557 passing tests and five optional skips, including the inventory recovery and crafted-item synchronization tests.
+
+## Complete inventory snapshots
+
+Core installs every slot from a full snapshot before it notifies slot observers.
+Recipe observers therefore see the complete replacement, rather than a mixture of old and new contents.
+Full item equality suppresses unchanged snapshot notifications and preserves count, tag, subtype, and stack network ID changes.
+Single-slot predictions retain their existing notification behavior because some predictions mutate the stored item before the update.
+
+Strict BDS sends a release transaction and then full player and offhand snapshots after food consumption.
+The previous callback loop sent duplicate mainhand equipment and unchanged offhand equipment after that transaction.
+The [matching equipment schema](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/mob-equipment-packet/) requires updates for held slot or content changes.
+Actual changes still produce an equipment update.
+
+Two tests cover repeated snapshots, count and network ID changes, complete contents during callbacks, and ownership of the snapshot array.
+All four projects build, and both complete patch stacks replay.
+There are 16 converter, 669 core, and 584 add-on test cases, with 133 skips and no failures or errors.
+
+Direct and ViaProxy strict-BDS recordings both reach join and spawn with protocol 2193.
+Each route contains ten food completions across controlled eating, additional repeated eating, and last-item consumption.
+Every completion now sends one equipment update, compared with three in the preceding recordings.
+Both routes consume the last item and restore full movement input.
+
+Eating corrections remain in these recordings.
+The direct route receives one during controlled eating and one during additional repeated eating.
+ViaProxy receives two during controlled eating, three during additional repeated eating, and two after last-item consumption.
+This change verifies snapshot consistency and removal of duplicate equipment updates.
+Native completion prediction, correction history, and the cause of those corrections remain incomplete.

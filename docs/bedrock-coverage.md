@@ -4461,3 +4461,42 @@ The visible hotbar is empty after consumption.
 Fresh native captures remain required; the current-boot native GPU guard prevents another native launch.
 Custom modifier integration, ordinary Java clients, Boar comparisons, correction history, broader movement, and actual Windows/macOS joins remain requirements.
 These results establish the named calculations and comparisons, not complete native movement parity.
+
+### Inventory snapshots during item use, October 6, 2026
+
+**Implemented:** Core installs complete inventory snapshots before it notifies slot observers.
+Full item equality suppresses unchanged notifications and preserves count and stack network ID changes.
+This change belongs to the existing server-authoritative inventory patch 0003.
+Single-slot predictions retain their notifications because existing predictions can mutate stored items before the update.
+Two tests cover repeated snapshots, count and ID changes, coherent callback contents, and snapshot array ownership.
+
+All four project builds pass, and the complete core and add-on stacks replay.
+The build contains 16 converter, 669 core, and 584 add-on test cases.
+There are 133 environment-dependent skips and no failures or errors.
+`bun run check` passes.
+The preceding commit's CI also passes its Ubuntu, Windows, and macOS tooling gates.
+Those gates do not establish actual platform game joins.
+
+**Live verification:** Direct and ViaProxy strict-BDS recordings each reach join and spawn with protocol 2193.
+Each route covers seven controlled cases with 399 movement frames, followed by repeated eating and last-item consumption.
+The additional cases contain 260 direct frames and 262 ViaProxy frames.
+All 157 comparable frames across bow charging, diagonals, sneaking, and a forward control match exactly.
+Bow release differs by one input frame between routes, so its complete trajectories are not counted as exact matches.
+
+Each route contains ten food completions.
+Every completion sends one equipment update, compared with three in the preceding recordings.
+The real count and network ID update remains present.
+Both routes consume the last item and restore full movement input.
+
+**Incomplete:** Eating corrections remain.
+Direct receives one correction during controlled eating and one during additional repeated eating.
+ViaProxy receives two during controlled eating, three during additional repeated eating, and two after last-item consumption.
+Fixture teleports produce three separate zero-velocity corrections on direct and one on ViaProxy.
+The snapshot change removes duplicate equipment updates but does not establish native completion parity.
+
+Matching executable inspection identifies duration callback `0x14c6109b0`, used by both named item-use duration systems.
+It decrements positive remaining ticks and stops at zero.
+Removal callback `0x14c5f5cb0` instead checks the actor's `USINGITEM` flag before it removes active-use components.
+Zero remaining duration alone therefore does not establish the correct local completion transition.
+Full query membership, local completion, acknowledgments, and correction history still require research.
+Fresh native captures, custom modifiers, ordinary Java clients, Boar comparisons, broader movement, and actual Windows/macOS joins remain requirements.

@@ -1,4 +1,4 @@
-From ff4f09e03cb4038cc55320369204c2dd27a22baf Mon Sep 17 00:00:00 2001
+From 8f465c52fc666d1c6e8b5598b6bb7edaa09ef55b Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 12:56:10 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -106,10 +106,25 @@ Reopening the inventory alone does not guarantee fresh cursor and equipment
 snapshots. Use the same refresh transaction already verified against native
 Bedrock 1.26.51.1 for crafted metadata, and retain the authoritative recovery
 barrier before allowing more predictions.
+
+Install complete inventory snapshots before notifying slot observers, and
+notify only changed stacks using full Bedrock item equality. Counts and
+stack network IDs remain authoritative. Repeated strict-BDS food updates
+send a release transaction followed by unchanged inventory and offhand
+snapshots; the old callback loop emits duplicate equipment packets and
+exposes partially replaced contents to recipe observers.
+
+Protocol-2193 MobEquipment describes changes to held slots or contents:
+https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/mob-equipment-packet/
+Keep real changes, including renewed network IDs, while suppressing
+unchanged snapshot callbacks. Preserve single-slot update semantics for
+existing in-place prediction. Tests exercise repeated snapshots, count
+and ID changes, coherent callback contents, and array ownership. Native
+item-use prediction and completion timing remain a separate requirement.
 ---
  build.gradle                                  |    3 +-
  .../api/model/container/ChestContainer.java   |   52 +-
- .../api/model/container/Container.java        |  907 ++++++++-
+ .../api/model/container/Container.java        |  909 ++++++++-
  .../api/model/container/HorseContainer.java   |   55 +
  .../model/container/block/AnvilContainer.java |  178 ++
  .../container/block/BeaconContainer.java      |  238 +++
@@ -152,7 +167,7 @@ barrier before allowing more predictions.
  .../protocol/types/item/BedrockItemType.java  |   12 +-
  .../data/bedrock/item_stack_sizes.json        |  267 +++
  .../viabedrock/data/custom/block_tags.json    |   16 +-
- .../api/model/container/ContainerTest.java    |  116 ++
+ .../api/model/container/ContainerTest.java    |  179 ++
  .../model/container/HorseContainerTest.java   |   53 +
  .../block/EnchantmentContainerTest.java       |  120 ++
  .../container/block/LecternContainerTest.java |   84 +
@@ -167,7 +182,7 @@ barrier before allowing more predictions.
  .../storage/InventoryRequestTrackerTest.java  |  330 ++++
  .../storage/InventoryTrackerTest.java         |  124 ++
  .../storage/StonecutterRecipePacketTest.java  |   53 +
- 60 files changed, 8785 insertions(+), 838 deletions(-)
+ 60 files changed, 8850 insertions(+), 838 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/AnvilContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/BeaconContainer.java
@@ -289,7 +304,7 @@ index a37f1b071..741852606 100644
  
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
-index 26f172417..6a31d0fba 100644
+index 26f172417..1164c1e8e 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/Container.java
 @@ -21,13 +21,28 @@ import com.viaversion.viaversion.api.connection.UserConnection;
@@ -1092,7 +1107,7 @@ index 26f172417..6a31d0fba 100644
      }
  
      public BedrockItem[] getItems() {
-@@ -88,29 +837,119 @@ public abstract class Container {
+@@ -88,29 +837,121 @@ public abstract class Container {
      }
  
      public boolean setItem(final int slot, final BedrockItem item) {
@@ -1138,11 +1153,13 @@ index 26f172417..6a31d0fba 100644
              return false;
          }
  
++        final BedrockItem[] previous = this.getItems();
++        System.arraycopy(items, 0, this.items, 0, items.length);
          for (int i = 0; i < items.length; i++) {
 -            this.setItem(i, items[i]);
-+            final BedrockItem previous = this.items[i];
-+            this.items[i] = items[i];
-+            this.onSlotChanged(i, previous, items[i]);
++            if (!previous[i].equals(items[i])) {
++                this.onSlotChanged(i, previous[i], items[i]);
++            }
          }
          return true;
      }
@@ -1219,7 +1236,7 @@ index 26f172417..6a31d0fba 100644
      public int javaSlot(final int slot) {
          return slot;
      }
-@@ -147,7 +986,51 @@ public abstract class Container {
+@@ -147,7 +988,51 @@ public abstract class Container {
          }
      }
  
@@ -10092,10 +10109,10 @@ index fbc16b4b2..a02f9294f 100644
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/container/ContainerTest.java b/src/test/java/net/raphimc/viabedrock/api/model/container/ContainerTest.java
 new file mode 100644
-index 000000000..842727a22
+index 000000000..be1b704b4
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/container/ContainerTest.java
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,179 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -10120,12 +10137,60 @@ index 000000000..842727a22
 +import org.junit.jupiter.api.Test;
 +
 +import java.lang.reflect.Proxy;
++import java.util.ArrayList;
++import java.util.List;
 +
 +import static org.junit.jupiter.api.Assertions.assertEquals;
 +import static org.junit.jupiter.api.Assertions.assertSame;
 +import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 +
 +class ContainerTest {
++
++    @Test
++    void repeatedSnapshotRetainsNetworkIdsWithoutRepeatedSlotEvents() {
++        final SnapshotContainer container = new SnapshotContainer();
++        final BedrockItem held = new BedrockItem(258);
++        held.setAmount(32);
++        held.setNetId(85);
++        container.setItems(new BedrockItem[]{held, BedrockItem.empty()});
++        container.changedSlots.clear();
++
++        final BedrockItem repeated = held.copy();
++        container.setItems(new BedrockItem[]{repeated, BedrockItem.empty()});
++        assertEquals(List.of(), container.changedSlots);
++        assertSame(repeated, container.getItem(0));
++
++        final BedrockItem consumed = repeated.copy();
++        consumed.setAmount(31);
++        consumed.setNetId(86);
++        container.setItems(new BedrockItem[]{consumed, BedrockItem.empty()});
++        assertEquals(List.of(0), container.changedSlots);
++        assertEquals(31, container.getItem(0).amount());
++        assertEquals(86, container.getItem(0).netId());
++
++        container.changedSlots.clear();
++        final BedrockItem renewedId = consumed.copy();
++        renewedId.setNetId(87);
++        container.setItems(new BedrockItem[]{renewedId, BedrockItem.empty()});
++        assertEquals(List.of(0), container.changedSlots);
++        assertEquals(87, container.getItem(0).netId());
++    }
++
++    @Test
++    void snapshotCallbacksObserveTheCompleteReplacement() {
++        final SnapshotContainer container = new SnapshotContainer();
++        final BedrockItem first = new BedrockItem(1);
++        final BedrockItem second = new BedrockItem(2);
++        final BedrockItem[] incoming = {first, second};
++        container.setItems(incoming);
++        assertEquals(List.of(0, 1), container.changedSlots);
++        for (BedrockItem[] observed : container.observedSnapshots) {
++            assertSame(first, observed[0]);
++            assertSame(second, observed[1]);
++        }
++        incoming[0] = BedrockItem.empty();
++        assertSame(first, container.getItem(0));
++    }
 +
 +    @Test
 +    void offhandSwapPreservesBothNetworkIdsAndUsesEquipmentSlot() {
@@ -10209,6 +10274,21 @@ index 000000000..842727a22
 +        assertSame(tracker.getHudContainer(), ((Container) player).resolveJavaSlot(tracker, (short) 1).container());
 +        assertSame(tracker.getArmorContainer(), ((Container) player).resolveJavaSlot(tracker, (short) 5).container());
 +        assertSame(tracker.getOffhandContainer(), ((Container) player).resolveJavaSlot(tracker, (short) 45).container());
++    }
++
++    private static final class SnapshotContainer extends Container {
++        private final List<Integer> changedSlots = new ArrayList<>();
++        private final List<BedrockItem[]> observedSnapshots = new ArrayList<>();
++
++        private SnapshotContainer() {
++            super(null, (byte) 0, ContainerType.CONTAINER, null, null, 2);
++        }
++
++        @Override
++        protected void onSlotChanged(final int slot, final BedrockItem previous, final BedrockItem item) {
++            this.changedSlots.add(slot);
++            this.observedSnapshots.add(this.getItems());
++        }
 +    }
 +
 +}
