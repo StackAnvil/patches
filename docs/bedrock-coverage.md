@@ -5493,3 +5493,42 @@ The dependency build passes, including Checkstyle.
 Core reports 663 passing tests and 19 skipped tests; CubeConverter reports 16 passing tests.
 No test failures or errors occur. The seven neighbor-shape tests pass.
 This run did not repeat live client or cross-platform join tests.
+
+
+## Native fence connections beside stairs (October 6, 2026)
+
+**Implemented in core:** Fences connect to the full horizontal stair face, independently of stair half.
+Rotation tests cover all four neighboring directions and both fence families.
+They verify that an updated stair removes the old connection and enables the new one.
+The correction belongs to the existing neighbor-shape patch and requires no add-on code.
+Java opacity previously rejected every stair.
+
+**Native instructions verified:** Oak-stair factory `0x14c963d20` invokes constructor `0x1495c3990`.
+Its installed vtable `0x14ea60ee0`, stored base block, and two flags identify `StairBlock`.
+The [versioned declaration](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/world/level/block/StairBlock.h) supports this identification.
+The target remains official Windows Bedrock 1.26.51.1, build 51061372, protocol 2193, with the executable hash recorded above.
+
+The component hook at vtable slot `0x390` executes its update prefix from `0x1495c6c50` through `0x1495c6fd4`.
+For valid `weirdo_direction` values, it selects face bit `5 - direction`.
+The upside-down flag does not change the connecting face.
+This identifies a different hook from the earlier direction-only class lead; address proximity does not establish block identity.
+
+A native fixture starts with no connection component and spare capacity in its sorted component store.
+Actual lookup allocates, initializes, inserts, and retains the connection component before the stair hook selects its face.
+The allocator and region lookup are explicit boundaries.
+The unchanged native predicate then tests the four requested directions using the actual fence source classifier.
+All 4,096 component allocations and connecting directions match, with zero failures.
+Cases vary direction, half, and unrelated packed bits.
+The production Java comparison fails on the first case before the correction and matches every case afterward.
+Two verified Ghidra function names and comments were saved through MCP and matched after a fresh program query.
+
+**Remaining:** The fixture supplies initialized TLS, component IDs, state maps, storage capacity, and region lookup.
+It stops before callback registration and does not execute full block construction, native world initialization, or live movement.
+Other neighbor classes, native stair shapes, retained world state, ordered collision resolution, and correction replay remain incomplete.
+The full platform and Bedrock coverage requirements remain active.
+
+**Verification:** The full 95-patch core stack replays and builds successfully with Checkstyle.
+Core reports 664 passing tests and 19 skips; CubeConverter reports 16 passing tests.
+All eight neighbor-shape tests pass, with no failures or errors.
+Fresh Java comparisons match the 4,096 stair cases and the earlier 4,096 gate, slab, and snow cases.
+Live joins and complete movement parity were not verified in this run.

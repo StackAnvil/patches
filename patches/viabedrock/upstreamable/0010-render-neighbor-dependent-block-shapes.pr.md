@@ -67,3 +67,36 @@ The full 95-patch core stack replays and builds successfully with Checkstyle.
 Core tests report 663 passes, 19 skips, and no failures or errors.
 CubeConverter adds 16 passing tests. All seven neighbor-shape tests pass.
 Live joins and platform tests were not repeated for this core correction.
+
+## Native stair connection face
+
+Core now connects fences to the full horizontal face of stairs.
+The direction rule applies to both fence families and both stair halves.
+Rotation tests replace every neighboring stair and verify that obsolete connections disappear.
+Java opacity previously rejected every stair, including the native connecting face.
+
+The native oak-stair factory `0x14c963d20` calls constructor `0x1495c3990`.
+The constructor installs vtable `0x14ea60ee0` and stores the base block plus two flags.
+These fields match the [versioned StairBlock declaration](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/world/level/block/StairBlock.h).
+Vtable slot `0x390` selects the component hook `0x1495c6c50`.
+Its component-update prefix ends at `0x1495c6fd4`, before native callback registration.
+The connecting face is bit `5 - weirdo_direction` for the four valid directions.
+The upside-down flag affects another component but does not change this face.
+
+A private fixture starts without a connection component.
+Native lookup allocates its default, inserts it into the sorted store, and applies the stair face.
+The fixture then invokes the unchanged connection predicate and actual fence source classifier.
+It executes 4,096 cases with varying direction, half, and unrelated packed bits.
+All 4,096 component allocations and connecting directions match without failures.
+Production Java rejects the first case before this correction and matches every case afterward.
+
+The fixture supplies initialized TLS and component IDs, state maps, storage capacity, allocator, and region lookup.
+It stops before callback registration and does not execute full block construction or native world initialization.
+Two verified function names and comments were saved through MCP and confirmed by a fresh program query.
+Live joins, native stair meshes, ordered movement resolution, and complete vanilla connectivity remain outside this verification.
+
+**Verification:** The full 95-patch core stack replays and builds successfully with Checkstyle.
+Core reports 664 passing tests and 19 skips; CubeConverter reports 16 passing tests.
+All eight neighbor-shape tests pass, with no failures or errors.
+Fresh Java comparisons match the 4,096 stair cases and the earlier 4,096 gate, slab, and snow cases.
+Live joins and complete movement parity were not verified in this run.
