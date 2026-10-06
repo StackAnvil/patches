@@ -839,3 +839,29 @@ CubeConverter passes all 16 tests, and Checkstyle passes for both Java stacks.
 ViaProxy also builds and embeds the updated movement classes.
 The rebuilt production calculator still matches all 6,992 native speed/damping cases exactly.
 These checks establish the named calculations and transport tests; live boosted trajectories remain unverified.
+
+## Ordinary water acceleration and damping
+
+Core now shares ordinary and boosted water calculations through `WaterMovement`.
+The add-on applies them with a known underwater-speed attribute and retains local state across death and respawn.
+Missing remote actors and disconnected sessions still lose their state.
+
+Matching native getters `14207c030` and `142dee630` establish clamped Depth Strider efficiency, airborne halving, float order, and drag interpolation.
+The rebuilt production calculator matches all 19,456 bounded native speed/damping cases exactly.
+These cases supply the walking-speed virtual boundary, ECS storage, attributes, equipment, and water traits.
+They do not simulate the complete native world or client.
+
+Fresh direct and ViaProxy clients reach actual strict-BDS spawn and complete plain-water and grounded Depth Strider 3 cases without nonzero movement corrections.
+The enchanted first position advances to Z `0.59799999`; completed motion is `0.053508006`.
+A separate runtime observation exposes underwater state loss during death/respawn, which the local-state retention change corrects.
+The rebuilt direct client retains speed `0.02` during death and after respawn.
+Its controlled enchanted-water windows have no corrections, but four nonzero corrections occur during separate respawn relocation.
+That lifecycle/prediction gap remains open.
+The rebuilt ViaProxy client retains speed `0.02` after respawn and completes both 17-frame enchanted cases without corrections during controlled input or release.
+Three earlier fixture-position corrections remain outside those windows, including one idle vertical-gravity correction.
+Invalid drowning, unavailable-arena, and expired-recording attempts do not count as valid comparisons.
+
+Core passes 697 tests with 19 optional skips; the add-on passes 478 tests with 114 optional skips.
+CubeConverter passes 16 tests; both Java stacks pass Checkstyle and complete replay/build.
+ViaProxy builds with the updated calculator embedded.
+The [coverage ledger](../../../docs/bedrock-coverage.md#ordinary-water-travel-and-local-state-across-respawn-october-6-2026) records evidence, route checks, and remaining fluid, prediction, platform, and full-goal requirements.

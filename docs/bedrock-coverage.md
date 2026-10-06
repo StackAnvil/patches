@@ -5960,3 +5960,63 @@ CubeConverter passes all 16 tests, and Checkstyle passes for both Java stacks.
 ViaProxy also builds and embeds the updated movement classes.
 The rebuilt production calculator still matches all 6,992 native speed/damping cases exactly.
 These checks establish the named calculations and transport tests; live boosted trajectories remain unverified.
+
+### Ordinary water travel and local state across respawn (October 6, 2026)
+
+**Implemented:** The shared core `WaterMovement` calculator now covers ordinary water travel and confirmed dolphin boosts.
+It replaces the earlier dolphin-only calculator.
+The add-on supplies walking speed, equipped Depth Strider, ground state, sprint state, and water slowdown at the existing travel boundaries.
+A known authoritative underwater-speed attribute remains necessary; zero remains valid.
+Local movement attributes and confirmed effects survive temporary absence from the world entity index during death and respawn.
+Disconnect clears the state, and missing remote actors still lose their entries.
+
+**Target evidence:** The matching 1.26.51.1 executable has SHA-256 `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+Water-speed getter `14207c030` clamps Depth Strider to three and halves ordinary efficiency when its ground component is absent.
+It multiplies the walking/underwater speed difference by that level before division by three.
+A precomputed fraction changes float rounding, including airborne speed `0.02`, walking speed `0.13`, and level three.
+Native damping `142dee630` interpolates ordinary horizontal drag toward `0.54600006F` with the same grounded efficiency.
+Confirmed boosts retain full efficiency and bypass this drag interpolation; vertical drag remains `0.8F`.
+
+[Microsoft's underwater movement reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/entityreference/examples/entitycomponents/minecraftcomponent_underwater_movement?view=minecraft-bedrock-stable) identifies the component as entity water speed and gives no default value.
+That reference supports the attribute role; the pinned executable establishes these arithmetic rules.
+[Mojang's movement overview](https://mojang.github.io/bedrock-protocol-docs/guides/player-movement-overview/) also describes tick-bound corrections and history replay.
+The current portal selects protocol 2225; it does not establish protocol 2193 numeric mappings.
+
+**Verified within scope:** The rebuilt production Java calculator matches 19,456 bounded native speed/damping executions with zero bit mismatches.
+These comprise 2,304 speed cases and 17,152 damping cases.
+The fixture supplies ECS storage, underwater attributes, walking-speed virtual results, enchantment observations, and water traits.
+Native instructions perform clamping, ground gates, interpolation, acceleration, and damping unchanged.
+The separate native boost-admission fixture still passes 2,048 cases.
+Compact Java regressions cover ordinary interpolation order, grounded efficiency, sprint drag, clamping, boost behavior, and signed zero.
+
+Fresh direct and ViaProxy Java clients reach actual spawn on strict BDS 1.26.51.1, protocol 2193.
+Their controlled plain-water and grounded Depth Strider 3 cases produce no nonzero movement corrections.
+The ViaProxy recording contains 22 plain-water input frames and 17 enchanted input frames; its two corrections only acknowledge fixture teleports.
+The enchanted first position advances from Z `0.5` to `0.59799999`, with completed horizontal motion `0.053508006`.
+The fresh direct enchanted case produces the same first position and motion.
+
+An earlier direct death/respawn exposes repeated corrections after its underwater speed disappears.
+Read-only runtime observations show speed `0.02` before death and an absent value afterward, including equipped Depth Strider level three.
+The add-on now retains connection-owned local state while the player temporarily leaves the world entity index.
+The rebuilt direct client retains speed `0.02` during death and after respawn.
+Its 17-frame initial and 18-frame post-respawn enchanted cases produce no corrections during the controlled input windows.
+Four nonzero corrections occur during respawn relocation outside those windows; that lifecycle/prediction gap remains open.
+Those frames contain zero movement input; fluid loading and current handling still need investigation.
+The rebuilt ViaProxy client also retains speed `0.02` after respawn.
+Its initial and post-respawn enchanted cases each contain 17 input frames with identical first and last motion values.
+No corrections occur during either controlled input or the later release window.
+Its three corrections precede input at the fixture position, including one idle vertical-gravity correction.
+Owned recording clients, proxy processes, and the strict-BDS fixture stop after these comparisons; existing servers and display services remain intact.
+Drowning setup, unloaded-arena setup, and input attempted after a recording deadline do not count as valid movement comparisons.
+Raw recordings, licensed native data, screenshots, and the observation agent remain private.
+
+**Incomplete or unverified:** Broader phase timing, custom walking-speed and water-trait mapping, rotation, collision, gravity, and currents remain required.
+Native full-world trajectories, actual dolphin boosts, lava, bubble columns, geysers, latency, and correction history still need comparisons.
+Boar, CubeCraft, ordinary Java clients, dimension changes, actor ID reuse, and Windows/macOS gameplay remain separate requirements.
+The native GPU guard remains active for this boot.
+All original coverage groups and the complete complex gameplay matrix remain required.
+
+Both complete stacks replay and build against the pinned ViaFabricPlus artifact.
+Core passes 697 tests with 19 optional skips; the add-on passes 478 tests with 114 optional skips.
+CubeConverter passes all 16 tests, and Checkstyle passes for both Java stacks.
+ViaProxy builds with the shared water calculator embedded.

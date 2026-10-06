@@ -1,4 +1,4 @@
-From c00ece033d1632cec970138dcbb9ef283e239276 Mon Sep 17 00:00:00 2001
+From 287affd219c207a4a1b6365d39dc849ae8364c76 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:53 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -251,16 +251,38 @@ native cases exactly. The client supplies equipped enchantment and water
 trait observations; core owns calculation, authoritative state and wire
 format. Phase timing, trait mapping, speculative admission, correction
 replay and actual boosted trajectories on both routes remain unverified.
+
+Use the shared WaterMovement calculator for ordinary water travel as well
+as confirmed dolphin boosts. Keep the authoritative underwater attribute
+gate and observe effective walking speed, equipped Depth Strider, ground,
+sprint and water drag at the existing client travel boundaries. Airborne
+ordinary travel uses half enchantment efficiency; confirmed boosted travel
+keeps full efficiency. Preserve native multiplication/division order and
+float damping instead of Java's interpolation order and double motion.
+
+Core production calculations match all 19,456 bounded native executions.
+Keep the calculator and its rules in core and retain no dolphin-only shim.
+The existing completed-frame transport handles both connection routes.
+Native phase timing, walking-speed/trait mapping, input rotation, collision,
+fluid gravity, currents and correction history remain unverified or partial.
+
+Retain local movement attributes and confirmed effects while the client
+player temporarily leaves the world entity index during death or respawn.
+Connection teardown still clears them, and unloaded remote actors are
+pruned. Strict BDS repeats corrections after respawn when underwater speed
+is lost; a runtime observation confirms 0.02 becomes absent while equipped
+Depth Strider remains level three. Preserve connection-owned local state
+instead of falling back to Java water physics until another attribute update.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   4 +
  .../access/IBedrockPlayerPosture.java         |  14 ++
  .../mixin/features/movement/MixinAvatar.java  |  27 +++
  .../mixin/features/movement/MixinEntity.java  |  25 +--
  .../movement/MixinFireworkRocketEntity.java   |  28 +++
- .../features/movement/MixinLivingEntity.java  |  68 ++++++
+ .../features/movement/MixinLivingEntity.java  |  72 +++++++
  .../features/movement/MixinLocalPlayer.java   | 194 +++++++++++++++++-
  .../mixin/features/movement/MixinPlayer.java  |  55 +++--
- .../bedrock/input/BedrockMovementEffects.java |  68 ++++++
+ .../bedrock/input/BedrockMovementEffects.java |  72 +++++++
  .../bedrock/input/MovementEffectPayload.java  |  24 +++
  .../input/PlayerPredictionPayload.java        |  24 +++
  .../input/UnderwaterMovementPayload.java      |  24 +++
@@ -269,7 +291,7 @@ replay and actual boosted trajectories on both routes remain unverified.
  .../viafabricplus-bedrock.mixins.json         |   2 +
  .../movement/BedrockFluidPhysicsTest.java     | 121 +++++++++++
  .../movement/BedrockPlayerPostureTest.java    |  45 ++++
- 17 files changed, 831 insertions(+), 41 deletions(-)
+ 17 files changed, 839 insertions(+), 41 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinFireworkRocketEntity.java
@@ -455,7 +477,7 @@ index 0000000..b648ca3
 +
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-index 1c9125e..4bdd6cb 100644
+index 1c9125e..f287573 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
 @@ -21,18 +21,32 @@
@@ -477,8 +499,8 @@ index 1c9125e..4bdd6cb 100644
 +import net.minecraft.world.item.enchantment.EnchantmentHelper;
 +import net.minecraft.world.item.enchantment.Enchantments;
  import net.minecraft.world.phys.Vec3;
-+import net.raphimc.viabedrock.api.model.DolphinBoostMovement;
 +import net.raphimc.viabedrock.api.model.GlideMovement;
++import net.raphimc.viabedrock.api.model.WaterMovement;
 +import net.raphimc.viabedrock.protocol.model.Position3f;
  import org.jetbrains.annotations.Nullable;
 +import org.objectweb.asm.Opcodes;
@@ -491,7 +513,7 @@ index 1c9125e..4bdd6cb 100644
  import org.spongepowered.asm.mixin.injection.Redirect;
  import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  
-@@ -42,6 +56,60 @@ public abstract class MixinLivingEntity {
+@@ -42,6 +56,64 @@ public abstract class MixinLivingEntity {
      @Shadow
      public abstract @Nullable MobEffectInstance getEffect(final Holder<MobEffect> effect);
  
@@ -499,14 +521,12 @@ index 1c9125e..4bdd6cb 100644
 +    protected abstract float getWaterSlowDown();
 +
 +    @WrapOperation(method = "travelInWater", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;moveRelative(FLnet/minecraft/world/phys/Vec3;)V"))
-+    private void applyDolphinBoostAcceleration(final LivingEntity entity, final float speed, final Vec3 input, final Operation<Void> original) {
-+        if (entity instanceof LocalPlayer player && player.isSwimming() && BedrockInputPermissions.isBedrockConnection()
-+                && BedrockMovementEffects.hasDolphinBoost(player.getId())) {
++    private void applyNativeWaterAcceleration(final LivingEntity entity, final float speed, final Vec3 input, final Operation<Void> original) {
++        if (entity instanceof LocalPlayer player && BedrockInputPermissions.isBedrockConnection()) {
 +            final Float underwaterSpeed = BedrockMovementEffects.underwaterSpeed(player.getId());
 +            if (underwaterSpeed != null) {
-+                final var depthStrider = player.level().registryAccess().lookupOrThrow(Registries.ENCHANTMENT).getOrThrow(Enchantments.DEPTH_STRIDER);
-+                final int level = EnchantmentHelper.getItemEnchantmentLevel(depthStrider, player.getItemBySlot(EquipmentSlot.FEET));
-+                original.call(entity, DolphinBoostMovement.acceleration(underwaterSpeed, level), input);
++                final boolean boosted = player.isSwimming() && BedrockMovementEffects.hasDolphinBoost(player.getId());
++                original.call(entity, WaterMovement.acceleration(underwaterSpeed, player.getSpeed(), depthStriderLevel(player), player.onGround(), boosted), input);
 +                return;
 +            }
 +        }
@@ -514,14 +534,20 @@ index 1c9125e..4bdd6cb 100644
 +    }
 +
 +    @WrapOperation(method = "travelInWater", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/phys/Vec3;multiply(DDD)Lnet/minecraft/world/phys/Vec3;"))
-+    private Vec3 applyDolphinBoostDamping(final Vec3 motion, final double x, final double y, final double z, final Operation<Vec3> original) {
-+        if ((Object) this instanceof LocalPlayer player && player.isSwimming() && BedrockInputPermissions.isBedrockConnection()
-+                && BedrockMovementEffects.hasDolphinBoost(player.getId()) && BedrockMovementEffects.underwaterSpeed(player.getId()) != null) {
-+            final Position3f result = DolphinBoostMovement.damp(new Position3f((float) motion.x, (float) motion.y, (float) motion.z),
-+                    player.isSprinting(), this.getWaterSlowDown());
++    private Vec3 applyNativeWaterDamping(final Vec3 motion, final double x, final double y, final double z, final Operation<Vec3> original) {
++        if ((Object) this instanceof LocalPlayer player && BedrockInputPermissions.isBedrockConnection()
++                && BedrockMovementEffects.underwaterSpeed(player.getId()) != null) {
++            final boolean boosted = player.isSwimming() && BedrockMovementEffects.hasDolphinBoost(player.getId());
++            final Position3f result = WaterMovement.damp(new Position3f((float) motion.x, (float) motion.y, (float) motion.z),
++                    depthStriderLevel(player), player.onGround(), player.isSprinting(), this.getWaterSlowDown(), boosted);
 +            return new Vec3(result.x(), result.y(), result.z());
 +        }
 +        return original.call(motion, x, y, z);
++    }
++
++    private static int depthStriderLevel(final LocalPlayer player) {
++        final var enchantment = player.level().registryAccess().lookupOrThrow(Registries.ENCHANTMENT).getOrThrow(Enchantments.DEPTH_STRIDER);
++        return EnchantmentHelper.getItemEnchantmentLevel(enchantment, player.getItemBySlot(EquipmentSlot.FEET));
 +    }
 +
 +    @Inject(method = "updateFallFlyingMovement", at = @At("HEAD"), cancellable = true)
@@ -879,10 +905,10 @@ index 49a37ac..9b2d80b 100644
          }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java
 new file mode 100644
-index 0000000..7c10b41
+index 0000000..143b1f8
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,72 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -899,6 +925,7 @@ index 0000000..7c10b41
 +
 +import java.util.HashMap;
 +import java.util.Map;
++import java.util.function.IntPredicate;
 +
 +public final class BedrockMovementEffects {
 +    private static final MovementEffectTimeline TIMELINE = new MovementEffectTimeline();
@@ -929,8 +956,11 @@ index 0000000..7c10b41
 +        });
 +        ClientTickEvents.END_CLIENT_TICK.register(client -> {
 +            if (client.level != null) {
-+                TIMELINE.retainEntities(id -> client.level.getEntity(id) != null);
-+                UNDERWATER_SPEEDS.keySet().removeIf(id -> client.level.getEntity(id) == null);
++                // The local player temporarily leaves the entity index during death and respawn.
++                final IntPredicate present = id -> (client.player != null && client.player.getId() == id)
++                        || client.level.getEntity(id) != null;
++                TIMELINE.retainEntities(present);
++                UNDERWATER_SPEEDS.keySet().removeIf(id -> !present.test(id));
 +            }
 +        });
 +    }

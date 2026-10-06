@@ -363,3 +363,23 @@ CubeConverter passes all 16 tests, and Checkstyle passes for both Java stacks.
 ViaProxy also builds and embeds the updated movement classes.
 The rebuilt production calculator still matches all 6,992 native speed/damping cases exactly.
 These checks establish the named calculations and transport tests; live boosted trajectories remain unverified.
+
+### Ordinary water and respawn state (October 6, 2026)
+
+**Implemented:** Core shares native ordinary-water acceleration and float damping with confirmed dolphin boosts through `WaterMovement`.
+The add-on supplies equipment, speed, ground, sprint, and water observations.
+It preserves local movement attributes and effects across temporary removal from the entity index during death and respawn.
+Disconnect and missing remote actors still clear state.
+
+**Verified within scope:** Production Java matches 19,456 bounded native speed/damping executions with zero bit mismatches.
+Fresh direct and ViaProxy clients reach strict-BDS spawn and complete plain-water and grounded Depth Strider 3 cases without nonzero movement corrections.
+A runtime observation identifies local underwater-speed loss during death/respawn.
+The rebuilt direct client retains that state and completes its controlled post-respawn water case without corrections.
+The rebuilt ViaProxy client also retains that state and completes its post-respawn enchanted case without corrections during controlled input or release.
+Separate corrections during respawn relocation and fixture setup remain prediction gaps.
+Invalid drowning, unavailable-arena, and expired-recording attempts do not count as movement evidence.
+The [coverage ledger](bedrock-coverage.md#ordinary-water-travel-and-local-state-across-respawn-october-6-2026) records addresses, test boundaries, route checks, and lifecycle evidence.
+
+**Incomplete or unverified:** This increment does not establish full native water travel.
+Broader phases, custom traits, rotation, collision, gravity, currents, boosts, lava, bubbles, geysers, latency, and history replay remain required.
+Boar, real-server joins, platform gameplay, and the complete movement/combat/inventory matrix remain part of the goal.
