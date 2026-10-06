@@ -3573,7 +3573,51 @@ Both suites report zero failures and errors. TypeScript checks pass.
 The fix stays in the owning input patch; the full add-on stack replays successfully.
 Raw journals, account data, server logs, and screenshots remain private.
 
-**Remaining:** Verify this change on direct connections and with other input implementations.
+**Remaining:** Verify other input implementations and the full movement matrix.
+The following direct-connection run covers basic keyboard movement and sneak transitions.
 Compare native packet timing, prediction history, release behavior, and server corrections across the full movement matrix.
 Fluids, collision, steps, climbing, effects, knockback, vehicles, latency, and real-server behavior remain open.
 Official BDS remains the primary movement reference. Experimental Boar flags require separate investigation.
+
+## Direct NetherNet launch entry points, October 6, 2026
+
+**Implemented:** Supported NetherNet URI parsing now runs in the shared `ServerAddress.parseString` entry point.
+Java 26.3 Quick Play skips the multiplayer screen wrapper that previously attached the custom socket address.
+The private direct test initially failed with “Unknown host” before any Bedrock packets arrived.
+The redundant screen parser is removed; ordinary address and default-port handling remain intact.
+
+Prism also appends a Java port to its launcher server value, producing an invalid URI with two ports.
+The private recorder supplies URI targets through an instance component's exact Quick Play argument.
+It now supports direct live add-on recordings and keeps account selection separate from proxy state.
+A private readiness marker requires local-player initialization followed by gameplay input.
+The requested scene timer starts after that marker, with a separate 20-minute setup bound.
+This test allowance does not change production timeouts or weaken strict BDS movement.
+
+The rebuilt direct route reaches BDS HTTP signaling and receives login success on protocol 2193.
+An uncached optional licensed asset acquisition then holds resource-pack negotiation.
+A private thread dump identifies `BedrockPackageHelper.exchange`, waiting for the helper process.
+Increasing output file counts establish active package downloading during the observed wait.
+Older private caches have obsolete formats and are correctly rejected; copying them does not complete setup.
+
+The final direct recording completes normally with 676 chunks and 3,619 gameplay inputs.
+It records eight forward-input segments without prediction corrections during those segments.
+They include two sneak starts, continuous walking with a sneak press/release, denied sneak, and ordinary walking.
+Walking and sprinting stop against the wall at Z=9.7; the half-block step raises predicted eye height by 0.5 blocks.
+Two stationary corrections follow fixture teleports, outside the movement segments.
+Held jumps also produce no additional corrections in this session.
+These observations verify direct behavior against BDS; native wall and step trajectory comparisons remain open.
+
+The mixed direct sequence contains 119 forward ticks, including 41 sneak ticks.
+Its final BDS position shows about 19.337 blocks of travel, matching the previous proxy sequence within sampled precision.
+Native tick counts remain unavailable for this route, so this does not establish exact native trajectory parity.
+
+The optional asset attempt does not publish a current-format cache; joining continues through the existing fallback.
+The failure cause remains unresolved. This successful join does not verify licensed built-in image loading.
+Improve visible progress and cancellation for cold optional asset acquisition during a join.
+Keep this separate from server-pack conversion stalls.
+
+The full dependency build passes with no failures or errors in 624 core tests and 600 add-on tests.
+Eighteen focused recorder tests pass after fixing two compile commands that omitted their private-file dependency.
+The updated readiness recorder also compiles against the built protocol API.
+The previous sneak-fix CI completes successfully across the configured Ubuntu, Windows, and macOS jobs.
+Official BDS remains the primary movement reference; experimental Boar flags require separate investigation.

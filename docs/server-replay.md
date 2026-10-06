@@ -19,7 +19,7 @@ bun run server-replay record cubecraft --seconds 120
 
 Other targets are `minehut` and `geyser`. The Hive uses `geo.hivebedrock.cloud`, but ViaBedrock blacklists its network because translated clients can be banned. Use the official client to record Hive. The tool preserves the translated-client guard. A translated diagnostic join requires the explicit `--allow-hive` option.
 
-The default login comes from the separate `StackAnvil Desktop 26.3` profile. Use `--account /absolute/path/bedrock.json` for another saved MinecraftAuth Bedrock account. The tool copies that account into its private proxy directory. It does not change the source account file.
+The default login comes from the separate `StackAnvil Desktop 26.3` profile. Use `--account /absolute/path/bedrock.json` for another saved MinecraftAuth Bedrock account. The tool copies that account into its private client or proxy directory. It does not change the source account file.
 
 The Java client uses a private copy of the integration instance. Its runtime libraries stay shared, while settings, mods, logs, and account files stay isolated. The client runs on the lab's private virtual display with silent audio. A recording lasts between 20 and 300 seconds. It allows one connection and blocks automatic reconnects. The tool accepts the Java pack prompt, saves a screenshot, and stops its processes.
 
@@ -29,7 +29,23 @@ For a local fixture, use:
 bun run server-replay record local --target 127.0.0.1:19132 --seconds 120
 ```
 
-Local fixtures use offline authentication. Recording a public server always requires the saved Bedrock account.
+Local fixtures use offline authentication unless you supply `--account`. Recording a public server always requires the saved Bedrock account.
+
+### Record a direct add-on connection
+
+Use `--client addon` to record a direct connection without ViaProxy:
+
+```bash
+bun run server-replay record cubecraft --client addon --seconds 120
+bun run server-replay record local --target 127.0.0.1:19132 --client addon --seconds 120
+```
+
+Direct and proxy recordings accept local HTTP signaling endpoints such as `nethernet://127.0.0.1:19182`.
+Supply `--account` when the endpoint needs a signed operator identity.
+The private Fabric recorder captures packets before protocol translation and checks initialization and gameplay acknowledgments.
+Add-on recordings allow up to 20 minutes for setup, matching the licensed asset helper's existing download limit.
+The requested scene duration starts after local-player initialization and the first gameplay input.
+This setup allowance does not change production networking or server movement checks.
 
 ### Record with the official client
 

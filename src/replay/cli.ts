@@ -104,7 +104,7 @@ async function buildFabricRecorder(jar: string, build: string): Promise<string> 
   return output;
 }
 
-async function launchJava(directory: string, bind: number, client: "addon" | "proxy", recorder: string, account?: string): Promise<{ pid: number; log: string }> {
+async function launchJava(directory: string, address: string, client: "addon" | "proxy", recorder: string, account?: string): Promise<{ pid: number; log: string }> {
   const isolated = await displayEnv(true);
   if (!isolated) throw new Error("The replay lab requires a private virtual display.");
   const sourceName = process.env.STACKANVIL_REPLAY_INSTANCE ?? "StackAnvil Integration 26.3";
@@ -123,6 +123,16 @@ async function launchJava(directory: string, bind: number, client: "addon" | "pr
   const instance = join(prism, "instances", name);
   await mkdir(instance, { mode: 0o700 });
   for (const file of ["instance.cfg", "mmc-pack.json"]) await cp(join(source, file), join(instance, file));
+  if (address.startsWith("nethernet://")) {
+    // Prism's host/port launcher option appends a Java port to URI addresses.
+    const pack = JSON.parse(await readFile(join(instance, "mmc-pack.json"), "utf8")) as { components: { uid: string; version: string }[] };
+    const minecraft = pack.components.find((component) => component.uid === "net.minecraft");
+    if (!minecraft) throw new Error("The integration instance has no Minecraft component.");
+    const component = JSON.parse(await readFile(join(prismData, "meta/net.minecraft", `${minecraft.version}.json`), "utf8"));
+    component.minecraftArguments += ` --quickPlayMultiplayer ${address}`;
+    await mkdir(join(instance, "patches"), { mode: 0o700 });
+    await writeFile(join(instance, "patches/net.minecraft.json"), JSON.stringify(component), { mode: 0o600 });
+  }
   const game = join(instance, "minecraft");
   await mkdir(game, { mode: 0o700 });
   for (const file of ["config", "options.txt"]) if (existsSync(join(source, "minecraft", file))) await cp(join(source, "minecraft", file), join(game, file), { recursive: true });
@@ -157,7 +167,8 @@ async function launchJava(directory: string, bind: number, client: "addon" | "pr
     ...(client === "addon" ? [`--filesystem=${join(privateRoot, "client-assets")}`] : []),
     `--env=DISPLAY=${isolated.DISPLAY}`, `--env=XAUTHORITY=${isolated.XAUTHORITY}`, "--env=WAYLAND_DISPLAY=", "--env=QT_QPA_PLATFORM=xcb",
     "--env=SDL_VIDEODRIVER=x11", "--env=SDL_VIDEO_DRIVER=x11", "--env=SDL_VIDEO_FORCE_EGL=1", "--env=PULSE_SINK=stackanvil_silent",
-    "org.prismlauncher.PrismLauncher", "--dir", prism, "--launch", name, "--server", `127.0.0.1:${bind}`], root, launcherLog, isolated);
+    "org.prismlauncher.PrismLauncher", "--dir", prism, "--launch", name,
+    ...(address.startsWith("nethernet://") ? [] : ["--server", address])], root, launcherLog, isolated);
   const until = Date.now() + 60_000;
   while (Date.now() < until) {
     const { stdout } = await execute("ps", ["-eo", "pid=,args="], { maxBuffer: 8 * 1024 * 1024 });
@@ -274,7 +285,7 @@ async function main(): Promise<void> {
   if (mode === "record" && input === "local") {
     target = option("--target")!;
     if (!/^(?:nethernet:\/\/)?127\.0\.0\.1:\d+$/.test(target ?? "")) throw new Error("Local recordings require --target 127.0.0.1:port or nethernet://127.0.0.1:port.");
-    if (target.startsWith("nethernet://") && client !== "proxy") throw new Error("Local NetherNet recording requires --client proxy.");
+    if (target.startsWith("nethernet://") && client === "native") throw new Error("Native recording requires a RakNet target. Use --client proxy or addon for NetherNet.");
   } else if (mode === "record" && !target) throw new Error("Unknown server.");
   const jar = await artifact("viaproxy");
   await mkdir(privateRoot, { recursive: true, mode: 0o700 });
@@ -289,7 +300,7 @@ async function main(): Promise<void> {
   await mkdir(join(proxyHome, "plugins"), { mode: 0o700 });
   await writeFile(join(proxyHome, "plugins/recorder.jar"), await readFile(plugin), { mode: 0o600 });
   if (mode === "record") {
-    if (input !== "local" || option("--account")) {
+    if (client === "proxy" && (input !== "local" || option("--account"))) {
       const authPath = resolve(option("--account") ?? process.env.STACKANVIL_BEDROCK_ACCOUNT ?? accountDefault);
       const auth = JSON.parse(await readFile(authPath, "utf8"));
       auth.accountType = "net.raphimc.viaproxy.saves.impl.accounts.BedrockAccount";
@@ -298,7 +309,6 @@ async function main(): Promise<void> {
   }
   const ownedDisplay = !await activeDisplay();
   let gamePid: number | undefined;
-  let replayPort: number | undefined;
   let stopped = false;
   let unexpectedClientExit = false;
   const abort = () => { stopped = true; };
@@ -318,9 +328,8 @@ async function main(): Promise<void> {
       const child = service("java", [`-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`, "com.enderdash.agent.replay.ReplayServer", recording, String(udp)], directory, log);
       await ready(child, log, /StackAnvil replay ready/);
       target = `127.0.0.1:${udp}`;
-      replayPort = udp;
     }
-    const bind = client === "addon" && replayPort ? replayPort : await port(client === "native");
+    const bind = client === "addon" ? undefined : await port(client === "native");
     const proxyLog = join(directory, "proxy.log");
     let child: ChildProcess | undefined;
     if (client === "proxy") {
@@ -333,23 +342,28 @@ async function main(): Promise<void> {
       child = service("java", [`-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`,
         "com.enderdash.agent.replay.NativeCaptureProxy", directory, String(bind), target!.slice(0, separator), target!.slice(separator + 1), account], directory, proxyLog);
       await ready(child, proxyLog, /StackAnvil native capture ready/);
-    } else if (mode !== "replay") {
-      throw new Error("Direct addon recording currently accepts local replay fixtures only. Use --client proxy for public recording.");
     }
-    const assetAccount = client === "addon" ? option("--account") : undefined;
+    const assetAccount = client === "addon" ? option("--account")
+      ?? (mode === "record" && input !== "local" ? process.env.STACKANVIL_BEDROCK_ACCOUNT ?? accountDefault : undefined) : undefined;
     const game = client === "native"
-      ? await launchNative(directory, bind, option("--native-home"), mode === "replay" || args.includes("--native-manual-connect"), nativeOffline)
-      : await launchJava(directory, bind, client, recorder, assetAccount ? resolve(assetAccount) : undefined);
+      ? await launchNative(directory, bind!, option("--native-home"), mode === "replay" || args.includes("--native-manual-connect"), nativeOffline)
+      : await launchJava(directory, client === "addon" ? target! : `127.0.0.1:${bind}`, client, recorder, assetAccount ? resolve(assetAccount) : undefined);
     gamePid = game.pid;
     console.log(`Private ${mode} session: ${directory}`);
-    // Give verified manual setup its own bound without shortening the recorded scene.
+    // Keep connection setup separate from the requested gameplay scene.
     let waitingForNativeConnection = client === "native";
-    let until = Date.now() + (waitingForNativeConnection ? 300_000 : seconds * 1000);
+    let waitingForAddonSpawn = client === "addon";
+    let until = Date.now() + (waitingForNativeConnection ? 300_000 : waitingForAddonSpawn ? 1_200_000 : seconds * 1000);
     while (!stopped && Date.now() < until && alive(gamePid) && (!child || alive(child.pid))) {
       if (waitingForNativeConnection && existsSync(join(directory, "packets.sbr"))) {
         waitingForNativeConnection = false;
         until = Date.now() + seconds * 1000;
         console.log(`Native connection observed; capturing the full ${seconds}-second scene.`);
+      }
+      if (waitingForAddonSpawn && existsSync(join(directory, "gameplay-ready"))) {
+        waitingForAddonSpawn = false;
+        until = Date.now() + seconds * 1000;
+        console.log(`Add-on gameplay observed; capturing the full ${seconds}-second scene.`);
       }
       const log = await logText(game.log);
       if (client === "native" && /Native connection failed:|Native capture failed:|StackAnvil native capture connection closed/.test(await logText(proxyLog))) break;

@@ -17,6 +17,7 @@ test.skipIf(!built)("publishes a burst of audit changes without a direct recorde
     const jar = await artifact("viaproxy");
     await writeFile(join(directory, "stackanvil-replay-directory.txt"), directory);
     await execute("javac", ["-cp", jar, "-d", directory,
+      join(root, "src/replay/java/com/enderdash/agent/replay/PrivateFiles.java"),
       join(root, "src/replay/fabric/com/enderdash/agent/replay/fabric/RenderAudit.java"),
       join(root, "test/fixtures/RenderAuditSelfTest.java")]);
     const result = await execute("java", ["-cp", `${directory}${delimiter}${jar}`,
