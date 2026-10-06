@@ -18,6 +18,12 @@ For protocol and enum work:
 
 The [preview `TextProcessingEventOrigin` page](https://mojang.github.io/bedrock-protocol-docs/1.26.60-preview.25/types/text-processing-event-origin/) shows a concrete enum renumbering in its **All builds** changelog. Use the changelog to locate a change, then check the schema for the target build.
 
+Preview tables also need wire checks.
+The target protocol 2193 actor-event table lists sequential values that contradict the matching BDS and native client.
+BDS sends rocket explosion 25 and crossbow charge completion 74; the target documentation lists 24 and 54.
+The [actor-event evidence](../patches/viabedrock/deferred/0001-translate-bedrock-actor-events-to-java-statuses.pr.md) records the discrepancy.
+Keep verified sparse IDs even when a versioned table gives different values.
+
 ## Establish the behavior to port
 
 Confirm that the target Bedrock version has the feature before you implement it. Record what players observe and what the client or server sends. Use versioned protocol documentation, game assets, implementation code, or native captures as evidence. When these sources leave a behavior uncertain, test it in the native game.

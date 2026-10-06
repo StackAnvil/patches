@@ -5814,3 +5814,21 @@ These item components do not prove full ranged-combat or movement parity.
 
 The complete 95-patch core stack replays and builds successfully.
 Checkstyle passes, with 679 tests passing, 19 optional skips, and no failures.
+
+## Rocket actor metadata and sparse event IDs (October 6, 2026)
+
+**Implemented:** Rocket compound field 16 uses the shared item converter and standard Java entity item metadata.
+Empty updates clear previous firework components; integer minecart display data remains separate.
+The actor-event patch no longer overwrites sparse wire IDs with sequential documentation values.
+This restores correct numeric decoding for existing Java status translations.
+
+**Verified within scope:** Target BDS emits compound rocket data, explosion event 25, charge-complete event 74, and subsequent rocket removal.
+The matching native rocket code reads the same data field and emits 25.
+Numeric tests cover both sparse ranges; metadata tests cover conversion, source immutability, clearing, and type separation.
+See the [gameplay evidence](bedrock-complex-gameplay.md), [event notes](../patches/viabedrock/deferred/0001-translate-bedrock-actor-events-to-java-statuses.pr.md), and [metadata notes](../patches/viabedrock/deferred/0002-translate-bedrock-metadata-and-properties.pr.md).
+
+**Unverified:** Remaining event effects, data and position handling, rocket direction and attachment, flight simulation, boost timing, and visible particles/audio remain required.
+Full direct and ViaProxy gameplay comparisons remain open.
+
+The complete 95-patch core stack replays and builds successfully.
+Checkstyle passes, with 683 tests passing, 19 optional skips, and no failures.

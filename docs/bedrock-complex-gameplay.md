@@ -236,3 +236,26 @@ The current-boot GPU guard and occupied private display remain in place.
 
 The complete 95-patch core stack replays and builds successfully.
 Checkstyle passes, with 679 tests passing, 19 optional skips, and no failures.
+
+### Rocket actor data and actor-event wire IDs, October 6, 2026
+
+**Implemented:** Rocket compound metadata field 16 now passes through the ordinary item converter into Java entity metadata.
+It retains firework components and clears them on an empty update.
+Integer minecart display data uses its existing path.
+The actor-event patch now preserves the upstream sparse wire IDs.
+It removes the earlier sequential renumbering, which misread rocket explosions and many other events.
+
+**Target evidence:** Controlled BDS crossbow firing produces a rocket with `Fireworks` in field 16.
+A summoned rocket has an empty compound there.
+Both emit explosion event 25 and then disappear; crossbow charging emits event 74.
+Matching native rocket code reads field 16 and emits 25.
+The target protocol page’s sequential values contradict these observations.
+The [event notes](../patches/viabedrock/deferred/0001-translate-bedrock-actor-events-to-java-statuses.pr.md) record that conflict.
+The [metadata notes](../patches/viabedrock/deferred/0002-translate-bedrock-metadata-and-properties.pr.md) describe conversion and limits.
+
+**Unverified:** Direction field 17, attachment field 18, complete rocket flight and boost behavior, and visible particle/audio comparisons remain required.
+Live translated direct and ViaProxy comparisons remain open.
+The synthetic packet probe establishes target wire behavior and does not establish client parity.
+
+The complete 95-patch core stack replays and builds successfully.
+Checkstyle passes, with 683 tests passing, 19 optional skips, and no failures.
