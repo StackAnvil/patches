@@ -19,6 +19,43 @@ The probe uses the published `@minecraft/server` **2.9.0** types, matching its p
 The tables below specify required comparisons.
 An entry does not claim that production behavior or a live comparison passes.
 
+## Edge-case completion requirement
+
+The goal includes every applicable gameplay action and edge case in the pinned build.
+Movement, combat, item use, block interaction, breaking, placement, and inventories share this requirement.
+The tables and current fixtures are starting points.
+Native comparisons, protocol research, target assets, existing implementations, and bug reports must extend this matrix.
+Passing the current suite does not close the requirement.
+
+Each mechanic needs positive controls, negative controls, boundary values, and stateful action sequences.
+Shared mechanics need systematic combinations across terrain, equipment, effects, mounts, game modes, and network conditions.
+Bounded packet, enum, and state domains need focused exhaustive checks.
+Mixed cases must compare item use and combat during movement, state changes, and corrections.
+
+| Edge-case family | Required boundaries and interactions |
+| --- | --- |
+| Input and timing | Startup, stopping, reversals, diagonal and analog input, yaw/pitch limits, input loss, partial ticks, and unusual frame pacing. |
+| Contact and posture | Corners, ledges, overlapping shapes, step heights, ceilings, moving blocks, entity collisions, crawling, swimming, climbing, and grounded transitions. |
+| State transitions | Game modes, abilities, permissions, input locks, teleports, dimensions, death, respawn, mounting, dismounting, and replaced vehicles. |
+| Combat eligibility | Reach boundaries, occlusion, moving targets, relative velocity, critical hits, invulnerability, armor, enchantments, shield facing, and hand selection. |
+| Interrupted use | Slot or hand changes, replaced or exhausted stacks, containers, mounts, ability loss, damage, corrections, disconnects, and dimension changes during charging. |
+| Projectiles and damage | Ownership, flight, deflection, dodging, piercing, multishot, pickup, return, explosions, potion/cloud radius, fire, freezing, fall damage, and supported weapon abilities. |
+| Effects and resources | Added, replaced, stacked, expired, or removed effects and attributes; hunger, durability, ammunition, equipment, and cooldown changes at action boundaries. |
+| Prediction and ordering | Rejected actions, conflicting updates, duplicate or stale updates, missing or evicted frames, tick boundaries, replay, and overlapping impulses or corrections. |
+| Network and execution | Latency, jitter, loss, permitted reordering, reconnects, burst delivery, low/high render rates, server tick stalls, and supported server policies. |
+| Item use | Eating, drinking, charging, throwing, fishing, buckets, bottles, tools, ignition, shearing, fertilizing, equipping, repeated use, cooldowns, and offhand eligibility. |
+| Interaction and placement | Target selection, reach, occlusion, hit faces, coordinates, hand/sneak priority, replacement, fluids, waterlogging, orientation, multi-block structures, support, collisions, and custom blocks. |
+| Breaking | Start/continue/abort/finish order, changed targets/faces/tools, speed, hardness, enchantments, effects, underwater/airborne penalties, restrictions, drops, durability, and rejected predictions. |
+| Interactive content | Doors, gates, controls, beds, signs, books, containers, workstations, redstone, mounts, feeding, trading, NPCs, and supported editors. |
+| Transactions | Cursor/slot identity, bulk transfers, dragging, splitting, hand swaps, dropping, crafting, stack consumption, dynamic containers, acknowledgments, rollback, screen transitions, and duplication/loss prevention. |
+| World boundaries | Permissions, spawn protection, adventure restrictions, changing or unloaded chunks, height limits, borders, dimensions, respawns, concurrent players, and scheduled block updates. |
+| Feedback and lifecycle | Authoritative reconciliation of blocks, items, entities, effects, and inventories; cancellation, retries, audiovisual feedback, pending inputs, and cleanup. |
+
+Keep failures and unresolved boundaries in this ledger until implementation and native comparisons establish their behavior on both routes.
+Record test-driver limits and possible Boar defects separately from production mismatches.
+The underlying parity requirements remain open in either case.
+Apply this method to additional target-build gameplay mechanics as research identifies them.
+
 ## Ground movement and terrain
 
 | Area | Required comparisons |
