@@ -3872,3 +3872,49 @@ The latest guide targets a newer preview; numeric values come from target captur
 **Incomplete:** Corrections inside movement history still need rewind and input resimulation.
 Vehicle motion, angular motion, and movement-related metadata, attributes, and effects need corresponding reconciliation.
 Immediate correction application does not establish native reconciliation parity.
+
+### Swimming surfaces and capture shutdown, October 6, 2026
+
+**Reference:** The private native 1.26.51.1 journal contains 3,962 auth-input frames and visible strict-BDS gameplay.
+It includes upward swimming at about 30, 35, and 45 degrees.
+The first two native pitches are -29.998169 and -34.996948 degrees after teleport quantization.
+Java comparisons use those recorded angles.
+The seven native zero-velocity corrections occur at fixture teleports.
+
+The reference CLI fails its final pack-completion check during shutdown.
+Its raw movement journal remains usable, but the capture is not a complete replay reference.
+The recorder shutdown hook now closes active channels and waits for their event-loop cleanup and pack export.
+The launcher allows 45 seconds after termination, covering the existing 35-second download limit.
+A targeted asynchronous shutdown test passes, along with the other replay self-tests.
+A new official-client run is blocked by the launcher's GPU safety check until the host reboots.
+The safety check remains active; live native shutdown verification remains open.
+
+**Implemented:** Keep the fluid inset symmetric when the swimming box is shorter than twice the inset.
+The old negative inset reverses the box, and Java's AABB constructor swaps its bounds.
+That delays the first water-surface exit by one frame.
+The box test covers six heights, including zero and the short swimming box, while preserving horizontal bounds.
+
+Ignore the old visual crawling classification on a frame that leaves swimming.
+Java updates the visual pose after travel, which otherwise reduces input to 30% on that frame.
+Allow sprinting in shallow water under the existing movement, food, item, and vehicle restrictions.
+Native retains sprinting during the return into water while forward and sprint remain held.
+
+**Direct verification:** The revised direct journal completes with 2,421 auth-input frames and visible gameplay.
+All three cases match native flags and motion before re-entry.
+Maximum vertical position differences are about 0.000031 blocks, within float rounding.
+The 30-degree cap clears vertical motion on the first stationary capped frame, matching native.
+
+**ViaProxy verification:** The repeated proxy route matches native exit flags and motion before re-entry at the same three angles.
+Its maximum vertical position difference is also about 0.000031 blocks.
+Both routes receive the same five corrections during the steeper re-entry cases.
+The proxy route transports completed physics through its negotiated channel and applies standard Java position and velocity corrections.
+
+**Incomplete:** Re-entry starts two frames early at 35 degrees and one frame early at 45 degrees.
+Both route runs receive five corrections during those steeper cases.
+The result verifies the tested surface exits, not full swimming or correction parity.
+Other fluid levels, currents, lava, effects, vehicles, latency, and history replay remain open requirements.
+
+**Automated verification:** The dependency builds pass with 16 converter tests, 636 core tests, and 604 add-on tests.
+There are no failures or errors; 135 tests skip environment-dependent fixtures.
+All 107 tooling tests, the three replay self-test suites, and `bun run check` pass.
+The previous main CI run completes successfully, including Linux, Windows, and macOS jobs.

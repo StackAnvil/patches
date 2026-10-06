@@ -1,4 +1,4 @@
-From 23d75e599d27e4715ba003c9e0a52159d26f240c Mon Sep 17 00:00:00 2001
+From eebe774970d04ba7e66045bc3e41d90a7625ac70 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:53 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -30,13 +30,23 @@ Native 1.26.51.1 wall and open-water captures stop swimming on forward release
 while retaining sprint drag until the next frame. Preserve that physics
 phase directly instead of delaying protocol events independently. Include
 completed collision axes so stationary frames cannot retain stale flags.
+
+Keep the fluid inset symmetric for short swimming boxes. Java normalizes
+inverted AABBs, which moved the water boundary below the box center and
+delayed native surface exits. Avoid the stale visual crawling slowdown
+on that exit frame and retain sprinting in shallow water. Native 1.26.51.1
+protocol 2193 surface captures establish these transitions.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |  2 +
- .../mixin/features/movement/MixinEntity.java  | 20 -------
- .../features/movement/MixinLocalPlayer.java   | 58 ++++++++++++++++++-
- .../input/PlayerPredictionPayload.java        | 24 ++++++++
- 4 files changed, 83 insertions(+), 21 deletions(-)
+ .../mixin/features/movement/MixinEntity.java  | 25 +------
+ .../features/movement/MixinLocalPlayer.java   | 75 ++++++++++++++++++-
+ .../input/PlayerPredictionPayload.java        | 24 ++++++
+ .../bedrock/movement/BedrockFluidPhysics.java | 36 +++++++++
+ .../movement/BedrockFluidPhysicsTest.java     | 48 ++++++++++++
+ 6 files changed, 186 insertions(+), 24 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index 924035a..e053b23 100644
@@ -59,14 +69,15 @@ index 924035a..e053b23 100644
          ClientPlayNetworking.registerGlobalReceiver(InputPermissionsPayload.TYPE,
              (payload, context) -> BedrockInputPermissions.accept(payload.permissions()));
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java
-index 236c05d..0166539 100644
+index 236c05d..dda48a4 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java
-@@ -25,21 +25,16 @@ import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
+@@ -25,21 +25,17 @@ import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
  import com.llamalad7.mixinextras.injector.ModifyReturnValue;
  import com.viaversion.viafabricplus.ViaFabricPlus;
  import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
 -import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viafabricplus.bedrock.movement.BedrockFluidPhysics;
  import net.minecraft.world.entity.Entity;
  import net.minecraft.world.phys.AABB;
  import net.minecraft.world.phys.Vec3;
@@ -84,7 +95,7 @@ index 236c05d..0166539 100644
  
  @Mixin(Entity.class)
  public abstract class MixinEntity {
-@@ -47,21 +42,6 @@ public abstract class MixinEntity {
+@@ -47,21 +43,6 @@ public abstract class MixinEntity {
      @Shadow
      protected Vec3 stuckSpeedMultiplier;
  
@@ -106,11 +117,25 @@ index 236c05d..0166539 100644
      @Redirect(method = "makeStuckInBlock", at = @At(value = "FIELD", target = "Lnet/minecraft/world/entity/Entity;stuckSpeedMultiplier:Lnet/minecraft/world/phys/Vec3;", opcode = Opcodes.PUTFIELD))
      private void prioritySlowestMovementMultiplier(final Entity instance, final Vec3 value) {
          if (ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST) && this.stuckSpeedMultiplier != Vec3.ZERO) {
+@@ -77,11 +58,11 @@ public abstract class MixinEntity {
+         return BedrockInputPermissions.isBedrockConnection() ? null : vehicle;
+     }
+ 
+-    // Bedrock inflates the box before deflating it, which is the same as inflating the deflated box
++    // Keep the vertical inset symmetric without inverting short swimming boxes.
+     @ModifyReturnValue(method = "getFluidInteractionBox", at = @At("RETURN"))
+     private @Nullable AABB inflateFluidInteractionBox(final @Nullable AABB box) {
+         if (box != null && BedrockInputPermissions.isBedrockConnection()) {
+-            return box.inflate(0, -0.4, 0);
++            return BedrockFluidPhysics.interactionBox(box);
+         } else {
+             return box;
+         }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-index e5a8167..a3d4bf4 100644
+index e5a8167..a0889eb 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-@@ -21,15 +21,71 @@
+@@ -21,22 +21,93 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -128,6 +153,7 @@ index e5a8167..a3d4bf4 100644
  import net.minecraft.client.player.LocalPlayer;
  import org.spongepowered.asm.mixin.Mixin;
  import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.Unique;
  import org.spongepowered.asm.mixin.injection.At;
  import org.spongepowered.asm.mixin.injection.Redirect;
 +import org.spongepowered.asm.mixin.injection.Inject;
@@ -140,6 +166,9 @@ index e5a8167..a3d4bf4 100644
 +    @Shadow
 +    public ClientInput input;
 +
++    @Unique
++    private boolean viaFabricPlusBedrock$wasSwimming;
++
 +    protected MixinLocalPlayer(final ClientLevel level, final GameProfile profile) {
 +        super(level, profile);
 +    }
@@ -149,6 +178,17 @@ index e5a8167..a3d4bf4 100644
 +        if (!BedrockInputPermissions.isBedrockConnection()) {
 +            super.updateSwimming();
 +        }
++    }
++
++    @Inject(method = "aiStep", at = @At("HEAD"))
++    private void rememberPreviousSwimming(final CallbackInfo ci) {
++        this.viaFabricPlusBedrock$wasSwimming = this.isSwimming();
++    }
++
++    @ModifyExpressionValue(method = "isMovingSlowly", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;isVisuallyCrawling()Z"))
++    private boolean ignoreSwimmingExitPose(final boolean crawling) {
++        // Java updates the visual pose after travel, so a surface exit can look like crawling for one frame.
++        return crawling && !(BedrockInputPermissions.isBedrockConnection() && this.viaFabricPlusBedrock$wasSwimming);
 +    }
 +
 +    @ModifyExpressionValue(method = "shouldStopSwimSprinting", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/ClientInput;hasForwardImpulse()Z"))
@@ -183,6 +223,14 @@ index e5a8167..a3d4bf4 100644
  
      @Shadow
      protected abstract boolean isSprintingPossible(final boolean allowedInShallowWater);
+ 
+     @Redirect(method = {"shouldStopRunSprinting", "canStartSprinting"}, at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;isSprintingPossible(Z)Z"))
+     private boolean allowNonSwimWaterSprinting(final LocalPlayer instance, final boolean allowedInShallowWater) {
+-        return this.isSprintingPossible(allowedInShallowWater || BedrockInputPermissions.isBedrockConnection() && (instance.isSwimming() || instance.onGround()));
++        return this.isSprintingPossible(allowedInShallowWater || BedrockInputPermissions.isBedrockConnection());
+     }
+ 
+ }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java
 new file mode 100644
 index 0000000..7b212c2
@@ -212,6 +260,102 @@ index 0000000..7b212c2
 +    public Type<PlayerPredictionPayload> type() {
 +        return TYPE;
 +    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java
+new file mode 100644
+index 0000000..160ab8a
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java
+@@ -0,0 +1,36 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2021-2026 the original authors
++ *                         - Florian Reuth <git@florianreuth.de>
++ *                         - RK_01/RaphiMC
++ * Copyright (C) 2023-2026 ViaVersion and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package com.viaversion.viafabricplus.bedrock.movement;
++
++import net.minecraft.world.phys.AABB;
++
++public final class BedrockFluidPhysics {
++
++    private BedrockFluidPhysics() {
++    }
++
++    public static AABB interactionBox(final AABB box) {
++        final double inset = Math.min(0.4, box.getYsize() * 0.5);
++        return new AABB(box.minX, box.minY + inset, box.minZ, box.maxX, box.maxY - inset, box.maxZ);
++    }
++
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
+new file mode 100644
+index 0000000..cdd17fe
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
+@@ -0,0 +1,48 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2021-2026 the original authors
++ *                         - Florian Reuth <git@florianreuth.de>
++ *                         - RK_01/RaphiMC
++ * Copyright (C) 2023-2026 ViaVersion and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++package com.viaversion.viafabricplus.bedrock.movement;
++
++import net.minecraft.world.phys.AABB;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class BedrockFluidPhysicsTest {
++
++    @Test
++    void verticalInsetPreservesTheCenterAndNeverExpandsShortBoxes() {
++        for (final double height : new double[]{0, 0.2, 0.6, 0.8, 1.0, 1.8}) {
++            final AABB original = new AABB(-0.3, 104.7, -0.3, 0.3, 104.7 + height, 0.3);
++            final AABB adjusted = BedrockFluidPhysics.interactionBox(original);
++            assertEquals(original.getCenter().y, adjusted.getCenter().y, 1E-12);
++            assertEquals(Math.max(0, height - 0.8), adjusted.getYsize(), 1E-12);
++            assertTrue(adjusted.minY >= original.minY);
++            assertTrue(adjusted.maxY <= original.maxY);
++            assertEquals(original.minX, adjusted.minX);
++            assertEquals(original.maxX, adjusted.maxX);
++            assertEquals(original.minZ, adjusted.minZ);
++            assertEquals(original.maxZ, adjusted.maxZ);
++        }
++    }
++
 +}
 -- 
 2.55.0

@@ -8,7 +8,7 @@ Send stationary frames too, so motion and swimming state do not depend on sparse
 
 The payload carries position, motion, swimming state, and completed collision axes.
 Core validates the sample and builds Bedrock auth input on direct connections and through ViaProxy.
-The add-on keeps its existing fluid physics and server correction behavior.
+The add-on supplies local fluid physics; core owns server correction translation.
 
 Remove the former Entity-wide swimming hook.
 That hook required a local core tracker and could forward another entity's swimming transition as local input.
@@ -74,3 +74,28 @@ Each observer case contains 120 server ticks.
 The dependency builds pass with 629 core tests and 603 add-on tests, with no failures or errors.
 The codec test covers all eight pose and collision combinations in stationary frames.
 The rest of the movement matrix remains unverified by these cases.
+
+## Surface exit physics
+
+The native protocol 2193 reference includes upward swimming at about 30, 35, and 45 degrees.
+Native teleports quantize the first two pitches to -29.998169 and -34.996948 degrees.
+The comparison uses those recorded angles rather than the original command values.
+
+At 30 degrees, native caps height and clears vertical motion on the first stationary capped frame.
+The Java trajectory already matches that behavior within float rounding.
+At steeper angles, Java initially remains swimming for one extra frame at the water boundary.
+Its negative vertical inset reverses the short swimming box, and the AABB constructor swaps the bounds.
+Clamp the inset to half the box height so it stays symmetric and cannot invert.
+The box test covers short and tall heights, including zero height, without changing horizontal bounds.
+
+Java also treats the old visual swimming pose as crawling on the surface-exit frame.
+That applies a 30% input multiplier before the visual pose updates.
+Ignore this transient crawling classification when the previous completed state is swimming.
+Retain sprinting in shallow water, subject to the existing food, mobility, item, and vehicle restrictions.
+Native keeps sprinting while it falls back into water with forward and sprint held.
+
+The revised direct and ViaProxy routes match exit flags and motion before re-entry at all three angles.
+The largest vertical position difference is about 0.000031 blocks.
+Both completed route recordings have five corrections during early re-entry in the steeper cases.
+**Incomplete:** Re-entry begins one or two frames early at steeper angles and still receives strict-BDS corrections.
+These changes do not establish full fluid or correction parity.
