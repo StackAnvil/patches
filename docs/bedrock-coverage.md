@@ -5414,3 +5414,33 @@ Their connection-state producer still needs executable tests and matching vanill
 **Validation:** The existing production revision's build, tooling, and capture-permission jobs passed.
 Capture-permission checks ran on Ubuntu 24.04, Windows 2025, and macOS 15.
 The full Bedrock goal remains incomplete, including native world state, correction replay, account and appearance flows, and actual platform joins.
+
+## Native fence connection algorithm (October 6, 2026)
+
+**Native instructions verified:** The standard connection callback updates requested directions through immutable block permutations.
+Its direction predicate reads a source category and two bytes from the neighboring block's connection rule.
+The first byte selects accepted source categories. The second byte enables neighboring faces.
+A local component overrides the type component. A null local component permits type fallback.
+Wooden and nether-brick fences use distinct categories.
+Each requested direction tests the opposite face of its neighbor.
+The native query order is north, east, south, west, up, and down.
+Absent rules accept these two fence categories, so the real component defaults determine exclusions such as air.
+
+A private fixture executes the unchanged predicate, source classifier, and component lookup for 8,192 cases without mismatches.
+It covers 24,606 requested directions, local overrides, type fallback, absent components, and signed integer position extremes.
+Source classification uses the actual FenceBlock vtable and supplied wooden or nether-brick identity.
+The fixture supplies existing component stores, initialized type indices, and the region's block lookup.
+It does not establish real vanilla component defaults or their registration.
+
+A second fixture executes the native callback and packed permutation lookup for 4,096 cases without mismatches.
+Randomized state maps assign four connection flags among six packed bits.
+The callback changes 4,051 requested flags and preserves every original permutation object and unrelated bit.
+Another 4,059 requested vertical checks cannot invent properties absent from the supplied fence state map.
+The fixture supplies the maps, runtime IDs, existing permutations, neighbor components, and block lookup.
+It does not establish the world dispatcher's final block update or native game physics.
+
+**Production incomplete:** Core still derives fence connections from Java identifiers, gate axes, and mapped opacity.
+Native category masks and enabled faces require real vanilla defaults and matching server evidence before replacing that path.
+The [versioned connection declarations](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/world/level/block/traits/block_trait/Connection.h) identify the shared trait.
+The executable comparisons establish the tested algorithm, with the supplied boundaries described here.
+Full movement, retained world state, correction replay, all other coverage groups, and platform joins remain incomplete.
