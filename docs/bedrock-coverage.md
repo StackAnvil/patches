@@ -4184,3 +4184,52 @@ Matching executable inspection identifies a native metadata queue carrying the s
 The queue's application, predicted flags, correction history, and resimulation require further research and implementation.
 The first air-frame fix does not establish complete ceiling parity.
 Fresh native ceiling captures remain required, alongside the broader movement, real-server, and Windows/macOS game-join requirements.
+
+### Retain crawling after swimming ends, October 6, 2026
+
+**Reference:** Strict BDS 1.26.51.1 clears `SWIMMING` and sets `CRAWLING`, bit 114, at the ceiling exit.
+The sparse update retains the 0.6-block body height.
+Matching executable inspection also confirms that native flag reconciliation uses the historical frame at the server tick.
+It treats swimming and crawling as independent predicted flags.
+
+**Implemented:** Core translates crawling into the short Java player pose without setting the swimming shared flag.
+It composes pose metadata after retaining all fields in a sparse update.
+Ending crawling restores the remaining player pose.
+The change belongs to the existing deferred metadata patch, whose upstream owner remains [ViaBedrock PR 327](https://github.com/ViaVersionAddons/ViaBedrock/pull/327).
+
+Java 26.3 remote players retain server pose metadata; the local player recalculates its pose each tick.
+The existing add-on prediction patch retains core's short crawling pose through the native actor state channel.
+It preserves sleeping, gliding, and spin attack poses and supports direct connections and ViaProxy.
+
+**Direct verification:** Both 35-degree and 45-degree strict-BDS ceiling cases retain a 0.6-block body while swimming is off.
+Each receives one nonzero correction during re-entry, compared with two per angle before the change.
+The completed recording joins and spawns with protocol 2193 and contains 3,017 auth-input frames.
+It receives two nonzero ceiling corrections and one zero-velocity fixture correction.
+
+Open-water regressions match all 192 saved native frames across 30, 35, and 45 degrees, including swimming and sprint events.
+They receive no corrections during those cases.
+Maximum differences remain below 0.000031 blocks vertically, 0.000008 blocks horizontally, and 0.000000060 blocks per tick in motion.
+The 48-frame held swimming-jump regression matches the preceding accepted reference exactly in position, motion, and input flags.
+
+**ViaProxy verification:** Both ceiling cases retain the short body while swimming is off.
+They still receive two nonzero corrections per angle.
+The proxy case retains swimming for one extra completed frame before the server crawling update takes effect.
+This timing difference reinforces the need for local native transitions and server-tick reconciliation.
+
+The 64-frame 45-degree open-water regression matches the saved native reference without corrections.
+Its 47-frame held swimming-jump regression matches the direct route exactly in position, motion, and input flags.
+The completed recording joins and spawns with protocol 2193 and contains 2,722 auth-input frames.
+Its four corrections occur in the two ceiling cases.
+
+**Automated verification:** All four project builds pass.
+There are 16 converter, 639 core, and 610 add-on test cases, with 135 skips and no failures or errors.
+Three new core tests cover sparse flag retention, word order, independent swimming state, and pose restoration.
+The full core and add-on stacks replay successfully, and `bun run check` passes.
+The preceding main CI run passes builds, tooling, platform permissions, and all four native helper targets.
+Runner checks do not establish Windows or macOS game-join parity.
+
+**Incomplete:** Ceiling re-entry still receives a correction on each tested angle.
+Predicted crawling input transitions, native local state transitions, server-tick history, and resimulation remain requirements.
+The native flag merge preserves newer local predicted state only when the historical server frame agrees.
+Ignoring authoritative swimming changes would not reproduce that behavior.
+Fresh native ceiling captures remain required, alongside the broader movement, real-server, and Windows/macOS game-join requirements.

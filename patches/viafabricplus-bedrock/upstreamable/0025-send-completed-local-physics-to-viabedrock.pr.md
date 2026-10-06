@@ -281,3 +281,30 @@ The dependency build reports 16 converter, 636 core, and 610 add-on test cases, 
 
 These comparisons do not establish complete ceiling parity.
 Fresh native ceiling captures, prediction history, and actual Windows/macOS game joins remain required.
+
+### Retain native crawling separately from swimming
+
+Strict BDS 1.26.51.1 clears the swimming flag and sets crawling, bit 114, at the ceiling exit.
+Its sparse metadata retains the 0.6-block body height.
+Core now translates that state into Java pose metadata after all flag words in the update have been retained.
+Crawling does not set the Java swimming flag.
+Ending crawling restores the pose from the remaining swimming, gliding, sleeping, or sneaking state.
+
+Java 26.3 remote players retain the server pose.
+The local player recalculates its desired pose each tick.
+The add-on therefore retains core's short crawling pose from the existing native actor channel.
+This works for direct and ViaProxy connections and preserves sleeping, gliding, and spin attack poses.
+
+Three core tests cover the swimming-to-crawling transition, sparse flag updates, both flag-word orders, and restoration.
+The full build passes 16 converter, 639 core, and 610 add-on test cases, with 135 skips and no failures or errors.
+ViaProxy also builds successfully.
+
+Both strict-BDS routes retain the 0.6-block body while swimming is off under the ceiling.
+Direct corrections drop from two per angle to one; ViaProxy still receives two per angle.
+A proxy frame retains swimming before the server crawling update takes effect.
+Predicted native transitions and server-tick history replay remain required.
+
+Direct open-water regressions match 192 saved native frames; ViaProxy matches another 64.
+They retain swimming and sprint events and receive no corrections during those cases.
+The held swimming-jump regressions match the preceding accepted reference: 48 frames directly and 47 through ViaProxy.
+Both recordings join and spawn with protocol 2193.

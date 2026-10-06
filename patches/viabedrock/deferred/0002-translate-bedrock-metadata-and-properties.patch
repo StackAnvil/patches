@@ -1,4 +1,4 @@
-From e95b5a7df9bbb90483a3c2782a7fd6ec4c82da4a Mon Sep 17 00:00:00 2001
+From 6b34843beb698a6a38a1592aabfcf40c97cf59fa Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 00:27:08 +0200
 Subject: [PATCH] feat(entities): translate Bedrock metadata and properties
@@ -99,10 +99,12 @@ values at indices 0..2 and a float at index 3; splitting the definition
 lists silently discarded that float. Reject a wire value whose type does
 not match its indexed definition. Interleaved-type and sparse-update
 tests cover both channels without renumbering the schema.
+
+Translate native player crawling into Java pose metadata without setting the swimming shared flag. Strict BDS 1.26.51.1 metadata clears SWIMMING and sets CRAWLING (bit 114) under a ceiling while retaining the 0.6-block body. Compose the pose after all sparse flag words have been retained so packet field order cannot change the result. Restore standing, crouching, gliding or swimming when crawling ends. Java 26.3 remote players retain this pose; local players require the separate client integration because they recalculate it every tick.
 ---
- .../viabedrock/api/model/entity/Entity.java   |  56 ++
+ .../viabedrock/api/model/entity/Entity.java   |  61 ++
  .../api/model/entity/LivingEntity.java        |   7 +-
- .../api/model/entity/PlayerEntity.java        |  19 +-
+ .../api/model/entity/PlayerEntity.java        |  40 +-
  .../viabedrock/protocol/BedrockProtocol.java  |   2 +
  .../data/enums/bedrock/ActorFlags.java        |   6 +-
  .../protocol/model/entity/EntityProperty.java |  40 ++
@@ -114,17 +116,19 @@ tests cover both channels without renumbering the schema.
  .../storage/EntityPropertyTracker.java        |  61 ++
  .../entity_flag_molang_query_mappings.json    |   6 +-
  .../entity/EntityPropertyRenderTest.java      |  75 +++
+ .../model/entity/PlayerCrawlingPoseTest.java  | 132 ++++
  .../enums/bedrock/ActorFlagsMappingTest.java  |  27 +
  .../model/entity/EntityPropertyListTest.java  |  92 +++
  .../ArmorStandMarkerMetadataTest.java         | 177 +++++
  .../rewriter/EntityBodyVisibilityTest.java    | 253 +++++++
  .../rewriter/EntityMetadataRewriterTest.java  | 151 +++++
  .../rewriter/EntityNameFormattingTest.java    | 256 +++++++
- 20 files changed, 1942 insertions(+), 70 deletions(-)
+ 21 files changed, 2100 insertions(+), 70 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityProperty.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyList.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/EntityPropertyTracker.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/EntityPropertyRenderTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/PlayerCrawlingPoseTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/data/enums/bedrock/ActorFlagsMappingTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/entity/EntityPropertyListTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/ArmorStandMarkerMetadataTest.java
@@ -133,7 +137,7 @@ tests cover both channels without renumbering the schema.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityNameFormattingTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index 216a83e94..142a69afe 100644
+index 216a83e94..1577a684c 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 @@ -36,6 +36,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
@@ -201,7 +205,11 @@ index 216a83e94..142a69afe 100644
      public final void updateEntityData(final EntityData[] entityData, final List<EntityData> javaEntityData) {
          for (EntityData data : entityData) {
              final ActorDataIds dataId = ActorDataIds.getByValue(data.id());
-@@ -156,6 +189,10 @@ public class Entity {
+@@ -153,9 +186,14 @@ public class Entity {
+                 // ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received unknown entity data: " + dataId + " for entity type: " + this.type);
+             }
+         }
++        this.finishEntityDataUpdate(javaEntityData);
          this.onEntityDataChanged();
      }
  
@@ -212,7 +220,7 @@ index 216a83e94..142a69afe 100644
      public void playSound(final String soundEvent) {
          final PacketWrapper levelSoundEvent = PacketWrapper.create(ClientboundBedrockPackets.LEVEL_SOUND_EVENT, this.user);
          levelSoundEvent.write(BedrockTypes.STRING, soundEvent); // event
-@@ -207,6 +244,14 @@ public class Entity {
+@@ -207,6 +245,14 @@ public class Entity {
          return this.javaType;
      }
  
@@ -227,7 +235,7 @@ index 216a83e94..142a69afe 100644
      public Position3f position() {
          return this.position;
      }
-@@ -309,6 +354,14 @@ public class Entity {
+@@ -309,6 +355,14 @@ public class Entity {
          return this.mountRuntimeId;
      }
  
@@ -242,7 +250,18 @@ index 216a83e94..142a69afe 100644
      public final int getJavaEntityDataIndex(final String fieldName) {
          final int index = BedrockProtocol.MAPPINGS.getJavaEntityDataFields().get(this.javaType).indexOf(fieldName);
          if (index == -1) {
-@@ -368,4 +421,7 @@ public class Entity {
+@@ -321,6 +375,10 @@ public class Entity {
+         return EntityMetadataRewriter.rewrite(this.user, this, id, entityData, javaEntityData);
+     }
+ 
++    /** Append metadata that depends on the final state of a sparse native update. */
++    protected void finishEntityDataUpdate(final List<EntityData> javaEntityData) {
++    }
++
+     protected void onEntityDataChanged() {
+         this.sendNativeActorSnapshot();
+     }
+@@ -368,4 +426,7 @@ public class Entity {
          payload.send(BedrockProtocol.class);
      }
  
@@ -283,18 +302,28 @@ index c9cdd40aa..966c45fda 100644
                  })); // attribute id
                  javaAttributes.write(Types.DOUBLE, (double) attribute.computeClampedValue()); // base value
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java
-index 82b9eb731..8b0ddc5f4 100644
+index 82b9eb731..0dcbfcaca 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/PlayerEntity.java
-@@ -27,6 +27,7 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets
+@@ -27,6 +27,8 @@ import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets
  import net.raphimc.viabedrock.api.util.StringUtil;
  import net.raphimc.viabedrock.api.util.TextUtil;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
  import net.raphimc.viabedrock.protocol.data.enums.java.PlayerTeamMethod;
  import net.raphimc.viabedrock.protocol.data.enums.java.generated.TeamCollisionRule;
  import net.raphimc.viabedrock.protocol.data.enums.java.generated.TeamVisibility;
-@@ -67,14 +68,19 @@ public class PlayerEntity extends LivingEntity {
+@@ -44,6 +46,8 @@ public class PlayerEntity extends LivingEntity {
+ 
+     protected PlayerAbilities abilities;
+ 
++    private boolean crawling;
++
+     public PlayerEntity(final UserConnection user, final long runtimeId, final int javaId, final UUID javaUuid, final PlayerAbilities abilities) {
+         super(user, abilities.entityUniqueId(), runtimeId, "minecraft:player", javaId, javaUuid, EntityTypes26_3.PLAYER);
+ 
+@@ -67,14 +71,19 @@ public class PlayerEntity extends LivingEntity {
  
      public final void updateName(final String name) {
          this.setName(name);
@@ -316,7 +345,7 @@ index 82b9eb731..8b0ddc5f4 100644
          setPlayerTeam.write(Types.VAR_INT, TeamCollisionRule.NEVER.ordinal()); // collision rule
          setPlayerTeam.write(Types.BOOL_OPTIONAL_VAR_INT, null); // color
          setPlayerTeam.write(Types.BYTE, (byte) 3); // flags
-@@ -114,6 +120,15 @@ public class PlayerEntity extends LivingEntity {
+@@ -114,6 +123,33 @@ public class PlayerEntity extends LivingEntity {
          this.abilities = abilities;
      }
  
@@ -327,6 +356,24 @@ index 82b9eb731..8b0ddc5f4 100644
 +            this.updateNameTag();
 +        }
 +        return translated;
++    }
++
++    @Override
++    protected void finishEntityDataUpdate(final List<EntityData> javaEntityData) {
++        final var flags = this.entityFlags();
++        final boolean crawling = flags.contains(ActorFlags.CRAWLING);
++        if (crawling || this.crawling) {
++            // Java uses pose 3 for the short crawling body. Its swimming flag still
++            // comes only from native SWIMMING, which controls different physics.
++            final int pose = crawling || flags.contains(ActorFlags.SWIMMING) ? 3
++                    : flags.contains(ActorFlags.GLIDING) ? 1
++                    : flags.contains(ActorFlags.SLEEPING) ? 2
++                    : flags.contains(ActorFlags.SNEAKING) ? 5 : 0;
++            final int index = this.getJavaEntityDataIndex(EntityDataFields.POSE);
++            javaEntityData.removeIf(data -> data.id() == index);
++            javaEntityData.add(new EntityData(index, VersionedTypes.V26_3.entityDataTypes().poseType, pose));
++        }
++        this.crawling = crawling;
 +    }
 +
      @Override
@@ -1668,6 +1715,144 @@ index 000000000..5dc1d8b96
 +
 +    private static EntityProperties values(final Map<Integer, Integer> integers, final Map<Integer, Float> floats) {
 +        return new EntityProperties(new Int2IntOpenHashMap(integers), new Int2ObjectOpenHashMap<>(floats));
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/PlayerCrawlingPoseTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/PlayerCrawlingPoseTest.java
+new file mode 100644
+index 000000000..b0ad3f0dd
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/entity/PlayerCrawlingPoseTest.java
+@@ -0,0 +1,132 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.entity;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
++import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
++import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
++import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Field;
++import java.lang.reflect.Proxy;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class PlayerCrawlingPoseTest {
++
++    private static final List<String> FIELDS = List.of(EntityDataFields.SHARED_FLAGS, EntityDataFields.SILENT,
++            EntityDataFields.NO_GRAVITY, EntityDataFields.LIVING_ENTITY_FLAGS, EntityDataFields.POSE);
++    private final Map<Field, Object> previousMappings = new HashMap<>();
++
++    @BeforeAll
++    static void initializeTypes() throws Exception {
++        Class.forName("com.viaversion.viaversion.api.minecraft.data.StructuredDataKey");
++    }
++
++    @BeforeEach
++    void installMappings() throws Exception {
++        this.replaceMapping("bedrockEntityDataTypes", Map.of());
++        this.replaceMapping("javaEntityDataFields", Map.of(EntityTypes26_3.PLAYER, FIELDS));
++    }
++
++    @AfterEach
++    void restoreMappings() throws Exception {
++        for (final var entry : this.previousMappings.entrySet()) {
++            entry.getKey().set(BedrockProtocol.MAPPINGS, entry.getValue());
++        }
++    }
++
++    @Test
++    void retainsShortBodyAfterSwimmingStopsWithoutAdvertisingSwimming() {
++        final PlayerEntity player = player();
++        update(player, flags(ActorDataIds.RESERVED_0, ActorFlags.SWIMMING, ActorFlags.SPRINTING));
++        final List<EntityData> crawling = update(player, flags(ActorDataIds.RESERVED_0),
++                flags(ActorDataIds.RESERVED_092, ActorFlags.CRAWLING));
++        assertEquals(3, value(crawling, EntityDataFields.POSE));
++        assertEquals((byte) 0, value(crawling, EntityDataFields.SHARED_FLAGS));
++        assertTrue(player.entityFlags().contains(ActorFlags.CRAWLING));
++        assertFalse(player.entityFlags().contains(ActorFlags.SWIMMING));
++
++        final List<EntityData> sparse = update(player, flags(ActorDataIds.RESERVED_0, ActorFlags.ONFIRE));
++        assertEquals(3, value(sparse, EntityDataFields.POSE));
++        assertEquals((byte) 1, value(sparse, EntityDataFields.SHARED_FLAGS));
++        assertTrue(player.entityFlags().contains(ActorFlags.CRAWLING));
++    }
++
++    @Test
++    void resumesSwimmingForBothFlagWordOrdersWithoutDuplicatePoseMetadata() {
++        for (final boolean lowWordFirst : new boolean[]{false, true}) {
++            final PlayerEntity player = player();
++            update(player, flags(ActorDataIds.RESERVED_092, ActorFlags.CRAWLING));
++            final EntityData low = flags(ActorDataIds.RESERVED_0, ActorFlags.SWIMMING, ActorFlags.SPRINTING);
++            final EntityData high = flags(ActorDataIds.RESERVED_092);
++            final List<EntityData> result = lowWordFirst ? update(player, low, high) : update(player, high, low);
++            assertEquals(3, value(result, EntityDataFields.POSE));
++            assertEquals((byte) 24, value(result, EntityDataFields.SHARED_FLAGS));
++            assertEquals(1, result.stream().filter(data -> data.id() == FIELDS.indexOf(EntityDataFields.POSE)).count());
++            assertFalse(player.entityFlags().contains(ActorFlags.CRAWLING));
++        }
++    }
++
++    @Test
++    void restoresStandingSneakingAndGlidingWhenCrawlingEnds() {
++        final ActorFlags[][] lowFlags = {{}, {ActorFlags.SNEAKING}, {ActorFlags.GLIDING}};
++        final int[] poses = {0, 5, 1};
++        for (int i = 0; i < poses.length; i++) {
++            final PlayerEntity player = player();
++            update(player, flags(ActorDataIds.RESERVED_0, lowFlags[i]), flags(ActorDataIds.RESERVED_092, ActorFlags.CRAWLING));
++            assertEquals(poses[i], value(update(player, flags(ActorDataIds.RESERVED_092)), EntityDataFields.POSE));
++        }
++    }
++
++    private static PlayerEntity player() {
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, args) -> null);
++        return new PlayerEntity(user, 1, 1, new UUID(0, 1), new PlayerAbilities(1, (byte) 0, (byte) 0));
++    }
++
++    private static EntityData flags(final ActorDataIds word, final ActorFlags... flags) {
++        long mask = 0;
++        for (final ActorFlags flag : flags) {
++            final int bit = flag.getValue() - (word == ActorDataIds.RESERVED_092 ? Long.SIZE : 0);
++            assertTrue(bit >= 0 && bit < Long.SIZE);
++            mask |= 1L << bit;
++        }
++        return new EntityData(word.getValue(), EntityDataTypesBedrock.LONG, mask);
++    }
++
++    private static List<EntityData> update(final PlayerEntity player, final EntityData... data) {
++        final List<EntityData> result = new ArrayList<>();
++        player.updateEntityData(data, result);
++        return result;
++    }
++
++    private static Object value(final List<EntityData> data, final String field) {
++        return data.stream().filter(entry -> entry.id() == FIELDS.indexOf(field)).findFirst().orElseThrow().value();
++    }
++
++    private void replaceMapping(final String name, final Object replacement) throws Exception {
++        final Field field = BedrockProtocol.MAPPINGS.getClass().getDeclaredField(name);
++        field.setAccessible(true);
++        this.previousMappings.put(field, field.get(BedrockProtocol.MAPPINGS));
++        field.set(BedrockProtocol.MAPPINGS, replacement);
 +    }
 +
 +}
