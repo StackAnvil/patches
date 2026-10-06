@@ -12,7 +12,6 @@ import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 import net.raphimc.viabedrock.protocol.types.primitive.ImageType;
 import java.nio.file.Path;
 import java.nio.file.Files;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
 import java.util.*;
 
@@ -23,8 +22,9 @@ public final class SceneFeatures {
             Optional<UUID> identity = selfIdentity(PacketJournal.read(Path.of(args[1]), ProtocolConstants.BEDROCK_PROTOCOL_VERSION));
             if (identity.isEmpty()) return;
             Path output = Path.of(args[2]);
-            Files.writeString(output, identity.get().toString(), java.nio.file.StandardOpenOption.CREATE_NEW);
-            Files.setPosixFilePermissions(output, PosixFilePermissions.fromString("rw-------"));
+            try (var stream = PrivateFiles.newOutputStream(output)) {
+                stream.write(identity.get().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
             return;
         }
         System.out.println(new Gson().toJson(features(PacketJournal.read(Path.of(args[0]), ProtocolConstants.BEDROCK_PROTOCOL_VERSION))));

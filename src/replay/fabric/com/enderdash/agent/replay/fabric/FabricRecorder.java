@@ -2,6 +2,7 @@ package com.enderdash.agent.replay.fabric;
 
 import com.enderdash.agent.replay.CameraPresetAudit;
 import com.enderdash.agent.replay.PacketJournal;
+import com.enderdash.agent.replay.PrivateFiles;
 import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.api.connection.UserConnection;
 import com.viaversion.viaversion.api.type.Types;
@@ -18,7 +19,6 @@ import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 
 import java.io.IOException;
 import java.nio.file.*;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -58,12 +58,11 @@ public final class FabricRecorder {
                 ResourcePackStorage storage = connection.get(ResourcePackStorage.class);
                 if (storage == null || storage.getPackStackTopToBottom().isEmpty()) return;
                 Path packs = directory.resolve("packs");
-                Files.createDirectory(packs, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+                PrivateFiles.createDirectory(packs);
                 for (ResourcePack pack : storage.getPackStackTopToBottom()) {
                     if (!storage.isServerPack(pack)) continue;
                     Path file = packs.resolve(pack.key() + ".mcpack");
-                    Files.write(file, pack.content().toZip(), StandardOpenOption.CREATE_NEW);
-                    Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
+                    try (var output = PrivateFiles.newOutputStream(file)) { output.write(pack.content().toZip()); }
                 }
                 packsSaved = true;
                 System.out.println("StackAnvil selected packs saved");

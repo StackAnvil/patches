@@ -6,7 +6,7 @@ import net.raphimc.viabedrock.api.model.NativeSkinFragment;
 import net.raphimc.viabedrock.protocol.model.SkinData;
 import net.raphimc.viabedrock.protocol.types.primitive.ImageType;
 import java.nio.file.*;
-import java.nio.file.attribute.PosixFilePermissions;
+import com.enderdash.agent.replay.PrivateFiles;
 import java.security.MessageDigest;
 import java.util.*;
 
@@ -90,8 +90,7 @@ public final class RenderAudit {
             stats.put("fullSkinRecords", fullSkinRecords);
             stats.put("actorIdentifiers", actors); stats.put("evaluatedModels", models); stats.put("actorScales", actorScales);
             Path temporary = directory.resolve("render-audit.json.tmp");
-            Files.writeString(temporary, new Gson().toJson(stats));
-            Files.setPosixFilePermissions(temporary, PosixFilePermissions.fromString("rw-------"));
+            PrivateFiles.write(temporary, new Gson().toJson(stats).getBytes(java.nio.charset.StandardCharsets.UTF_8));
             Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             lastSave = System.nanoTime();
             pending = false;

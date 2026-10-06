@@ -91,6 +91,7 @@ async function buildFabricRecorder(jar: string, build: string): Promise<string> 
   const source = join(root, "src/replay/fabric/com/enderdash/agent/replay/fabric");
   const files = [...new Bun.Glob("**/*.java").scanSync(source)].map((file) => join(source, file));
   await execute("javac", ["-proc:none", "-cp", `${jar}${delimiter}${mixin}`, "-d", classes,
+    join(root, "src/replay/java/com/enderdash/agent/replay/PrivateFiles.java"),
     join(root, "src/replay/java/com/enderdash/agent/replay/PacketJournal.java"),
     join(root, "src/replay/java/com/enderdash/agent/replay/CameraPresetAudit.java"), ...files]);
   await writeFile(join(classes, "fabric.mod.json"), JSON.stringify({ schemaVersion: 1, id: "stackanvil_recorder", version: "1.0.0",
@@ -252,7 +253,7 @@ async function main(): Promise<void> {
   if (mode === "selftest") {
     const jar = await artifact("viaproxy");
     const { classes } = await buildPlugin(jar);
-    for (const test of ["ReplaySelfTest", "NativeCaptureSelfTest"]) {
+    for (const test of ["ReplaySelfTest", "NativeCaptureSelfTest", "PrivateFilesSelfTest"]) {
       const { stdout } = await execute("java", ["-cp", `${classes}${delimiter}${jar}`, `com.enderdash.agent.replay.${test}`]);
       console.log(stdout.trim());
     }

@@ -250,6 +250,7 @@ The tooling refuses to recreate media over an orphaned installation.
 
 The repository's main tooling and full builds run on Ubuntu GitHub runners.
 The separate native persona helper matrix runs on Ubuntu, Windows, Intel macOS, and ARM macOS.
+The private packet recorder permission tests also run on Ubuntu, Windows, and ARM macOS.
 Those jobs do not run account-based game joins.
 See [ci.yml](../.github/workflows/ci.yml) and [persona-helpers.yml](../.github/workflows/persona-helpers.yml).
 
@@ -295,5 +296,16 @@ The rebuilt Windows stack reaches the lobby on retry with a confirmed 2 GiB heap
 Live diagnostics verify an active PLAY connection, completed spawn, and advancing player ticks.
 After more than four minutes, the client unloads its server pack back to the multiplayer menu without heap exhaustion.
 Its first resource reload still disconnects. The successful retry does not close that gap.
-Native negotiation comparison and Windows radius recovery remain open; this Windows run has no packet journal.
+Native negotiation comparison and Windows recovery from smaller radii remain open.
+The later Windows recording below requests radius sixteen.
 Treat conversion, resource reload, chunk negotiation, and graphics as separate stages when diagnosing a stalled join.
+
+A fresh Windows client and proxy also complete a CubeCraft join with an empty converted-pack cache.
+The private recorder saves five server packs and a closed 219-second packet journal.
+It records spawn, one initialization packet, 3,747 input packets, and 594 chunks.
+The client requests radius sixteen and receives radius fourteen, so this run does not exercise the smaller-radius recovery.
+The client reaches the visible lobby, accepts walking and jumping input, and unloads back to the multiplayer menu with a confirmed 2 GiB heap.
+The two conversion intervals are 1,715 milliseconds and 2,426 milliseconds; these exclude other join stages.
+The warm-cache client restart also reaches spawn.
+These successful repeats do not reproduce or explain the earlier first reload disconnect.
+Fresh Store login, other launchers, direct connections, and complete movement parity remain open.

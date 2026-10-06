@@ -4,8 +4,7 @@ import com.viaversion.viaversion.libs.gson.Gson;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.PosixFilePermissions;
+import com.enderdash.agent.replay.PrivateFiles;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -77,8 +76,7 @@ public final class HeldItemLightAudit {
             state.put("avatarPackedLight", avatar == null ? null : avatar.getClass().getField("lightCoords").get(avatar));
             Path directory = Path.of(Files.readString(Path.of("stackanvil-replay-directory.txt")).trim());
             Path file = directory.resolve("held-item-light-audit.jsonl");
-            if (!Files.exists(file)) Files.createFile(file, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
-            Files.writeString(file, new Gson().toJson(state) + "\n", StandardOpenOption.APPEND);
+            PrivateFiles.append(file, (new Gson().toJson(state) + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
         } catch (ReflectiveOperationException | java.io.IOException error) {
             throw new IllegalStateException("Could not audit the first-person item submission", error);
         }

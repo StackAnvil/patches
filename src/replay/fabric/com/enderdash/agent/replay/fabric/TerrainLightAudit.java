@@ -5,8 +5,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.PosixFilePermissions;
+import com.enderdash.agent.replay.PrivateFiles;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -109,8 +108,7 @@ public final class TerrainLightAudit {
         }
         try {
             Path file = directory.resolve("terrain-light-audit.jsonl");
-            if (!Files.exists(file)) Files.createFile(file, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
-            Files.writeString(file, new Gson().toJson(audit) + "\n", StandardOpenOption.APPEND);
+            PrivateFiles.append(file, (new Gson().toJson(audit) + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
         } catch (java.io.IOException error) {
             throw new IllegalStateException("Could not write private terrain observations", error);
         }

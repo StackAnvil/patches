@@ -3,8 +3,7 @@ package com.enderdash.agent.replay.fabric;
 import com.viaversion.viaversion.libs.gson.Gson;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.PosixFilePermissions;
+import com.enderdash.agent.replay.PrivateFiles;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -90,8 +89,7 @@ final class ReplaySceneDiagnostics {
                 }
             }
             Path file = directory.resolve("camera-audit.jsonl");
-            if (!Files.exists(file)) Files.createFile(file, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
-            Files.writeString(file, new Gson().toJson(state) + "\n", StandardOpenOption.APPEND);
+            PrivateFiles.append(file, (new Gson().toJson(state) + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
             TerrainLightAudit.sample(minecraft, directory);
         } catch (ReflectiveOperationException | java.io.IOException error) {
             throw new IllegalStateException("Could not observe private replay scene", error);

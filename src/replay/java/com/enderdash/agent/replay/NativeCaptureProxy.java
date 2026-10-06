@@ -24,7 +24,6 @@ import javax.crypto.spec.SecretKeySpec;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.security.*;
 import java.time.Instant;
 import java.util.*;
@@ -50,7 +49,7 @@ public final class NativeCaptureProxy {
             if (args.length != 5) throw new IllegalArgumentException("NativeCaptureProxy <private-directory> <loopback-port> <host> <port> <account-json|offline>");
             Path directory = Path.of(args[0]).toAbsolutePath();
             Files.createDirectories(directory);
-            Files.setPosixFilePermissions(directory, PosixFilePermissions.fromString("rwx------"));
+            PrivateFiles.protectDirectory(directory);
             InetSocketAddress target = new InetSocketAddress(args[2], Integer.parseInt(args[3]));
             if (target.isUnresolved()) throw new IllegalArgumentException("Unresolved target");
             if (args[4].equals("offline") && !target.getAddress().isLoopbackAddress()) throw new IllegalArgumentException("Offline identity is restricted to a local backend");

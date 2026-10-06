@@ -15,7 +15,6 @@ import net.raphimc.viaproxy.proxy.session.ProxyConnection;
 
 import java.io.IOException;
 import java.nio.file.*;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.ScheduledFuture;
@@ -51,12 +50,11 @@ public final class RecordingPlugin extends ViaProxyPlugin {
                 ResourcePackStorage storage = connection.getUserConnection().get(ResourcePackStorage.class);
                 if (packsSaved || storage == null) return;
                 Path packs = directory.resolve("packs");
-                Files.createDirectory(packs, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+                PrivateFiles.createDirectory(packs);
                 for (ResourcePack pack : storage.getPackStackTopToBottom()) {
                     if (!storage.isServerPack(pack)) continue;
                     Path file = packs.resolve(pack.key() + ".mcpack");
-                    Files.write(file, pack.content().toZip(), StandardOpenOption.CREATE_NEW);
-                    Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
+                    try (var output = PrivateFiles.newOutputStream(file)) { output.write(pack.content().toZip()); }
                 }
                 packsSaved = true;
             }

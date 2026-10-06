@@ -38,4 +38,6 @@ Native radius comparison remains open.
 Complete builds pass with 624 core tests and 600 add-on tests, with no failures.
 The rebuilt Windows guest reaches the CubeCraft lobby on retry and unloads its pack with a confirmed 2 GiB heap.
 Live core diagnostics verify spawn and advancing player ticks during more than four minutes of gameplay.
-The first Windows resource reload still disconnects. Windows radius recovery remains unverified without a packet journal.
+The earlier first Windows resource reload disconnect remains unexplained.
+A later cold-cache Windows run records spawn, initialization, 3,747 input packets, and 594 chunks over 219 seconds.
+It requests radius sixteen and receives radius fourteen, so Windows recovery from smaller radii remains unverified.

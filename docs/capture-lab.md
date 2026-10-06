@@ -4,6 +4,11 @@ The capture lab helps reproduce Bedrock menus and compare their HTTPS requests w
 
 For Windows and macOS guests, use the [Quickemu platform guide](platform-testing.md). Its QMP input and screenshots target the guest directly. The existing `capture ui` commands target host clients on the lab display.
 
+The Java recorders use POSIX permissions on Linux and macOS, and a user-only ACL on Windows.
+They apply permissions before writing journals, exported packs, keys, or render observations.
+Unsupported filesystems stop recording. Existing journals remain protected against accidental overwrite.
+The command orchestrator still requires the host's private virtual display; guest recorders can run inside their own platform harness.
+
 ## Prepare the clients
 
 Build the stack and install its PrismLauncher instance:

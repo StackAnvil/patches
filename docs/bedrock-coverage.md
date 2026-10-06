@@ -3506,5 +3506,30 @@ The rebuilt Windows stack also reaches the CubeCraft lobby on retry with a confi
 Live core diagnostics show an active PLAY connection, completed spawn, and advancing player ticks.
 The session remains playable for more than four minutes and unloads the server pack back to the multiplayer menu without heap exhaustion.
 Its first attempt still disconnects during resource reload; the retry does not explain that failure.
-Windows radius recovery remains unverified because this run has no packet journal.
+That Windows retry has no packet journal; recovery from smaller radii remains unverified.
 A particle definition also reports ambiguous motion and needs separate investigation.
+
+## Portable private packet recording, October 6, 2026
+
+The Windows diagnostic recorder previously failed because it called POSIX permission APIs.
+Java recorders now use POSIX owner permissions or a Windows user-only ACL before writing capture contents.
+Journals, exported packs, keys, camera observations, and render observations share this implementation.
+Unsupported filesystems stop recording, and existing journals cannot be overwritten.
+The native filesystem tests pass on Linux, Windows 11, and macOS Sonoma.
+The tests cover journal round trips, authentication exclusion, access permissions, append behavior, overwrite protection, and unsupported filesystems.
+Linux also verifies rejection of capture symlinks.
+The CI now repeats the permission tests on Ubuntu, Windows, and ARM macOS.
+
+The revised recorder also passes an authenticated strict BDS join through ViaProxy.
+The closed journal records spawn, one initialization packet, 2,032 input packets, and 595 chunks over about 110 seconds.
+Walking and jumping input run during the session. This regression does not establish complete movement parity.
+
+A fresh Windows client and proxy also complete a CubeCraft join with an empty converted-pack cache.
+The private recorder saves five server packs and a closed 219-second packet journal.
+It records spawn, one initialization packet, 3,747 input packets, and 594 chunks.
+The client requests radius sixteen and receives radius fourteen, so this run does not exercise the smaller-radius recovery.
+The client reaches the visible lobby, accepts walking and jumping input, and unloads back to the multiplayer menu with a confirmed 2 GiB heap.
+The two conversion intervals are 1,715 milliseconds and 2,426 milliseconds; these exclude other join stages.
+The warm-cache client restart also reaches spawn.
+These successful repeats do not reproduce or explain the earlier first reload disconnect.
+Fresh Store login, other launchers, direct connections, and complete movement parity remain open.

@@ -10,7 +10,6 @@ import java.io.*;
 import java.net.URI;
 import java.net.http.*;
 import java.nio.file.*;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.util.*;
@@ -44,7 +43,7 @@ final class NativeCapturePacks implements AutoCloseable {
 
     NativeCapturePacks(Path recording) throws IOException {
         directory = recording.resolve("packs");
-        Files.createDirectory(directory, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+        PrivateFiles.createDirectory(directory);
     }
 
     synchronized void accept(int id, ByteBuf input) throws Exception {
@@ -102,7 +101,7 @@ final class NativeCapturePacks implements AutoCloseable {
                 }));
             }
         }
-        writePrivate(directory.resolve("keys.json"), new Gson().toJson(keys).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        PrivateFiles.write(directory.resolve("keys.json"), new Gson().toJson(keys).getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     private void stack(ByteBuf input) throws Exception {
@@ -188,12 +187,7 @@ final class NativeCapturePacks implements AutoCloseable {
         var manifest = pack.parsed.content().getJson("manifest.json");
         // Hive sends display labels in the stack even when the manifest has no subpacks.
         String selection = manifest.has("subpacks") && !manifest.getAsJsonArray("subpacks").isEmpty() ? pack.selection : "";
-        writePrivate(directory.resolve(pack.key + ".mcpack"), pack.parsed.selectSubpack(selection).content().toZip());
-    }
-
-    private static void writePrivate(Path file, byte[] data) throws IOException {
-        if (!Files.exists(file)) Files.createFile(file, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
-        Files.write(file, data, StandardOpenOption.TRUNCATE_EXISTING);
+        PrivateFiles.write(directory.resolve(pack.key + ".mcpack"), pack.parsed.selectSubpack(selection).content().toZip());
     }
 
     @Override public void close() throws Exception {

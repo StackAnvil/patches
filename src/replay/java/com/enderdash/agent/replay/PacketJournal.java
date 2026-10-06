@@ -2,7 +2,6 @@ package com.enderdash.agent.replay;
 
 import java.io.*;
 import java.nio.file.*;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.*;
 
 /** Decrypted packet payloads. Authentication packets never enter this journal. */
@@ -19,8 +18,7 @@ public final class PacketJournal implements AutoCloseable {
     }
 
     public PacketJournal(Path file, int protocol) throws IOException {
-        output = new DataOutputStream(new BufferedOutputStream(Files.newOutputStream(file, StandardOpenOption.CREATE_NEW)));
-        Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
+        output = new DataOutputStream(new BufferedOutputStream(PrivateFiles.newOutputStream(file)));
         output.writeInt(MAGIC);
         output.writeInt(protocol);
         output.flush();
