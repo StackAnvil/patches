@@ -23,6 +23,11 @@ bun run test:integration -- --route java-bedrock --gameplay-cases movement-left,
 
 The default gameplay run includes movement, block actions, inventory, creative selection, chest transfer, equipment, item use, entity interaction, maps, commands, respawn, and dimension change. Each case uses a fresh arena so a client-predicted block from one case cannot interfere with the next.
 
+Arena preparation requires a living player, including after asynchronous tick boundaries.
+It rejects a dead player before changing their position or resetting health.
+The runner must complete an actual respawn before it prepares the next arena.
+Resetting a dead player's health through the Script API can prevent BDS from completing the respawn handshake.
+
 ## What each case checks
 
 | Case | Java action | Bedrock result |

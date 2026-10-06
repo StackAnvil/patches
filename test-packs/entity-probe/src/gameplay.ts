@@ -55,12 +55,22 @@ function clearEntities() {
   for (const entity of arena.dimension.getEntities({ tags: [ENTITY_TAG] })) entity.remove();
 }
 
+function livingPlayerHealth(player) {
+  const health = player.getComponent("minecraft:health");
+  if (!health || !Number.isFinite(health.currentValue) || health.currentValue <= 0) {
+    throw new Error("Respawn the player before preparing a gameplay arena.");
+  }
+  return health;
+}
+
 async function prepareArena(player, gameMode = GameMode.Survival) {
+  livingPlayerHealth(player);
   if (!origin) origin = { dimension: player.dimension, x: Math.floor(player.location.x), z: Math.floor(player.location.z) };
   clearEntities();
   arena = { dimension: origin.dimension, x: origin.x + arenaSerial++ * 32, y: 250, z: origin.z };
   player.teleport(position(), { dimension: arena.dimension });
   await nextTick();
+  livingPlayerHealth(player);
   for (let x = -3; x <= 3; x++) {
     for (let z = -3; z <= 4; z++) {
       blockAt(arena.dimension, x, -1, z).setType("minecraft:stone");
@@ -75,11 +85,12 @@ async function prepareArena(player, gameMode = GameMode.Survival) {
   }
   player.setGameMode(gameMode);
   player.extinguishFire(false);
-  player.getComponent("minecraft:health")?.resetToMaxValue();
+  livingPlayerHealth(player).resetToMaxValue();
   player.commandPermissionLevel = CommandPermissionLevel.GameDirectors;
   player.selectedSlotIndex = 0;
   player.teleport(position(), { dimension: arena.dimension, facingLocation: position(0.5, 0, 2.5) });
   await nextTick();
+  livingPlayerHealth(player);
 }
 
 function giveSelected(player, itemId, amount = 1) {

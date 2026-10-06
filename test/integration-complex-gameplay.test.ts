@@ -9,15 +9,19 @@ let sample: () => void;
 const signal = (name: string) => ({ subscribe(callback: (event: any) => void) { callbacks.set(name, callback); } });
 const player = { name: "ProbePlayer", id: "player", selectedSlotIndex: 0 } as Player;
 mock.module("@minecraft/server", () => ({
+  BlockPermutation: {}, CommandPermissionLevel: {},
   EnchantmentType: class {}, EquipmentSlot: {}, GameMode: {}, ItemStack: class {}, Potions: {},
   system: { currentTick: 10, run(callback: () => void) { pending.push(callback); },
     runTimeout(callback: () => void) { pending.push(callback); },
     runInterval(callback: () => void) { sample = callback; } },
-  world: { getAllPlayers: () => [player], afterEvents: Object.fromEntries(
+  world: { getAllPlayers: () => [player], beforeEvents: { playerInteractWithEntity: signal("beforeInteraction") },
+    afterEvents: Object.fromEntries(
     ["itemStartUse", "itemReleaseUse", "itemCompleteUse", "itemStopUse", "itemUse", "entitySpawn",
-      "projectileHitBlock", "projectileHitEntity", "effectAdd", "entityHitEntity", "entityHurt"]
+      "projectileHitBlock", "projectileHitEntity", "effectAdd", "entityHitEntity", "entityHurt",
+      "playerInteractWithEntity", "playerInteractWithBlock", "playerSpawn", "playerDimensionChange"]
       .map((name) => [name, signal(name)])) },
 }));
+const { prepareGameplay } = await import(new URL("../test-packs/entity-probe/src/gameplay.ts", import.meta.url).href);
 const { registerComplexGameplay } = await import("../test-packs/entity-probe/src/complex-gameplay.ts");
 type Context = Parameters<typeof registerComplexGameplay>[0];
 let active: ReturnType<Context["getActive"]>;
@@ -25,6 +29,37 @@ registerComplexGameplay({ define() {}, getActive: () => active, tagEntity() {},
   prepareArena: async () => {}, inventory: () => { throw new Error("Unused fixture setup"); },
   equipment: () => { throw new Error("Unused fixture setup"); }, countItem: () => 0,
   blockAt: () => { throw new Error("Unused fixture setup"); }, position: () => ({ x: 0, y: 0, z: 0 }) });
+
+test("arena preparation cannot mutate a corpse or heal a player who dies during its first tick", async () => {
+  const warn = console.warn;
+  const events: { status: string }[] = [];
+  console.warn = (line: string) => { events.push(JSON.parse(line.slice(line.indexOf("{")))); };
+  let mutations = 0;
+  const health = { currentValue: 0, resetToMaxValue() { mutations++; } };
+  const source = { ...player, dimension: {}, location: { x: 0, y: 250, z: 0 },
+    getComponent: () => health, teleport() { mutations++; } };
+  try {
+    for (const value of [0, -1, Number.NaN]) {
+      health.currentValue = value;
+      await prepareGameplay("movement-left", "dead", source);
+      expect(mutations).toBe(0);
+      expect(pending).toHaveLength(0);
+      expect(events.pop()?.status).toBe("error");
+    }
+    health.currentValue = 20;
+    const preparation = prepareGameplay("movement-left", "dies-during-prepare", source);
+    expect(mutations).toBe(1);
+    expect(pending).toHaveLength(1);
+    health.currentValue = 0;
+    pending.shift()!();
+    await preparation;
+    expect(mutations).toBe(1);
+    expect(health.currentValue).toBe(0);
+    expect(events.pop()?.status).toBe("error");
+  } finally {
+    console.warn = warn;
+  }
+});
 
 function prepareObservation(): RangedObservation {
   const ranged: RangedObservation = { item: "minecraft:bow", ammunition: "minecraft:arrow", initialCount: 4,

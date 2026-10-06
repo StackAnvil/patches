@@ -631,3 +631,30 @@ The owned sweep server stops and both recorders finish successfully despite fail
 Failed dodge and recovery cases remain open.
 Detailed trajectories, native baselines, controlled network conditions, Boar, CubeCraft, actual Windows/macOS joins, and the full gameplay matrix remain required.
 The current-boot GPU guard remains in force, and all eight original coverage groups remain required.
+
+### Dead-player arena preparation, October 6, 2026
+
+**Resolved fixture defect:** The earlier ViaProxy recovery failure followed preparation of a dead player.
+The journal records health falling to zero, then rising to twenty before the client requests respawn.
+Its request uses the correct player runtime ID.
+There is no subsequent ready-to-spawn reply.
+
+A controlled protocol client reproduces this on strict BDS 1.26.51.1, build 51061372, protocol 2193.
+An ordinary death completes the client-ready, server-ready, and player-action sequence.
+Preparing the dead player resets health through the Script API, after which neither client-ready nor a respawn action completes the handshake.
+This establishes a fixture defect; it does not establish a missing ViaBedrock respawn packet.
+The [target protocol reference](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/respawn-packet/) retains the three respawn states and runtime-ID field.
+
+Arena preparation now requires a living player before mutation, after tick waits, and before resetting health.
+The controlled BDS regression rejects preparation while dead and subsequently completes the ordinary respawn handshake.
+The unit regression also covers death during the first asynchronous tick and invalid health values.
+It checks that preparation preserves zero health and cannot heal the corpse.
+
+**Verified within scope:** Actual Java clients with the add-on reject deliberate dead-player preparation through direct and ViaProxy connections.
+Each then completes an in-game respawn and passes movement right, the downward bubble column, large-fireball contact, and movement left.
+All eight follow-up gameplay checks pass against strict BDS.
+Both journals contain the client-ready request and the subsequent server-ready reply.
+All 148 tooling tests, the TypeScript check, and the behavior-pack build pass.
+
+**Remaining:** This fix does not establish complete death/respawn parity, native comparisons, or every hazardous-terrain transition.
+Dodge timing, full prediction replay, the complete gameplay matrix, and all eight original coverage groups remain required.

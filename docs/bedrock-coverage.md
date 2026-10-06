@@ -6406,3 +6406,20 @@ All 147 tooling tests, the TypeScript check, and the behavior-pack build pass.
 The sweep's recorders finish normally, and its owned server stops.
 No native visual baseline, full correction replay, anticheat result, or actual Windows/macOS game join is claimed.
 All eight original groups and every applicable gameplay action and edge case remain required.
+
+### Dead-player preparation and respawn recovery, October 6, 2026
+
+**Resolved fixture defect:** The failed ViaProxy sweep reset a dead player's health before requesting respawn.
+The private journal confirms zero health, the reset to twenty, the correct request runtime ID, and no ready-to-spawn reply.
+A controlled strict-BDS probe reproduces this sequence and completes ordinary respawn without that reset.
+
+Arena preparation now rejects dead players before mutation and checks health across asynchronous tick boundaries.
+The corrected protocol control rejects the preparation and then completes respawn.
+The unit regression preserves the corpse's health and rejects death during preparation.
+Actual Java clients reject dead-player preparation and complete an in-game respawn on both direct and ViaProxy routes.
+Each then passes movement right, the downward bubble column, large-fireball contact, and movement left against strict BDS.
+All 148 tooling tests, the TypeScript check, and the pack build pass.
+The [complex gameplay record](bedrock-complex-gameplay.md#dead-player-arena-preparation-october-6-2026) describes the evidence and limits.
+
+Complete death/respawn parity, native comparisons, dodge timing, and full historical prediction replay remain required.
+All eight original coverage groups and the complete gameplay matrix remain active.
