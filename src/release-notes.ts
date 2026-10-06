@@ -1,12 +1,17 @@
 import { execFileSync } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getSeries, getTarget, root, targetIds } from "./model.ts";
 import { parsePatchMessage } from "./patch-message.ts";
+import { releaseDownloadSection } from "./release-downloads.ts";
 
 const repository = process.env.GITHUB_REPOSITORY ?? "StackAnvil/patches";
 const commit = process.env.GITHUB_SHA ?? execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
 const groupTitles = { setup: "Setup", upstreamable: "Upstreamable", deferred: "Deferred" } as const;
+const tag = process.argv[2] ?? (process.env.GITHUB_REF_TYPE === "tag" ? process.env.GITHUB_REF_NAME
+  : process.env.GITHUB_RUN_NUMBER ? `stack-v0.0.${process.env.GITHUB_RUN_NUMBER}` : undefined);
+if (!tag) throw new Error("Usage: bun src/release-notes.ts <release-tag> [release-assets-directory]");
+const assets = await readdir(process.argv[3] ?? join(root, "release"));
 
 function patchUrl(id: string, group: string, file: string): string {
   const path = ["patches", id, group, file].map(encodeURIComponent).join("/");
@@ -20,6 +25,7 @@ async function patchTitle(id: string, group: string, file: string): Promise<stri
 
 const lines = [
   "# StackAnvil builds", "",
+  ...releaseDownloadSection(repository, tag, assets),
   "The StackAnvil JARs contain experimental patch stacks. The ViaFabricPlus JAR is an unchanged, pinned upstream Jenkins build.", "",
   "Setup patches prepare StackAnvil builds. Upstreamable patches can become our PRs. Deferred patches track work that another contributor already owns upstream.", "",
   "## Play from Java Edition", "",
