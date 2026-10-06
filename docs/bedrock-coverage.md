@@ -5778,3 +5778,19 @@ ViaBedrock already implements those joining packets; this work does not claim a 
 The matrix retains enchantments, detailed damage and charge rules, potion duration and radius, correction replay, and other mixed gameplay cases.
 The current-boot GPU guard and the occupied private display remain in place.
 All eight original coverage groups, CubeCraft interoperability, and actual platform joins remain requirements.
+
+## Stored crossbow ammunition (October 6, 2026)
+
+**Implemented:** Core exports loaded crossbow ammunition through the ordinary Java loaded-projectile component.
+Unloaded or invalid charges produce an empty component.
+The shared decoder retains stored auxiliary data, preserving tipped-arrow subtype mappings.
+No add-on payload is required for this state.
+
+**Target evidence:** Headless BDS 1.26.51.1, build 51061372, protocol 2193 supplies one arrow, auxiliary value 15 for a tipped arrow, and an offhand rocket.
+The [item patch notes](../patches/viabedrock/upstreamable/0028-translate-java-overrides-and-book-data.pr.md) retain the wire findings and test scope.
+
+**Unverified:** Full translated firing timing, native visuals, slot changes, enchantments, rocket effects, and direct and ViaProxy comparisons remain required.
+All eight original coverage groups and the complete complex gameplay matrix remain active.
+
+The complete 95-patch core stack replays successfully.
+The core build and Checkstyle pass with 675 tests passing and 19 optional skips.

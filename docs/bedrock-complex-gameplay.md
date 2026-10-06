@@ -128,9 +128,9 @@ They are an executable subset of this matrix.
 The existing portable gameplay sweep remains separate.
 The Java/Geyser fixture does not implement the new cases yet.
 
-### Verification status, October 6, 2026
+### Initial suite verification, October 6, 2026
 
-**Implemented:** Twelve fixture IDs, Java input actions, ranged event checks, owner filtering, deferred callback isolation, and bounded movement sampling.
+**Implemented initially:** Twelve fixture IDs, Java input actions, ranged event checks, owner filtering, deferred callback isolation, and bounded movement sampling.
 The probe is checked against Script API 2.9.0.
 
 **Verified:** Targeted assertion and lifecycle tests pass, the TypeScript check passes, and the behavior pack bundles successfully.
@@ -195,3 +195,21 @@ These probe corrections do not establish a new production joining fix.
 Full Java, native client, direct, and ViaProxy comparisons remain required.
 Detailed charge, damage, potion radius and duration, small-fireball reflection, enchantments, correction replay, and mixed movement cases remain open.
 The current-boot GPU guard and occupied private display remain in place.
+
+### Stored crossbow ammunition, October 6, 2026
+
+**Implemented:** Core translates `chargedItem` into Java's loaded-projectile component and clears unloaded charges.
+The shared item decoder retains auxiliary data, preserving tipped-arrow subtype mappings.
+This uses standard Java item components, including through ViaProxy.
+
+**Target evidence:** Headless BDS wire data confirms one loaded arrow, a tipped arrow with auxiliary value 15, and an offhand rocket.
+The rocket retains its nested `Fireworks` tag and flight value 1.
+An inventory rocket does not load in this controlled probe.
+The [item patch notes](../patches/viabedrock/upstreamable/0028-translate-java-overrides-and-book-data.pr.md) describe the checks and limits.
+
+**Unverified:** Full Java input and firing timing, native visuals, slot changes, and both connection routes remain required.
+Enchantment-specific behavior and complete firework component translation remain open.
+The synthetic protocol probe does not establish translated gameplay parity.
+
+The complete 95-patch core stack replays successfully.
+The core build and Checkstyle pass with 675 tests passing and 19 optional skips.

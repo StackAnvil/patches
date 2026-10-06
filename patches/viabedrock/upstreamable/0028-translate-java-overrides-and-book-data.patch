@@ -1,21 +1,33 @@
-From 6da854658d6a67f5832e98d733e25ced500932f8 Mon Sep 17 00:00:00 2001
+From 6d1ee7bb91fc1f6fe0b44e5efd3b4d3cd8bad98e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 03:58:56 +0200
 Subject: [PATCH] feat(items): translate Java overrides and book data
 
 Apply mapped potion, instrument, and block-state overrides as Java 26.3 components. Preserve Bedrock book pages and metadata, and retain the enchantment glint for an empty enchantment list so item presentation survives translation.
+
+Translate Bedrock chargedItem into Java charged_projectiles through the
+shared item converter. Preserve the authoritative arrow or rocket stack,
+including auxiliary and nested data, and clear unloaded charges. Restrict
+nested conversion to vanilla ammunition so a charged crossbow cannot
+recursively contain another charged crossbow.
+
+Isolated official BDS 1.26.51.1 build 51061372, protocol 2193, supplies one
+charged arrow, retains auxiliary value 15 for a tipped arrow, and loads a
+rocket from the offhand with its Fireworks tag. Rockets elsewhere in the
+inventory do not load in this controlled probe. Java and ViaProxy live
+charge and firing timing remain unverified; captures stay private.
 ---
- .../protocol/rewriter/ItemDataRewriter.java   | 157 +++++++++++++++++-
+ .../protocol/rewriter/ItemDataRewriter.java   | 179 +++++++++++++++++-
  .../protocol/rewriter/ItemRewriter.java       |   5 +-
- .../rewriter/ItemDataRewriterTest.java        |  93 +++++++++++
- 3 files changed, 250 insertions(+), 5 deletions(-)
+ .../rewriter/ItemDataRewriterTest.java        | 163 ++++++++++++++++
+ 3 files changed, 342 insertions(+), 5 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriterTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
-index e21bdddba..3ecc81af1 100644
+index e21bdddba..0e35ec6f8 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
-@@ -19,25 +19,176 @@ package net.raphimc.viabedrock.protocol.rewriter;
+@@ -19,25 +19,198 @@ package net.raphimc.viabedrock.protocol.rewriter;
  
  import com.viaversion.nbt.tag.*;
  import com.viaversion.viaversion.api.connection.UserConnection;
@@ -24,6 +36,7 @@ index e21bdddba..3ecc81af1 100644
 +import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
  import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
  import com.viaversion.viaversion.api.minecraft.item.Item;
++import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
 +import com.viaversion.viaversion.api.minecraft.item.data.BlockStateProperties;
  import com.viaversion.viaversion.api.minecraft.item.data.Enchantments;
 +import com.viaversion.viaversion.api.minecraft.item.data.EnumTypes;
@@ -47,6 +60,7 @@ index e21bdddba..3ecc81af1 100644
 +import java.util.HashMap;
 +import java.util.List;
 +import java.util.Map;
++import java.util.function.Function;
  import java.util.logging.Level;
  
  public final class ItemDataRewriter {
@@ -172,9 +186,29 @@ index e21bdddba..3ecc81af1 100644
 +        return new WrittenBook(title, bedrockTag.getString("author", ""), generation, javaPages, true);
 +    }
 +
++    static Item[] chargedProjectiles(final CompoundTag bedrockTag, final Function<CompoundTag, Item> convert) {
++        final CompoundTag charged = bedrockTag == null ? null : bedrockTag.getCompoundTag("chargedItem");
++        if (charged == null || charged.getByte("Count") == 0) {
++            return new Item[0];
++        }
++        // Native stores one arrow or offhand rocket. Only these ammunition types
++        // reach the nested item converter; charged crossbows cannot recurse.
++        final String identifier = charged.getString("Name", "");
++        if (!identifier.equals("minecraft:arrow") && !identifier.equals("minecraft:firework_rocket")) {
++            return new Item[0];
++        }
++        final Item projectile = convert.apply(charged);
++        return projectile == null || projectile.isEmpty() ? new Item[0] : new Item[]{projectile};
++    }
++
      // BedrockTag can be null
 -    public static void handleItem(final UserConnection user, final BedrockItem bedrockItem, final CompoundTag bedrockTag, final Item javaItem) {
 +    public static void handleItem(final UserConnection user, final String identifier, final BedrockItem bedrockItem, final CompoundTag bedrockTag, final Item javaItem) {
++
++        if (identifier.equals("minecraft:crossbow")) {
++            javaItem.dataContainer().set(VersionedTypes.V26_3.structuredDataKeys().chargedProjectiles,
++                    chargedProjectiles(bedrockTag, user.get(ItemRewriter.class)::javaItemStack));
++        }
  
          if (bedrockTag != null) {
  
@@ -193,7 +227,7 @@ index e21bdddba..3ecc81af1 100644
              if (bedrockTag.get("Damage") instanceof NumberTag durability) {
                  javaItem.dataContainer().set(StructuredDataKey.DAMAGE, durability.asInt());
              }
-@@ -52,7 +203,9 @@ public final class ItemDataRewriter {
+@@ -52,7 +225,9 @@ public final class ItemDataRewriter {
                      javaEnchantments = enchantmentsData.value();
                  }
  
@@ -205,7 +239,7 @@ index e21bdddba..3ecc81af1 100644
                      if (enchantment instanceof CompoundTag compoundTag) {
                          //id and lvl must be a short. Else bedrock defaults to protection (id 0) and lvl 0 (TODO: implement the fallback)
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
-index 2ca1c4ee1..4ff94df84 100644
+index c8f728380..bb94f4e0d 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriter.java
 @@ -174,8 +174,7 @@ public class ItemRewriter extends StoredObject {
@@ -229,25 +263,95 @@ index 2ca1c4ee1..4ff94df84 100644
          if (ITEM_NBT_REWRITERS.containsKey(tag)) {
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriterTest.java
 new file mode 100644
-index 000000000..a30cc2371
+index 000000000..07942f490
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriterTest.java
-@@ -0,0 +1,93 @@
+@@ -0,0 +1,163 @@
 +package net.raphimc.viabedrock.protocol.rewriter;
 +
 +import com.viaversion.nbt.tag.CompoundTag;
 +import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.viaversion.api.minecraft.item.Item;
++import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
++import com.viaversion.viaversion.api.minecraft.data.StructuredData;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
++import com.viaversion.viaversion.api.minecraft.item.data.Fireworks;
++import com.viaversion.viaversion.api.minecraft.item.data.FireworkExplosion;
 +import com.viaversion.viaversion.api.minecraft.item.data.BlockStateProperties;
 +import com.viaversion.viaversion.api.minecraft.item.data.PotionContents;
++import com.viaversion.viaversion.api.minecraft.item.data.PotionEffect;
 +import com.viaversion.viaversion.api.minecraft.item.data.WritableBook;
 +import com.viaversion.viaversion.api.minecraft.item.data.WrittenBook;
 +import org.junit.jupiter.api.Test;
 +
++import java.util.function.Function;
++
 +import static org.junit.jupiter.api.Assertions.assertEquals;
 +import static org.junit.jupiter.api.Assertions.assertNotNull;
 +import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertSame;
++import static org.junit.jupiter.api.Assertions.fail;
 +
 +class ItemDataRewriterTest {
++
++    @Test
++    void loadedAmmunitionPassesItsCompleteStackThroughTheItemConverter() {
++        for (String ammunition : new String[]{"minecraft:arrow", "minecraft:firework_rocket"}) {
++            final CompoundTag charged = new CompoundTag();
++            charged.putString("Name", ammunition);
++            charged.putByte("Count", (byte) 1);
++            charged.putShort("Damage", (short) 15);
++            final CompoundTag nested = new CompoundTag();
++            nested.putByte("Flight", (byte) 3);
++            charged.put("tag", nested);
++            final CompoundTag tag = new CompoundTag();
++            tag.put("chargedItem", charged);
++            final CompoundTag before = tag.copy();
++            final StructuredData<?> component = ammunition.equals("minecraft:arrow")
++                    ? StructuredData.of(StructuredDataKey.POTION_CONTENTS1_21_2,
++                            new PotionContents(14, null, new PotionEffect[0]), 1)
++                    : StructuredData.of(StructuredDataKey.FIREWORKS, new Fireworks(3, new FireworkExplosion[0]), 2);
++            final StructuredDataContainer data = new StructuredDataContainer(new StructuredData<?>[]{component});
++            final Item converted = new StructuredItem(17, 1, data);
++            final Item[] projectiles = ItemDataRewriter.chargedProjectiles(tag, input -> {
++                assertSame(charged, input);
++                assertEquals(15, input.getShort("Damage"));
++                assertSame(nested, input.getCompoundTag("tag"));
++                return converted;
++            });
++            assertEquals(1, projectiles.length);
++            assertSame(converted, projectiles[0]);
++            assertSame(data, projectiles[0].dataContainer());
++            assertEquals(before, tag);
++            tag.remove("chargedItem");
++            assertEquals(0, ItemDataRewriter.chargedProjectiles(tag, input -> converted).length);
++        }
++    }
++
++    @Test
++    void invalidChargesAndMissingMappingsProduceNoProjectiles() {
++        final Function<CompoundTag, Item> unexpected = input -> {
++            fail("An invalid charge must not reach the nested item converter");
++            return null;
++        };
++        assertEquals(0, ItemDataRewriter.chargedProjectiles(null, unexpected).length);
++        final CompoundTag tag = new CompoundTag();
++        assertEquals(0, ItemDataRewriter.chargedProjectiles(tag, unexpected).length);
++        tag.putString("chargedItem", "invalid");
++        assertEquals(0, ItemDataRewriter.chargedProjectiles(tag, unexpected).length);
++        final CompoundTag charged = new CompoundTag();
++        tag.put("chargedItem", charged);
++        charged.putString("Name", "minecraft:arrow");
++        assertEquals(0, ItemDataRewriter.chargedProjectiles(tag, unexpected).length);
++        charged.putByte("Count", (byte) 1);
++        charged.putString("Name", "minecraft:crossbow");
++        charged.put("tag", tag.copy());
++        assertEquals(0, ItemDataRewriter.chargedProjectiles(tag, unexpected).length);
++        charged.putString("Name", "minecraft:arrow");
++        assertEquals(0, ItemDataRewriter.chargedProjectiles(tag, input -> null).length);
++        assertEquals(0, ItemDataRewriter.chargedProjectiles(tag, input -> StructuredItem.empty()).length);
++    }
 +
 +    @Test
 +    void convertsMappedPotionAndCustomEffectsToJavaComponents() {

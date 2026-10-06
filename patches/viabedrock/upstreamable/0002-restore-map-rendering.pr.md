@@ -55,3 +55,12 @@ The add-on reports 519 tests with no failures or errors and 109 optional fixture
 The latest complete core stack contains 85 patches.
 Its 403 tests pass with one optional fixture skip.
 All four targets build successfully.
+
+## Stored item auxiliary data
+
+The shared stored-item decoder now retains the outer `Damage` short as auxiliary data.
+This field identifies item subtypes; nested `tag.Damage` remains the separate durability field.
+BDS 1.26.51.1, build 51061372, protocol 2193 retains auxiliary value 15 in a crossbow's stored tipped arrow.
+Discarding that field converts the ammunition to an ordinary arrow.
+The inventory patch preserves this decoding rule when it shares the decoder with container items.
+Targeted tests check auxiliary values, absent defaults, nested tags, and source immutability.
