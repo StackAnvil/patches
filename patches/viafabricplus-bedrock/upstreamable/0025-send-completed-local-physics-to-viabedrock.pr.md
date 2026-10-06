@@ -458,3 +458,38 @@ The visible hotbar is empty after consumption.
 Fresh native captures remain required; the current-boot native GPU guard prevents another native launch.
 Custom modifier integration, ordinary Java clients, Boar comparisons, correction history, broader movement, and actual Windows/macOS joins remain requirements.
 These results establish the named calculations and comparisons, not complete native movement parity.
+
+## Bound native item-use duration
+
+Native 1.26.51.1 duration callback `0x14c6109b0` decrements positive ticks only and clamps at zero.
+Java 26.3 continues below zero while the client waits for completion.
+Bound the remaining counter for the local Bedrock player at its field write in `updateUsingItem`.
+Keep server acknowledgment and inventory handling unchanged.
+Remote players and Java connections retain their existing counter behavior.
+
+Matching native constructor inspection proves completion's world-side gate.
+Level getter `0x14117c450` reads byte `0x238` through vtable slot `0x9e8`.
+Base constructor `0x14114e0c0` copies it from LevelArguments byte `0x120`.
+Client factory `0x14086eef0` sets that argument to one before ClientLevel construction at `0x1412efe30`.
+Native client completion therefore skips the server inventory transaction and completion-packet sender.
+It still dispatches item event 7 through the item coordinator before clearing active use.
+The server packet acknowledgment dispatches actor event 19 through a separate coordinator.
+Gameplay handlers and downstream listeners remain untraced.
+Their inventory effects and exact completion phase require more evidence.
+
+A local-completion prototype receives two repeated-eating corrections on each strict-BDS route.
+It also exposes delayed updates interrupting the next use cycle.
+The direct and ViaProxy last-item cases each contain 100 moving frames without corrections.
+The prototype is excluded from this patch; the bounded counter is the established native behavior.
+Local completion prediction, metadata synchronization, late acknowledgment correlation, and history replay remain incomplete.
+
+Verification builds all four projects and replays both complete patch stacks.
+The suites contain 16 converter, 672 core, and 584 add-on test cases, with 133 skips and no failures or errors.
+`bun run check` passes.
+Both strict-BDS routes join and spawn with protocol 2193.
+Each records 232 completed active-use frames without negative duration and seven server completions with one equipment update each.
+Direct contains 160 repeated-eating frames and 100 last-item frames.
+ViaProxy contains 161 and 101, respectively.
+Both last-item cases finish with an empty held stack and no correction.
+Direct repeated eating receives three nonzero corrections; ViaProxy receives none in this recording.
+These observations verify the bounded counter and inventory flow, while completion and correction timing remain incomplete.

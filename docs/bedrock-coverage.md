@@ -4541,3 +4541,49 @@ That capture ends after 23 moving frames, before the full planned five-second ho
 **Incomplete:** Local completion prediction and late acknowledgment correlation for repeated same-item use remain unresolved.
 These observations locate a timing difference but do not establish the cause of every correction.
 Fresh native captures, custom modifiers, ordinary Java clients, Boar comparisons, broader movement, and actual Windows/macOS joins remain requirements.
+
+### Native completion side gate and bounded duration, October 6, 2026
+
+**Native evidence:** Matching executable inspection resolves the previously unknown completion side gate.
+All three inspected Level vtables map slot `0x9e8` to getter `0x14117c450`, which reads `Level+0x238`.
+Base constructor `0x14114e0c0` copies that byte from `LevelArguments+0x120`.
+Client factory `0x14086eef0` sets the argument to one before calling ClientLevel constructor `0x1412efe30`.
+The client therefore skips completion's inventory transaction and packet-sender branch.
+This proof uses the matching executable's constructors and named Level assertions, rather than current SDK offsets.
+
+Completion function `0x1401eb190` first dispatches item event 7, then clears active use.
+The item coordinator getter uses Level slot `0x628` and manager field `0x28`.
+The packet acknowledgment instead dispatches actor event 19 through slot `0x618` and manager field `0x8`.
+The item dispatcher invokes a gameplay handler synchronously before processing additional listeners.
+Those consumers and their inventory effects remain untraced.
+The side gate alone does not establish whether every local event preserves inventory.
+
+**Implemented:** The add-on keeps the local Bedrock player's remaining item-use duration at zero after it expires.
+Native callback `0x14c6109b0` decrements positive duration only and clamps at zero.
+Java 26.3 otherwise continues into negative duration while awaiting acknowledgment.
+The change belongs to prediction patch 0025 and preserves the existing server completion and inventory paths.
+Other players and Java connections retain their existing counters.
+
+**Verification:** All four projects build, and the complete core and add-on patch stacks replay.
+The build contains 16 converter, 672 core, and 584 add-on test cases, with 133 skips and no failures or errors.
+`bun run check` passes.
+Both strict-BDS recordings reach join and spawn with protocol 2193.
+Direct repeated eating contains 160 moving frames; its last-item case contains 100.
+ViaProxy contains 161 repeated-eating frames and 101 last-item frames.
+Each route records 232 completed active-use frames with no negative duration.
+Direct records 11 active-use frames at zero; ViaProxy records 10.
+Each route receives seven server completions, with one equipment update per completion, and finishes with an empty held stack.
+Direct repeated eating still receives three nonzero corrections; ViaProxy receives none in this recording.
+Neither last-item case receives a correction.
+The bounded counter does not establish local completion or correction parity.
+
+**Experiment:** A separate local-completion prototype reaches join and spawn through direct connections and ViaProxy with protocol 2193.
+Direct repeated eating contains 159 moving frames; ViaProxy contains 160.
+Each route receives two nonzero corrections during repeated eating.
+Both last-item cases contain 100 moving frames and no correction.
+The observer also records delayed updates clearing a newly started use cycle.
+These results do not establish synchronized native completion, so the production change retains only bounded duration.
+
+**Incomplete:** Trace item and actor event consumers, local completion order, and repeated-use inventory and metadata synchronization.
+Compare fresh native captures when the current-boot GPU guard permits them.
+Custom items, ordinary Java clients, Boar, correction history, broader movement, and actual Windows/macOS joins remain requirements.
