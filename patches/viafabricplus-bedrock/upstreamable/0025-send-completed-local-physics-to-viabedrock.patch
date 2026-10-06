@@ -1,4 +1,4 @@
-From af445d650c0d8d4493fa3ef241894266fead840c Mon Sep 17 00:00:00 2001
+From d9f432ba9d61d9b37846dd23060b867a5005c314 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:53 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -141,21 +141,55 @@ Use core's prior-posture input scaling decision in local physics. Matching
 slowdown during flight, previous SWIMMING, or WasInWaterFlagComponent.
 Sample water contact before input and carry it in the revision-5 frame so
 core emits the same move vector, including initial crawl-to-water input.
+
+Use core's native equipped Swift Sneak scalar for local input, preserving
+separate float multiply/add arithmetic and the cap at one. Native
+SneakingSystem 0x14b192c50 and callback 0x14b193600 establish the rule;
+equipment update 0x1432760e0 selects leggings and enchantment 37. Java
+uses a double attribute with different rounding, while core previously
+sent fixed 0.3 input despite translated enchanted leggings. Keep the
+water/swimming/flight bypass and ordinary Java attribute behavior intact.
+
+The native scalar producer grants the enchantment bonus only when the
+prior SNEAKING or CRAWLING flag is set. The initial physical sneak press
+therefore uses 0.3 before the posture transition. Apply the same previous
+posture in core and local physics. Keep normalized diagonal input instead
+of Java's square-speed expansion, which strict BDS rejects while sneaking.
+The native input calculator normalizes before applying the sneak scalar.
+
+Equipment update 0x1432760e0 creates SwiftSneakEnchantComponent only when
+absent and removes it for nonpositive enchantment levels. Positive-to-
+positive replacement retains the original component level. Share this
+lifecycle in SwiftSneakState and advance equipment state even while idle.
+Strict BDS produces the same retained-level behavior; do not fit physics
+to a newly read level that the pinned native component has not adopted.
+
+Native parser 0x14519b430 reads the low byte of a short enchantment ID,
+defaults incorrectly typed IDs/levels to zero, and preserves entry order.
+Lookup 0x1432602c0 takes the first matching entry. Share that level lookup
+with valid Java enchantment translation so duplicate entries cannot give
+local physics a different Swift Sneak level from the core input vector.
+
+Use core's retained SneakingInputState for the scalar phase. Native
+registration 0x14681da00 orders input before the scalar producer and applies
+sneak actions later. Consume the retained component, produce its successor
+from prior posture, then apply the new posture, including idle frames.
+This reproduces startup and release without an elapsed-tick workaround.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
  .../access/IBedrockPlayerPosture.java         |  14 ++
- .../mixin/features/movement/MixinAvatar.java  |  27 ++++
- .../mixin/features/movement/MixinEntity.java  |  25 +---
+ .../mixin/features/movement/MixinAvatar.java  |  27 +++
+ .../mixin/features/movement/MixinEntity.java  |  25 +--
  .../features/movement/MixinLivingEntity.java  |   7 +
- .../features/movement/MixinLocalPlayer.java   | 130 +++++++++++++++++-
- .../mixin/features/movement/MixinPlayer.java  |  55 +++++---
- .../input/PlayerPredictionPayload.java        |  24 ++++
- .../bedrock/movement/BedrockFluidPhysics.java |  86 ++++++++++++
- .../movement/BedrockPlayerPosture.java        |  63 +++++++++
+ .../features/movement/MixinLocalPlayer.java   | 162 +++++++++++++++++-
+ .../mixin/features/movement/MixinPlayer.java  |  55 ++++--
+ .../input/PlayerPredictionPayload.java        |  24 +++
+ .../bedrock/movement/BedrockFluidPhysics.java |  86 ++++++++++
+ .../movement/BedrockPlayerPosture.java        |  63 +++++++
  .../viafabricplus-bedrock.mixins.json         |   1 +
- .../movement/BedrockFluidPhysicsTest.java     | 121 ++++++++++++++++
- .../movement/BedrockPlayerPostureTest.java    |  45 ++++++
- 13 files changed, 559 insertions(+), 41 deletions(-)
+ .../movement/BedrockFluidPhysicsTest.java     | 121 +++++++++++++
+ .../movement/BedrockPlayerPostureTest.java    |  45 +++++
+ 13 files changed, 591 insertions(+), 41 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java
@@ -327,15 +361,17 @@ index 1c9125e..a06c283 100644
      private boolean changeFluidGravityCondition(final LivingEntity instance) {
          return BedrockInputPermissions.isBedrockConnection() ? instance.isSwimming() : instance.isSprinting();
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-index e5a8167..aa53e44 100644
+index e5a8167..3d17d34 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-@@ -21,22 +21,148 @@
+@@ -21,22 +21,180 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
 +import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 +import com.llamalad7.mixinextras.injector.ModifyReturnValue;
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 +import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockPlayerPosture;
 +import com.mojang.authlib.GameProfile;
  import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
@@ -348,9 +384,15 @@ index e5a8167..aa53e44 100644
 +import net.minecraft.client.player.ClientInput;
  import net.minecraft.client.player.LocalPlayer;
 +import net.minecraft.core.BlockPos;
++import net.minecraft.core.registries.Registries;
++import net.minecraft.world.entity.EquipmentSlot;
++import net.minecraft.world.item.enchantment.EnchantmentHelper;
++import net.minecraft.world.item.enchantment.Enchantments;
 +import net.minecraft.world.phys.Vec3;
++import net.minecraft.world.phys.Vec2;
 +import net.raphimc.viabedrock.api.model.PlayerPrediction;
 +import net.raphimc.viabedrock.api.model.PlayerPosture;
++import net.raphimc.viabedrock.api.model.SneakingInputState;
 +import net.raphimc.viabedrock.protocol.model.Position3f;
  import org.spongepowered.asm.mixin.Mixin;
  import org.spongepowered.asm.mixin.Shadow;
@@ -379,6 +421,12 @@ index e5a8167..aa53e44 100644
 +    @Unique
 +    private PlayerPosture viaFabricPlusBedrock$posture = PlayerPosture.STANDING;
 +
++    @Unique
++    private final SneakingInputState viaFabricPlusBedrock$sneakingInput = new SneakingInputState();
++
++    @Unique
++    private float viaFabricPlusBedrock$sneakingScale = 0.3F;
++
 +    @Override
 +    public PlayerPosture viaFabricPlusBedrock$posture() {
 +        return this.viaFabricPlusBedrock$posture;
@@ -400,6 +448,11 @@ index e5a8167..aa53e44 100644
 +        this.viaFabricPlusBedrock$wasSwimming = this.isSwimming();
 +        this.viaFabricPlusBedrock$inputInWater = this.isInWater();
 +        this.viaFabricPlusBedrock$groundJump = false;
++        if (BedrockInputPermissions.isBedrockConnection()) {
++            final var swiftSneak = this.level().registryAccess().lookupOrThrow(Registries.ENCHANTMENT).getOrThrow(Enchantments.SWIFT_SNEAK);
++            this.viaFabricPlusBedrock$sneakingScale = this.viaFabricPlusBedrock$sneakingInput.advance(this.viaFabricPlusBedrock$posture,
++                    EnchantmentHelper.getItemEnchantmentLevel(swiftSneak, this.getItemBySlot(EquipmentSlot.LEGS)));
++        }
 +    }
 +
 +    @Override
@@ -415,6 +468,19 @@ index e5a8167..aa53e44 100644
 +                ? this.viaFabricPlusBedrock$posture.slowsMovementInput(this.input.keyPresses.shift(), this.getAbilities().flying,
 +                        this.viaFabricPlusBedrock$inputInWater)
 +                : movingSlowly;
++    }
++
++    @ModifyExpressionValue(method = "modifyInput", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;getAttributeValue(Lnet/minecraft/core/Holder;)D"))
++    private double useNativeSneakingScale(final double javaScale) {
++        if (!BedrockInputPermissions.isBedrockConnection()) {
++            return javaScale;
++        }
++        return this.viaFabricPlusBedrock$sneakingScale;
++    }
++
++    @WrapOperation(method = "modifyInput", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;modifyInputSpeedForSquareMovement(Lnet/minecraft/world/phys/Vec2;)Lnet/minecraft/world/phys/Vec2;"))
++    private Vec2 retainNativeNormalizedInput(final Vec2 input, final Operation<Vec2> original) {
++        return BedrockInputPermissions.isBedrockConnection() ? input : original.call(input);
 +    }
 +
 +    @ModifyExpressionValue(method = "shouldStopSwimSprinting", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/ClientInput;hasForwardImpulse()Z"))

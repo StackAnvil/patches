@@ -1,4 +1,4 @@
-From 42a624bf4e0e246e32d66481064c770e5acde0d4 Mon Sep 17 00:00:00 2001
+From 10f18e343bb274cb547097e79913eba8b4bed080 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:28 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -66,33 +66,82 @@ The movement request writer 0x148b58fe0 copies the processed coordinates.
 Carry pre-input water contact in revision 5 so core packet construction
 and client physics share the rule, including the crawl-to-water frame.
 Reject incompatible revisions and exercise all 128 flag combinations.
+
+Native SneakingSystem 0x14b192c50 and callback 0x14b193600 compute
+min(1F, 0.3F + equipped Swift Sneak level * 0.15F) with separate float
+operations. Equipment update 0x1432760e0 reads enchantment 37 from leg
+slot 2, and lookup 0x1432602c0 returns the first matching enchantment.
+Use this scalar for auth input instead of fixed 0.3, including ordinary
+Java clients. Read only typed Bedrock enchantment entries and preserve
+water, previous-swimming and flight bypasses. The add-on shares the
+same scalar for local input physics. Item-use scaling remains separate.
+
+The native scalar producer grants the enchantment bonus only when the
+prior SNEAKING or CRAWLING flag is set. The initial physical sneak press
+therefore uses 0.3 before the posture transition. Apply the same previous
+posture in core and local physics. Keep normalized diagonal input instead
+of Java's square-speed expansion, which strict BDS rejects while sneaking.
+The native input calculator normalizes before applying the sneak scalar.
+
+Equipment update 0x1432760e0 creates SwiftSneakEnchantComponent only when
+absent and removes it for nonpositive enchantment levels. Positive-to-
+positive replacement retains the original component level. Share this
+lifecycle in SwiftSneakState and advance equipment state even while idle.
+Strict BDS produces the same retained-level behavior; do not fit physics
+to a newly read level that the pinned native component has not adopted.
+
+Native parser 0x14519b430 reads the low byte of a short enchantment ID,
+defaults incorrectly typed IDs/levels to zero, and preserves entry order.
+Lookup 0x1432602c0 takes the first matching entry. Share that level lookup
+with valid Java enchantment translation so duplicate entries cannot give
+local physics a different Swift Sneak level from the core input vector.
+
+Retain SneakingComponent as state rather than deriving this frame's scalar
+from the immediately preceding pose. Registration 0x14681da00 places
+ClientInputUpdateSystem before SneakingSystem and SneakTriggerActionSystem
+later in the pipeline. Consume the retained scale, produce its successor
+from the previous flags, then apply the completed posture. This preserves
+the initial input phase and component lifecycle without tick counters.
 ---
- .../viabedrock/api/model/PlayerPosture.java   |  58 ++++++++
- .../api/model/PlayerPrediction.java           |  79 +++++++++++
+ .../viabedrock/api/model/PlayerPosture.java   |  63 ++++++++
+ .../api/model/PlayerPrediction.java           |  79 +++++++++
+ .../api/model/SneakingInputState.java         |  21 +++
+ .../viabedrock/api/model/SwiftSneakState.java |  25 +++
  .../api/model/entity/ClientPlayerEntity.java  |  21 ++-
+ .../raphimc/viabedrock/api/util/MathUtil.java |   6 +-
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
- .../protocol/packet/ClientPlayerPackets.java  |  42 +++---
+ .../protocol/model/BedrockItem.java           |  19 +++
+ .../protocol/packet/ClientPlayerPackets.java  |  53 ++++--
  .../protocol/packet/MultiStatePackets.java    |  13 ++
+ .../protocol/rewriter/ItemDataRewriter.java   |   7 +-
  .../protocol/storage/PlayerInputStorage.java  |   3 +-
- .../storage/PlayerPredictionStorage.java      |  48 +++++++
- .../api/model/PlayerPostureTest.java          | 125 ++++++++++++++++++
- .../api/model/PlayerPredictionTest.java       | 115 ++++++++++++++++
- .../packet/ClientPlayerPacketsTest.java       |  32 ++++-
- .../packet/PlayerCorrectionPacketTest.java    | 105 +++++++++++++++
- 12 files changed, 612 insertions(+), 30 deletions(-)
+ .../storage/PlayerPredictionStorage.java      |  54 +++++++
+ .../api/model/PlayerPostureTest.java          | 152 ++++++++++++++++++
+ .../api/model/PlayerPredictionTest.java       | 115 +++++++++++++
+ .../api/model/SneakingInputStateTest.java     |  32 ++++
+ .../api/model/SwiftSneakStateTest.java        |  32 ++++
+ .../model/BedrockItemEnchantmentTest.java     |  73 +++++++++
+ .../packet/ClientPlayerPacketsTest.java       |  32 +++-
+ .../packet/PlayerCorrectionPacketTest.java    | 105 ++++++++++++
+ 20 files changed, 868 insertions(+), 38 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerPosture.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SneakingInputState.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SwiftSneakState.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/PlayerPostureTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/SneakingInputStateTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/SwiftSneakStateTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/BedrockItemEnchantmentTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/PlayerPosture.java b/src/main/java/net/raphimc/viabedrock/api/model/PlayerPosture.java
 new file mode 100644
-index 000000000..1a07693f6
+index 000000000..c66d743c2
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/PlayerPosture.java
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,63 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -105,6 +154,11 @@ index 000000000..1a07693f6
 +
 +    public static final PlayerPosture STANDING = new PlayerPosture(false, false, false);
 +    private static final float SWIMMING_MOVEMENT_THRESHOLD = 0.49999997F;
++
++    /** SneakingComponent uses separate float multiply/add operations and caps the equipped enchantment bonus at one. */
++    public float sneakingInputScale(final int swiftSneakLevel) {
++        return this.sneaking || this.crawling ? Math.min(1F, 0.3F + Math.max(0, swiftSneakLevel) * 0.15F) : 0.3F;
++    }
 +
 +    /** Input scaling precedes the posture trigger and bypasses slowdown during flight, swimming or water contact. */
 +    public boolean slowsMovementInput(final boolean sneakHeld, final boolean flying, final boolean inWater) {
@@ -236,6 +290,64 @@ index 000000000..398f73d9a
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/SneakingInputState.java b/src/main/java/net/raphimc/viabedrock/api/model/SneakingInputState.java
+new file mode 100644
+index 000000000..34c380566
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/SneakingInputState.java
+@@ -0,0 +1,21 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++/** Retains the native SneakingComponent between input calculation and posture application. */
++public final class SneakingInputState {
++
++    private final SwiftSneakState swiftSneak = new SwiftSneakState();
++    private float scale = 0.3F;
++
++    public float advance(final PlayerPosture posture, final int equippedLevel) {
++        this.swiftSneak.update(equippedLevel);
++        final float inputScale = this.scale;
++        this.scale = posture.sneakingInputScale(this.swiftSneak.level());
++        return inputScale;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/SwiftSneakState.java b/src/main/java/net/raphimc/viabedrock/api/model/SwiftSneakState.java
+new file mode 100644
+index 000000000..72cfd857b
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/SwiftSneakState.java
+@@ -0,0 +1,25 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++/** Native SwiftSneakEnchantComponent retains its initial level until unequipped or replaced by an unenchanted item. */
++public final class SwiftSneakState {
++
++    private int level;
++
++    public void update(final int equippedLevel) {
++        if (equippedLevel <= 0) {
++            this.level = 0;
++        } else if (this.level == 0) {
++            this.level = equippedLevel;
++        }
++    }
++
++    public int level() {
++        return this.level;
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
 index f69b430bf..ffe76000b 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
@@ -283,6 +395,30 @@ index f69b430bf..ffe76000b 100644
          }
          if (shouldSneak != this.bedrockSneaking) {
              this.addAuthInputData(shouldSneak ? PlayerAuthInputData.StartSneaking : PlayerAuthInputData.StopSneaking);
+diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MathUtil.java b/src/main/java/net/raphimc/viabedrock/api/util/MathUtil.java
+index a00fed785..e2cdf603f 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/util/MathUtil.java
++++ b/src/main/java/net/raphimc/viabedrock/api/util/MathUtil.java
+@@ -95,7 +95,7 @@ public final class MathUtil {
+         }
+     }
+ 
+-    public static Position2f calculateMovementDirections(final Set<PlayerAuthInputData> authInputData, final boolean sneaking) {
++    public static Position2f calculateMovementDirections(final Set<PlayerAuthInputData> authInputData, final float inputScale) {
+         final float[] directions = new float[2];
+         directions[0] = authInputData.contains(PlayerAuthInputData.Left) ? -1F : authInputData.contains(PlayerAuthInputData.Right) ? 1F : 0F;
+         directions[1] = authInputData.contains(PlayerAuthInputData.Up) ? 1F : authInputData.contains(PlayerAuthInputData.Down) ? -1F : 0F;
+@@ -104,9 +104,7 @@ public final class MathUtil {
+             if (both) {
+                 directions[i] *= (float) (1D / Math.sqrt(2));
+             }
+-            if (sneaking) {
+-                directions[i] *= 0.3F;
+-            }
++            directions[i] *= inputScale;
+         }
+         return new Position2f(directions[0], directions[1]);
+     }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 index b5ff4df4e..37c44820f 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
@@ -295,19 +431,61 @@ index b5ff4df4e..37c44820f 100644
          user.put(new HudVisibilityStorage(user));
          user.put(new CameraEffectsStorage(user));
          user.put(new PlayerListStorage());
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/BedrockItem.java b/src/main/java/net/raphimc/viabedrock/protocol/model/BedrockItem.java
+index 77d33f594..54101ffdb 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/model/BedrockItem.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/BedrockItem.java
+@@ -18,8 +18,12 @@
+ package net.raphimc.viabedrock.protocol.model;
+ 
+ import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.nbt.tag.ShortTag;
++import com.viaversion.nbt.tag.Tag;
+ import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
+ import com.viaversion.viaversion.api.minecraft.item.Item;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Enchant_Type;
+ 
+ import java.util.Arrays;
+ import java.util.Objects;
+@@ -120,6 +124,21 @@ public class BedrockItem implements Item {
+         this.tag = tag;
+     }
+ 
++    public int enchantmentLevel(final Enchant_Type enchantment) {
++        if (this.isEmpty() || this.tag == null || !(this.tag.get("ench") instanceof ListTag<?> enchantments)) {
++            return 0;
++        }
++        for (Tag entry : enchantments) {
++            if (entry instanceof CompoundTag compound) {
++                final int enchantmentId = compound.get("id") instanceof ShortTag value ? value.asInt() & 0xFF : 0;
++                if (enchantmentId == enchantment.getValue()) {
++                    return compound.get("lvl") instanceof ShortTag level ? level.asInt() : 0;
++                }
++            }
++        }
++        return 0;
++    }
++
+     @Override
+     public StructuredDataContainer dataContainer() {
+         throw new UnsupportedOperationException();
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index feb36e9b0..f04178429 100644
+index feb36e9b0..83fde77ab 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-@@ -38,6 +38,7 @@ import net.raphimc.viabedrock.api.util.MathUtil;
+@@ -38,6 +38,10 @@ import net.raphimc.viabedrock.api.util.MathUtil;
  import net.raphimc.viabedrock.api.util.PacketFactory;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
  import net.raphimc.viabedrock.api.model.PlayerInput;
 +import net.raphimc.viabedrock.api.model.PlayerPrediction;
++import net.raphimc.viabedrock.api.model.PlayerPosture;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Enchant_Type;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.SharedTypes_Legacy_ArmorSlot;
  import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
  import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
  import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
-@@ -191,32 +192,27 @@ public final class ClientPlayerPackets {
+@@ -191,32 +195,27 @@ public final class ClientPlayerPackets {
              }
          });
          protocol.registerClientbound(ClientboundBedrockPackets.CORRECT_PLAYER_MOVE_PREDICTION, ClientboundPackets26_3.PLAYER_POSITION, wrapper -> {
@@ -344,7 +522,7 @@ index feb36e9b0..f04178429 100644
                  }
                  case Vehicle -> {
                      final Entity vehicle = predictedVehicle(wrapper.user().get(EntityTracker.class), clientPlayer);
-@@ -554,12 +550,16 @@ public final class ClientPlayerPackets {
+@@ -554,12 +553,16 @@ public final class ClientPlayerPackets {
          protocol.registerServerbound(ServerboundPackets26_3.CLIENT_TICK_END, ServerboundBedrockPackets.PLAYER_AUTH_INPUT, wrapper -> {
              final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
              final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
@@ -362,7 +540,7 @@ index feb36e9b0..f04178429 100644
                  clientPlayer.addAuthInputData(PlayerAuthInputData.StartJumping);
              }
  
-@@ -583,10 +583,10 @@ public final class ClientPlayerPackets {
+@@ -583,10 +586,10 @@ public final class ClientPlayerPackets {
              final PlayerInputStorage playerInput = wrapper.user().get(PlayerInputStorage.class);
              clientPlayer.authInputData().addAll(playerInput.takeButtonEvents());
              clientPlayer.addAuthInputData(PlayerAuthInputData.BlockBreakingDelayEnabled);
@@ -375,7 +553,7 @@ index feb36e9b0..f04178429 100644
                  clientPlayer.addAuthInputData(PlayerAuthInputData.HorizontalCollision);
              }
              if (clientPlayer.inputFlags().contains(InputFlag.FORWARD)) {
-@@ -623,9 +623,14 @@ public final class ClientPlayerPackets {
+@@ -623,9 +626,20 @@ public final class ClientPlayerPackets {
                      clientPlayer.setShieldBlockingHand(null);
                  }
              }
@@ -386,13 +564,19 @@ index feb36e9b0..f04178429 100644
 +                            clientPlayer.isSneaking() || clientPlayer.isShieldBlocking() || clientPlayer.isBedrockSneaking(),
 +                            clientPlayer.abilities().getBooleanValue(AbilitiesIndex.Flying), prediction.inWater())
 +                    : clientPlayer.isSneaking() || clientPlayer.isShieldBlocking();
++            final PlayerPosture inputPosture = completedPrediction ? predictionStorage.posture()
++                    : new PlayerPosture(false, clientPlayer.entityFlags().contains(ActorFlags.CRAWLING), clientPlayer.isBedrockSneaking());
++            final float sneakingScale = predictionStorage.sneakingInput().advance(inputPosture,
++                    wrapper.user().get(InventoryTracker.class).getArmorContainer()
++                            .getItem(SharedTypes_Legacy_ArmorSlot.Legs.getValue()).enchantmentLevel(Enchant_Type.SwiftSneak));
++            final float inputScale = slowMovement ? sneakingScale : 1F;
 +            clientPlayer.updateBedrockSneakingInput(completedPrediction ? prediction.posture().sneaking() : clientPlayer.isSneaking());
  
 -            final Entity vehicle = predictedVehicle(entityTracker, clientPlayer);
              final Position3f inputPosition;
              final Position3f positionDelta;
              if (vehicle != null) {
-@@ -638,8 +643,13 @@ public final class ClientPlayerPackets {
+@@ -638,8 +652,13 @@ public final class ClientPlayerPackets {
                  inputPosition = clientPlayer.position();
                  positionDelta = inputPosition.subtract(prevPosition);
              }
@@ -407,15 +591,24 @@ index feb36e9b0..f04178429 100644
                  velocity = positionDelta;
              } else {
                  float dx = positionDelta.x() * 0.98F;
-@@ -662,7 +672,7 @@ public final class ClientPlayerPackets {
+@@ -662,7 +681,7 @@ public final class ClientPlayerPackets {
              wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().x()); // pitch
              wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().y()); // yaw
              wrapper.write(BedrockTypes.POSITION_3F, inputPosition); // predicted player or vehicle position
 -            wrapper.write(BedrockTypes.POSITION_2F, MathUtil.calculateMovementDirections(clientPlayer.authInputData(), clientPlayer.isBedrockSneaking())); // move vector
-+            wrapper.write(BedrockTypes.POSITION_2F, MathUtil.calculateMovementDirections(clientPlayer.authInputData(), slowMovement)); // move vector
++            wrapper.write(BedrockTypes.POSITION_2F, MathUtil.calculateMovementDirections(clientPlayer.authInputData(), inputScale)); // move vector
              wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().z()); // head yaw
              if (Via.getManager().getProviders().get(EmoteProvider.class).isEmoting(wrapper.user())) {
                  clientPlayer.addAuthInputData(PlayerAuthInputData.Emoting);
+@@ -701,7 +720,7 @@ public final class ClientPlayerPackets {
+                 wrapper.write(BedrockTypes.VAR_LONG, vehicle.uniqueId());
+             }
+             wrapper.write(BedrockTypes.POSITION_2F, vehicle != null
+-                    ? MathUtil.calculateMovementDirections(clientPlayer.authInputData(), false)
++                    ? MathUtil.calculateMovementDirections(clientPlayer.authInputData(), 1F)
+                     : new Position2f(0F, 0F)); // analog move vector
+             wrapper.write(BedrockTypes.POSITION_3F, MathUtil.calculateCameraOrientation(clientPlayer.rotation().y(), clientPlayer.rotation().x())); // camera orientation
+             wrapper.write(BedrockTypes.POSITION_2F, playerInput.rawInput().movement()); // raw move vector
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 index 1f202046c..3006920d9 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
@@ -454,6 +647,29 @@ index 1f202046c..3006920d9 100644
          if (channel.equals(PlayerInput.CHANNEL)) {
              if (wrapper.user().getProtocolInfo().getClientState() == State.PLAY
                      && wrapper.user().get(ChannelStorage.class).hasChannel(PlayerInputPermissions.CHANNEL)) {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
+index 7eeeba7a8..fcbf6246b 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
+@@ -229,14 +229,15 @@ public final class ItemDataRewriter {
+                     if (enchantment instanceof CompoundTag compoundTag) {
+                         //id and lvl must be a short. Else bedrock defaults to protection (id 0) and lvl 0 (TODO: implement the fallback)
+                         if (compoundTag.get("id") instanceof ShortTag idTag && compoundTag.get("lvl") instanceof ShortTag levelTag) {
+-                            final Enchant_Type bedrockId = Enchant_Type.getByValue(idTag.asInt());
+-                            final int level = levelTag.asInt();
++                            final Enchant_Type bedrockId = Enchant_Type.getByValue(idTag.asInt() & 0xFF);
+ 
+                             if (bedrockId == null) {
+-                                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown enchantment with id " + idTag.asInt() + " and level " + level);
++                                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown enchantment with id " + idTag.asInt() + " and level " + levelTag.asInt());
+                                 continue;
+                             }
+ 
++                            final int level = bedrockItem.enchantmentLevel(bedrockId);
++
+                             final String javaEnchantmentId = BedrockProtocol.MAPPINGS.getBedrockToJavaEnchantments().get(bedrockId);
+ 
+                             //Update the java item with the enchantment
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
 index 47c6a05d1..b7ebcb4a8 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerInputStorage.java
@@ -477,10 +693,10 @@ index 47c6a05d1..b7ebcb4a8 100644
          packet.write(Types.STRING, PlayerInputPermissions.CHANNEL);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
 new file mode 100644
-index 000000000..ec4ba1dfc
+index 000000000..97c2043e4
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,54 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -491,6 +707,7 @@ index 000000000..ec4ba1dfc
 +import com.viaversion.viaversion.api.connection.StorableObject;
 +import net.raphimc.viabedrock.api.model.PlayerPrediction;
 +import net.raphimc.viabedrock.api.model.PlayerPosture;
++import net.raphimc.viabedrock.api.model.SneakingInputState;
 +
 +import java.util.EnumSet;
 +import java.util.Set;
@@ -501,6 +718,11 @@ index 000000000..ec4ba1dfc
 +
 +    private PlayerPrediction pending;
 +    private PlayerPosture posture = PlayerPosture.STANDING;
++    private final SneakingInputState sneakingInput = new SneakingInputState();
++
++    public SneakingInputState sneakingInput() {
++        return this.sneakingInput;
++    }
 +
 +    public void record(final PlayerPrediction prediction) {
 +        this.pending = prediction;
@@ -531,10 +753,10 @@ index 000000000..ec4ba1dfc
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/PlayerPostureTest.java b/src/test/java/net/raphimc/viabedrock/api/model/PlayerPostureTest.java
 new file mode 100644
-index 000000000..f5cf1e176
+index 000000000..8d870a5fb
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/PlayerPostureTest.java
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,152 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -543,6 +765,10 @@ index 000000000..f5cf1e176
 +package net.raphimc.viabedrock.api.model;
 +
 +import org.junit.jupiter.api.Test;
++import net.raphimc.viabedrock.api.util.MathUtil;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputData;
++
++import java.util.EnumSet;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
@@ -552,6 +778,29 @@ index 000000000..f5cf1e176
 +    private static final PlayerPosture.Space CROUCH = new PlayerPosture.Space(false, true, true);
 +    private static final PlayerPosture.Space CRAWL = new PlayerPosture.Space(false, false, true);
 +    private static final PlayerPosture.Space BLOCKED = new PlayerPosture.Space(false, false, false);
++
++    @Test
++    void scalesDiagonalSneakInputWithNativeFloatArithmeticAndEnchantmentCap() {
++        final float[] expected = {0.3F, 0.45000002F, 0.6F, 0.75F, 0.90000004F, 1F};
++        final var sneaking = new PlayerPosture(false, false, true);
++        final var forward = EnumSet.of(PlayerAuthInputData.Up);
++        final var diagonal = EnumSet.of(PlayerAuthInputData.Up, PlayerAuthInputData.Left);
++        for (int level = 0; level < expected.length; level++) {
++            final float scale = sneaking.sneakingInputScale(level);
++            assertEquals(expected[level], scale);
++            final var cardinal = MathUtil.calculateMovementDirections(forward, scale);
++            assertEquals(0F, cardinal.x());
++            assertEquals(scale, cardinal.y());
++            final var scaledDiagonal = MathUtil.calculateMovementDirections(diagonal, scale);
++            assertEquals(-(float) (1D / Math.sqrt(2)) * scale, scaledDiagonal.x());
++            assertEquals(-scaledDiagonal.x(), scaledDiagonal.y());
++        }
++        assertEquals(0.3F, sneaking.sneakingInputScale(-1));
++        assertEquals(1F, sneaking.sneakingInputScale(Short.MAX_VALUE));
++        assertEquals(0.3F, PlayerPosture.STANDING.sneakingInputScale(3));
++        assertEquals(0.75F, new PlayerPosture(false, true, false).sneakingInputScale(3));
++        assertEquals(1F, MathUtil.calculateMovementDirections(forward, 1F).y());
++    }
 +
 +    @Test
 +    void swapsSwimmingAndCrawlingBeforeServerMetadataArrives() {
@@ -778,6 +1027,161 @@ index 000000000..875125080
 +
 +    private static PlayerPrediction frame(final Position3f position, final boolean swimming) {
 +        return new PlayerPrediction(position, new Position3f(0F, -0.022315647F, 0F), new PlayerPosture(swimming, false, false), false, false, false, false);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/SneakingInputStateTest.java b/src/test/java/net/raphimc/viabedrock/api/model/SneakingInputStateTest.java
+new file mode 100644
+index 000000000..1af819719
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/SneakingInputStateTest.java
+@@ -0,0 +1,32 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class SneakingInputStateTest {
++
++    @Test
++    void consumesTheScalarBeforeProducingItFromThePreviousPosture() {
++        final var state = new SneakingInputState();
++        final var sneaking = new PlayerPosture(false, false, true);
++        assertEquals(0.3F, state.advance(PlayerPosture.STANDING, 3));
++        assertEquals(0.3F, state.advance(sneaking, 3));
++        assertEquals(0.75F, state.advance(sneaking, 3));
++        assertEquals(0.75F, state.advance(PlayerPosture.STANDING, 3));
++        assertEquals(0.3F, state.advance(PlayerPosture.STANDING, 3));
++        assertEquals(0.3F, state.advance(sneaking, 1));
++        assertEquals(0.75F, state.advance(sneaking, 1));
++        assertEquals(0.75F, state.advance(sneaking, 0));
++        assertEquals(0.3F, state.advance(sneaking, 2));
++        assertEquals(0.6F, state.advance(sneaking, 2));
++        assertEquals(0.6F, state.advance(new PlayerPosture(false, true, false), 2));
++        assertEquals(0.6F, state.advance(PlayerPosture.STANDING, 2));
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/SwiftSneakStateTest.java b/src/test/java/net/raphimc/viabedrock/api/model/SwiftSneakStateTest.java
+new file mode 100644
+index 000000000..2ddd2d7fb
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/SwiftSneakStateTest.java
+@@ -0,0 +1,32 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class SwiftSneakStateTest {
++
++    @Test
++    void retainsTheNativeComponentLevelUntilItsRemoval() {
++        final var state = new SwiftSneakState();
++        assertEquals(0, state.level());
++        state.update(1);
++        state.update(3);
++        assertEquals(1, state.level());
++        state.update(0);
++        assertEquals(0, state.level());
++        state.update(3);
++        state.update(1);
++        assertEquals(3, state.level());
++        state.update(-1);
++        assertEquals(0, state.level());
++        state.update(2);
++        assertEquals(2, state.level());
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/BedrockItemEnchantmentTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/BedrockItemEnchantmentTest.java
+new file mode 100644
+index 000000000..b583a26ec
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/BedrockItemEnchantmentTest.java
+@@ -0,0 +1,73 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.IntTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.nbt.tag.ShortTag;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Enchant_Type;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockItemEnchantmentTest {
++
++    @Test
++    void readsOnlyTheFirstMatchingTypedEnchantmentWithoutChangingItemData() {
++        final var tag = new CompoundTag();
++        final var enchantments = new ListTag<>(CompoundTag.class);
++        enchantments.add(enchantment(Enchant_Type.Protection, 4));
++        enchantments.add(enchantment(Enchant_Type.SwiftSneak, 2));
++        enchantments.add(enchantment(Enchant_Type.SwiftSneak, 3));
++        tag.put("ench", enchantments);
++        final var item = new BedrockItem(1, (short) 0, (byte) 1, tag);
++        assertEquals(2, item.enchantmentLevel(Enchant_Type.SwiftSneak));
++        assertEquals(4, item.enchantmentLevel(Enchant_Type.Protection));
++        assertEquals(0, item.enchantmentLevel(Enchant_Type.DepthStrider));
++        assertEquals(3, enchantments.size());
++        assertSame(tag, item.tag());
++        item.setAmount(0);
++        assertEquals(0, item.enchantmentLevel(Enchant_Type.SwiftSneak));
++    }
++
++    @Test
++    void missingAndIncorrectTagTypesDoNotInventEquippedEnchantments() {
++        final var tag = new CompoundTag();
++        final var item = new BedrockItem(1, (short) 0, (byte) 1, tag);
++        assertEquals(0, item.enchantmentLevel(Enchant_Type.SwiftSneak));
++        tag.put("ench", new IntTag(37));
++        assertEquals(0, item.enchantmentLevel(Enchant_Type.SwiftSneak));
++        final var enchantments = new ListTag<>(CompoundTag.class);
++        final var badId = enchantment(Enchant_Type.SwiftSneak, 3);
++        badId.put("id", new IntTag(Enchant_Type.SwiftSneak.getValue()));
++        final var badLevel = enchantment(Enchant_Type.SwiftSneak, 3);
++        badLevel.put("lvl", new IntTag(3));
++        enchantments.add(badId);
++        enchantments.add(badLevel);
++        tag.put("ench", enchantments);
++        assertEquals(0, item.enchantmentLevel(Enchant_Type.SwiftSneak));
++        enchantments.add(enchantment(Enchant_Type.SwiftSneak, 1));
++        assertEquals(0, item.enchantmentLevel(Enchant_Type.SwiftSneak));
++        assertEquals(3, item.enchantmentLevel(Enchant_Type.Protection));
++        enchantments.getValue().remove(badLevel);
++        assertEquals(1, item.enchantmentLevel(Enchant_Type.SwiftSneak));
++        final var wrappedId = enchantment(Enchant_Type.SwiftSneak, 2);
++        wrappedId.put("id", new ShortTag((short) (256 + Enchant_Type.SwiftSneak.getValue())));
++        enchantments.getValue().clear();
++        enchantments.add(wrappedId);
++        assertEquals(2, item.enchantmentLevel(Enchant_Type.SwiftSneak));
++        assertEquals(0, BedrockItem.empty().enchantmentLevel(Enchant_Type.SwiftSneak));
++    }
++
++    private static CompoundTag enchantment(final Enchant_Type type, final int level) {
++        final var tag = new CompoundTag();
++        tag.put("id", new ShortTag((short) type.getValue()));
++        tag.put("lvl", new ShortTag((short) level));
++        return tag;
 +    }
 +
 +}

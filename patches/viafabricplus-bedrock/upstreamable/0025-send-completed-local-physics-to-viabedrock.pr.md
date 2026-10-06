@@ -365,3 +365,44 @@ Each route matches 64 saved native open-water frames without event mismatches.
 Both 48-frame held swimming-jump cases match the preceding accepted reference exactly.
 Fixture teleports produce one zero-velocity correction directly and two through ViaProxy, outside the movement cases.
 Fresh native ceiling comparisons and broader movement verification remain requirements.
+
+## Swift Sneak and normalized input
+
+Matching 1.26.51.1 executable inspection identifies `SneakingSystem` at `0x14b192c50` and its callback at `0x14b193600`.
+They compute `min(1F, 0.3F + level * 0.15F)` with separate float operations.
+The bonus requires the prior sneaking or crawling flag.
+Registration `0x14681da00` places input before the scalar producer and applies sneak actions later.
+Core retains that scalar in `SneakingInputState`, consumes it, then produces its successor before applying the new posture.
+This preserves the startup phase without a tick counter.
+The add-on uses the same state for local physics.
+
+Equipment update `0x1432760e0` reads enchantment 37 from leg slot 2.
+It creates the enchantment component only when absent and removes it for nonpositive levels.
+Positive replacements retain the original level until removal.
+Core and the add-on share that lifecycle, including idle updates.
+Parser `0x14519b430` reads the low byte of a short ID and defaults incorrectly typed fields to zero.
+Lookup `0x1432602c0` returns the first matching entry.
+Valid Java enchantment translation uses the same lookup, so duplicate entries cannot give the add-on a different Swift Sneak level.
+
+The native input calculator normalizes directions before applying the scalar.
+The add-on now retains that normalization instead of Java's square-speed expansion.
+This also corrects ordinary diagonal walking and unenchanted diagonal sneaking.
+Connections to Java servers retain their existing local input behavior.
+
+Four additional test methods cover scalar boundaries, equipment lifecycle, typed enchantment lookup, and duplicate entries.
+Another test covers the retained scalar across startup, release, removal, re-equipping, and crawling.
+All four project builds pass, with 16 converter, 656 core, and 584 add-on test cases.
+There are 133 environment-dependent skips and no failures or errors.
+Both complete patch stacks replay, and `bun run check` passes.
+
+Live strict-BDS direct and ViaProxy runs each complete ten controlled cases without movement corrections.
+They cover base sneaking, level 1, retained positive replacements, removal, fresh levels 2 and 3, and diagonal movement.
+The direct cases contain 399 forward frames; ViaProxy contains 402.
+All 397 comparable frames match exactly in position, motion, movement vectors, and input flags.
+Fixture teleports produce zero-velocity corrections outside these cases.
+Both recordings complete join and spawn with protocol 2193.
+
+**Incomplete:** Fresh native Swift Sneak captures remain required because the current-boot native GPU guard prevents another native launch.
+Boar comparisons, ordinary Java clients without the add-on, item-use slowdown, and correction history need separate verification.
+Opposing physical directions still need native cancellation in core's direction helper.
+These cases do not establish complete movement parity or Windows/macOS game-join compatibility.
