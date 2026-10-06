@@ -104,7 +104,7 @@ Their inventory behavior must be tested with native item stack requests and reje
 The October 6 audit found these limits:
 
 - `ClientPlayerPackets.predictedVehicle` selects Java boat and abstract horse types. Other controlled mounts need an authority audit.
-- `InventoryPackets` accepts only `minecraft:horse` for `HORSE` screens. `HorseContainer` exposes two equipment slots and no storage columns. Mule chest storage is missing.
+- Core now handles `UPDATE_EQUIP` and ordinary horse, donkey, and mule menus. Cargo mapping and request identity have unit coverage. Live transfers, mounted opening, rejection recovery, and destruction remain unverified.
 - `ItemAnimationData` carries kinetic timing for animation. It does not model spear reach or relative-speed attack conditions.
 - `PlayerPredictionStorage` retains one pending sample. It does not provide coherent tick-indexed world history and correction replay.
 - Bundle containers and rewriting exist. End-to-end capacity, cursor, transfer, and rollback parity remain to verify.
@@ -144,3 +144,21 @@ The remaining matrix needs fixtures, native baselines, production changes, and r
 Use strict official BDS as the primary reference.
 Treat Boar flags as diagnostic evidence and keep CubeCraft interoperability as a separate test.
 All eight original coverage groups and actual platform joins remain required.
+
+### Mount inventory implementation, October 6, 2026
+
+ViaBedrock core now opens horse, donkey, and mule menus through standard Java mount packets.
+Chested donkeys and mules expose five cargo columns.
+Native cargo slots 1 through 15 map to Java cells 2 through 16, and player cells follow at 17.
+An unchested mount hides cargo and the unused armor cell from requests.
+Equipment predictions use server item and auxiliary-value restrictions.
+
+An isolated headless official BDS probe confirmed tamed mule capacity 16 before chest attachment and the later `CHESTED` flag.
+Server Script API also confirmed items at cargo indices 1 and 15.
+Eight new tests cover mappings, snapshots, equipment rules, complete packet decoding, player content placement, and either opening packet order.
+The 95-patch stack replays, and the complete core build passes with 672 tests and 19 optional skips.
+The [inventory patch notes](../patches/viabedrock/deferred/0003-translate-server-authoritative-bedrock-requests.pr.md#horse-donkey-and-mule-menus) retain source links and verification limits.
+
+The headless screen-opening attempt timed out.
+Native screen behavior and live Java or ViaProxy transfers remain unverified.
+The full mount and movement matrix above remains required.

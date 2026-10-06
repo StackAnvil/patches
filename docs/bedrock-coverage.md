@@ -5721,3 +5721,26 @@ The pending prediction sample does not supply coherent frame history and world-s
 The matrix records these findings and the remaining fixture, production, and comparison work.
 
 All eight original coverage groups, direct and ViaProxy routes, strict BDS, diagnostic Boar checks, CubeCraft, and actual platform joins remain requirements.
+
+## Mule chest inventory translation (October 6, 2026)
+
+**Implemented:** ViaBedrock core handles `UPDATE_EQUIP` alongside `CONTAINER_OPEN` for horses, donkeys, and mules.
+Chested donkeys and mules use Java's standard mount screen with five cargo columns.
+Native capacity remains separate from Java slot count, preserving saddle, cargo, player inventory offsets, request network IDs, and rollback snapshots.
+Equipment placement uses server item and auxiliary-value restrictions.
+Duplicate opening packets retain the existing container.
+Hidden armor and inaccessible cargo cells cannot generate requests.
+
+**Target evidence:** An isolated headless official BDS 1.26.51.1, build 51061372, protocol 2193 probe confirmed tamed mule capacity 16 before chest attachment and the later `CHESTED` flag.
+Script API observed cargo items at indices 1 and 15.
+The [owning inventory patch notes](../patches/viabedrock/deferred/0003-translate-server-authoritative-bedrock-requests.pr.md#horse-donkey-and-mule-menus) record fixed protocol and Geyser sources.
+
+**Verified within scope:** Eight added tests cover cargo and player mappings, hidden cells, equipment restrictions, compact and full snapshots, rollback identity, complete packet decoding, and either opening packet order.
+
+The full 95-patch stack replays successfully.
+CubeConverter and the complete ViaBedrock build pass, including Checkstyle, 672 passing core tests, and 19 optional skips.
+
+**Incomplete:** The headless screen-opening probe timed out.
+Native UI behavior, live translated requests, shift-clicks, rejection recovery, reopen and destruction cases, other mount types, and direct or ViaProxy comparisons remain unverified.
+Probe processes stopped cleanly; the occupied lab display and native GPU guard were preserved.
+The broader complex gameplay matrix and all eight original coverage groups remain requirements.

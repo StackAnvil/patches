@@ -71,3 +71,40 @@ The direct route receives one during controlled eating and one during additional
 ViaProxy receives two during controlled eating, three during additional repeated eating, and two after last-item consumption.
 This change verifies snapshot consistency and removal of duplicate equipment updates.
 Native completion prediction, correction history, and the cause of those corrections remain incomplete.
+
+## Horse, donkey, and mule menus
+
+Core handles `UPDATE_EQUIP` and `CONTAINER_OPEN` through one mount-opening flow.
+Receiving both packets preserves the same container and contents.
+Supported mounts use Java's ordinary mount screen, including five cargo columns for chested donkeys and mules.
+The menu uses standard Java packets and needs no add-on-specific screen in ViaProxy.
+Live route comparisons remain pending.
+
+Bedrock capacity, content indices, request slots, and Java menu slots have separate meanings.
+Java reserves two equipment cells; Bedrock donkeys and mules use one.
+Native cargo indices 1 through 15 therefore map to Java cells 2 through 16.
+Player contents begin at Java cell 17.
+An unchested mule can retain native capacity 16 while displaying only two Java cells.
+The hidden armor cell and inaccessible cargo cannot create item requests.
+Compact unchested snapshots and complete native snapshots both retain correct identity.
+
+The [target equipment packet schema](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/update-equip-packet/) establishes the packet fields.
+[Geyser's fixed mount opener](https://github.com/GeyserMC/Geyser/blob/f66329d9d21b3c836edc014fbb9d8312fbe34285/core/src/main/java/org/geysermc/geyser/translator/protocol/java/inventory/JavaMountScreenOpenTranslator.java) sends a zero size and server equipment rules.
+Its [chested mount translator](https://github.com/GeyserMC/Geyser/blob/f66329d9d21b3c836edc014fbb9d8312fbe34285/core/src/main/java/org/geysermc/geyser/translator/inventory/horse/ChestedHorseInventoryTranslator.java) corroborates equipment and cargo mappings.
+Supported actor metadata and chest state determine our menu layout.
+Equipment predictions honor server item names, auxiliary values, and empty accepted-item lists.
+
+A headless client joined official BDS 1.26.51.1, build 51061372, protocol 2193, in an isolated loopback network namespace.
+The server reported a tamed mule capacity of 16 before chest attachment and set `CHESTED` after attachment.
+Script API observed four emeralds at cargo index 1 and two diamonds at index 15.
+These checks establish target capacity, chest state, and cargo indices.
+They do not establish native screen-opening packet order or live translated inventory requests.
+The headless screen-opening probe timed out; its processes stopped cleanly.
+The existing lab display and current-boot native GPU guard remain intact.
+
+Eight added tests cover native and Java slot separation, all cargo and player cells, hidden slots, both opening packet orders, complete payload consumption, equipment restrictions, compact snapshots, and rollback identity.
+Native UI, saddle transfers, shift-clicks, rejection recovery, reopening, destruction, direct connections, and ViaProxy comparisons remain required.
+Other mount types and their storage layouts remain unsupported.
+
+The full 95-patch stack replays successfully.
+CubeConverter and the complete ViaBedrock build pass, including Checkstyle and 672 passing core tests with 19 optional skips.
