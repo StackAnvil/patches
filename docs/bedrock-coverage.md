@@ -5330,3 +5330,56 @@ The executable and BDS checks do not substitute for that comparison.
 **Remaining:** Production still uses Java collision solving and lacks complete native vanilla per-type shape providers.
 Full movement needs coherent frame identity, retained world state, state producers, and ordered correction replay.
 Terrain lighting, material behavior, geometry limits, all eight coverage groups, actual operating-system joins, and broader native comparisons remain incomplete.
+
+
+## Production native fence geometry (October 6, 2026)
+
+**Implemented:** Core supplies separate physical fence arms and rectangular outline and camera envelopes.
+The model follows official Bedrock 1.26.51.1, build 51061372, protocol 2193.
+Collision appends the north/south arm before the east/west arm.
+Collision and camera height is 1.5 blocks. Outline height is one block.
+World position conversion and bound addition preserve native float rounding.
+Collapsed physical boxes disappear.
+
+The add-on consumes these bounds through actual block-state collision, selection, support, and camera hooks.
+Direct connections use their Bedrock protocol context.
+ViaProxy uses supported metadata from an accepted converted server pack.
+Reload preparation now retains the applied context until replacement resources apply.
+Local disconnect clears the context after Minecraft removes server packs.
+Stale reload completion cannot restore a cleared session.
+
+**Native arithmetic verified:** Production core matches 4,096 native execution cases and 85,164 raw float bounds without mismatches.
+The fixtures cover all connection combinations, large coordinates, and float collapse.
+They supply initialized connection-state maps and sufficient vector capacity.
+They do not establish native connectivity production, constructor behavior, or vector growth.
+The shared PistonDecompiler runner supplies PE loading and native execution for these private probes.
+Its focused Ghidra queries also verify this executable's function, caller, and vtable data without a complete export.
+
+**Direct and ViaProxy consumers verified:** Completed recordings join the matching strict BDS fixture and load the converted pack.
+Live inspection verifies all sixteen connection combinations through the actual injected methods.
+The physical north/east arms retain their diagonal gap. The outline and camera envelopes include that gap.
+The real fixture fence receives north/east connection states from translated neighbor updates.
+Both routes settle at standing height Y=101.5 on the fixture fence.
+An earlier ViaProxy sample differs by about 0.000008 blocks before the later sample reaches 101.5.
+These samples do not establish native correction or position precision across all movement.
+
+Actual resource reloads preserve the accepted marker throughout preparation and retain the same shape hooks afterward.
+A ViaProxy probe clears the marker and verifies that the state hook returns the original Java block shape.
+A subsequent reload restores the native hooks.
+This verifies the context gate. It does not establish a separate ordinary Java server join.
+
+**Local cleanup verified:** Separate direct and ViaProxy replays reach initialization and spawn before local leave.
+The central disconnect path leaves the rendering marker cleared on both routes.
+These lifecycle replays intentionally end before the complete recorded scene.
+They do not substitute for the completed BDS recordings.
+
+**Validation:** The dependency build runs 680 core tests, 589 add-on tests, and 16 converter tests without failures or errors.
+Those totals include 19 optional core skips and 114 optional add-on skips.
+Both complete ordered stacks replay successfully. Core Checkstyle and the tooling type check pass.
+Three add-on tests cover connection variants, distinct physical/envelope shapes, and rebasing after native float rounding.
+Metadata tests cover preparation, removal at apply, and stale reload completion.
+
+**Remaining:** Production still merges physical arms into Java voxel shapes and uses the Java movement solver.
+Native connectivity production, collision-query iteration at extreme coordinates, ordered resolution, rendered vanilla fence meshes, and complete visible comparisons remain incomplete.
+The native profile's graphics guard still blocks a matched game comparison until the host graphics session is repaired.
+Full frame state, correction replay, the other coverage groups, and Windows/macOS game joins remain required.

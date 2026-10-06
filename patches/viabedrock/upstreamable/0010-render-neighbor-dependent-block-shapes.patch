@@ -1,22 +1,103 @@
-From 62fe75af6de6f128786581592d306322bc20aaf6 Mon Sep 17 00:00:00 2001
+From 6608c7382f0c09d91e87ab15361a295b4bd382ff Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 19:22:23 +0200
 Subject: [PATCH] fix(world): render neighbor-dependent block shapes
 
 Bedrock omits the Java connection states for redstone wire, fences, and stair corners. Resolve each shape through one shared chunk update path, including multi-block packets and chunk borders, so later block types can use the same refresh mechanism without patching a redstone-only path.
+
+Supply client-neutral FenceBlock geometry recovered from the official
+Windows Bedrock 1.26.51.1 executable (build 51061372, protocol 2193).
+Collision appends north/south then east/west arms at height 1.5; outline
+and camera use rectangular envelopes at heights 1 and 1.5. Convert world
+positions to float before adding bounds and omit collapsed physical boxes.
+
+The pinned executable SHA-256 is
+537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7.
+Verified FenceBlock vtable 0x14e9fd2d0 identifies the concrete subtype;
+geometry follows 0x147ac0fa0, 0x147ac0db0 and 0x147ac0eb0. Production
+Java bounds match 4096 native cases and 85164 float bit comparisons.
+These fixtures supply connection state and vector capacity. Real native
+connectivity, movement resolution and rendered mesh remain unverified.
 ---
+ .../api/model/BedrockFenceGeometry.java       |  57 ++++++++
  .../protocol/packet/WorldPackets.java         |  17 +++
  .../protocol/storage/ChunkTracker.java        | 105 +++++++++++++-
  .../storage/ConnectedBlockShapes.java         | 136 ++++++++++++++++++
  .../storage/RedstoneWireConnections.java      | 134 +++++++++++++++++
+ .../api/model/BedrockFenceGeometryTest.java   |  50 +++++++
  .../storage/ConnectedBlockShapesTest.java     |  71 +++++++++
  .../storage/RedstoneWireConnectionsTest.java  |  76 ++++++++++
- 6 files changed, 536 insertions(+), 3 deletions(-)
+ 8 files changed, 643 insertions(+), 3 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/BedrockFenceGeometry.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapes.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/RedstoneWireConnections.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/BedrockFenceGeometryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/ConnectedBlockShapesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/RedstoneWireConnectionsTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/BedrockFenceGeometry.java b/src/main/java/net/raphimc/viabedrock/api/model/BedrockFenceGeometry.java
+new file mode 100644
+index 000000000..5d48a0ced
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/BedrockFenceGeometry.java
+@@ -0,0 +1,57 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import java.util.ArrayList;
++import java.util.List;
++
++/** Physical fence geometry for Bedrock 1.26.51, independent of Java shape merging. */
++public record BedrockFenceGeometry(boolean north, boolean east, boolean south, boolean west) {
++
++    /** Preserve the native append order: north/south, then east/west. */
++    public List<Box> collisionBoxes(final int x, final int y, final int z) {
++        final List<Box> boxes = new ArrayList<>(2);
++        if (this.north || this.south) {
++            add(boxes, box(x, y, z, 0.375F, this.north ? 0 : 0.375F, 0.625F, this.south ? 1 : 0.625F, 1.5F));
++        }
++        if (this.east || this.west) {
++            add(boxes, box(x, y, z, this.west ? 0 : 0.375F, 0.375F, this.east ? 1 : 0.625F, 0.625F, 1.5F));
++        }
++        if (!this.north && !this.east && !this.south && !this.west) {
++            add(boxes, box(x, y, z, 0.375F, 0.375F, 0.625F, 0.625F, 1.5F));
++        }
++        return List.copyOf(boxes);
++    }
++
++    public Box outline(final int x, final int y, final int z) {
++        return this.envelope(x, y, z, 1);
++    }
++
++    public Box cameraCollision(final int x, final int y, final int z) {
++        return this.envelope(x, y, z, 1.5F);
++    }
++
++    private Box envelope(final int x, final int y, final int z, final float height) {
++        return box(x, y, z, this.west ? 0 : 0.375F, this.north ? 0 : 0.375F,
++                this.east ? 1 : 0.625F, this.south ? 1 : 0.625F, height);
++    }
++
++    private static Box box(final int x, final int y, final int z, final float minX, final float minZ,
++                           final float maxX, final float maxZ, final float height) {
++        // Native converts the integer position before adding local float bounds.
++        return new Box(x + minX, (float) y, z + minZ, x + maxX, y + height, z + maxZ);
++    }
++
++    private static void add(final List<Box> boxes, final Box box) {
++        if (box.minX < box.maxX && box.minY < box.maxY && box.minZ < box.maxZ) {
++            boxes.add(box);
++        }
++    }
++
++    public record Box(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
 index a87286ba0..3a98a6995 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
@@ -517,6 +598,62 @@ index 000000000..c45ebcd85
 +        String property() {
 +            return this.property;
 +        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/BedrockFenceGeometryTest.java b/src/test/java/net/raphimc/viabedrock/api/model/BedrockFenceGeometryTest.java
+new file mode 100644
+index 000000000..6d5c118b4
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/BedrockFenceGeometryTest.java
+@@ -0,0 +1,50 @@
++package net.raphimc.viabedrock.api.model;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockFenceGeometryTest {
++
++    @Test
++    void preservesConnectionsHeightAndSeparateCollisionArms() {
++        for (int mask = 0; mask < 16; mask++) {
++            final var geometry = new BedrockFenceGeometry((mask & 1) != 0, (mask & 2) != 0, (mask & 4) != 0, (mask & 8) != 0);
++            final var boxes = geometry.collisionBoxes(-11, 90, 12);
++            assertEquals((mask & 5) != 0 && (mask & 10) != 0 ? 2 : 1, boxes.size());
++            for (final var box : boxes) {
++                assertEquals(90, box.minY());
++                assertEquals(91.5F, box.maxY());
++            }
++            final var outline = geometry.outline(-11, 90, 12);
++            final var camera = geometry.cameraCollision(-11, 90, 12);
++            assertEquals((mask & 8) != 0 ? -11 : -10.625F, outline.minX());
++            assertEquals((mask & 2) != 0 ? -10 : -10.375F, outline.maxX());
++            assertEquals((mask & 1) != 0 ? 12 : 12.375F, outline.minZ());
++            assertEquals((mask & 4) != 0 ? 13 : 12.625F, outline.maxZ());
++            assertEquals(91, outline.maxY());
++            assertEquals(91.5F, camera.maxY());
++            assertEquals(outline.minX(), camera.minX());
++            assertEquals(outline.maxZ(), camera.maxZ());
++        }
++    }
++
++    @Test
++    void keepsCollisionGapInsideTheOutlineEnvelopeAndNativeAppendOrder() {
++        final var fence = new BedrockFenceGeometry(true, true, false, false);
++        final var boxes = fence.collisionBoxes(0, 0, 0);
++        assertEquals(new BedrockFenceGeometry.Box(0.375F, 0, 0, 0.625F, 1.5F, 0.625F), boxes.getFirst());
++        assertEquals(new BedrockFenceGeometry.Box(0.375F, 0, 0.375F, 1, 1.5F, 0.625F), boxes.getLast());
++        assertTrue(boxes.stream().noneMatch(box -> box.minX() < 0.8F && 0.8F < box.maxX() && box.minZ() < 0.1F && 0.1F < box.maxZ()));
++        assertEquals(new BedrockFenceGeometry.Box(0.375F, 0, 0, 1, 1, 0.625F), fence.outline(0, 0, 0));
++    }
++
++    @Test
++    void roundsWorldBoundsBeforeDroppingCollapsedCollisionBoxes() {
++        final var fence = new BedrockFenceGeometry(false, false, false, false);
++        assertTrue(fence.collisionBoxes(16_777_216, 0, 0).isEmpty());
++        assertEquals(16_777_216F, fence.outline(16_777_216, 0, 0).minX());
++        assertEquals(16_777_216F, fence.outline(16_777_216, 0, 0).maxX());
 +    }
 +
 +}

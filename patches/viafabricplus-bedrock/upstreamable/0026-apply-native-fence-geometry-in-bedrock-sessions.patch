@@ -1,0 +1,236 @@
+From e1a9574f773347dbaded5813988b50564aa54023 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 16:09:57 +0200
+Subject: [PATCH] feat(blocks): apply native fence geometry in Bedrock sessions
+
+Adapt core Bedrock 1.26.51 fence bounds to Java collision, selection and
+camera hooks. Preserve float world rounding before rebasing and use
+separate physical arms instead of the rectangular outline envelope.
+Accepted versioned server-pack metadata enables the same hooks through
+ViaProxy; ordinary Java sessions retain their existing shapes.
+
+The pinned native executable establishes geometry for supplied connection
+bits. Connectivity production, ordered movement resolution and the
+rendered fence mesh remain separate work.
+---
+ .../bedrock/block/BedrockFenceShapes.java     | 61 ++++++++++++++++++
+ .../features/block/MixinFenceBlockState.java  | 55 ++++++++++++++++
+ .../viafabricplus-bedrock.mixins.json         |  1 +
+ .../bedrock/block/BedrockFenceShapesTest.java | 64 +++++++++++++++++++
+ 4 files changed, 181 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockFenceShapes.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinFenceBlockState.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockFenceShapesTest.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockFenceShapes.java b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockFenceShapes.java
+new file mode 100644
+index 0000000..26af8b4
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockFenceShapes.java
+@@ -0,0 +1,61 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.block;
++
++import com.viaversion.viafabricplus.ViaFabricPlus;
++import com.viaversion.viafabricplus.bedrock.render.light.BedrockRenderingMetadata;
++import net.minecraft.client.Minecraft;
++import net.minecraft.core.BlockPos;
++import net.minecraft.world.level.block.CrossCollisionBlock;
++import net.minecraft.world.level.block.FenceBlock;
++import net.minecraft.world.level.block.state.BlockState;
++import net.minecraft.world.phys.shapes.Shapes;
++import net.minecraft.world.phys.shapes.VoxelShape;
++import net.raphimc.viabedrock.api.model.BedrockFenceGeometry;
++import net.raphimc.viabedrock.api.BedrockProtocolVersion;
++import org.jetbrains.annotations.Nullable;
++
++/** Adapts core fence bounds to Java's block-local shape interface. */
++public final class BedrockFenceShapes {
++    private BedrockFenceShapes() {
++    }
++
++    public static @Nullable BedrockFenceGeometry current(final BlockState state) {
++        if (!(state.getBlock() instanceof FenceBlock)) return null;
++        final Minecraft client = Minecraft.getInstance();
++        if (client == null || client.getConnection() == null) return null;
++        if (!BedrockRenderingMetadata.active() && !ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST)) return null;
++        return geometry(state);
++    }
++
++    static BedrockFenceGeometry geometry(final BlockState state) {
++        return new BedrockFenceGeometry(state.getValue(CrossCollisionBlock.NORTH), state.getValue(CrossCollisionBlock.EAST),
++            state.getValue(CrossCollisionBlock.SOUTH), state.getValue(CrossCollisionBlock.WEST));
++    }
++
++    public static VoxelShape collision(final BedrockFenceGeometry geometry, final BlockPos pos) {
++        VoxelShape result = Shapes.empty();
++        for (final var box : geometry.collisionBoxes(pos.getX(), pos.getY(), pos.getZ())) {
++            result = Shapes.or(result, local(box, pos));
++        }
++        return result.optimize();
++    }
++
++    public static VoxelShape outline(final BedrockFenceGeometry geometry, final BlockPos pos) {
++        return local(geometry.outline(pos.getX(), pos.getY(), pos.getZ()), pos);
++    }
++
++    public static VoxelShape camera(final BedrockFenceGeometry geometry, final BlockPos pos) {
++        return local(geometry.cameraCollision(pos.getX(), pos.getY(), pos.getZ()), pos);
++    }
++
++    private static VoxelShape local(final BedrockFenceGeometry.Box box, final BlockPos pos) {
++        if (box.minX() >= box.maxX() || box.minY() >= box.maxY() || box.minZ() >= box.maxZ()) return Shapes.empty();
++        // Widen before subtracting the integer position so float rounding survives rebasing.
++        return Shapes.box((double) box.minX() - pos.getX(), (double) box.minY() - pos.getY(), (double) box.minZ() - pos.getZ(),
++            (double) box.maxX() - pos.getX(), (double) box.maxY() - pos.getY(), (double) box.maxZ() - pos.getZ());
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinFenceBlockState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinFenceBlockState.java
+new file mode 100644
+index 0000000..4e14218
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinFenceBlockState.java
+@@ -0,0 +1,55 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
++
++import com.viaversion.viafabricplus.bedrock.block.BedrockFenceShapes;
++import net.minecraft.core.BlockPos;
++import net.minecraft.world.level.BlockGetter;
++import net.minecraft.world.level.block.state.BlockBehaviour;
++import net.minecraft.world.level.block.state.BlockState;
++import net.minecraft.world.phys.shapes.CollisionContext;
++import net.minecraft.world.phys.shapes.VoxelShape;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
++
++@Mixin(BlockBehaviour.BlockStateBase.class)
++public abstract class MixinFenceBlockState {
++    @Inject(method = {"getShape(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/phys/shapes/VoxelShape;",
++        "getInteractionShape"}, at = @At("HEAD"), cancellable = true)
++    private void nativeOutline(final BlockGetter level, final BlockPos pos, final CallbackInfoReturnable<VoxelShape> cir) {
++        final var geometry = BedrockFenceShapes.current((BlockState) (Object) this);
++        if (geometry != null) cir.setReturnValue(BedrockFenceShapes.outline(geometry, pos));
++    }
++
++    @Inject(method = "getShape(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/phys/shapes/CollisionContext;)Lnet/minecraft/world/phys/shapes/VoxelShape;",
++        at = @At("HEAD"), cancellable = true)
++    private void nativeOutlineWithContext(final BlockGetter level, final BlockPos pos, final CollisionContext context, final CallbackInfoReturnable<VoxelShape> cir) {
++        final var geometry = BedrockFenceShapes.current((BlockState) (Object) this);
++        if (geometry != null) cir.setReturnValue(BedrockFenceShapes.outline(geometry, pos));
++    }
++
++    @Inject(method = {"getCollisionShape(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/phys/shapes/VoxelShape;",
++        "getBlockSupportShape"}, at = @At("HEAD"), cancellable = true)
++    private void nativeCollision(final BlockGetter level, final BlockPos pos, final CallbackInfoReturnable<VoxelShape> cir) {
++        final var geometry = BedrockFenceShapes.current((BlockState) (Object) this);
++        if (geometry != null) cir.setReturnValue(BedrockFenceShapes.collision(geometry, pos));
++    }
++
++    @Inject(method = "getCollisionShape(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/phys/shapes/CollisionContext;)Lnet/minecraft/world/phys/shapes/VoxelShape;",
++        at = @At("HEAD"), cancellable = true)
++    private void nativeCollisionWithContext(final BlockGetter level, final BlockPos pos, final CollisionContext context, final CallbackInfoReturnable<VoxelShape> cir) {
++        final var geometry = BedrockFenceShapes.current((BlockState) (Object) this);
++        if (geometry != null) cir.setReturnValue(BedrockFenceShapes.collision(geometry, pos));
++    }
++
++    @Inject(method = "getVisualShape", at = @At("HEAD"), cancellable = true)
++    private void nativeCamera(final BlockGetter level, final BlockPos pos, final CollisionContext context, final CallbackInfoReturnable<VoxelShape> cir) {
++        final var geometry = BedrockFenceShapes.current((BlockState) (Object) this);
++        if (geometry != null) cir.setReturnValue(BedrockFenceShapes.camera(geometry, pos));
++    }
++}
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index 53c9fae..2f66e9c 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -49,6 +49,7 @@
+     "features.block.MixinDragonEggBlock",
+     "features.block.MixinEndPortalFrameBlock",
+     "features.block.MixinEnderChestBlock",
++    "features.block.MixinFenceBlockState",
+     "features.block.MixinLadderBlock",
+     "features.block.MixinLanternBlock",
+     "features.block.MixinLecternBlock",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockFenceShapesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockFenceShapesTest.java
+new file mode 100644
+index 0000000..4bc911c
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockFenceShapesTest.java
+@@ -0,0 +1,64 @@
++package com.viaversion.viafabricplus.bedrock.block;
++
++import net.minecraft.SharedConstants;
++import net.minecraft.core.BlockPos;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.level.block.Blocks;
++import net.minecraft.world.level.block.CrossCollisionBlock;
++import net.minecraft.world.phys.shapes.BooleanOp;
++import net.minecraft.world.phys.shapes.Shapes;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockFenceShapesTest {
++    @BeforeAll
++    static void bootstrap() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void adaptsEveryConnectionStateAndSeparatesPhysicalAndCameraHeight() {
++        for (int mask = 0; mask < 16; mask++) {
++            final var state = Blocks.OAK_FENCE.defaultBlockState()
++                .setValue(CrossCollisionBlock.NORTH, (mask & 1) != 0).setValue(CrossCollisionBlock.EAST, (mask & 2) != 0)
++                .setValue(CrossCollisionBlock.SOUTH, (mask & 4) != 0).setValue(CrossCollisionBlock.WEST, (mask & 8) != 0);
++            final var geometry = BedrockFenceShapes.geometry(state);
++            final var pos = new BlockPos(-11, 90, 12);
++            final var collision = BedrockFenceShapes.collision(geometry, pos);
++            final var outline = BedrockFenceShapes.outline(geometry, pos);
++            final var camera = BedrockFenceShapes.camera(geometry, pos);
++            assertEquals(1.5, collision.max(net.minecraft.core.Direction.Axis.Y));
++            assertEquals(1, outline.max(net.minecraft.core.Direction.Axis.Y));
++            assertEquals(1.5, camera.max(net.minecraft.core.Direction.Axis.Y));
++            assertEquals(outline.bounds().minX, collision.bounds().minX);
++            assertEquals(outline.bounds().maxZ, collision.bounds().maxZ);
++            assertEquals(outline.bounds().minX, camera.bounds().minX);
++            assertEquals(outline.bounds().maxZ, camera.bounds().maxZ);
++        }
++    }
++
++    @Test
++    void diagonalArmsKeepARealCollisionGapInsideTheOutlineAndCameraEnvelope() {
++        final var geometry = BedrockFenceShapes.geometry(Blocks.OAK_FENCE.defaultBlockState()
++            .setValue(CrossCollisionBlock.NORTH, true).setValue(CrossCollisionBlock.EAST, true));
++        final var gap = Shapes.box(0.75, 0.1, 0.1, 0.85, 0.9, 0.2);
++        assertFalse(Shapes.joinIsNotEmpty(BedrockFenceShapes.collision(geometry, BlockPos.ZERO), gap, BooleanOp.AND));
++        assertTrue(Shapes.joinIsNotEmpty(BedrockFenceShapes.outline(geometry, BlockPos.ZERO), gap, BooleanOp.AND));
++        assertTrue(Shapes.joinIsNotEmpty(BedrockFenceShapes.camera(geometry, BlockPos.ZERO), gap, BooleanOp.AND));
++    }
++
++    @Test
++    void preservesNativeWorldFloatRoundingWhenConvertingToLocalDoubles() {
++        final var geometry = BedrockFenceShapes.geometry(Blocks.OAK_FENCE.defaultBlockState());
++        assertTrue(BedrockFenceShapes.collision(geometry, new BlockPos(16_777_216, 0, 0)).isEmpty());
++        assertTrue(BedrockFenceShapes.camera(geometry, new BlockPos(16_777_216, 0, 0)).isEmpty());
++        final var pos = new BlockPos(-16_777_217, 0, 0);
++        final var connected = BedrockFenceShapes.geometry(Blocks.OAK_FENCE.defaultBlockState().setValue(CrossCollisionBlock.EAST, true));
++        final var bounds = BedrockFenceShapes.collision(connected, pos).bounds();
++        assertEquals(1, bounds.minX);
++        assertEquals(2, bounds.maxX);
++    }
++}
+-- 
+2.55.0
