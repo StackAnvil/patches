@@ -1,4 +1,4 @@
-From cc749fcf51098a1e472ae6c3c50f5063549aa7d3 Mon Sep 17 00:00:00 2001
+From 161c01a3a406c8653d75fc99420886daebb1655b Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:28 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -44,28 +44,106 @@ held input or grounded state when the client supplies local physics.
 Use a separately negotiated revision-three channel to prevent earlier
 clients from sending an incompatible layout. Keep the standard Java
 approximation for connections without a completed local frame.
+
+Evaluate the native SneakTriggerIntent posture rules in core. The pinned
+1.26.51.1 executable separates swimming, crawling and sneaking flags, probes
+standing/crouching/crawling block space, and uses a 0.49999997F movement
+threshold when crouching space is clear. Low ceilings switch swimming to
+crawling outside body water and crawling back to swimming on water entry.
+Keep these decisions independent from delayed server metadata.
+
+Revision four transports all three completed posture flags. Emit swimming
+and crawling edges once per connection, and distinguish effective sneaking
+from physical SneakDown/WantDown input while preserving shield blocking.
+The add-on supplies collision probes and local input; core owns the rule,
+wire validation and Bedrock events. Metadata history rewind and input
+resimulation remain incomplete.
 ---
- .../api/model/PlayerPrediction.java           |  75 ++++++++++++
- .../api/model/entity/ClientPlayerEntity.java  |  11 +-
+ .../viabedrock/api/model/PlayerPosture.java   |  53 ++++++++
+ .../api/model/PlayerPrediction.java           |  79 ++++++++++++
+ .../api/model/entity/ClientPlayerEntity.java  |  21 ++--
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
- .../protocol/packet/ClientPlayerPackets.java  |  35 +++---
- .../protocol/packet/MultiStatePackets.java    |  13 +++
+ .../protocol/packet/ClientPlayerPackets.java  |  42 ++++---
+ .../protocol/packet/MultiStatePackets.java    |  13 ++
  .../protocol/storage/PlayerInputStorage.java  |   3 +-
- .../storage/PlayerPredictionStorage.java      |  36 ++++++
- .../api/model/PlayerPredictionTest.java       | 109 ++++++++++++++++++
- .../packet/PlayerCorrectionPacketTest.java    | 105 +++++++++++++++++
- 9 files changed, 370 insertions(+), 18 deletions(-)
+ .../storage/PlayerPredictionStorage.java      |  48 ++++++++
+ .../api/model/PlayerPostureTest.java          |  97 +++++++++++++++
+ .../api/model/PlayerPredictionTest.java       | 115 ++++++++++++++++++
+ .../packet/ClientPlayerPacketsTest.java       |  32 ++++-
+ .../packet/PlayerCorrectionPacketTest.java    | 105 ++++++++++++++++
+ 12 files changed, 579 insertions(+), 30 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerPosture.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/PlayerPostureTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/PlayerPosture.java b/src/main/java/net/raphimc/viabedrock/api/model/PlayerPosture.java
+new file mode 100644
+index 000000000..abaf37731
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/PlayerPosture.java
+@@ -0,0 +1,53 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++/** Independent native posture flags, evaluated after the swimming trigger and before travel. */
++public record PlayerPosture(boolean swimming, boolean crawling, boolean sneaking) {
++
++    public static final PlayerPosture STANDING = new PlayerPosture(false, false, false);
++    private static final float SWIMMING_MOVEMENT_THRESHOLD = 0.49999997F;
++
++    public PlayerPosture next(final Space space, final Input input) {
++        final boolean requestedSneak = input.sneakHeld() && !input.sneakDisabled();
++        if (input.forceStanding() || space.standing()) {
++            return new PlayerPosture(this.swimming, false, requestedSneak);
++        }
++        if (!space.crouching()) {
++            if (!input.crawlingAllowed() || !space.crawling()) {
++                return new PlayerPosture(this.swimming, this.crawling, requestedSneak);
++            }
++            if (!this.swimming) {
++                return new PlayerPosture(input.inWater(), !input.inWater(), this.sneaking);
++            }
++            if (!input.inWater()) {
++                return new PlayerPosture(false, true, this.sneaking);
++            }
++            return new PlayerPosture(true, this.crawling, requestedSneak);
++        }
++        if (this.crawling) {
++            return new PlayerPosture(this.swimming, false, true);
++        }
++        if (this.swimming) {
++            return input.movementSquared() < SWIMMING_MOVEMENT_THRESHOLD
++                    ? new PlayerPosture(false, false, true) : this;
++        }
++        return new PlayerPosture(false, false, true);
++    }
++
++    public record Space(boolean standing, boolean crouching, boolean crawling) {
++    }
++
++    public record Input(boolean sneakHeld, boolean sneakDisabled, boolean forceStanding,
++                        boolean inWater, float movementSquared, boolean crawlingAllowed) {
++        public Input {
++            if (!Float.isFinite(movementSquared) || movementSquared < 0F) {
++                throw new IllegalArgumentException("Invalid posture movement");
++            }
++        }
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java b/src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java
 new file mode 100644
-index 000000000..d9b4b5734
+index 000000000..39c08dedb
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,79 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -79,37 +157,41 @@ index 000000000..d9b4b5734
 +import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 +import net.raphimc.viabedrock.protocol.model.Position3f;
 +
-+/** Completed local physics for one Java movement frame, never an authoritative position update. */
-+public record PlayerPrediction(Position3f position, Position3f motion, boolean swimming, boolean horizontalCollision, boolean verticalCollision, boolean groundJump) {
++import java.util.Objects;
 +
-+    public static final String CHANNEL = "viabedrock:player_prediction_v3";
++/** Completed local physics for one Java movement frame, never an authoritative position update. */
++public record PlayerPrediction(Position3f position, Position3f motion, PlayerPosture posture, boolean horizontalCollision, boolean verticalCollision, boolean groundJump) {
++
++    public static final String CHANNEL = "viabedrock:player_prediction_v4";
 +    public static final Type<PlayerPrediction> TYPE = new Type<>(PlayerPrediction.class) {
 +        @Override
 +        public PlayerPrediction read(final ByteBuf buffer) {
-+            if (Types.VAR_INT.readPrimitive(buffer) != 3
++            if (Types.VAR_INT.readPrimitive(buffer) != 4
 +                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
 +                throw new IllegalArgumentException("Unsupported player prediction");
 +            }
 +            final Position3f position = readVector(buffer);
 +            final Position3f motion = readVector(buffer);
 +            final int flags = buffer.readUnsignedByte();
-+            if ((flags & ~15) != 0) {
++            if ((flags & ~63) != 0) {
 +                throw new IllegalArgumentException("Invalid player prediction flags");
 +            }
-+            return new PlayerPrediction(position, motion, (flags & 1) != 0, (flags & 2) != 0, (flags & 4) != 0, (flags & 8) != 0);
++            return new PlayerPrediction(position, motion, new PlayerPosture((flags & 1) != 0, (flags & 16) != 0, (flags & 32) != 0), (flags & 2) != 0, (flags & 4) != 0, (flags & 8) != 0);
 +        }
 +
 +        @Override
 +        public void write(final ByteBuf buffer, final PlayerPrediction value) {
-+            Types.VAR_INT.writePrimitive(buffer, 3);
++            Types.VAR_INT.writePrimitive(buffer, 4);
 +            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
 +            writeVector(buffer, value.position());
 +            writeVector(buffer, value.motion());
-+            buffer.writeByte((value.swimming() ? 1 : 0) | (value.horizontalCollision() ? 2 : 0) | (value.verticalCollision() ? 4 : 0) | (value.groundJump() ? 8 : 0));
++            buffer.writeByte((value.posture().swimming() ? 1 : 0) | (value.horizontalCollision() ? 2 : 0) | (value.verticalCollision() ? 4 : 0) | (value.groundJump() ? 8 : 0)
++                    | (value.posture().crawling() ? 16 : 0) | (value.posture().sneaking() ? 32 : 0));
 +        }
 +    };
 +
 +    public PlayerPrediction {
++        Objects.requireNonNull(posture, "posture");
 +        requireFinite(position);
 +        requireFinite(motion);
 +    }
@@ -142,7 +224,7 @@ index 000000000..d9b4b5734
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
-index f69b430bf..1c823f98b 100644
+index f69b430bf..ffe76000b 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
 @@ -131,6 +131,11 @@ public class ClientPlayerEntity extends PlayerEntity {
@@ -170,6 +252,24 @@ index f69b430bf..1c823f98b 100644
          wrapper.write(Types.FLOAT, relatives.contains(Relative.Y_ROT) ? 0F : this.rotation.y()); // yaw
          wrapper.write(Types.FLOAT, relatives.contains(Relative.X_ROT) ? 0F : this.rotation.x()); // pitch
          wrapper.write(Types.INT, EnumUtil.getIntBitmaskFromEnumSet(relatives, Relative::ordinal)); // flags
+@@ -427,11 +432,13 @@ public class ClientPlayerEntity extends PlayerEntity {
+         return this.bedrockSneaking;
+     }
+ 
+-    public void updateBedrockSneakingInput() {
+-        final boolean shouldSneak = this.sneaking || this.isShieldBlocking();
++    public void updateBedrockSneakingInput(final boolean postureSneaking) {
++        if (this.sneaking || this.isShieldBlocking()) {
++            this.addAuthInputData(PlayerAuthInputData.SneakDown, PlayerAuthInputData.WantDown);
++        }
++        final boolean shouldSneak = postureSneaking || this.isShieldBlocking();
+         if (shouldSneak) {
+-            this.addAuthInputData(PlayerAuthInputData.SneakDown, PlayerAuthInputData.Sneaking,
+-                    PlayerAuthInputData.WantDown);
++            this.addAuthInputData(PlayerAuthInputData.Sneaking);
+         }
+         if (shouldSneak != this.bedrockSneaking) {
+             this.addAuthInputData(shouldSneak ? PlayerAuthInputData.StartSneaking : PlayerAuthInputData.StopSneaking);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 index b5ff4df4e..37c44820f 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
@@ -183,7 +283,7 @@ index b5ff4df4e..37c44820f 100644
          user.put(new CameraEffectsStorage(user));
          user.put(new PlayerListStorage());
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index feb36e9b0..a4bc8eeb7 100644
+index feb36e9b0..0b2b3685c 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 @@ -38,6 +38,7 @@ import net.raphimc.viabedrock.api.util.MathUtil;
@@ -262,23 +362,29 @@ index feb36e9b0..a4bc8eeb7 100644
                  clientPlayer.addAuthInputData(PlayerAuthInputData.HorizontalCollision);
              }
              if (clientPlayer.inputFlags().contains(InputFlag.FORWARD)) {
-@@ -625,7 +625,6 @@ public final class ClientPlayerPackets {
+@@ -623,9 +623,14 @@ public final class ClientPlayerPackets {
+                     clientPlayer.setShieldBlockingHand(null);
+                 }
              }
-             clientPlayer.updateBedrockSneakingInput();
+-            clientPlayer.updateBedrockSneakingInput();
++            // Native MoveInput uses held sneak and the previous posture before SneakTriggerIntent.
++            final boolean slowMovement = completedPrediction
++                    ? !clientPlayer.abilities().getBooleanValue(AbilitiesIndex.Flying)
++                            && (clientPlayer.isSneaking() || clientPlayer.isShieldBlocking() || clientPlayer.isBedrockSneaking()
++                                    || predictionStorage.posture().crawling())
++                    : clientPlayer.isSneaking() || clientPlayer.isShieldBlocking();
++            clientPlayer.updateBedrockSneakingInput(completedPrediction ? prediction.posture().sneaking() : clientPlayer.isSneaking());
  
 -            final Entity vehicle = predictedVehicle(entityTracker, clientPlayer);
              final Position3f inputPosition;
              final Position3f positionDelta;
              if (vehicle != null) {
-@@ -638,8 +637,16 @@ public final class ClientPlayerPackets {
+@@ -638,8 +643,13 @@ public final class ClientPlayerPackets {
                  inputPosition = clientPlayer.position();
                  positionDelta = inputPosition.subtract(prevPosition);
              }
-+            if (prediction != null && vehicle == null) {
-+                final PlayerAuthInputData transition = predictionStorage.swimmingTransition(prediction.swimming());
-+                if (transition != null) {
-+                    clientPlayer.addAuthInputData(transition);
-+                }
++            if (completedPrediction) {
++                clientPlayer.authInputData().addAll(predictionStorage.postureTransitions(prediction.posture()));
 +            }
              final Position3f velocity;
 -            if (vehicle != null || clientPlayer.isGliding() || !clientPlayer.isInitiallySpawned() || clientPlayer.dimensionChangeInfo() != null || clientPlayer.abilities().getBooleanValue(AbilitiesIndex.Flying)) {
@@ -288,6 +394,15 @@ index feb36e9b0..a4bc8eeb7 100644
                  velocity = positionDelta;
              } else {
                  float dx = positionDelta.x() * 0.98F;
+@@ -662,7 +672,7 @@ public final class ClientPlayerPackets {
+             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().x()); // pitch
+             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().y()); // yaw
+             wrapper.write(BedrockTypes.POSITION_3F, inputPosition); // predicted player or vehicle position
+-            wrapper.write(BedrockTypes.POSITION_2F, MathUtil.calculateMovementDirections(clientPlayer.authInputData(), clientPlayer.isBedrockSneaking())); // move vector
++            wrapper.write(BedrockTypes.POSITION_2F, MathUtil.calculateMovementDirections(clientPlayer.authInputData(), slowMovement)); // move vector
+             wrapper.write(BedrockTypes.FLOAT_LE, clientPlayer.rotation().z()); // head yaw
+             if (Via.getManager().getProviders().get(EmoteProvider.class).isEmoting(wrapper.user())) {
+                 clientPlayer.addAuthInputData(PlayerAuthInputData.Emoting);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
 index 1f202046c..3006920d9 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
@@ -349,10 +464,10 @@ index 47c6a05d1..b7ebcb4a8 100644
          packet.write(Types.STRING, PlayerInputPermissions.CHANNEL);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
 new file mode 100644
-index 000000000..cc5de3376
+index 000000000..ec4ba1dfc
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,48 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -362,13 +477,17 @@ index 000000000..cc5de3376
 +
 +import com.viaversion.viaversion.api.connection.StorableObject;
 +import net.raphimc.viabedrock.api.model.PlayerPrediction;
++import net.raphimc.viabedrock.api.model.PlayerPosture;
++
++import java.util.EnumSet;
++import java.util.Set;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputData;
 +import net.raphimc.viabedrock.protocol.model.Position3f;
 +
 +public final class PlayerPredictionStorage implements StorableObject {
 +
 +    private PlayerPrediction pending;
-+    private boolean swimming;
++    private PlayerPosture posture = PlayerPosture.STANDING;
 +
 +    public void record(final PlayerPrediction prediction) {
 +        this.pending = prediction;
@@ -380,21 +499,132 @@ index 000000000..cc5de3376
 +        return prediction != null && prediction.matches(position) ? prediction : null;
 +    }
 +
-+    public PlayerAuthInputData swimmingTransition(final boolean swimming) {
-+        if (this.swimming == swimming) {
-+            return null;
++    public PlayerPosture posture() {
++        return this.posture;
++    }
++
++    public Set<PlayerAuthInputData> postureTransitions(final PlayerPosture posture) {
++        final Set<PlayerAuthInputData> transitions = EnumSet.noneOf(PlayerAuthInputData.class);
++        if (this.posture.swimming() != posture.swimming()) {
++            transitions.add(posture.swimming() ? PlayerAuthInputData.StartSwimming : PlayerAuthInputData.StopSwimming);
 +        }
-+        this.swimming = swimming;
-+        return swimming ? PlayerAuthInputData.StartSwimming : PlayerAuthInputData.StopSwimming;
++        if (this.posture.crawling() != posture.crawling()) {
++            transitions.add(posture.crawling() ? PlayerAuthInputData.StartCrawling : PlayerAuthInputData.StopCrawling);
++        }
++        this.posture = posture;
++        return transitions;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/PlayerPostureTest.java b/src/test/java/net/raphimc/viabedrock/api/model/PlayerPostureTest.java
+new file mode 100644
+index 000000000..95a16d246
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/PlayerPostureTest.java
+@@ -0,0 +1,97 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class PlayerPostureTest {
++
++    private static final PlayerPosture.Space OPEN = new PlayerPosture.Space(true, true, true);
++    private static final PlayerPosture.Space CROUCH = new PlayerPosture.Space(false, true, true);
++    private static final PlayerPosture.Space CRAWL = new PlayerPosture.Space(false, false, true);
++    private static final PlayerPosture.Space BLOCKED = new PlayerPosture.Space(false, false, false);
++
++    @Test
++    void swapsSwimmingAndCrawlingBeforeServerMetadataArrives() {
++        var posture = new PlayerPosture(true, false, false);
++        posture = posture.next(CRAWL, input(false, false, 1F));
++        assertEquals(new PlayerPosture(false, true, false), posture);
++        assertEquals(posture, posture.next(CRAWL, input(false, false, 1F)));
++        posture = posture.next(CRAWL, input(false, true, 1F));
++        assertEquals(new PlayerPosture(true, false, false), posture);
++        assertEquals(posture, posture.next(CRAWL, input(false, true, 1F)));
++    }
++
++    @Test
++    void clearsCrawlingInStandingSpaceWithoutChangingTheSwimmingTrigger() {
++        for (boolean swimming : new boolean[]{false, true}) {
++            final var posture = new PlayerPosture(swimming, true, true);
++            assertEquals(new PlayerPosture(swimming, false, false), posture.next(OPEN, input(false, false, 0F)));
++            assertEquals(new PlayerPosture(swimming, false, true), posture.next(OPEN, input(true, false, 0F)));
++        }
++    }
++
++    @Test
++    void forcesCrouchingWhenOnlyCrouchingSpaceIsClear() {
++        assertEquals(new PlayerPosture(false, false, true), PlayerPosture.STANDING.next(CROUCH, input(false, false, 0F)));
++        assertEquals(new PlayerPosture(true, false, true),
++                new PlayerPosture(true, true, false).next(CROUCH, input(false, true, 1F)));
++        // A sneak lock suppresses physical sneak, but cannot create standing space.
++        assertEquals(new PlayerPosture(false, false, true), PlayerPosture.STANDING.next(CROUCH,
++                new PlayerPosture.Input(true, true, false, false, 0F, true)));
++    }
++
++    @Test
++    void usesTheNativeFloatBoundaryToLeaveSwimmingInCrouchingSpace() {
++        final var posture = new PlayerPosture(true, false, false);
++        final float boundary = Math.nextDown(0.5F);
++        assertEquals(new PlayerPosture(false, false, true), posture.next(CROUCH, input(false, true, Math.nextDown(boundary))));
++        assertSame(posture, posture.next(CROUCH, input(false, true, boundary)));
++        assertSame(posture, posture.next(CROUCH, input(false, true, Math.nextUp(boundary))));
++    }
++
++    @Test
++    void retainsPostureWhenEvenTheCrawlingBodyCannotFit() {
++        final var posture = new PlayerPosture(true, true, true);
++        assertEquals(new PlayerPosture(true, true, false), posture.next(BLOCKED, input(false, false, 1F)));
++        assertEquals(posture, posture.next(BLOCKED, input(true, false, 1F)));
++        assertEquals(new PlayerPosture(true, true, false), posture.next(CRAWL,
++                new PlayerPosture.Input(false, false, false, false, 1F, false)));
++    }
++
++    @Test
++    void forceStandingAndSneakLocksDoNotClearSwimming() {
++        final var posture = new PlayerPosture(true, true, true);
++        assertEquals(new PlayerPosture(true, false, false), posture.next(BLOCKED,
++                new PlayerPosture.Input(true, true, true, true, 1F, true)));
++        assertEquals(new PlayerPosture(true, false, true), posture.next(BLOCKED,
++                new PlayerPosture.Input(true, false, true, true, 1F, true)));
++    }
++
++    @Test
++    void preservesSneakingAcrossCrawlSwimTransitionsUntilTheNativeBranchChangesIt() {
++        final var sneaking = new PlayerPosture(false, false, true);
++        final var crawl = sneaking.next(CRAWL, input(false, false, 0F));
++        assertEquals(new PlayerPosture(false, true, true), crawl);
++        final var swim = crawl.next(CRAWL, input(false, true, 0F));
++        assertEquals(new PlayerPosture(true, false, true), swim);
++        assertEquals(new PlayerPosture(true, false, false), swim.next(CRAWL, input(false, true, 0F)));
++    }
++
++    @Test
++    void rejectsMovementThatCannotDescribeAnInputVector() {
++        for (float movement : new float[]{-1F, Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY}) {
++            assertThrows(IllegalArgumentException.class, () -> input(false, false, movement));
++        }
++    }
++
++    private static PlayerPosture.Input input(final boolean sneak, final boolean water, final float movement) {
++        return new PlayerPosture.Input(sneak, false, false, water, movement, true);
 +    }
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
 new file mode 100644
-index 000000000..9d749c6b4
+index 000000000..02ac19af3
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,115 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -419,18 +649,18 @@ index 000000000..9d749c6b4
 +        final var buffer = Unpooled.buffer();
 +        try {
 +            final var frame = new PlayerPrediction(new Position3f(-6.5F, 101.86157F, 1.5F),
-+                    new Position3f(0.125F, -0.022315647F, -0.25F), true, true, false, true);
++                    new Position3f(0.125F, -0.022315647F, -0.25F), new PlayerPosture(true, true, true), true, false, true);
 +            PlayerPrediction.TYPE.write(buffer, frame);
 +            assertEquals(frame, PlayerPrediction.TYPE.read(buffer));
 +            assertFalse(buffer.isReadable());
-+            for (final int revision : new int[]{1, 2, 4}) {
++            for (final int revision : new int[]{1, 2, 3, 5}) {
 +                buffer.clear();
 +                Types.VAR_INT.writePrimitive(buffer, revision);
 +                Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
 +                assertThrows(IllegalArgumentException.class, () -> PlayerPrediction.TYPE.read(buffer));
 +            }
 +            buffer.clear();
-+            Types.VAR_INT.writePrimitive(buffer, 3);
++            Types.VAR_INT.writePrimitive(buffer, 4);
 +            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION + 1);
 +            assertThrows(IllegalArgumentException.class, () -> PlayerPrediction.TYPE.read(buffer));
 +        } finally {
@@ -442,14 +672,14 @@ index 000000000..9d749c6b4
 +    void rejectsNonFiniteMotionAndUnknownPoseFlags() {
 +        for (float invalid : new float[]{Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY}) {
 +            assertThrows(IllegalArgumentException.class, () -> new PlayerPrediction(Position3f.ZERO,
-+                    new Position3f(0F, invalid, 0F), false, false, false, false));
++                    new Position3f(0F, invalid, 0F), PlayerPosture.STANDING, false, false, false));
 +            assertThrows(IllegalArgumentException.class, () -> new PlayerPrediction(
-+                    new Position3f(invalid, 0F, 0F), Position3f.ZERO, false, false, false, false));
++                    new Position3f(invalid, 0F, 0F), Position3f.ZERO, PlayerPosture.STANDING, false, false, false));
 +        }
 +        final var buffer = Unpooled.buffer();
 +        try {
 +            PlayerPrediction.TYPE.write(buffer, frame(Position3f.ZERO, false));
-+            buffer.setByte(buffer.writerIndex() - 1, 16);
++            buffer.setByte(buffer.writerIndex() - 1, 64);
 +            assertThrows(IllegalArgumentException.class, () -> PlayerPrediction.TYPE.read(buffer));
 +        } finally {
 +            buffer.release();
@@ -460,9 +690,9 @@ index 000000000..9d749c6b4
 +    void preservesIndependentPoseCollisionAndJumpEventsInStationaryFrames() {
 +        final var buffer = Unpooled.buffer();
 +        try {
-+            for (int flags = 0; flags < 16; flags++) {
++            for (int flags = 0; flags < 64; flags++) {
 +                final var frame = new PlayerPrediction(Position3f.ZERO, Position3f.ZERO,
-+                        (flags & 1) != 0, (flags & 2) != 0, (flags & 4) != 0, (flags & 8) != 0);
++                        new PlayerPosture((flags & 1) != 0, (flags & 16) != 0, (flags & 32) != 0), (flags & 2) != 0, (flags & 4) != 0, (flags & 8) != 0);
 +                PlayerPrediction.TYPE.write(buffer, frame);
 +                assertEquals(frame, PlayerPrediction.TYPE.read(buffer));
 +                buffer.clear();
@@ -476,7 +706,7 @@ index 000000000..9d749c6b4
 +    void consumesOnlyOneMatchingFrameAndDiscardsTeleportStaleness() {
 +        final var storage = new PlayerPredictionStorage();
 +        final var frame = new PlayerPrediction(new Position3f(0.5F, 101F, 0.5F), Position3f.ZERO,
-+                false, false, false, true);
++                PlayerPosture.STANDING, false, false, true);
 +        storage.record(frame);
 +        assertEquals(frame, storage.take(frame.position().add(0F, 0.00001F, 0F)));
 +        assertNull(storage.take(frame.position()));
@@ -490,20 +720,102 @@ index 000000000..9d749c6b4
 +    }
 +
 +    @Test
-+    void emitsSwimmingEdgesOnceAndKeepsConnectionsIndependent() {
++    void emitsIndependentSwimmingAndCrawlingEdgesOncePerConnection() {
 +        final var storage = new PlayerPredictionStorage();
-+        assertNull(storage.swimmingTransition(false));
-+        assertEquals(StartSwimming, storage.swimmingTransition(true));
-+        assertNull(storage.swimmingTransition(true));
-+        assertEquals(StopSwimming, storage.swimmingTransition(false));
-+        assertNull(new PlayerPredictionStorage().swimmingTransition(false));
++        assertTrue(storage.postureTransitions(PlayerPosture.STANDING).isEmpty());
++        final var swimming = new PlayerPosture(true, false, false);
++        final var crawling = new PlayerPosture(false, true, false);
++        assertEquals(java.util.Set.of(StartSwimming), storage.postureTransitions(swimming));
++        assertTrue(storage.postureTransitions(swimming).isEmpty());
++        assertEquals(java.util.Set.of(StopSwimming, StartCrawling), storage.postureTransitions(crawling));
++        assertTrue(storage.postureTransitions(crawling).isEmpty());
++        assertEquals(crawling, storage.posture());
++        assertEquals(java.util.Set.of(StartSwimming, StopCrawling), storage.postureTransitions(swimming));
++        assertEquals(java.util.Set.of(StopSwimming), storage.postureTransitions(PlayerPosture.STANDING));
++        assertTrue(new PlayerPredictionStorage().postureTransitions(PlayerPosture.STANDING).isEmpty());
 +    }
 +
 +    private static PlayerPrediction frame(final Position3f position, final boolean swimming) {
-+        return new PlayerPrediction(position, new Position3f(0F, -0.022315647F, 0F), swimming, false, false, false);
++        return new PlayerPrediction(position, new Position3f(0F, -0.022315647F, 0F), new PlayerPosture(swimming, false, false), false, false, false);
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
+index ad55fc55c..93bdd824d 100644
+--- a/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPacketsTest.java
+@@ -75,27 +75,27 @@ class ClientPlayerPacketsTest {
+     void shieldUseKeepsBedrockSneakActiveAcrossPhysicalSneakChanges() {
+         final ClientPlayerEntity player = player();
+         player.setShieldBlockingHand(InteractionHand.OFF_HAND);
+-        player.updateBedrockSneakingInput();
++        player.updateBedrockSneakingInput(player.isSneaking());
+         assertTrue(player.isBedrockSneaking());
+         assertTrue(player.authInputData().contains(PlayerAuthInputData.StartSneaking));
+         assertTrue(player.authInputData().contains(PlayerAuthInputData.Sneaking));
+ 
+         player.authInputData().clear();
+         player.setSneaking(true);
+-        player.updateBedrockSneakingInput();
++        player.updateBedrockSneakingInput(player.isSneaking());
+         assertTrue(player.authInputData().contains(PlayerAuthInputData.Sneaking));
+         assertFalse(player.authInputData().contains(PlayerAuthInputData.StartSneaking));
+         assertFalse(player.authInputData().contains(PlayerAuthInputData.StopSneaking));
+ 
+         player.authInputData().clear();
+         player.setShieldBlockingHand(null);
+-        player.updateBedrockSneakingInput();
++        player.updateBedrockSneakingInput(player.isSneaking());
+         assertTrue(player.isBedrockSneaking());
+         assertFalse(player.authInputData().contains(PlayerAuthInputData.StopSneaking));
+ 
+         player.authInputData().clear();
+         player.setSneaking(false);
+-        player.updateBedrockSneakingInput();
++        player.updateBedrockSneakingInput(player.isSneaking());
+         assertFalse(player.isBedrockSneaking());
+         assertTrue(player.authInputData().contains(PlayerAuthInputData.StopSneaking));
+     }
+@@ -104,17 +104,37 @@ class ClientPlayerPacketsTest {
+     void releasingShieldUseStopsBedrockSneakWithoutPhysicalCrouch() {
+         final ClientPlayerEntity player = player();
+         player.setShieldBlockingHand(InteractionHand.MAIN_HAND);
+-        player.updateBedrockSneakingInput();
++        player.updateBedrockSneakingInput(player.isSneaking());
+         player.authInputData().clear();
+ 
+         player.setShieldBlockingHand(null);
+-        player.updateBedrockSneakingInput();
++        player.updateBedrockSneakingInput(player.isSneaking());
+ 
+         assertFalse(player.isBedrockSneaking());
+         assertTrue(player.authInputData().contains(PlayerAuthInputData.StopSneaking));
+         assertFalse(player.isSneaking());
+     }
+ 
++    @Test
++    void forcedCrouchingDoesNotInventPhysicalSneakInput() {
++        final ClientPlayerEntity player = player();
++        player.updateBedrockSneakingInput(true);
++        assertTrue(player.isBedrockSneaking());
++        assertTrue(player.authInputData().contains(PlayerAuthInputData.StartSneaking));
++        assertTrue(player.authInputData().contains(PlayerAuthInputData.Sneaking));
++        assertFalse(player.authInputData().contains(PlayerAuthInputData.SneakDown));
++        assertFalse(player.authInputData().contains(PlayerAuthInputData.WantDown));
++
++        player.authInputData().clear();
++        player.setSneaking(true);
++        player.updateBedrockSneakingInput(false);
++        assertFalse(player.isBedrockSneaking());
++        assertTrue(player.authInputData().contains(PlayerAuthInputData.StopSneaking));
++        assertTrue(player.authInputData().contains(PlayerAuthInputData.SneakDown));
++        assertTrue(player.authInputData().contains(PlayerAuthInputData.WantDown));
++        assertFalse(player.authInputData().contains(PlayerAuthInputData.Sneaking));
++    }
++
+     @Test
+     void vehicleMovementUsesVehicleDeltaAndResetsOnDismount() {
+         final ClientPlayerEntity player = player();
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java
 new file mode 100644
 index 000000000..284d6e03d

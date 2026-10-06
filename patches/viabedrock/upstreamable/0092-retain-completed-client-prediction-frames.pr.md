@@ -6,7 +6,7 @@ Use completed local physics for Bedrock auth-input motion when a client provides
 Keep frame validation, event state, auth-input construction, and correction handling in ViaBedrock.
 Support direct connections and ViaProxy with the same payload.
 
-A frame carries feet position, motion, swimming state, completed collision axes, and the ground-jump event.
+A frame carries feet position, motion, independent swimming, crawling, and sneaking flags, completed collision axes, and the ground-jump event.
 Core compares the position with the standard Java movement stream and consumes each sample once.
 It discards unmatched samples, including stale samples after a teleport.
 The codec rejects non-finite coordinates, unknown flags, extra fields, and incompatible protocol revisions.
@@ -118,3 +118,34 @@ Version tests reject revisions 1, 2, and 4, plus a mismatched Bedrock protocol.
 
 **Incomplete:** Ordinary Java clients still approximate jump events.
 Automatic jumps, obstructed jumps, other liquid conditions, vehicle movement, and history resimulation need separate native verification.
+
+## Native local posture
+
+Matching 1.26.51.1 executable inspection identifies the native `SneakTriggerIntentSystem` callback at `0x14b177a30`.
+Its block-space probes use heights of 1.8, 1.49, and 0.6 blocks, with a 0.01-block inset.
+Swimming, crawling, and sneaking remain independent flags.
+The request writer at `0x1490c8cb0` distinguishes flight, which suppresses requested sneaking, from gliding, which bypasses forced crouching or crawling.
+Passengers, spectators, and spin attacks also bypass forced posture.
+The low-space swimming branch compares squared movement with float bits `0x3effffff`.
+These values come from the matching executable; raw decompilation remains private.
+
+Core exposes this decision as `PlayerPosture.next` for the add-on's local collision and input observations.
+Revision 4 carries the independent posture flags through `viabedrock:player_prediction_v4`.
+Core emits swimming and crawling edges from each accepted completed frame.
+Forced sneaking does not invent physical `SneakDown` or `WantDown` input.
+The held sneak input remains separate from the predicted posture.
+Codec tests cover all 64 combinations and reject incompatible revisions and unknown bits.
+
+Eight posture tests cover low-space transitions, flight and forced-standing gates, blocked crawl space, independent sneaking, and the exact movement boundary.
+A packet test covers forced sneaking without held sneak input.
+The full build passes 16 converter, 648 core, and 612 add-on test cases, with 135 skips and no failures or errors.
+
+Both strict-BDS routes emit crawling start and stop events and retain the short body before server crawling metadata arrives.
+The direct ceiling cases still receive one nonzero correction per angle.
+ViaProxy receives two at 45 degrees and one at 35 degrees in this run.
+Open-water comparisons and held swimming-jump regressions remain within the preceding accepted results.
+
+**Incomplete:** The first crawl-to-swim frame still differs in input scale, sprint state, and water drag.
+ViaProxy can receive a further correction while an earlier correction is in transit.
+Server-tick history, authoritative flag reconciliation, and resimulation remain requirements.
+Fresh native ceiling captures remain required; these tests do not establish full movement parity.

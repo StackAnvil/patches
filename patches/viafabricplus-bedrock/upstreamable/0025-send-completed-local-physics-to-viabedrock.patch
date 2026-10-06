@@ -1,4 +1,4 @@
-From d267e960067c2bcb4f2c6191dd199562c0875c15 Mon Sep 17 00:00:00 2001
+From b0206d3a422615e05cfae131ff699c65aa684565 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:53 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -119,19 +119,46 @@ metadata clearing the predicted swimming state; metadata tick handling
 and reconciliation remain separate incomplete requirements.
 
 Retain the core crawling pose when Java recalculates the local player pose each tick. Strict BDS 1.26.51.1 clears SWIMMING while setting CRAWLING under a ceiling and retains its 0.6-block body. Use the existing native actor state channel for both direct and ViaProxy connections. Do not change the swimming flag or overwrite sleeping, gliding or spin attack poses. Core supplies the pose for remote players, whose Java updatePlayerPose method is empty.
+
+Evaluate core's native posture rule after local input scaling and before
+travel. Query block collisions with the pinned native standing height
+1.8F, crouching height 1.49F, crawling height 0.6F and 0.01F inset. Native
+SneakTriggerIntentSystem switches swimming into crawling when body water
+ends under a ceiling, then restores swimming on water entry. Keep the
+local crawling state independent from delayed actor snapshot arrival.
+
+Send the three completed posture flags on core's revision-four channel.
+Core emits crawling/swimming edges and distinguishes physical sneak from
+forced crouching. Preserve input scaling before this frame's posture
+change and native block-space probes during Java pose selection. Keep
+sleeping, gliding and spin attack outside the crawling pose override.
+
+This follows private inspection of the pinned 1.26.51.1 executable's
+SneakTriggerIntentSystem, PlayerBoundingBoxStateUpdateSystem and MoveInput
+function. Metadata history rewind, native breathing offsets, other input
+controllers and broader posture conditions still require verification.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
+ .../access/IBedrockPlayerPosture.java         |  14 ++
+ .../mixin/features/movement/MixinAvatar.java  |  27 ++++
  .../mixin/features/movement/MixinEntity.java  |  25 +---
  .../features/movement/MixinLivingEntity.java  |   7 +
- .../features/movement/MixinLocalPlayer.java   | 103 ++++++++++++++-
- .../mixin/features/movement/MixinPlayer.java  |  49 ++++---
+ .../features/movement/MixinLocalPlayer.java   | 125 +++++++++++++++++-
+ .../mixin/features/movement/MixinPlayer.java  |  55 +++++---
  .../input/PlayerPredictionPayload.java        |  24 ++++
- .../bedrock/movement/BedrockFluidPhysics.java |  86 +++++++++++++
- .../movement/BedrockFluidPhysicsTest.java     | 121 ++++++++++++++++++
- 8 files changed, 375 insertions(+), 42 deletions(-)
+ .../bedrock/movement/BedrockFluidPhysics.java |  86 ++++++++++++
+ .../movement/BedrockPlayerPosture.java        |  63 +++++++++
+ .../viafabricplus-bedrock.mixins.json         |   1 +
+ .../movement/BedrockFluidPhysicsTest.java     | 121 +++++++++++++++++
+ .../movement/BedrockPlayerPostureTest.java    |  45 +++++++
+ 13 files changed, 554 insertions(+), 41 deletions(-)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPosture.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPostureTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index 924035a..e053b23 100644
@@ -153,6 +180,59 @@ index 924035a..e053b23 100644
          PayloadTypeRegistry.clientboundPlay().register(InputPermissionsPayload.TYPE, InputPermissionsPayload.CODEC);
          ClientPlayNetworking.registerGlobalReceiver(InputPermissionsPayload.TYPE,
              (payload, context) -> BedrockInputPermissions.accept(payload.permissions()));
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
+new file mode 100644
+index 0000000..c0be88a
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
+@@ -0,0 +1,14 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.access;
++
++import net.raphimc.viabedrock.api.model.PlayerPosture;
++
++public interface IBedrockPlayerPosture {
++
++    PlayerPosture viaFabricPlusBedrock$posture();
++
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java
+new file mode 100644
+index 0000000..e2f91b4
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java
+@@ -0,0 +1,27 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
++
++import com.llamalad7.mixinextras.injector.ModifyReturnValue;
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import com.viaversion.viafabricplus.bedrock.movement.BedrockPlayerPosture;
++import net.minecraft.world.entity.Avatar;
++import net.minecraft.world.entity.EntityDimensions;
++import net.minecraft.world.entity.Pose;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++@Mixin(Avatar.class)
++public abstract class MixinAvatar {
++
++    @ModifyReturnValue(method = "getDefaultDimensions", at = @At("RETURN"))
++    private EntityDimensions useNativeCrouchingHeight(final EntityDimensions dimensions, final Pose pose) {
++        return pose == Pose.CROUCHING && BedrockInputPermissions.isBedrockConnection()
++                ? new EntityDimensions(dimensions.width(), BedrockPlayerPosture.CROUCHING_HEIGHT,
++                        dimensions.eyeHeight(), dimensions.attachments(), dimensions.fixed()) : dimensions;
++    }
++
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java
 index 236c05d..dda48a4 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java
@@ -243,27 +323,30 @@ index 1c9125e..a06c283 100644
      private boolean changeFluidGravityCondition(final LivingEntity instance) {
          return BedrockInputPermissions.isBedrockConnection() ? instance.isSwimming() : instance.isSprinting();
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-index e5a8167..e0594dd 100644
+index e5a8167..5ea04b2 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-@@ -21,22 +21,121 @@
+@@ -21,22 +21,143 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
 +import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
++import com.llamalad7.mixinextras.injector.ModifyReturnValue;
++import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockPlayerPosture;
 +import com.mojang.authlib.GameProfile;
  import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
 +import com.viaversion.viafabricplus.bedrock.input.PlayerPredictionPayload;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockFluidPhysics;
++import com.viaversion.viafabricplus.bedrock.movement.BedrockPlayerPosture;
 +import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 +import net.minecraft.client.multiplayer.ClientLevel;
 +import net.minecraft.client.player.AbstractClientPlayer;
 +import net.minecraft.client.player.ClientInput;
  import net.minecraft.client.player.LocalPlayer;
 +import net.minecraft.core.BlockPos;
-+import net.minecraft.world.entity.Pose;
 +import net.minecraft.world.phys.Vec3;
 +import net.raphimc.viabedrock.api.model.PlayerPrediction;
++import net.raphimc.viabedrock.api.model.PlayerPosture;
 +import net.raphimc.viabedrock.protocol.model.Position3f;
  import org.spongepowered.asm.mixin.Mixin;
  import org.spongepowered.asm.mixin.Shadow;
@@ -275,7 +358,7 @@ index e5a8167..e0594dd 100644
  
  @Mixin(LocalPlayer.class)
 -public abstract class MixinLocalPlayer {
-+public abstract class MixinLocalPlayer extends AbstractClientPlayer {
++public abstract class MixinLocalPlayer extends AbstractClientPlayer implements IBedrockPlayerPosture {
 +
 +    @Shadow
 +    public ClientInput input;
@@ -285,6 +368,14 @@ index e5a8167..e0594dd 100644
 +
 +    @Unique
 +    private boolean viaFabricPlusBedrock$groundJump;
++
++    @Unique
++    private PlayerPosture viaFabricPlusBedrock$posture = PlayerPosture.STANDING;
++
++    @Override
++    public PlayerPosture viaFabricPlusBedrock$posture() {
++        return this.viaFabricPlusBedrock$posture;
++    }
 +
 +    protected MixinLocalPlayer(final ClientLevel level, final GameProfile profile) {
 +        super(level, profile);
@@ -309,10 +400,13 @@ index e5a8167..e0594dd 100644
 +        this.viaFabricPlusBedrock$groundJump = BedrockInputPermissions.isBedrockConnection();
 +    }
 +
-+    @ModifyExpressionValue(method = "isMovingSlowly", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;isVisuallyCrawling()Z"))
-+    private boolean ignoreSwimmingExitPose(final boolean crawling) {
-+        // Java updates the visual pose after travel, so a surface exit can look like crawling for one frame.
-+        return crawling && !(BedrockInputPermissions.isBedrockConnection() && this.viaFabricPlusBedrock$wasSwimming);
++    @ModifyReturnValue(method = "isMovingSlowly", at = @At("RETURN"))
++    private boolean usePreviousNativePostureForInput(final boolean movingSlowly) {
++        // MoveInput scales input before this frame's posture trigger runs.
++        return BedrockInputPermissions.isBedrockConnection()
++                ? !this.getAbilities().flying && (this.input.keyPresses.shift()
++                        || this.viaFabricPlusBedrock$posture.sneaking() || this.viaFabricPlusBedrock$posture.crawling())
++                : movingSlowly;
 +    }
 +
 +    @ModifyExpressionValue(method = "shouldStopSwimSprinting", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/ClientInput;hasForwardImpulse()Z"))
@@ -321,21 +415,21 @@ index e5a8167..e0594dd 100644
 +        return forward || BedrockInputPermissions.isBedrockConnection();
 +    }
 +
-+    @Inject(method = "aiStep", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/AbstractClientPlayer;aiStep()V"))
++    @Inject(method = "applyInput", at = @At("RETURN"))
 +    private void updateSwimmingBeforeTravel(final CallbackInfo ci) {
 +        if (BedrockInputPermissions.isBedrockConnection()) {
-+            if (this.viaFabricPlusBedrock$wasSwimming && !this.canPlayerFitWithinBlocksAndEntitiesWhen(Pose.STANDING)) {
-+                // Native cannot leave the swimming pose until its standing-space probe is clear.
++            final PlayerPosture.Space space = BedrockPlayerPosture.space(this);
++            if (this.viaFabricPlusBedrock$wasSwimming && !space.standing()) {
 +                this.setSwimming(true);
-+                return;
++            } else {
++                super.updateSwimming();
 +            }
-+            super.updateSwimming();
 +            final boolean breathingInAir = this.level().getBlockState(BlockPos.containing(this.getEyePosition(0F))).isAir();
 +            if (!this.input.hasForwardImpulse()) {
 +                this.setSwimming(false);
 +            } else if (this.viaFabricPlusBedrock$wasSwimming && breathingInAir
 +                    && !BedrockFluidPhysics.canRemainSwimmingAtSurface(this.getLookAngle())
-+                    && this.canPlayerFitWithinBlocksAndEntitiesWhen(Pose.STANDING)) {
++                    && space.standing()) {
 +                this.setSwimming(false);
 +            } else if (!this.viaFabricPlusBedrock$wasSwimming && this.isSwimming()) {
 +                final boolean airAboveBodyCenter = this.level().getBlockState(BedrockFluidPhysics.aboveBodyCenter(this.getBoundingBox())).isAir();
@@ -343,6 +437,14 @@ index e5a8167..e0594dd 100644
 +                    this.setSwimming(false);
 +                }
 +            }
++            this.viaFabricPlusBedrock$posture = new PlayerPosture(this.isSwimming(),
++                    this.viaFabricPlusBedrock$posture.crawling(), this.viaFabricPlusBedrock$posture.sneaking()).next(space,
++                    new PlayerPosture.Input(this.input.keyPresses.shift(),
++                            this.getAbilities().flying,
++                            this.isPassenger() || this.isSpectator() || this.isFallFlying() || this.isAutoSpinAttack(),
++                            this.isInWater(), this.xxa * this.xxa + this.zza * this.zza, true));
++            this.setSwimming(this.viaFabricPlusBedrock$posture.swimming());
++            this.setShiftKeyDown(this.viaFabricPlusBedrock$posture.sneaking());
 +        }
 +    }
 +
@@ -357,7 +459,7 @@ index e5a8167..e0594dd 100644
 +        ClientPlayNetworking.send(new PlayerPredictionPayload(new PlayerPrediction(
 +                new Position3f((float) player.getX(), (float) player.getY(), (float) player.getZ()),
 +                new Position3f((float) motion.x, (float) motion.y, (float) motion.z),
-+                player.isSwimming(), player.horizontalCollision, player.verticalCollision, this.viaFabricPlusBedrock$groundJump)));
++                this.viaFabricPlusBedrock$posture, player.horizontalCollision, player.verticalCollision, this.viaFabricPlusBedrock$groundJump)));
 +    }
  
      @Shadow
@@ -371,10 +473,10 @@ index e5a8167..e0594dd 100644
  
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
-index 49a37ac..d7eeef6 100644
+index 49a37ac..9b2d80b 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
-@@ -22,21 +22,24 @@
+@@ -22,21 +22,25 @@
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
  import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
@@ -383,7 +485,8 @@ index 49a37ac..d7eeef6 100644
  import com.viaversion.viafabricplus.ViaFabricPlus;
  import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockFluidPhysics;
-+import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
++import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockPlayerPosture;
++import com.viaversion.viafabricplus.bedrock.movement.BedrockPlayerPosture;
 +import net.minecraft.client.player.LocalPlayer;
  import net.minecraft.core.BlockPos;
  import net.minecraft.world.entity.Avatar;
@@ -395,14 +498,13 @@ index 49a37ac..d7eeef6 100644
  import net.minecraft.world.level.Level;
  import net.minecraft.world.phys.Vec3;
  import net.raphimc.viabedrock.api.BedrockProtocolVersion;
-+import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorFlags;
  import org.spongepowered.asm.mixin.Mixin;
--import org.spongepowered.asm.mixin.Shadow;
+ import org.spongepowered.asm.mixin.Shadow;
 -import org.spongepowered.asm.mixin.Unique;
  import org.spongepowered.asm.mixin.injection.At;
  import org.spongepowered.asm.mixin.injection.Inject;
  import org.spongepowered.asm.mixin.injection.Redirect;
-@@ -45,13 +48,22 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+@@ -45,13 +49,29 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  @Mixin(Player.class)
  public abstract class MixinPlayer extends Avatar {
  
@@ -419,16 +521,23 @@ index 49a37ac..d7eeef6 100644
 +                || (desiredPose != Pose.STANDING && desiredPose != Pose.CROUCHING)) {
 +            return desiredPose;
 +        }
-+        final var state = BedrockActorState.state(this.getUUID());
-+        // The local player recalculates its pose each tick, unlike remote players.
-+        // Keep core's short crawling body without activating swimming physics.
-+        return state != null && state.flags().contains(ActorFlags.CRAWLING) ? Pose.SWIMMING : desiredPose;
++        return ((IBedrockPlayerPosture) this).viaFabricPlusBedrock$posture().crawling() ? Pose.SWIMMING : desiredPose;
++    }
++
++    @Shadow
++    protected abstract boolean canPlayerFitWithinBlocksAndEntitiesWhen(Pose pose);
++
++    @Redirect(method = "updatePlayerPose", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;canPlayerFitWithinBlocksAndEntitiesWhen(Lnet/minecraft/world/entity/Pose;)Z"))
++    private boolean useNativePostureSpace(final Player player, final Pose pose) {
++        return player instanceof LocalPlayer && BedrockInputPermissions.isBedrockConnection()
++                && (pose == Pose.STANDING || pose == Pose.CROUCHING || pose == Pose.SWIMMING)
++                ? BedrockPlayerPosture.fits(player, pose) : this.canPlayerFitWithinBlocksAndEntitiesWhen(pose);
 +    }
 +
      @Redirect(method = "travel", at = @At(value = "INVOKE", target = "Lnet/minecraft/core/BlockPos;containing(DDD)Lnet/minecraft/core/BlockPos;"))
      private BlockPos modifyWaterAbovePosition(final double x, final double y, final double z) {
          if (BedrockInputPermissions.isBedrockConnection()) {
-@@ -67,17 +79,12 @@ public abstract class MixinPlayer extends Avatar {
+@@ -67,17 +87,12 @@ public abstract class MixinPlayer extends Avatar {
      }
  
      @Inject(method = "travel", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getAbilities()Lnet/minecraft/world/entity/player/Abilities;"))
@@ -450,7 +559,7 @@ index 49a37ac..d7eeef6 100644
              this.setDeltaMovement(this.getDeltaMovement().x(), 0, this.getDeltaMovement().z());
          }
      }
-@@ -88,9 +95,15 @@ public abstract class MixinPlayer extends Avatar {
+@@ -88,9 +103,15 @@ public abstract class MixinPlayer extends Avatar {
              return instance.isSwimming();
          }
  
@@ -591,6 +700,87 @@ index 0000000..d45e6d4
 +    }
 +
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPosture.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPosture.java
+new file mode 100644
+index 0000000..0f102d6
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPosture.java
+@@ -0,0 +1,63 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.movement;
++
++import net.minecraft.world.entity.Pose;
++import net.minecraft.world.entity.player.Player;
++import net.minecraft.world.phys.AABB;
++import net.raphimc.viabedrock.api.model.PlayerPosture;
++
++/** Native block-space probes. Entity overlap does not prevent a native posture change. */
++public final class BedrockPlayerPosture {
++
++    public static final float CROUCHING_HEIGHT = 1.49F;
++    private static final float PROBE_INSET = 0.01F;
++
++    private BedrockPlayerPosture() {
++    }
++
++    public static PlayerPosture.Space space(final Player player) {
++        final boolean standing = fits(player, Pose.STANDING);
++        final boolean crouching = standing || fits(player, Pose.CROUCHING);
++        return new PlayerPosture.Space(standing, crouching, crouching || fits(player, Pose.SWIMMING));
++    }
++
++    public static boolean fits(final Player player, final Pose pose) {
++        final AABB probe = probe(player.getBoundingBox(), pose);
++        for (final var collision : player.level().getBlockCollisions(player, probe)) {
++            if (!collision.isEmpty()) {
++                return false;
++            }
++        }
++        return true;
++    }
++
++    static AABB probe(final AABB body, final Pose pose) {
++        final float height = switch (pose) {
++            case STANDING -> 1.8F;
++            case CROUCHING -> CROUCHING_HEIGHT;
++            case SWIMMING -> 0.6F;
++            default -> throw new IllegalArgumentException("Unsupported posture probe");
++        };
++        float minX = (float) body.minX + PROBE_INSET;
++        float minY = (float) body.minY + PROBE_INSET;
++        float minZ = (float) body.minZ + PROBE_INSET;
++        float maxX = (float) body.maxX - PROBE_INSET;
++        float maxY = ((float) body.minY + height) - PROBE_INSET;
++        float maxZ = (float) body.maxZ - PROBE_INSET;
++        if (maxX < minX) {
++            minX = maxX = (minX + maxX) * 0.5F;
++        }
++        if (maxY < minY) {
++            minY = maxY = (minY + maxY) * 0.5F;
++        }
++        if (maxZ < minZ) {
++            minZ = maxZ = (minZ + maxZ) * 0.5F;
++        }
++        return new AABB(minX, minY, minZ, maxX, maxY, maxZ);
++    }
++
++}
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index 74b4c70..7b90c87 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -106,6 +106,7 @@
+     "features.input.MixinMouseHandler",
+     "features.input.MixinInputPermissionConnection",
+     "features.input.MixinMinecraftInputPermissions",
++    "features.movement.MixinAvatar",
+     "features.movement.MixinEntity",
+     "features.movement.MixinEntityFluidInteraction",
+     "features.movement.MixinEntityFluidInteraction_CurrentAccumulator",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
 new file mode 100644
 index 0000000..dfed580
@@ -715,6 +905,57 @@ index 0000000..dfed580
 +            assertEquals(original.minZ, adjusted.minZ);
 +            assertEquals(original.maxZ, adjusted.maxZ);
 +        }
++    }
++
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPostureTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPostureTest.java
+new file mode 100644
+index 0000000..b9f9d23
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPostureTest.java
+@@ -0,0 +1,45 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.movement;
++
++import net.minecraft.world.entity.Pose;
++import net.minecraft.world.phys.AABB;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockPlayerPostureTest {
++
++    @Test
++    void usesNativeFloatRoundingAndInsetAtWorldCoordinates() {
++        final var body = new AABB(-7.3, 104.5, 15.7, -6.7, 105.1, 16.3);
++        for (final var pose : new Pose[]{Pose.STANDING, Pose.CROUCHING, Pose.SWIMMING}) {
++            final var probe = BedrockPlayerPosture.probe(body, pose);
++            final float height = pose == Pose.STANDING ? 1.8F : pose == Pose.CROUCHING ? 1.49F : 0.6F;
++            assertEquals((double) ((float) body.minX + 0.01F), probe.minX);
++            assertEquals((double) ((float) body.maxX - 0.01F), probe.maxX);
++            assertEquals((double) ((float) body.minY + 0.01F), probe.minY);
++            assertEquals((double) (((float) body.minY + height) - 0.01F), probe.maxY);
++            assertEquals((double) ((float) body.minZ + 0.01F), probe.minZ);
++            assertEquals((double) ((float) body.maxZ - 0.01F), probe.maxZ);
++        }
++        final var ceiling = new AABB(-8, 106, 15, -6, 107, 17);
++        assertTrue(BedrockPlayerPosture.probe(body, Pose.STANDING).intersects(ceiling));
++        assertFalse(BedrockPlayerPosture.probe(body, Pose.CROUCHING).intersects(ceiling));
++        assertFalse(BedrockPlayerPosture.probe(body, Pose.SWIMMING).intersects(ceiling));
++    }
++
++    @Test
++    void collapsesInvertedInsetAxesAndRejectsUnrelatedPoses() {
++        final var probe = BedrockPlayerPosture.probe(new AABB(0, 0, 0, 0.01, 1, 0.01), Pose.SWIMMING);
++        assertEquals(probe.minX, probe.maxX);
++        assertEquals(probe.minZ, probe.maxZ);
++        assertTrue(probe.minY < probe.maxY);
++        assertThrows(IllegalArgumentException.class,
++                () -> BedrockPlayerPosture.probe(new AABB(0, 0, 0, 1, 1, 1), Pose.SLEEPING));
 +    }
 +
 +}

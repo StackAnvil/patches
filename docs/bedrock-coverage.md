@@ -4233,3 +4233,46 @@ Predicted crawling input transitions, native local state transitions, server-tic
 The native flag merge preserves newer local predicted state only when the historical server frame agrees.
 Ignoring authoritative swimming changes would not reproduce that behavior.
 Fresh native ceiling captures remain required, alongside the broader movement, real-server, and Windows/macOS game-join requirements.
+
+### Predict native local posture, October 6, 2026
+
+**Reference:** Matching 1.26.51.1 executable inspection establishes the local posture rules and the request flags that control them.
+Native posture uses independent swimming, crawling, and sneaking flags.
+Block-space probes use heights of 1.8, 1.49, and 0.6 blocks, with a 0.01-block inset and float arithmetic.
+Flight suppresses requested sneaking.
+Gliding, passengers, spectators, and spin attacks bypass forced crouching or crawling.
+The swimming movement boundary uses float bits `0x3effffff`.
+Raw executable data and decompilation remain private.
+
+**Implemented:** Core exposes the posture decision as `PlayerPosture.next`.
+The add-on supplies local block collisions and input before travel.
+Its desired crawling pose follows local prediction instead of waiting for server metadata.
+Core retains swimming and crawling edge tracking and auth-input construction for direct connections and ViaProxy.
+Forced sneaking remains separate from physical sneak input.
+The completed revision-4 payload carries all three posture flags, motion, collision axes, and ground-jump events.
+The changes belong to the existing core and add-on prediction patches.
+
+**Verified:** Both strict-BDS routes emit crawling start and stop events and retain the short body during the 35-degree and 45-degree ceiling cases.
+Direct receives one nonzero correction per angle.
+ViaProxy receives two at 45 degrees and one at 35 degrees in this run.
+The remaining first re-entry frame differs in input scale, sprint state, and water drag.
+The additional proxy correction follows the first correction's delivery delay.
+
+Direct open-water regressions match 191 saved native frames across 30, 35, and 45 degrees without corrections.
+ViaProxy matches another 192 frames across the same angles without corrections.
+Maximum differences remain below 0.000031 blocks vertically, 0.000008 blocks horizontally, and 0.000000060 blocks per tick in motion.
+The direct 48-frame held swimming-jump case matches the preceding accepted reference exactly.
+ViaProxy receives no corrections during its 49-frame held case; the first 48 frames match the direct reference exactly.
+All three recordings reach join and spawn with protocol 2193.
+The second direct recording ends through an intentional stop after its two regression cases.
+
+All four builds pass, and `bun run check` passes.
+There are 16 converter, 648 core, and 612 add-on test cases, with 135 skips and no failures or errors.
+New tests cover native posture transitions, independent physical sneak input, probe geometry, and all 64 payload flag combinations.
+The full core and add-on stacks replay successfully.
+The preceding main CI run passes builds, tooling, platform permissions, and all four native helper targets.
+
+**Incomplete:** Native input and sprint phase ordering, server-tick flag history, authoritative reconciliation, and resimulation still require implementation or verification.
+Local posture prediction does not establish full ceiling parity.
+Fresh native ceiling and combined swimming-jump captures remain required.
+The broader movement, real-server, and Windows/macOS game-join requirements remain open.

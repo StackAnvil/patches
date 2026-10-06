@@ -308,3 +308,39 @@ Direct open-water regressions match 192 saved native frames; ViaProxy matches an
 They retain swimming and sprint events and receive no corrections during those cases.
 The held swimming-jump regressions match the preceding accepted reference: 48 frames directly and 47 through ViaProxy.
 Both recordings join and spawn with protocol 2193.
+
+### Predict native local posture
+
+The local prediction now replaces the server-metadata dependency described above.
+It uses core's `PlayerPosture` decision with local input and block collisions before travel.
+The short desired pose follows local crawling state, while remote players retain core's server pose translation.
+Sleeping, gliding, and spin attack poses retain their existing paths.
+
+Matching 1.26.51.1 executable inspection establishes the posture rules and probe geometry.
+Standing, crouching, and crawling probes use native float arithmetic, heights of 1.8, 1.49, and 0.6 blocks, and a 0.01-block inset.
+Entity overlap does not prevent a native posture change.
+Collapsed probe axes use their midpoint.
+The add-on also uses the native 1.49-block crouching body height.
+
+The posture trigger runs after `applyInput` and before travel.
+Input scaling retains the preceding sneaking or crawling state, except during flight.
+Flight suppresses requested sneaking; gliding, passengers, spectators, and spin attacks bypass forced posture.
+The completed revision-4 frame carries independent swimming, crawling, and sneaking flags.
+Core retains packet construction and edge tracking for direct connections and ViaProxy.
+
+Two probe tests cover float rounding, native heights, ceiling overlap, collapsed axes, and unsupported poses.
+The full build passes 16 converter, 648 core, and 612 add-on test cases, with 135 skips and no failures or errors.
+`bun run check` also passes.
+
+Both routes retain the short body locally during the 35-degree and 45-degree ceiling cases.
+The direct route receives one nonzero correction per angle.
+ViaProxy receives two at 45 degrees and one at 35 degrees in this run.
+The remaining re-entry frame uses slow input and stops sprinting before travel; BDS expects greater forward acceleration and drag.
+The additional proxy correction follows the first correction's delivery delay.
+These observations require native phase and history research; they do not justify ignoring server corrections.
+
+Direct open-water comparisons match 191 saved native frames across 30, 35, and 45 degrees without corrections.
+The 48-frame held swimming-jump case matches the preceding accepted reference exactly in position, motion, and flags.
+ViaProxy matches another 192 saved native open-water frames without corrections.
+Its held swimming-jump case receives no corrections; the first 48 of 49 frames match the direct reference exactly.
+Both routes still require fresh native ceiling and combined swimming-jump captures.
