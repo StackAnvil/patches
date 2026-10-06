@@ -438,3 +438,14 @@ The generic Script API observer cannot establish their ownership, and their init
 Rocket launch, ownership, damage, and client prediction remain open.
 The [coverage ledger](bedrock-coverage.md#ranged-enchantment-fixtures-october-6-2026) records the probe limits.
 All movement, combat, terrain, fluid, inventory, route, and platform requirements remain in scope.
+
+### Native player step height (October 6, 2026)
+
+Native player initialization sets the maximum step height to `0.5625F`.
+Core now sends that limit through Java's step-height attribute at join, respawn, and dimension changes.
+The original native setter and getter pass 1,024 execution cases with supplied ECS storage.
+The constructor call chain is verified from instructions.
+
+This corrects the player limit while Java still selects and solves step candidates.
+Variable creature heights, native obstacle order, overlap recovery, and complete movement history remain required.
+The [coverage ledger](bedrock-coverage.md#native-player-step-height-october-6-2026) records runtime checks and verification boundaries.

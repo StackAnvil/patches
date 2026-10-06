@@ -460,3 +460,28 @@ The [coverage ledger](../../../docs/bedrock-coverage.md#native-collision-contact
 The rebuilt ViaProxy comparison also reaches strict-BDS spawn and sends 1,618 input frames with zero corrections.
 It includes the same rounded teleport, 22 backward-input frames, 22 forward-input frames, and later idle current contact.
 Both routes verify this regression; complete native collision and the full gameplay matrix remain required.
+
+## Native player step height
+
+The target 1.26.51.1 player constructor reaches shared initialization that sets `MaxAutoStepComponent` to `0.5625F`.
+Core sends this value through Java's ordinary step-height attribute at join, respawn, and dimension changes.
+This reaches direct and ViaProxy clients without a new add-on payload.
+It does not create a synthetic Bedrock attribute or change mounted creature heights.
+
+The original constant load, complete setter lookup/store, and complete getter lookup/load pass 1,024 CPU execution cases.
+The constructor call chain is verified from original instructions.
+Fixtures supply the hash registry and existing ECS storage.
+Full constructors, later component updates, variable creature heights, and world stepping remain outside this comparison.
+A packet regression test verifies the attribute value, modifiers, entity identity, repeated delivery, and unchanged native attribute state.
+
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-player-step-height-october-6-2026) records route checks and remaining collision requirements.
+This fixes the player height limit; native obstacle order, step selection, overlap recovery, and collision history still need implementation.
+
+Rebuilt direct and ViaProxy clients reach actual strict-BDS spawn.
+A read-only runtime probe verifies exact step-height bits at spawn, after death/respawn, in the Nether, and after returning on both routes.
+The direct journal contains 1,784 auth-input frames and four corrections during Nether fixture placement.
+The proxy journal contains 2,477 auth-input frames and six earlier spawn-current corrections.
+Controlled walking has no corrections on either route.
+Those setup and fluid/prediction gaps remain open.
+Core passes 704 tests with 19 optional skips, the add-on passes 480 tests with 114 optional skips, and CubeConverter passes 16 tests.
+Both Java stacks pass Checkstyle; core, add-on, converter, and ViaProxy stacks replay and build.

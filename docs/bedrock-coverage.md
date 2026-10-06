@@ -6184,3 +6184,54 @@ Detailed damage, ammunition selection, enchantment interactions, rocket trajecto
 Splash and lingering potions, fireball dodging and reflection, powder snow, water, lava, and bubble columns retain their existing fixtures and unresolved comparisons.
 The native GPU guard remains active for the current boot.
 The original eight coverage groups, full complex gameplay matrix, strict BDS, Boar, real servers, and actual platform joins remain required.
+
+## Native player step height (October 6, 2026)
+
+**Target:** Bedrock 1.26.51.1, build 51061372, protocol 2193.
+
+**Implemented:** ViaBedrock core sends Java's ordinary step-height attribute with base value `0.5625` and no modifiers.
+It sends this after login and after Java respawn packets for death and dimension changes.
+The add-on needs no new hook or payload, and ViaProxy forwards the same ordinary attribute packet.
+Native Bedrock attributes remain unchanged.
+Mounted creature heights remain outside this player change.
+
+**Native evidence:** Player constructor `0x1401dc620` calls base initialization `0x142073bf0` at `0x1401dc66b`.
+That base calls shared initialization `0x142072a60` at `0x142073cf2`.
+At `0x1420731ab`, shared initialization loads `0.5625F` from `0x14e7f8a70` into `XMM1`.
+The call at `0x1420731b6` invokes setter `0x141a24390`.
+The setter writes component hash `0x9aae5d7f`, identified as `MaxAutoStepComponent` by the [pinned SDK header](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/entity/components/MaxAutoStepComponent.h).
+Getter `0x141a242b0` returns the same float in `XMM0`.
+The stored bits are `0x3f100000`.
+
+**Execution comparison:** The original constant load, complete setter, and complete getter pass 1,024 cases with no mismatches.
+Cases vary hash-bucket capacity, collision chains, entity indices, generations, dense component indices, and surrounding bytes.
+Fixtures supply an existing hash registry and ECS storage.
+Constructor call-chain checks use original `CALL` instructions.
+They do not execute complete constructors or simulate a native game session.
+The final comparison checks both exact height bits and unchanged surrounding component bytes.
+
+**Unit check:** The packet regression checks entity identity, attribute identity and count, exact value, absent modifiers, repeated delivery, and unchanged native attributes.
+
+**Remaining:** The native step candidate algorithm, obstacle order, final bounds, overlap recovery and state, custom player behavior updates, and variable creature heights need further work.
+This change supplies the native initial player limit while Java still selects and solves step candidates.
+It does not establish complete stepping, fluid, prediction, combat, or platform parity.
+The full [complex gameplay matrix](bedrock-complex-gameplay.md), direct/ViaProxy strict-BDS and Boar comparisons, CubeCraft, and actual Windows/macOS joins remain required.
+
+**Direct runtime check:** The rebuilt add-on reaches actual strict-BDS spawn and sends 1,784 auth-input frames.
+A read-only JVM probe verifies exact player step-height bits at spawn, after death/respawn, in the Nether, and after returning.
+An 18-frame walking interval has no corrections.
+Four nonzero corrections occur during Nether fixture placement before its floor is available.
+The recording stops manually after the lifecycle checks, so its command reports cancellation after saving the journal and spawn summary.
+These observations verify the attribute lifecycle, not full native stepping or correction recovery.
+
+**Build check:** Core passes 704 tests with 19 optional skips; the add-on passes 480 tests with 114 optional skips.
+CubeConverter passes all 16 tests.
+Core, add-on, converter, and ViaProxy stacks replay and build with Checkstyle passing.
+
+**ViaProxy runtime check:** The rebuilt route reaches actual strict-BDS spawn and sends 2,477 auth-input frames.
+The read-only probe verifies `0x3f100000` at spawn, after death/respawn, in the Nether, and after returning.
+A 17-frame walking interval has no corrections.
+Six nonzero corrections occur earlier in the spawn-area current, before the controlled lifecycle checks.
+That initial fluid/loading behavior remains a prediction gap.
+The recording completes normally.
+Both routes verify delivery and lifecycle of this attribute; complete native stepping remains required.
