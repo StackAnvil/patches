@@ -611,3 +611,26 @@ The [collision solver reference](../../../docs/bedrock-coverage.md#native-collis
 The add-on still uses Java collision solving.
 Native overlap-state producers, stepping, final position updates, and retained-world replay remain incomplete.
 These comparisons do not establish production collision parity or visible native behavior.
+
+
+## Native stepping and finalization
+
+Matching-build inspection establishes native step eligibility, step solving, overlap-state updates, and final position and collision updates.
+Step eligibility consumes the always-step tag and checks exact horizontal motion changes before requesting a step.
+The solver tests rise, X, Z, and descent, checks the final box against the full collision list, and requires greater horizontal displacement.
+Exact native step instructions pass 2,064 cases, including ceilings and large aligned buffers.
+
+Overlap updates read actor flag 109, retain penetration state across frames, and clear temporary overlap limits.
+Exact overlap-update and step-eligibility instructions pass 1,024 and 1,280 cases respectively.
+A temporary-limit producer raises vertical overlap to at least float32 `0.05` and passes another 1,536 cases.
+Its caller conditions and other state producers remain unverified.
+
+Finalization uses float32 box-derived position and a collision threshold of `2⁻²³`.
+Grounded state depends on vertical collision, requested vertical motion, and prior grounded state.
+No-clip updates position while preserving existing collision and grounded flags.
+Exact finalization instructions pass 32,768 cases across threshold boundaries, prior flags, and ability states.
+
+The [stepping and finalization reference](../../../docs/bedrock-coverage.md#native-stepping-overlap-updates-and-move-finalization-october-6-2026) records addresses and verification limits.
+Fixtures substitute ECS or allocator boundaries and exclude complete scheduling, real component lifetime, and visible native behavior.
+Production still uses Java collision solving.
+Native shape collection, remaining overlap producers, retained-world replay, frame identity, and ordered corrections remain incomplete.

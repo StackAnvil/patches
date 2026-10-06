@@ -4981,3 +4981,98 @@ Retained world state, frame identity, ordered corrections, and later-input repla
 Current CI passes build, tooling, and Ubuntu/Windows/macOS permission jobs.
 Actual platform joins, direct and ViaProxy native comparisons, broader movement, and all eight coverage groups remain requirements.
 Actual Windows/macOS game joins and all eight coverage groups remain requirements.
+
+
+### Native stepping, overlap updates, and move finalization, October 6, 2026
+
+**Reference:** PistonDecompiler and Ghidra inspection uses the pinned Bedrock 1.26.51.1 executable, build 51061372, protocol 2193.
+Native type strings establish `AutoStepRequestFlagComponent` (`0xbaa9695a`), `CanAlwaysAutoStepFlagComponent` (`0x91e56036`), and `HasAutoSteppedComponent` (`0x37c138fa`).
+These findings extend the collision-solver reference above.
+
+**Step eligibility:** Kernel `0x149048220` consumes `CanAlwaysAutoStepFlagComponent`, including when it rejects the step.
+It requires a positive step height and a change in either horizontal speed component.
+These comparisons use exact float equality, separate from the collision threshold used during finalization.
+It then requires one of these conditions:
+
+- The flying ability is active.
+- The consumed always-step flag was present.
+- The actor was grounded.
+- Downward requested motion differs from resolved vertical motion.
+
+Eligible cases create an `AutoStepRequestFlagComponent` when none exists.
+Rejected cases leave an existing request unchanged within this kernel.
+The [SDK movement-ability enum](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/deps/vanilla_components/MovementAbilities.h) names the observed flying and no-clip bits.
+Native instructions and fixtures establish the behavior described here.
+
+**Step solving:** Kernel `0x149049700` starts from the original movement-request box and requested horizontal speed.
+It copies the collision list and keeps obstacles whose lower Y coordinate is below the original box's upper Y coordinate.
+It solves a rise to the configured step height, then X and Z movement.
+A second solve descends by the resolved rise.
+Both solves use the same contact kernel and overlap limits as ordinary actor movement.
+
+The kernel rejects a final box that strictly overlaps any obstacle from the original, unfiltered list.
+This preserves the ceiling check even when that ceiling was absent from the trial list.
+It accepts a candidate only when its squared horizontal displacement exceeds the already resolved displacement.
+Equality rejects the candidate.
+Accepted steps update resolved speed, the actor box, and each owned box by the difference from the previous resolution.
+They also create `HasAutoSteppedComponent` when absent.
+The kernel preserves requested speed, overlap limits, and the existing penetration flag.
+
+Exact step and contact instructions pass 2,064 cases against an independent float32 model, with no mismatches.
+The cases include steps, ceilings, random obstacles, empty lists, differing limits, and both prior step-tag states.
+They verify 112 accepted steps, 1,952 rejected steps, 1,800 allocations and matching releases, and 56 new step tags.
+Twelve cases use the native alignment path for large buffers, including 171, 172, and 192 collision boxes.
+The fixture substitutes allocation, CRT copying, release, and ECS tag operations.
+It excludes real allocator lifetime, live shape collection, complete scheduling, and visible native behavior.
+
+**Overlap-state update:** Kernel `0x14901c270` reads actor flag 109 from `ActorDataFlagComponent`.
+It mirrors that flag into overlap-state bit 4.
+The [SDK actor-flag enum](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/world/actor/ActorFlags.h) names flag 109 `PushTowardsClosestSpace`.
+When penetration stops, the kernel preserves only bits 0, 3, and 4.
+On the first penetrating frame, it sets bit 1.
+If bit 1 was already set, it sets bit 2.
+Penetration with actor flag 109 also creates `MoveTowardsClosestSpaceFlagComponent` when absent.
+Every case clears the temporary-limit presence byte.
+
+Exact overlap-state instructions pass 1,024 cases with no mismatches.
+Cases cover all combinations of the low six bits, actor flag 109, penetration, temporary presence, and existing closest-space tags.
+They verify 128 tag creations and preservation of unrelated component bytes.
+Another 1,280 exact step-eligibility cases verify 220 request creations and 640 consumed always-step tags.
+These fixtures supply synthetic ECS storage and substitute pool lookup, component creation, and removal.
+They exclude real component lifecycle, other producers, complete scheduling, and full movement.
+
+**Temporary overlap limits:** Producer `0x14266db80` selects the active temporary vector, or zero when none exists.
+It raises X and Z minima to zero and the Y minimum to float32 `0.05`, then marks the vector active.
+Exact producer instructions pass 1,536 cases, including signed zero and values adjacent to that minimum.
+The fixture substitutes pool lookup and construction and supplies initialized storage for absent components.
+Caller gameplay conditions, actual construction, and other limit producers remain unverified.
+
+**Finalization:** Kernel `0x1463b39a0` derives position from the final box using float32 arithmetic.
+X and Z use the midpoint of their box bounds.
+Y uses the lower box bound plus the actor's vertical offset.
+This position update also occurs when the no-clip ability is active.
+No-clip then preserves the existing collision and grounded flags.
+
+For ordinary movement, finalization compares requested and resolved speed on each axis.
+A collision requires the absolute float32 difference to exceed `2⁻²³`, or `0.00000011920928955078125`.
+This threshold differs from the contact-distance epsilon of `0.000001`.
+Horizontal collision retains separate X and Z booleans.
+Vertical and aggregate collision tags follow the same threshold.
+Grounded state becomes true for vertical collision with downward requested motion.
+It otherwise remains true only when the actor was grounded, has no vertical collision, and requested vertical motion equals zero.
+Finalization removes `CollidableMobNearFlagComponent` in both ordinary and no-clip cases.
+
+Exact finalization instructions pass 32,768 cases with no mismatches.
+Cases cover all prior flag combinations, ability presence, no-clip, zero and adjacent threshold values, and randomized finite motion and boxes.
+They verify position, separate horizontal flags, vertical and aggregate flags, grounded transitions, and 21,360 creations plus 42,256 removals.
+The fixture substitutes ECS pool lookup, component creation, and removal.
+It excludes invalid-position logging, real component lifecycle, complete movement scheduling, and visible native behavior.
+
+**Incomplete:** Production still uses Java collision solving.
+The findings establish these native subroutines, not a complete production simulation or reconciliation path.
+Integration still needs live collision shapes in native order, the remaining overlap-state producers, retained world state, and frame identity.
+Ordered corrections and later-input simulation remain requirements.
+The previous public revision passed build, tooling, and Ubuntu, Windows, and macOS permission jobs.
+Actual platform game joins, direct and ViaProxy native comparisons, broader movement, and all eight coverage groups remain requirements.
+No native game launch occurred during this investigation.
+The current-boot GPU guard remains in force.
