@@ -377,6 +377,9 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
     case "crossbow-quick-charge-1":
     case "crossbow-quick-charge-2":
     case "crossbow-quick-charge-3":
+    case "crossbow-piercing-0":
+    case "crossbow-piercing-1":
+    case "crossbow-piercing-4":
       await uiMouse(ui, "right", 2000);
       await Bun.sleep(300);
       if (id === "crossbow-retain") {
@@ -387,7 +390,7 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
       }
       if (id !== "crossbow-load" && id !== "crossbow-no-ammo") {
         await uiMouse(ui, "right");
-        await Bun.sleep(300);
+        await Bun.sleep(id.startsWith("crossbow-piercing-") ? 1800 : 300);
       }
       return;
     case "splash-potion-throw":

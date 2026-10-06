@@ -74,7 +74,7 @@ The opt-in complex suite adds ranged use and hits, potion effects, fireball inte
 bun run test:integration -- --route java-bedrock --gameplay-complex
 ```
 
-The [probe guide](../../docs/bedrock-test-packs.md#complex-gameplay) lists its 29 cases and observation limits.
+The [probe guide](../../docs/bedrock-test-packs.md#complex-gameplay) lists its 38 cases and observation limits.
 The [coverage matrix](../../docs/bedrock-complex-gameplay.md) tracks the broader movement and combat requirements.
 Headless BDS probes verify selected server controls.
 Translated Java gameplay and native client comparisons remain required.

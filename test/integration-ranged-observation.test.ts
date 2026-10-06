@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { potionImpactPasses, rangedHitPasses, rangedObservationPasses, type RangedObservation } from "../src/integration/ranged-observation.ts";
+import { potionImpactPasses, rangedHitPasses, rangedObservationPasses, rangedPiercingPasses, type RangedObservation } from "../src/integration/ranged-observation.ts";
 
 function chargedShot(): RangedObservation {
   return { item: "minecraft:bow", ammunition: "minecraft:arrow", initialCount: 4, remainingCount: 3,
@@ -106,4 +106,25 @@ test("ranged hits require damage and contact from the launched arrow against the
   expect(rangedHitPasses("release", { ...shot, target: { ...shot.target!, healthAfter: 10 } })).toBe(false);
   expect(rangedHitPasses("release", { ...shot, target: { ...shot.target!, damage: [{ tick: 40, amount: 6, projectile: "another-arrow" }] } })).toBe(false);
   expect(rangedHitPasses("release", { ...shot, impacts: [{ ...shot.impacts![0]!, target: "another-cow" }] })).toBe(false);
+});
+
+test("Piercing requires one arrow to damage the ordered chain and stop before the next target", () => {
+  const shot: RangedObservation = { ...chargedShot(), item: "minecraft:crossbow",
+    events: [{ action: "start", tick: 10 }, { action: "complete", tick: 35 }],
+    impacts: [0, 1].map((index) => ({ id: "owned-arrow", target: `target-${index}`, tick: 40 + index,
+      location: { x: 0, y: 1, z: 3 + 2 * index } })),
+    targets: [0, 1, 2].map((index) => ({ id: `target-${index}`, healthBefore: 100, healthAfter: index < 2 ? 94 : 100,
+      damage: index < 2 ? [{ tick: 40 + index, amount: 6, projectile: "owned-arrow" }] : [] })) };
+  expect(rangedPiercingPasses(shot, 2)).toBe(true);
+  expect(rangedPiercingPasses(shot, 1)).toBe(false);
+  expect(rangedPiercingPasses({ ...shot, targets: shot.targets!.slice(0, 2) }, 2)).toBe(false);
+  expect(rangedPiercingPasses({ ...shot, targets: [shot.targets![0]!, shot.targets![0]!, shot.targets![2]!] }, 2)).toBe(false);
+  expect(rangedPiercingPasses({ ...shot, impacts: [shot.impacts![0]!, { ...shot.impacts![1]!, tick: 39 }] }, 2)).toBe(false);
+  expect(rangedPiercingPasses({ ...shot, impacts: [shot.impacts![0]!, { ...shot.impacts![1]!, id: "another-arrow" }] }, 2)).toBe(false);
+  expect(rangedPiercingPasses({ ...shot, impacts: [...shot.impacts!, shot.impacts![0]!] }, 2)).toBe(false);
+  expect(rangedPiercingPasses({ ...shot, targets: shot.targets!.map((target, index) => index === 1
+    ? { ...target, damage: [{ tick: 41, amount: 6, projectile: "another-arrow" }] } : target) }, 2)).toBe(false);
+  expect(rangedPiercingPasses({ ...shot, targets: shot.targets!.map((target, index) => index === 2
+    ? { ...target, healthAfter: 99, damage: [{ tick: 42, amount: 1, projectile: "owned-arrow" }] } : target) }, 2)).toBe(false);
+  expect(rangedPiercingPasses({ ...shot, projectiles: [...shot.projectiles, { ...shot.projectiles[0]!, id: "second-shot" }] }, 2)).toBe(false);
 });

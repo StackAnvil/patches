@@ -6235,3 +6235,39 @@ Six nonzero corrections occur earlier in the spawn-area current, before the cont
 That initial fluid/loading behavior remains a prediction gap.
 The recording completes normally.
 Both routes verify delivery and lifecycle of this attribute; complete native stepping remains required.
+
+### Crossbow Piercing fixtures, October 6, 2026
+
+**Implemented:** The complex suite now contains 38 cases.
+Three new controls check ordinary crossbows, Piercing I, and Piercing IV against distinct stationary targets.
+Each requires one consumed arrow, one owned shot, ordered contacts, attributed damage, and an untouched target beyond the chain.
+The observer retains health and damage independently for every target.
+
+**Server controls:** Each case passes three synthetic-client attempts on strict BDS 1.26.51.1, protocol 2193.
+The native server supplies all projectile, damage, and inventory outcomes.
+The synthetic client supplies actions rather than native gameplay or rendering.
+The TypeScript check, pack build, and all 140 tooling tests pass.
+
+**Direct Java check:** All three cases pass through the rebuilt add-on against the same strict BDS.
+Actual Java mouse input loads and fires each crossbow.
+One arrow damages one, two, or five distinct targets; the next target remains untouched.
+
+**ViaProxy check:** All three cases also pass through ViaProxy after actual BDS spawn.
+The client selects Java 26.3, and the add-on remains installed on both test routes.
+These fixtures use ordinary Java item input and require no new add-on hook.
+The first private harness attempt starts before BDS spawn and cannot prepare a fixture.
+The corrected harness waits for the spawn event before sending test commands.
+That setup error supplies no gameplay comparison.
+
+**Movement observations:** Both successful recordings finish normally and establish actual spawn.
+The direct route sends 943 auth-input frames and receives six corrections.
+Two corrections follow fixture teleports; four occur later, after the firing assertions.
+The proxy route sends 927 auth-input frames and receives four corrections.
+One follows a fixture teleport; three occur after the firing assertions.
+Each route receives two later player velocity impulses before those additional corrections.
+Knockback and correction replay remain open; these firing checks do not establish movement parity.
+
+**Remaining:** Initial wide-target overlap produces repeated contacts and damage from the same arrow across consecutive BDS ticks.
+The final spacing tests distinct targets; it does not establish client parity for repeated overlap contacts.
+Wall stops, shields, moving targets, local projectile trajectories, native-client comparisons, and the full gameplay matrix remain required.
+The [complex gameplay record](bedrock-complex-gameplay.md#crossbow-piercing-fixtures-october-6-2026) explains fixture boundaries and version evidence.

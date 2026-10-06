@@ -120,6 +120,21 @@ test("clouds require an owned nearby impact and cannot leak through deferred cal
   expect(ranged.clouds).toHaveLength(1);
 });
 
+test("each Piercing target keeps its own damage attribution and health", () => {
+  const ranged = prepareObservation();
+  ranged.targets = ["first", "second"].map((id) => ({ id, healthBefore: 100, healthAfter: 100, damage: [] }));
+  const hurt = callbacks.get("entityHurt")!;
+  const event = (id: string) => ({ hurtEntity: { id, getComponent: () => ({ currentValue: 94 }) }, damage: 6,
+    damageSource: { damagingProjectile: { id: "arrow" } } });
+  hurt(event("unrelated"));
+  hurt(event("second"));
+  expect(ranged.targets[0]!.damage).toHaveLength(0);
+  expect(ranged.targets[1]).toMatchObject({ healthAfter: 94, damage: [{ amount: 6, projectile: "arrow", tick: 10 }] });
+  active!.fixture.closed = true;
+  hurt(event("first"));
+  expect(ranged.targets[0]!.healthAfter).toBe(100);
+});
+
 test("the incoming control selects an owned collision course and removes only its off-course shots", () => {
   let removedShots = 0;
   let stoppedShooter = 0;

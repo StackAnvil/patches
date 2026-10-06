@@ -9,6 +9,7 @@ export const complexGameplayCaseIds = [
   "bow-hit", "crossbow-hit",
   "bow-infinity", "bow-infinity-no-ammo", "crossbow-multishot",
   "crossbow-quick-charge-1", "crossbow-quick-charge-2", "crossbow-quick-charge-3",
+  "crossbow-piercing-0", "crossbow-piercing-1", "crossbow-piercing-4",
 ] as const;
 
 export type RangedAction = "start" | "release" | "complete" | "stop" | "use";
@@ -17,6 +18,12 @@ export interface RangedExpectation {
   projectileCount?: number;
   minChargeTicks?: number;
   maxChargeTicks?: number;
+}
+export interface RangedTarget {
+  id: string;
+  healthBefore: number;
+  healthAfter: number;
+  damage: { tick: number; amount: number; projectile?: string }[];
 }
 export interface RangedObservation {
   item: string;
@@ -29,8 +36,35 @@ export interface RangedObservation {
   impacts?: { id: string; tick: number; location: { x: number; y: number; z: number }; target?: string }[];
   effects?: { tick: number; type: string; amplifier: number; duration: number }[];
   clouds?: { id: string; tick: number; location: { x: number; y: number; z: number } }[];
-  target?: { id: string; healthBefore: number; healthAfter: number; damage: { tick: number; amount: number; projectile?: string }[] };
+  target?: RangedTarget;
+  targets?: RangedTarget[];
   error?: string;
+}
+
+/** One arrow must hit the ordered chain and leave the next target untouched. */
+export function rangedPiercingPasses(observation: RangedObservation, hitCount: number): boolean {
+  if (!Number.isInteger(hitCount) || hitCount < 1 || !rangedObservationPasses("fire", observation)) return false;
+  const targets = observation.targets;
+  if (!targets || targets.length !== hitCount + 1 || new Set(targets.map((target) => target.id)).size !== targets.length) return false;
+  const shot = observation.projectiles[0]!;
+  let previousTick = shot.tick;
+  for (const [index, target] of targets.entries()) {
+    if (!target.id || !Number.isFinite(target.healthBefore) || !Number.isFinite(target.healthAfter)
+        || target.healthBefore <= 0 || target.healthAfter < 0) return false;
+    const contacts = observation.impacts?.filter((impact) => impact.target === target.id) ?? [];
+    if (index === hitCount) {
+      if (contacts.length || target.damage.length || target.healthBefore !== target.healthAfter) return false;
+      continue;
+    }
+    if (contacts.length !== 1 || target.damage.length !== 1 || target.healthAfter >= target.healthBefore) return false;
+    const contact = contacts[0]!;
+    const damage = target.damage[0]!;
+    if (contact.id !== shot.id || !Number.isInteger(contact.tick) || contact.tick < previousTick
+        || damage.projectile !== shot.id || !Number.isInteger(damage.tick) || damage.tick < shot.tick
+        || !Number.isFinite(damage.amount) || damage.amount <= 0) return false;
+    previousTick = contact.tick;
+  }
+  return true;
 }
 
 export function rangedHitPasses(mode: "release" | "fire", observation: RangedObservation): boolean {

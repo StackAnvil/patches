@@ -116,7 +116,7 @@ Retain ordinary Java and ViaProxy coverage where standard translation suffices.
 
 ## Runnable suite
 
-Run the 35 BDS cases:
+Run the 38 BDS cases:
 
 ```bash
 bun run test:integration -- --route java-bedrock --gameplay-complex
@@ -438,6 +438,30 @@ The generic Script API observer cannot establish their ownership, and their init
 Rocket launch, ownership, damage, and client prediction remain open.
 The [coverage ledger](bedrock-coverage.md#ranged-enchantment-fixtures-october-6-2026) records the probe limits.
 All movement, combat, terrain, fluid, inventory, route, and platform requirements remain in scope.
+
+### Crossbow Piercing fixtures, October 6, 2026
+
+**Implemented:** Three cases extend the runnable suite to 38.
+An ordinary crossbow, Piercing I, and Piercing IV fire through stationary target chains.
+The assertions require one consumed arrow and one owned projectile after a completed load.
+That same projectile must contact and damage one, two, or five distinct targets in order.
+The next target must retain its health with no contact or damage event.
+The observer keeps separate damage attribution and health for each target.
+Negative tests reject wrong arrows, extra shots, duplicate contacts, reversed contact ticks, missing targets, and damage beyond the chain.
+
+**Version evidence:** The [Creator projectile reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/entityreference/examples/entitycomponents/minecraftcomponent_projectile?view=minecraft-bedrock-stable#multiple_targets) connects Piercing to multiple-target behavior.
+The target BDS supplies the hit counts and damage observations used here.
+All three controls pass three attempts through an isolated synthetic protocol client on strict BDS 1.26.51.1, protocol 2193.
+The TypeScript check, pack build, and all 140 tooling tests pass.
+
+**Overlap finding:** Initial spacing lets one wide target receive two contacts and two damage events from the same arrow on consecutive ticks.
+Piercing I then damages only that target; Piercing IV damages it twice and three later targets once each.
+The final fixture separates targets and places the first beyond the initial launch step.
+This preserves the owned projectile observation and tests distinct targets without repeated overlap contacts.
+Repeated contacts remain a separate parity requirement, as do shields, wall stops, moving targets, and projectile rendering.
+
+The [coverage ledger](bedrock-coverage.md#crossbow-piercing-fixtures-october-6-2026) records route verification.
+The full movement, combat, fluid, terrain, inventory, native comparison, and platform matrix remains required.
 
 ### Native player step height (October 6, 2026)
 

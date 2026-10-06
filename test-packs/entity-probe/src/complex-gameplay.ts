@@ -1,6 +1,6 @@
 import { EnchantmentType, EquipmentSlot, GameMode, ItemStack, Potions, system, world,
   type Block, type Container, type Dimension, type Entity, type EntityEquippableComponent, type Player, type Vector3 } from "@minecraft/server";
-import { potionImpactPasses, rangedHitPasses, rangedObservationPasses, type RangedExpectation, type RangedObservation } from "../../../src/integration/ranged-observation.ts";
+import { potionImpactPasses, rangedHitPasses, rangedObservationPasses, rangedPiercingPasses, type RangedExpectation, type RangedObservation, type RangedTarget } from "../../../src/integration/ranged-observation.ts";
 import { incomingProjectilePasses, projectileThreatens, type IncomingProjectileObservation } from "../../../src/integration/projectile-observation.ts";
 
 interface MotionObservation {
@@ -143,8 +143,10 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
   world.afterEvents.entityHurt.subscribe((event) => {
     const fixture = getActive()?.fixture;
     if (fixture?.closed) return;
-    const target = fixture?.ranged?.target;
-    if (target?.id === event.hurtEntity.id) {
+    const ranged = fixture?.ranged;
+    const target = ranged?.targets?.find((candidate) => candidate.id === event.hurtEntity.id)
+      ?? (ranged?.target?.id === event.hurtEntity.id ? ranged.target : undefined);
+    if (target) {
       target.damage.push({ tick: system.currentTick, amount: event.damage, projectile: event.damageSource.damagingProjectile?.id });
       target.healthAfter = event.hurtEntity.getComponent("minecraft:health")?.currentValue ?? 0;
     }
@@ -221,6 +223,45 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
         observed: { ...fixture.ranged, charge, motion: fixture.motion },
         expected: { mode, ...expectation,
           projectileCount: ["release", "fire", "retain", "throw"].includes(mode) ? expectation.projectileCount : 0 } };
+    });
+  }
+
+  for (const level of [0, 1, 4]) {
+    define(`crossbow-piercing-${level}`, "ranged", async (player) => {
+      await prepareArena(player);
+      // Tall targets catch the native trajectory. Spacing keeps consecutive ticks
+      // from hitting one wide target twice and consuming the piercing allowance.
+      for (let z = 2; z <= 24; z++) for (let x = -1; x <= 1; x++) {
+        blockAt(player.dimension, x, -1, z).setType("minecraft:stone");
+        for (let y = 0; y <= 3; y++) blockAt(player.dimension, x, y, z).setType("minecraft:air");
+      }
+      const crossbow = new ItemStack("minecraft:crossbow");
+      if (level) {
+        const enchantable = crossbow.getComponent("minecraft:enchantable");
+        if (!enchantable) throw new Error("The crossbow cannot receive its fixture enchantment.");
+        enchantable.addEnchantment({ type: new EnchantmentType("piercing"), level });
+      }
+      const container = inventory(player);
+      container.setItem(0, crossbow);
+      container.setItem(9, new ItemStack("minecraft:arrow", 4));
+      const targets: RangedTarget[] = [];
+      for (let index = 0; index < level + 2; index++) {
+        const entity = player.dimension.spawnEntity("minecraft:iron_golem", position(0.5, 0, 5.5 + 3 * index));
+        tagEntity(entity);
+        entity.addEffect("slowness", 400, { amplifier: 255, showParticles: false });
+        const health = entity.getComponent("minecraft:health")?.currentValue;
+        if (health === undefined) throw new Error("Piercing target health is unavailable.");
+        targets.push({ id: entity.id, healthBefore: health, healthAfter: health, damage: [] });
+      }
+      player.teleport(position(), { rotation: { x: 0, y: 0 } });
+      const ranged: RangedObservation = { item: crossbow.typeId, ammunition: "minecraft:arrow",
+        initialCount: 4, remainingCount: 4, events: [], projectiles: [], slots: [], impacts: [], targets };
+      return { ranged, closed: false as boolean };
+    }, (player, fixture) => {
+      fixture.closed = true;
+      fixture.ranged.remainingCount = countItem(inventory(player), fixture.ranged.ammunition);
+      return { passed: rangedPiercingPasses(fixture.ranged, level + 1), observed: fixture.ranged,
+        expected: { hitCount: level + 1, untouchedTargets: 1, projectileCount: 1, consumed: 1 } };
     });
   }
 
