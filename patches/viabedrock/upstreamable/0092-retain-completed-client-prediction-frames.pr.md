@@ -218,3 +218,29 @@ Both recordings complete join and spawn with protocol 2193.
 Boar comparisons, ordinary Java clients without the add-on, item-use slowdown, and correction history need separate verification.
 Opposing physical directions still need native cancellation in core's direction helper.
 These cases do not establish complete movement parity or Windows/macOS game-join compatibility.
+
+## Opposing physical directions
+
+Matching Bedrock 1.26.51.1 input calculator `0x1404495e0` adds opposing physical directions before normalization and slowdown.
+Core now cancels those directions on each axis while retaining the physical input flags.
+This broadens the existing direction helper in patch 0004.
+The full-stack test in this patch covers all sixteen key combinations with six input scales.
+It also retains unrelated sneak and sprint flags.
+
+All four project builds pass, with 16 converter, 657 core, and 584 add-on test cases.
+There are 133 environment-dependent skips and no failures or errors.
+The full core stack replays, the standalone direction patch applies to the pinned base, and `bun run check` passes.
+
+Strict-BDS direct and ViaProxy runs each complete eight controlled cases without movement corrections.
+They cover opposing longitudinal input, opposing lateral input with forward movement, both axes, sneak combinations, and a forward control.
+The direct route contains 322 controlled frames; ViaProxy contains 320.
+Every captured movement vector matches the native calculation.
+Both held directions remain present in the physical flags.
+All 318 comparable frames match exactly in position, motion, movement vectors, and input flags.
+ViaProxy receives one zero-velocity fixture correction outside these cases.
+Both recordings reach join and spawn with protocol 2193.
+
+The preceding build sent incorrect vectors in seven cases, but strict BDS accepted them without controlled corrections.
+A clean strict-BDS result alone therefore does not establish input parity.
+Fresh native captures remain required because the current-boot native GPU guard prevents another native launch.
+Item-use slowdown, correction history, broader movement, real-server interoperability, and Windows/macOS game joins remain requirements.

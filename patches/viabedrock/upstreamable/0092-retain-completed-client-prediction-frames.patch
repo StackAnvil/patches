@@ -1,4 +1,4 @@
-From 10f18e343bb274cb547097e79913eba8b4bed080 Mon Sep 17 00:00:00 2001
+From 71c2105ca46564ec2fa19c0c49877e2e8f0f5502 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:28 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -102,6 +102,11 @@ ClientInputUpdateSystem before SneakingSystem and SneakTriggerActionSystem
 later in the pipeline. Consume the retained scale, produce its successor
 from the previous flags, then apply the completed posture. This preserves
 the initial input phase and component lifecycle without tick counters.
+
+Exercise the shared direction helper across all sixteen cardinal-key
+combinations and six native scalar values. Verify zero movement when both
+axes cancel, cardinal movement when one axis cancels, and normalized
+movement before the scalar is applied. Keep unrelated held flags intact.
 ---
  .../viabedrock/api/model/PlayerPosture.java   |  63 ++++++++
  .../api/model/PlayerPrediction.java           |  79 +++++++++
@@ -120,10 +125,11 @@ the initial input phase and component lifecycle without tick counters.
  .../api/model/PlayerPredictionTest.java       | 115 +++++++++++++
  .../api/model/SneakingInputStateTest.java     |  32 ++++
  .../api/model/SwiftSneakStateTest.java        |  32 ++++
+ .../api/util/MathUtilMovementTest.java        |  44 +++++
  .../model/BedrockItemEnchantmentTest.java     |  73 +++++++++
  .../packet/ClientPlayerPacketsTest.java       |  32 +++-
  .../packet/PlayerCorrectionPacketTest.java    | 105 ++++++++++++
- 20 files changed, 868 insertions(+), 38 deletions(-)
+ 21 files changed, 912 insertions(+), 38 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerPosture.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SneakingInputState.java
@@ -133,6 +139,7 @@ the initial input phase and component lifecycle without tick counters.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/SneakingInputStateTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/SwiftSneakStateTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/util/MathUtilMovementTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/BedrockItemEnchantmentTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java
 
@@ -396,7 +403,7 @@ index f69b430bf..ffe76000b 100644
          if (shouldSneak != this.bedrockSneaking) {
              this.addAuthInputData(shouldSneak ? PlayerAuthInputData.StartSneaking : PlayerAuthInputData.StopSneaking);
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/MathUtil.java b/src/main/java/net/raphimc/viabedrock/api/util/MathUtil.java
-index a00fed785..e2cdf603f 100644
+index a760d4c52..e01e27405 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/util/MathUtil.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/MathUtil.java
 @@ -95,7 +95,7 @@ public final class MathUtil {
@@ -406,8 +413,8 @@ index a00fed785..e2cdf603f 100644
 -    public static Position2f calculateMovementDirections(final Set<PlayerAuthInputData> authInputData, final boolean sneaking) {
 +    public static Position2f calculateMovementDirections(final Set<PlayerAuthInputData> authInputData, final float inputScale) {
          final float[] directions = new float[2];
-         directions[0] = authInputData.contains(PlayerAuthInputData.Left) ? -1F : authInputData.contains(PlayerAuthInputData.Right) ? 1F : 0F;
-         directions[1] = authInputData.contains(PlayerAuthInputData.Up) ? 1F : authInputData.contains(PlayerAuthInputData.Down) ? -1F : 0F;
+         directions[0] = (authInputData.contains(PlayerAuthInputData.Right) ? 1F : 0F) - (authInputData.contains(PlayerAuthInputData.Left) ? 1F : 0F);
+         directions[1] = (authInputData.contains(PlayerAuthInputData.Up) ? 1F : 0F) - (authInputData.contains(PlayerAuthInputData.Down) ? 1F : 0F);
 @@ -104,9 +104,7 @@ public final class MathUtil {
              if (both) {
                  directions[i] *= (float) (1D / Math.sqrt(2));
@@ -1103,6 +1110,56 @@ index 000000000..2ddd2d7fb
 +        assertEquals(0, state.level());
 +        state.update(2);
 +        assertEquals(2, state.level());
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/util/MathUtilMovementTest.java b/src/test/java/net/raphimc/viabedrock/api/util/MathUtilMovementTest.java
+new file mode 100644
+index 000000000..a8fa71ba3
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/util/MathUtilMovementTest.java
+@@ -0,0 +1,44 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.util;
++
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputData;
++import org.junit.jupiter.api.Test;
++
++import java.util.EnumSet;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class MathUtilMovementTest {
++
++    @Test
++    void cancelsOpposingDirectionsBeforeNormalizationAndScaling() {
++        final float diagonal = 0.70710677F;
++        final float[][] vectors = {
++                {0F, 0F}, {0F, 1F}, {0F, -1F}, {0F, 0F},
++                {-1F, 0F}, {-diagonal, diagonal}, {-diagonal, -diagonal}, {-1F, 0F},
++                {1F, 0F}, {diagonal, diagonal}, {diagonal, -diagonal}, {1F, 0F},
++                {0F, 0F}, {0F, 1F}, {0F, -1F}, {0F, 0F}
++        };
++        final PlayerAuthInputData[] directions = {
++            PlayerAuthInputData.Up, PlayerAuthInputData.Down, PlayerAuthInputData.Left, PlayerAuthInputData.Right
++        };
++        for (int mask = 0; mask < vectors.length; mask++) {
++            final var input = EnumSet.of(PlayerAuthInputData.SneakDown, PlayerAuthInputData.Sprinting);
++            for (int bit = 0; bit < directions.length; bit++) {
++                if ((mask & (1 << bit)) != 0) {
++                    input.add(directions[bit]);
++                }
++            }
++            for (float scale : new float[]{0F, 0.3F, 0.45000002F, 0.6F, 0.75F, 1F}) {
++                final var movement = MathUtil.calculateMovementDirections(input, scale);
++                assertEquals(vectors[mask][0] * scale, movement.x());
++                assertEquals(vectors[mask][1] * scale, movement.y());
++            }
++        }
 +    }
 +
 +}
