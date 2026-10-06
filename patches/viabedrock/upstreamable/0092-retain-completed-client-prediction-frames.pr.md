@@ -43,7 +43,8 @@ Both routes complete jump, fall, and water cases without corrections in the cont
 Startup and elevated-teleport corrections remain.
 A ViaProxy sprint-swim case emits one start and one stop event without an additional correction.
 A native sprint-swim capture confirms start event 29 and stop event 30.
-The add-on aligns its start timing with native; release event ordering remains incomplete.
+The add-on aligns its start timing with native.
+The later release comparisons below also verify release event ordering.
 Remaining movement cases need separate native comparisons.
 
 ## Completed collision state
@@ -67,3 +68,23 @@ Each observer case contains 120 server ticks.
 The dependency builds pass with 629 core tests and 603 add-on tests, with no failures or errors.
 The codec test covers all eight pose and collision combinations in stationary frames.
 The rest of the movement matrix remains unverified by these cases.
+
+## Authoritative correction velocity
+
+`CORRECT_PLAYER_MOVE_PREDICTION` carries position, motion, grounded state, and a simulation tick.
+The [nearby packet reference](https://mojang.github.io/bedrock-protocol-docs/1.26.50-preview.26/packets/correct-player-move-prediction-packet/) describes this layout for protocol 2192.
+Native protocol 2193 captures confirm the layout and zero-velocity corrections around fixture teleports.
+The movement guide requires immediate application when the correction tick lies outside available history.
+
+Core previously discarded motion outside gliding and canceled corrections outside its tick window.
+It now applies absolute motion for every player pose, including zero-velocity resets.
+Unknown rewind types cancel the Java output before logging the unsupported value.
+The gliding-only implementation moves out of the deferred rocket patch into this general correction handler.
+
+Four parameterized test cases cover zero, past, current, and future ticks.
+Each case exercises both gliding states and zero and nonzero motion through the actual packet mapping.
+They verify position, motion, relative flags, grounded state, and complete packet consumption.
+
+**Incomplete:** Core applies corrections immediately because it has no usable movement history for replay.
+Corrections inside history still need rewind and input resimulation.
+Vehicle velocity, angular velocity, and movement-related metadata, attributes, and effects need matching reconciliation.

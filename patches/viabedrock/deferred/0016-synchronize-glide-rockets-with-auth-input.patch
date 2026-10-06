@@ -1,4 +1,4 @@
-From b731d363ef6eea46bb0420627bf4c91fab79f867 Mon Sep 17 00:00:00 2001
+From 6a01740b37adeff362c88f406369dd0e202f57cf Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 10:48:24 +0200
 Subject: [PATCH] fix(movement): synchronize glide rockets with auth input
@@ -26,22 +26,22 @@ with an authoritative InventorySlot update, without ItemStackResponse.
 Targeted tests cover input ordering, legacy metadata serialization,
 counter isolation, descriptor copies, and the final-rocket debit.
 ---
- .../api/model/entity/ClientPlayerEntity.java  |  16 +-
- .../protocol/packet/ClientPlayerPackets.java  |  30 +++-
+ .../api/model/entity/ClientPlayerEntity.java  |   5 +
+ .../protocol/packet/ClientPlayerPackets.java  |  22 ++-
  .../protocol/packet/InteractionPackets.java   |  95 +++++++----
  .../InventoryTransactionRewriter.java         |  10 +-
  .../InventoryTransactionPacketType.java       |  50 +++---
  .../packet/ClientPlayerPacketsTest.java       |  90 +++++++++++
  .../packet/InteractionPacketsTest.java        | 149 ++++++++++++++++++
  .../InventoryTransactionPacketTypeTest.java   | 143 +++++++++++++++++
- 8 files changed, 524 insertions(+), 59 deletions(-)
+ 8 files changed, 510 insertions(+), 54 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/types/inventory/InventoryTransactionPacketTypeTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
-index 3087def86..077b50274 100644
+index 723a7edd3..fba0c3ae8 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
-@@ -79,6 +79,7 @@ public class ClientPlayerEntity extends PlayerEntity {
+@@ -80,6 +80,7 @@ public class ClientPlayerEntity extends PlayerEntity {
      private final List<AuthInputBlockAction> authInputBlockActions = new ArrayList<>();
      private ItemStackRequestInfo authInputItemStackRequest;
      private BedrockInventoryTransaction authInputItemInteraction;
@@ -49,31 +49,7 @@ index 3087def86..077b50274 100644
      private Set<InputFlag> inputFlags = EnumSet.noneOf(InputFlag.class);
      private Set<InputFlag> prevInputFlags = EnumSet.noneOf(InputFlag.class);
      private boolean horizontalCollision;
-@@ -134,15 +135,20 @@ public class ClientPlayerEntity extends PlayerEntity {
-     }
- 
-     public void writePlayerPositionPacketToClient(final PacketWrapper wrapper, final Set<Relative> relatives, final boolean fakeTeleport) {
-+        this.writePlayerPositionPacketToClient(wrapper, relatives, fakeTeleport, Position3f.ZERO);
-+    }
-+
-+    public void writePlayerPositionPacketToClient(final PacketWrapper wrapper, final Set<Relative> relatives,
-+                                                  final boolean fakeTeleport, final Position3f velocity) {
-         this.pendingTeleportId = this.teleportId.getAndIncrement();
- 
-         wrapper.write(Types.VAR_INT, this.pendingTeleportId * (fakeTeleport ? -1 : 1)); // teleport id
-         wrapper.write(Types.DOUBLE, relatives.contains(Relative.X) ? 0D : (double) this.position.x()); // x
-         wrapper.write(Types.DOUBLE, relatives.contains(Relative.Y) ? 0D : (double) (this.position.y() - this.eyeOffset())); // y
-         wrapper.write(Types.DOUBLE, relatives.contains(Relative.Z) ? 0D : (double) this.position.z()); // z
--        wrapper.write(Types.DOUBLE, 0D); // velocity x
--        wrapper.write(Types.DOUBLE, 0D); // velocity y
--        wrapper.write(Types.DOUBLE, 0D); // velocity z
-+        wrapper.write(Types.DOUBLE, (double) velocity.x()); // velocity x
-+        wrapper.write(Types.DOUBLE, (double) velocity.y()); // velocity y
-+        wrapper.write(Types.DOUBLE, (double) velocity.z()); // velocity z
-         wrapper.write(Types.FLOAT, relatives.contains(Relative.Y_ROT) ? 0F : this.rotation.y()); // yaw
-         wrapper.write(Types.FLOAT, relatives.contains(Relative.X_ROT) ? 0F : this.rotation.x()); // pitch
-         wrapper.write(Types.INT, EnumUtil.getIntBitmaskFromEnumSet(relatives, Relative::ordinal)); // flags
-@@ -579,6 +585,10 @@ public class ClientPlayerEntity extends PlayerEntity {
+@@ -590,6 +591,10 @@ public class ClientPlayerEntity extends PlayerEntity {
          return this.authInputItemInteraction;
      }
  
@@ -85,7 +61,7 @@ index 3087def86..077b50274 100644
          this.authInputItemInteraction = transaction;
          if (transaction != null) {
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index 4d698572e..25d3ab8f1 100644
+index 96e8f7d3d..f16982b63 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 @@ -28,6 +28,7 @@ import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
@@ -119,29 +95,7 @@ index 4d698572e..25d3ab8f1 100644
      public static void register(final BedrockProtocol protocol) {
          protocol.registerClientbound(ClientboundBedrockPackets.RESPAWN, ClientboundPackets26_3.RESPAWN, wrapper -> {
              final Position3f position = wrapper.read(BedrockTypes.POSITION_3F); // position
-@@ -316,7 +333,7 @@ public final class ClientPlayerPackets {
-                 return;
-             }
-             final Position3f position = wrapper.read(BedrockTypes.POSITION_3F); // position
--            wrapper.read(BedrockTypes.POSITION_3F); // position delta
-+            final Position3f positionDelta = wrapper.read(BedrockTypes.POSITION_3F); // corrected velocity
-             final Position2f vehicleRotation = wrapper.read(BedrockTypes.POSITION_2F);
-             if (wrapper.read(Types.BOOLEAN)) {
-                 wrapper.read(BedrockTypes.FLOAT_LE); // vehicle angular velocity
-@@ -332,7 +349,11 @@ public final class ClientPlayerPackets {
-                 case Player -> {
-                     clientPlayer.setPosition(position);
-                     clientPlayer.setOnGround(onGround);
--                    clientPlayer.writePlayerPositionPacketToClient(wrapper, Relative.union(Relative.ROTATION, Relative.VELOCITY), true);
-+                    if (clientPlayer.isGliding()) {
-+                        clientPlayer.writePlayerPositionPacketToClient(wrapper, Relative.ROTATION, true, positionDelta);
-+                    } else {
-+                        clientPlayer.writePlayerPositionPacketToClient(wrapper, Relative.union(Relative.ROTATION, Relative.VELOCITY), true);
-+                    }
-                 }
-                 case Vehicle -> {
-                     final Entity vehicle = predictedVehicle(wrapper.user().get(EntityTracker.class), clientPlayer);
-@@ -714,6 +735,7 @@ public final class ClientPlayerPackets {
+@@ -709,6 +726,7 @@ public final class ClientPlayerPackets {
                  clientPlayer.setShieldBlockingHand(null);
                  clientPlayer.setAuthInputItemInteraction(null);
                  clientPlayer.setAuthInputItemStackRequest(null);
@@ -149,7 +103,7 @@ index 4d698572e..25d3ab8f1 100644
                  wrapper.cancel();
                  return;
              }
-@@ -831,7 +853,7 @@ public final class ClientPlayerPackets {
+@@ -826,7 +844,7 @@ public final class ClientPlayerPackets {
              wrapper.write(Types.BOOLEAN, itemInteraction != null);
              if (itemInteraction != null) {
                  wrapper.write(wrapper.user().get(InventoryTransactionRewriter.class)
@@ -158,7 +112,7 @@ index 4d698572e..25d3ab8f1 100644
              }
              final ItemStackRequestInfo itemStackRequest = clientPlayer.authInputItemStackRequest();
              wrapper.write(Types.BOOLEAN, itemStackRequest != null);
-@@ -872,6 +894,8 @@ public final class ClientPlayerPackets {
+@@ -867,6 +885,8 @@ public final class ClientPlayerPackets {
              clientPlayer.authInputBlockActions().clear();
              clientPlayer.setAuthInputItemInteraction(null);
              clientPlayer.setAuthInputItemStackRequest(null);

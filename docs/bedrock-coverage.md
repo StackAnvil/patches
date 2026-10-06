@@ -3848,3 +3848,27 @@ There are no failures or errors; 135 tests skip environment-dependent fixtures.
 The new codec test covers all eight combinations of swimming and collision axes in stationary frames.
 `bun run check` passes.
 Swimming surfaces, currents, shallow water, lava, effects, vehicles, latency, and correction reconciliation remain separate requirements.
+
+### Teleport and correction authority, October 6, 2026
+
+**Implemented:** Core tracks the signed Java teleport ID and the latest server teleport independently.
+Stale, duplicate, zero, and opposite-sign acknowledgments cannot clear prediction waits or emit `HandledTeleport`.
+A later local correction retains the required server acknowledgment without allowing it to unlock the newer local wait.
+Every new position sync clears an unused movement exception from an earlier confirmed teleport.
+Four tests cover these replacement and acknowledgment cases.
+
+Core now translates corrected player motion as absolute Java velocity in both gliding and other poses.
+Zero-velocity corrections reset motion too.
+Corrections outside the former tick window apply immediately instead of disappearing.
+The general velocity handler replaces the gliding-only implementation from the deferred rocket patch.
+Four packet test cases exercise zero, past, current, and future ticks across both gliding states and both velocity cases.
+
+The target is native 1.26.51.1, protocol 2193.
+Native strict-BDS recordings establish the correction layout and zero-velocity resets around fixture teleports.
+The [nearby packet reference](https://mojang.github.io/bedrock-protocol-docs/1.26.50-preview.26/packets/correct-player-move-prediction-packet/) describes the layout for protocol 2192.
+The [movement guide](https://mojang.github.io/bedrock-protocol-docs/guides/player-movement-overview/) describes immediate fallback when usable history is unavailable.
+The latest guide targets a newer preview; numeric values come from target captures and generated enums.
+
+**Incomplete:** Corrections inside movement history still need rewind and input resimulation.
+Vehicle motion, angular motion, and movement-related metadata, attributes, and effects need corresponding reconciliation.
+Immediate correction application does not establish native reconciliation parity.

@@ -1,4 +1,4 @@
-From bb17785c3578b6971d41364e08e46c9a1d1498e3 Mon Sep 17 00:00:00 2001
+From 1376ec6a0a48a767ce779c881328684b01b2341d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:28 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -26,18 +26,27 @@ frame, including stationary frames that Java omits from position updates.
 Consume them only for a matching unmounted frame outside dimension changes.
 Native 1.26.51.1 wall and open-water captures distinguish collision from
 grounded state and clear horizontal collision on the release frame.
+
+Apply corrected player velocity in all poses and retain zero-velocity resets.
+Java relative velocity flags previously discarded this authority outside
+gliding. Corrections without usable client history must still apply rather
+than disappear due to a tick window check. This preserves authoritative
+position and motion; input-history resimulation remains a separate gap.
 ---
  .../api/model/PlayerPrediction.java           |  75 +++++++++++++
+ .../api/model/entity/ClientPlayerEntity.java  |  11 +-
  .../viabedrock/protocol/BedrockProtocol.java  |   1 +
- .../protocol/packet/ClientPlayerPackets.java  |  20 +++-
+ .../protocol/packet/ClientPlayerPackets.java  |  33 +++---
  .../protocol/packet/MultiStatePackets.java    |  13 +++
  .../protocol/storage/PlayerInputStorage.java  |   3 +-
  .../storage/PlayerPredictionStorage.java      |  36 ++++++
  .../api/model/PlayerPredictionTest.java       | 105 ++++++++++++++++++
- 7 files changed, 248 insertions(+), 5 deletions(-)
+ .../packet/PlayerCorrectionPacketTest.java    | 105 ++++++++++++++++++
+ 9 files changed, 365 insertions(+), 17 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java b/src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java
 new file mode 100644
@@ -120,6 +129,35 @@ index 000000000..c573b4f63
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
+index f69b430bf..1c823f98b 100644
+--- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
++++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
+@@ -131,6 +131,11 @@ public class ClientPlayerEntity extends PlayerEntity {
+     }
+ 
+     public void writePlayerPositionPacketToClient(final PacketWrapper wrapper, final Set<Relative> relatives, final boolean fakeTeleport) {
++        this.writePlayerPositionPacketToClient(wrapper, relatives, fakeTeleport, Position3f.ZERO);
++    }
++
++    public void writePlayerPositionPacketToClient(final PacketWrapper wrapper, final Set<Relative> relatives,
++                                                  final boolean fakeTeleport, final Position3f velocity) {
+         this.serverSideTeleportConfirmed = false;
+         this.pendingTeleportId = this.teleportId.getAndIncrement() * (fakeTeleport ? -1 : 1);
+         if (!fakeTeleport) {
+@@ -141,9 +146,9 @@ public class ClientPlayerEntity extends PlayerEntity {
+         wrapper.write(Types.DOUBLE, relatives.contains(Relative.X) ? 0D : (double) this.position.x()); // x
+         wrapper.write(Types.DOUBLE, relatives.contains(Relative.Y) ? 0D : (double) (this.position.y() - this.eyeOffset())); // y
+         wrapper.write(Types.DOUBLE, relatives.contains(Relative.Z) ? 0D : (double) this.position.z()); // z
+-        wrapper.write(Types.DOUBLE, 0D); // velocity x
+-        wrapper.write(Types.DOUBLE, 0D); // velocity y
+-        wrapper.write(Types.DOUBLE, 0D); // velocity z
++        wrapper.write(Types.DOUBLE, (double) velocity.x()); // velocity x
++        wrapper.write(Types.DOUBLE, (double) velocity.y()); // velocity y
++        wrapper.write(Types.DOUBLE, (double) velocity.z()); // velocity z
+         wrapper.write(Types.FLOAT, relatives.contains(Relative.Y_ROT) ? 0F : this.rotation.y()); // yaw
+         wrapper.write(Types.FLOAT, relatives.contains(Relative.X_ROT) ? 0F : this.rotation.x()); // pitch
+         wrapper.write(Types.INT, EnumUtil.getIntBitmaskFromEnumSet(relatives, Relative::ordinal)); // flags
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
 index b5ff4df4e..37c44820f 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
@@ -133,7 +171,7 @@ index b5ff4df4e..37c44820f 100644
          user.put(new CameraEffectsStorage(user));
          user.put(new PlayerListStorage());
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index feb36e9b0..55b531119 100644
+index feb36e9b0..c48e61395 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 @@ -38,6 +38,7 @@ import net.raphimc.viabedrock.api.util.MathUtil;
@@ -144,7 +182,44 @@ index feb36e9b0..55b531119 100644
  import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
  import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
  import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
-@@ -554,6 +555,8 @@ public final class ClientPlayerPackets {
+@@ -191,32 +192,27 @@ public final class ClientPlayerPackets {
+             }
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.CORRECT_PLAYER_MOVE_PREDICTION, ClientboundPackets26_3.PLAYER_POSITION, wrapper -> {
+-            final GameSessionStorage gameSession = wrapper.user().get(GameSessionStorage.class);
+-
+             final byte rawRewindType = wrapper.read(Types.BYTE); // rewind type
+             final RewindType rewindType = RewindType.getByValue(rawRewindType);
+             if (rewindType == null) {
++                wrapper.cancel();
+                 ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Unknown RewindType: " + rawRewindType);
+                 return;
+             }
+             final Position3f position = wrapper.read(BedrockTypes.POSITION_3F); // position
+-            wrapper.read(BedrockTypes.POSITION_3F); // position delta
++            final Position3f correctedVelocity = wrapper.read(BedrockTypes.POSITION_3F); // corrected velocity
+             final Position2f vehicleRotation = wrapper.read(BedrockTypes.POSITION_2F);
+             if (wrapper.read(Types.BOOLEAN)) {
+                 wrapper.read(BedrockTypes.FLOAT_LE); // vehicle angular velocity
+             }
+             final boolean onGround = wrapper.read(Types.BOOLEAN);
+-            final long tick = wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG);
++            wrapper.read(BedrockTypes.UNSIGNED_VAR_LONG); // correction tick
+             final ClientPlayerEntity clientPlayer = wrapper.user().get(EntityTracker.class).getClientPlayer();
+-            if (tick > clientPlayer.age() || tick < clientPlayer.age() - gameSession.getMovementRewindHistorySize()) {
+-                wrapper.cancel();
+-                return;
+-            }
+             switch (rewindType) {
+                 case Player -> {
+                     clientPlayer.setPosition(position);
+                     clientPlayer.setOnGround(onGround);
+-                    clientPlayer.writePlayerPositionPacketToClient(wrapper, Relative.union(Relative.ROTATION, Relative.VELOCITY), true);
++                    clientPlayer.writePlayerPositionPacketToClient(wrapper, Relative.ROTATION, true, correctedVelocity);
+                 }
+                 case Vehicle -> {
+                     final Entity vehicle = predictedVehicle(wrapper.user().get(EntityTracker.class), clientPlayer);
+@@ -554,6 +550,8 @@ public final class ClientPlayerPackets {
          protocol.registerServerbound(ServerboundPackets26_3.CLIENT_TICK_END, ServerboundBedrockPackets.PLAYER_AUTH_INPUT, wrapper -> {
              final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
              final ClientPlayerEntity clientPlayer = entityTracker.getClientPlayer();
@@ -153,7 +228,7 @@ index feb36e9b0..55b531119 100644
              final Position3f prevPosition = clientPlayer.prevPosition();
              final boolean prevOnGround = clientPlayer.prevOnGround();
              final Set<InputFlag> prevInputFlags = clientPlayer.prevInputFlags();
-@@ -583,10 +586,12 @@ public final class ClientPlayerPackets {
+@@ -583,10 +581,12 @@ public final class ClientPlayerPackets {
              final PlayerInputStorage playerInput = wrapper.user().get(PlayerInputStorage.class);
              clientPlayer.authInputData().addAll(playerInput.takeButtonEvents());
              clientPlayer.addAuthInputData(PlayerAuthInputData.BlockBreakingDelayEnabled);
@@ -168,7 +243,7 @@ index feb36e9b0..55b531119 100644
                  clientPlayer.addAuthInputData(PlayerAuthInputData.HorizontalCollision);
              }
              if (clientPlayer.inputFlags().contains(InputFlag.FORWARD)) {
-@@ -625,7 +630,6 @@ public final class ClientPlayerPackets {
+@@ -625,7 +625,6 @@ public final class ClientPlayerPackets {
              }
              clientPlayer.updateBedrockSneakingInput();
  
@@ -176,7 +251,7 @@ index feb36e9b0..55b531119 100644
              final Position3f inputPosition;
              final Position3f positionDelta;
              if (vehicle != null) {
-@@ -638,8 +642,16 @@ public final class ClientPlayerPackets {
+@@ -638,8 +637,16 @@ public final class ClientPlayerPackets {
                  inputPosition = clientPlayer.position();
                  positionDelta = inputPosition.subtract(prevPosition);
              }
@@ -403,6 +478,117 @@ index 000000000..dadb4e13a
 +
 +    private static PlayerPrediction frame(final Position3f position, final boolean swimming) {
 +        return new PlayerPrediction(position, new Position3f(0F, -0.022315647F, 0F), swimming, false, false);
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java
+new file mode 100644
+index 000000000..284d6e03d
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java
+@@ -0,0 +1,105 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.RewindType;
++import net.raphimc.viabedrock.protocol.data.enums.java.Relative;
++import net.raphimc.viabedrock.protocol.model.PlayerAbilities;
++import net.raphimc.viabedrock.protocol.model.Position2f;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
++
++import java.lang.reflect.Proxy;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class PlayerCorrectionPacketTest {
++
++    @ParameterizedTest
++    @ValueSource(longs = {0, 1, 10, 11})
++    void appliesAuthoritativeVelocityForEveryPoseAndCorrectionAge(final long tick) throws Exception {
++        for (boolean gliding : new boolean[]{false, true}) {
++            for (Position3f velocity : new Position3f[]{Position3f.ZERO, new Position3f(-0.25F, 0.5F, 1.25F)}) {
++                final EntityTracker[] trackers = new EntityTracker[1];
++                final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                        new Class<?>[]{UserConnection.class}, (proxy, method, args) ->
++                                method.getName().equals("get") && args[0] == EntityTracker.class ? trackers[0] : null);
++                final EntityTracker tracker = trackers[0] = new EntityTracker(user);
++                final ClientPlayerEntity player = tracker.addEntity(new ClientPlayerEntity(user, 1,
++                        UUID.randomUUID(), new PlayerAbilities(1, (byte) 0, (byte) 0)), false);
++                player.setGliding(gliding);
++                for (int i = 0; i < 10; i++) {
++                    player.tick();
++                }
++                final Position3f position = new Position3f(2.5F, 65.62F, -3.5F);
++                final var input = Unpooled.buffer();
++                final var output = Unpooled.buffer();
++                try {
++                    input.writeByte(RewindType.Player.getValue());
++                    BedrockTypes.POSITION_3F.write(input, position);
++                    BedrockTypes.POSITION_3F.write(input, velocity);
++                    BedrockTypes.POSITION_2F.write(input, new Position2f(0F, 0F));
++                    input.writeBoolean(true);
++                    BedrockTypes.FLOAT_LE.writePrimitive(input, 0.75F);
++                    input.writeBoolean(true);
++                    BedrockTypes.UNSIGNED_VAR_LONG.writePrimitive(input, tick);
++                    final PacketWrapper packet = new PacketWrapperImpl(ClientboundBedrockPackets.CORRECT_PLAYER_MOVE_PREDICTION, input, user);
++                    new TestProtocol().translate(packet);
++                    assertFalse(packet.isCancelled());
++                    packet.writeToBuffer(output);
++                    assertEquals(ClientboundPackets26_3.PLAYER_POSITION.getId(), Types.VAR_INT.readPrimitive(output));
++                    assertTrue(Types.VAR_INT.readPrimitive(output) < 0);
++                    assertEquals(position.x(), output.readDouble());
++                    assertEquals(position.y() - player.eyeOffset(), output.readDouble());
++                    assertEquals(position.z(), output.readDouble());
++                    assertEquals(velocity.x(), output.readDouble());
++                    assertEquals(velocity.y(), output.readDouble());
++                    assertEquals(velocity.z(), output.readDouble());
++                    output.readFloat();
++                    output.readFloat();
++                    final int flags = output.readInt();
++                    assertEquals(0, flags & ((1 << Relative.DELTA_X.ordinal()) | (1 << Relative.DELTA_Y.ordinal()) | (1 << Relative.DELTA_Z.ordinal())));
++                    assertEquals(position, player.position());
++                    assertTrue(player.isOnGround());
++                    assertFalse(input.isReadable());
++                    assertFalse(output.isReadable());
++                } finally {
++                    input.release();
++                    output.release();
++                }
++            }
++        }
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++
++        private TestProtocol() {
++            ClientPlayerPackets.register(this);
++        }
++
++        private void translate(final PacketWrapper packet) throws Exception {
++            final var mapping = this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++            mapping.applyType(packet);
++            mapping.handler().handle(packet);
++        }
++
 +    }
 +
 +}

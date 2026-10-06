@@ -1,4 +1,4 @@
-From 3b51ddf9983227c3528caab2c69b276b82cae2c2 Mon Sep 17 00:00:00 2001
+From b689efcee38bca070191d33d171d7dee91714f68 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 12:08:02 +0200
 Subject: [PATCH] fix(movement): release prediction wait after server teleport
@@ -6,33 +6,82 @@ Subject: [PATCH] fix(movement): release prediction wait after server teleport
 A chunk boundary correction waits for its fake Java teleport acknowledgement. If a real server teleport supersedes that correction, the old acknowledgement no longer matches the pending ID. Previously the real acknowledgement admitted only one position packet and left the correction wait set forever, freezing subsequent server movement.
 
 Clear the prediction wait when the current authoritative teleport is acknowledged. Preserve stale-ID protection and the HandledTeleport signal. The regression test covers a pending local correction replaced by a server teleport, stale acknowledgements, and the final matching acknowledgement.
+
+Track the exact signed Java teleport ID. Ignore stale, duplicate, zero,
+and opposite-sign acknowledgements before changing prediction wait or
+reporting HandledTeleport. Only the current authoritative acknowledgement
+can grant the post-teleport movement exception. The tests cover replacement
+by a server teleport and wrong-sign acknowledgements for local corrections.
+
+Keep the latest server teleport identity separate from the pending local
+position sync. A later local correction must not retire the server
+acknowledgement, and that acknowledgement must not unlock the newer
+local correction or grant its position exception.
 ---
- .../api/model/entity/ClientPlayerEntity.java  |  4 ++
- .../entity/ClientPlayerTeleportTest.java      | 65 +++++++++++++++++++
- 2 files changed, 69 insertions(+)
+ .../api/model/entity/ClientPlayerEntity.java  |  26 +++-
+ .../entity/ClientPlayerTeleportTest.java      | 142 ++++++++++++++++++
+ 2 files changed, 160 insertions(+), 8 deletions(-)
  create mode 100644 src/test/java/com/enderdash/agent/viabedrock/entity/ClientPlayerTeleportTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
-index 6347d81bf..e634276b0 100644
+index 6347d81bf..9b18d56e2 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/ClientPlayerEntity.java
-@@ -224,6 +224,10 @@ public class ClientPlayerEntity extends PlayerEntity {
-                 this.waitingForPositionSync = false;
+@@ -62,6 +62,7 @@ public class ClientPlayerEntity extends PlayerEntity {
+ 
+     // Position syncing
+     private int pendingTeleportId;
++    private int authoritativeTeleportId;
+     private boolean waitingForPositionSync;
+     private boolean serverSideTeleportConfirmed;
+ 
+@@ -124,9 +125,13 @@ public class ClientPlayerEntity extends PlayerEntity {
+     }
+ 
+     public void writePlayerPositionPacketToClient(final PacketWrapper wrapper, final Set<Relative> relatives, final boolean fakeTeleport) {
+-        this.pendingTeleportId = this.teleportId.getAndIncrement();
++        this.serverSideTeleportConfirmed = false;
++        this.pendingTeleportId = this.teleportId.getAndIncrement() * (fakeTeleport ? -1 : 1);
++        if (!fakeTeleport) {
++            this.authoritativeTeleportId = this.pendingTeleportId;
++        }
+ 
+-        wrapper.write(Types.VAR_INT, this.pendingTeleportId * (fakeTeleport ? -1 : 1)); // teleport id
++        wrapper.write(Types.VAR_INT, this.pendingTeleportId); // teleport id
+         wrapper.write(Types.DOUBLE, relatives.contains(Relative.X) ? 0D : (double) this.position.x()); // x
+         wrapper.write(Types.DOUBLE, relatives.contains(Relative.Y) ? 0D : (double) (this.position.y() - this.eyeOffset())); // y
+         wrapper.write(Types.DOUBLE, relatives.contains(Relative.Z) ? 0D : (double) this.position.z()); // z
+@@ -218,13 +223,18 @@ public class ClientPlayerEntity extends PlayerEntity {
+     }
+ 
+     public void confirmTeleport(final int teleportId) {
+-        if (teleportId < 0) { // Fake teleport
+-            if (this.pendingTeleportId == -teleportId) {
+-                this.pendingTeleportId = 0;
+-                this.waitingForPositionSync = false;
++        if (teleportId == 0) {
++            return;
++        }
++        if (this.pendingTeleportId == teleportId) {
++            this.pendingTeleportId = 0;
++            this.waitingForPositionSync = false;
++            if (teleportId > 0) {
++                this.serverSideTeleportConfirmed = true;
              }
-         } else {
-+            if (this.pendingTeleportId == teleportId) {
-+                this.pendingTeleportId = 0;
-+                this.waitingForPositionSync = false;
-+            }
-             this.serverSideTeleportConfirmed = true;
+-        } else {
+-            this.serverSideTeleportConfirmed = true;
++        }
++        if (teleportId > 0 && this.authoritativeTeleportId == teleportId) {
++            this.authoritativeTeleportId = 0;
              if (!this.initiallySpawned) {
                  ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received teleport confirm for teleport id " + teleportId + " but player is not spawned yet");
+             }
 diff --git a/src/test/java/com/enderdash/agent/viabedrock/entity/ClientPlayerTeleportTest.java b/src/test/java/com/enderdash/agent/viabedrock/entity/ClientPlayerTeleportTest.java
 new file mode 100644
-index 000000000..3ec25a296
+index 000000000..1f7414c32
 --- /dev/null
 +++ b/src/test/java/com/enderdash/agent/viabedrock/entity/ClientPlayerTeleportTest.java
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,142 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -83,12 +132,89 @@ index 000000000..3ec25a296
 +        final int currentTeleport = teleport.get(Types.VAR_INT, 0);
 +        player.confirmTeleport(oldCorrection);
 +        assertTrue(waiting.getBoolean(player));
++        assertFalse(player.authInputData().contains(PlayerAuthInputData.HandledTeleport));
 +        player.confirmTeleport(currentTeleport + 1);
 +        assertTrue(waiting.getBoolean(player));
++        assertFalse(player.authInputData().contains(PlayerAuthInputData.HandledTeleport));
 +        player.confirmTeleport(currentTeleport);
 +
 +        assertFalse(waiting.getBoolean(player));
 +        assertTrue(player.authInputData().contains(PlayerAuthInputData.HandledTeleport));
++        player.authInputData().clear();
++        player.confirmTeleport(currentTeleport);
++        assertFalse(player.authInputData().contains(PlayerAuthInputData.HandledTeleport));
++    }
++
++    @Test
++    void localCorrectionRequiresTheExactSignedAcknowledgement() throws ReflectiveOperationException {
++        final ClientPlayerEntity player = player();
++        player.setInitiallySpawned();
++        player.setPosition(new Position3f(3F, 64F, 5F));
++        final var waiting = ClientPlayerEntity.class.getDeclaredField("waitingForPositionSync");
++        waiting.setAccessible(true);
++        waiting.setBoolean(player, true);
++        final PacketWrapper correction = new PacketWrapperImpl(ClientboundPackets26_3.PLAYER_POSITION, null, null);
++        player.writePlayerPositionPacketToClient(correction, Relative.ROTATION, true);
++        final int id = correction.get(Types.VAR_INT, 0);
++        assertTrue(id < 0);
++        player.confirmTeleport(-id);
++        player.confirmTeleport(0);
++        player.confirmTeleport(Integer.MIN_VALUE);
++        assertTrue(waiting.getBoolean(player));
++        assertFalse(player.authInputData().contains(PlayerAuthInputData.HandledTeleport));
++        player.confirmTeleport(id);
++        assertFalse(waiting.getBoolean(player));
++        assertFalse(player.authInputData().contains(PlayerAuthInputData.HandledTeleport));
++        player.confirmTeleport(-id);
++        assertFalse(player.authInputData().contains(PlayerAuthInputData.HandledTeleport));
++    }
++
++    @Test
++    void localCorrectionDoesNotRetireTheLatestServerTeleportAcknowledgement() throws ReflectiveOperationException {
++        final ClientPlayerEntity player = player();
++        player.setInitiallySpawned();
++        player.setPosition(new Position3f(3F, 64F, 5F));
++        final var waiting = ClientPlayerEntity.class.getDeclaredField("waitingForPositionSync");
++        final var admitted = ClientPlayerEntity.class.getDeclaredField("serverSideTeleportConfirmed");
++        waiting.setAccessible(true);
++        admitted.setAccessible(true);
++        final PacketWrapper teleport = new PacketWrapperImpl(ClientboundPackets26_3.PLAYER_POSITION, null, null);
++        player.writePlayerPositionPacketToClient(teleport, Relative.NONE, false);
++        final int serverId = teleport.get(Types.VAR_INT, 0);
++        waiting.setBoolean(player, true);
++        final PacketWrapper correction = new PacketWrapperImpl(ClientboundPackets26_3.PLAYER_POSITION, null, null);
++        player.writePlayerPositionPacketToClient(correction, Relative.ROTATION, true);
++        final int correctionId = correction.get(Types.VAR_INT, 0);
++        player.confirmTeleport(serverId);
++        assertTrue(player.authInputData().contains(PlayerAuthInputData.HandledTeleport));
++        assertTrue(waiting.getBoolean(player));
++        assertFalse(admitted.getBoolean(player));
++        player.authInputData().clear();
++        player.confirmTeleport(serverId);
++        assertTrue(waiting.getBoolean(player));
++        assertFalse(player.authInputData().contains(PlayerAuthInputData.HandledTeleport));
++        player.confirmTeleport(correctionId);
++        assertFalse(waiting.getBoolean(player));
++        assertFalse(admitted.getBoolean(player));
++        assertFalse(player.authInputData().contains(PlayerAuthInputData.HandledTeleport));
++    }
++
++    @Test
++    void aNewCorrectionRetiresThePreviousTeleportPositionException() throws ReflectiveOperationException {
++        final ClientPlayerEntity player = player();
++        player.setInitiallySpawned();
++        player.setPosition(new Position3f(3F, 64F, 5F));
++        final var admitted = ClientPlayerEntity.class.getDeclaredField("serverSideTeleportConfirmed");
++        admitted.setAccessible(true);
++        final PacketWrapper teleport = new PacketWrapperImpl(ClientboundPackets26_3.PLAYER_POSITION, null, null);
++        player.writePlayerPositionPacketToClient(teleport, Relative.NONE, false);
++        player.confirmTeleport(teleport.get(Types.VAR_INT, 0));
++        assertTrue(admitted.getBoolean(player));
++        final PacketWrapper correction = new PacketWrapperImpl(ClientboundPackets26_3.PLAYER_POSITION, null, null);
++        player.writePlayerPositionPacketToClient(correction, Relative.ROTATION, true);
++        assertFalse(admitted.getBoolean(player));
++        player.confirmTeleport(correction.get(Types.VAR_INT, 0));
++        assertFalse(admitted.getBoolean(player));
 +    }
 +
 +    private static ClientPlayerEntity player() {
