@@ -5132,21 +5132,74 @@ Missing chunks and three invalid chunk states emit full-column boxes with Y boun
 These records have no source block and set the nearby-unloaded flag.
 They remain separate from ordinary loaded block records.
 
-Exact world traversal and record construction pass 512 cases with no mismatches.
-The comparison checks 21,106 block visits and 16,506 output records against an independent model.
-Fixtures cover negative coordinates, height limits, missing columns, empty and multiple emitted shapes, and unloaded-chunk states.
+Exact world traversal and record construction pass 640 cases with no mismatches.
+The comparison checks 22,150 block visits and 18,140 output records against an independent model.
+Fixtures cover negative coordinates, height limits, missing columns, emitted shapes, unloaded-chunk states, borders, and the below-world barrier.
 World, chunk, subchunk, and block-type boundaries supply fixture data; CRT floor uses a fixture implementation.
-Real shape generation, border blocks, the below-world barrier, buffer growth, actual lifetime, and complete simulation remain unverified.
+Real shape generation, buffer growth, actual lifetime, and complete simulation remain unverified.
+
+When query maximum Y is below minimum build height, the kernel adds a separate below-world box.
+Its X/Z bounds match the query; Y extends from negative float32 maximum to minimum build height minus 40.
+This box follows unloaded barriers and precedes loaded blocks.
+It has no source block and leaves the nearby-unloaded flag clear.
+
+Border blocks follow loaded blocks, unless the collision interface reports `isWorldBuilder`.
+The scan uses X as the outer loop and Z as the inner loop, with block positions at Y zero.
+It tests strict horizontal intersection against each supplied border shape and replaces vertical bounds with negative and positive float32 maximum.
+Output records use the border manager's block reference and retain the scanned position; the nearby-unloaded flag stays clear.
+The fixture distinguishes this reference from the world block supplied to shape generation.
+The [versioned collision interface](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/world/level/block/GetCollisionShapeInterface.h) identifies the builder method.
 
 **Overlap initialization:** Kernel `0x141aadbe0` zero-initializes all 56 bytes of `DepenetrationComponent` after insertion.
 Exact initialization and dense-payload selection pass 1,024 cases and preserve adjacent bytes.
 ECS insertion uses a fixture boundary with an existing dense page.
-Actor-specific persistent overlap limits and actual allocation remain unverified.
+The player constructor's persistent limits are verified separately below.
+Actual allocation and later constructor overrides remain unverified.
 The [versioned component declaration](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/entity/components/DepenetrationComponent.h) supplies field names, not behavioral proof.
 
 **Incomplete:** Production still uses Java collision solving.
-These 7,680 new comparisons establish subroutine behavior and do not establish complete movement parity.
+These comparisons establish subroutine behavior and do not establish complete movement parity.
 Integration needs native obstacle ordering, remaining overlap producers, coherent frame identity, retained world state, and ordered corrections.
+Actual direct and ViaProxy comparisons, Windows and macOS game joins, and all eight coverage groups remain required.
+The previous public revision passed build, tooling, and Ubuntu, Windows, and macOS permission jobs.
+No native game launch occurred during this investigation; the current-boot GPU guard remains in force.
+
+
+### Native player overlap defaults and collision state, October 6, 2026
+
+**Reference:** These comparisons use Bedrock 1.26.51.1, build 51061372, protocol 2193.
+Constructor `0x1401dc620` assigns actor type 319 through `0x141a1a7a0`.
+The [versioned actor enum](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/world/actor/ActorType.h) identifies type 319 as `Player`.
+The constructor writes persistent X/Y/Z overlap limits with float32 bits `0x3c23d70a`, which represent `0.01`.
+
+Exact actor-type assignment and the three constructor stores pass 1,024 cases and preserve adjacent bytes.
+The type setter uses synthetic existing ECS storage; the store comparison executes only the constructor's relevant instruction range.
+The full constructor, component insertion, subclass overrides, and later lifecycle remain unverified.
+These persistent minima do not mean every move uses `0.01`.
+The previously verified configuration rule can raise the baseline to one, then apply active temporary minima.
+
+**One-way boxes:** Kernel `0x1482e1570` removes retained boxes that no longer strictly intersect the actor box.
+Touching faces do not count as intersection.
+Removal compacts the list in place, preserves surviving order, and leaves other overlap-component fields unchanged.
+Exact pruning passes 2,048 cases, including touching bounds, empty lists, and repeated removals.
+The comparison checks 11,756 removed boxes; CRT copying uses a fixture implementation.
+Registration identifies this callback as part of `UpdateOnewayCollisionsSystem`.
+Initial list creation, allocation lifetime, and complete scheduling remain unverified.
+
+**Nearby solid shapes:** Kernel `0x1482a6300` merges a nonzero nearby-solid vector into temporary overlap minima.
+Each axis uses the maximum of the incoming and active temporary values.
+When no temporary value exists, the comparison uses zero.
+A zero incoming vector preserves the existing temporary state.
+The kernel also appends nearby shapes in linked-list order to the movement request.
+Each parallel reference clears its first 20 bytes and preserves four padding bytes.
+
+Exact temporary merging and appending pass 2,048 cases and check 8,198 appended shapes.
+Fixtures cover positive and negative minima, zero vectors, active and absent temporary values, and existing request entries.
+Request buffers have sufficient capacity; growth and actual nearby-solid production remain unverified.
+
+**Incomplete:** Production still uses Java collision solving.
+These comparisons do not implement native physics or establish complete player movement parity.
+Integration still needs native block shapes, remaining state producers, coherent frame identity, retained world state, and ordered correction replay.
 Actual direct and ViaProxy comparisons, Windows and macOS game joins, and all eight coverage groups remain required.
 The previous public revision passed build, tooling, and Ubuntu, Windows, and macOS permission jobs.
 No native game launch occurred during this investigation; the current-boot GPU guard remains in force.

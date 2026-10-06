@@ -648,12 +648,37 @@ Exact cache-extension instructions pass another 2,048 cases against an independe
 They check 11,072 ordered fetches, 3,264 merges, stored bounds, and 8,544 matching allocations and releases.
 World results are empty in these fixtures; real shape production, allocation lifetime, and replay remain unverified.
 
-Exact world traversal and record construction pass another 512 cases with fixture world and block-type boundaries.
+Exact world traversal and record construction pass another 640 cases with fixture world and block-type boundaries.
 Loaded blocks use X/Z/Y loop order; unloaded-chunk barriers precede them with X advancing before Z.
-The comparison checks 21,106 block visits and 16,506 records, including height limits and four unloaded-chunk states.
-Real shape generation, border blocks, the below-world barrier, capacity growth, and full simulation remain unverified.
+The comparison checks 22,150 block visits and 18,140 records, including height limits, unloaded chunks, the below-world barrier, and border blocks.
+The below-world barrier follows unloaded records and leaves the nearby-unloaded flag clear.
+Border records follow loaded blocks, use strict horizontal intersection, and extend vertically to negative and positive float32 maximum.
+Their block reference comes from the border manager, with a separate fixture reference for the world block used during shape generation.
+The builder collision interface skips border collection.
+Real shape generation, capacity growth, and full simulation remain unverified.
 
 Exact overlap-component initialization passes 1,024 cases with insertion supplied by a fixture boundary.
 The [collision-query reference](../../../docs/bedrock-coverage.md#native-collision-query-bounds-and-cache-extension-october-6-2026) records addresses, constants, and verification limits.
 Production still uses Java collision solving.
 Native obstacle ordering, remaining state producers, coherent frame identity, retained world state, and ordered corrections remain incomplete.
+
+
+## Native player overlap state
+
+Matching-build inspection identifies the player constructor through actor type 319.
+Its persistent overlap minima are float32 `0.01` on each axis.
+Exact actor-type assignment and the relevant constructor stores pass 1,024 cases and preserve adjacent bytes.
+The full constructor, subclass overrides, and later lifecycle remain unverified.
+The configured movement limits can exceed these persistent minima.
+
+The native one-way collision callback removes boxes that no longer strictly intersect the actor and preserves surviving order.
+Exact pruning passes 2,048 cases and checks 11,756 removals with a fixture CRT copy boundary.
+Initial list creation and complete scheduling remain unverified.
+
+The nearby-solid kernel merges nonzero vectors into temporary overlap minima and appends shapes in linked-list order.
+Exact merging and append instructions pass 2,048 cases and check 8,198 shapes with sufficient existing request capacity.
+Zero incoming vectors preserve temporary state; parallel references clear 20 bytes and preserve four padding bytes.
+Actual nearby-solid production, buffer growth, and complete physics remain unverified.
+
+The [player overlap reference](../../../docs/bedrock-coverage.md#native-player-overlap-defaults-and-collision-state-october-6-2026) records addresses and fixture limits.
+Production still uses Java collision solving; these findings do not implement native movement or correction replay.
