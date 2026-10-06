@@ -99,7 +99,9 @@ For skin behavior, see [the Bedrock skin flow](skin-flow.md). It explains what H
 Use `server-replay record local --target 127.0.0.1:port --client proxy` for a local RakNet server.
 For an owned BDS with NetherNet, use `--target nethernet://127.0.0.1:port`.
 Named server recordings use their configured address and reject `--target`.
-The native recorder currently supports RakNet targets only.
+The native recorder supports RakNet and owned BDS NetherNet targets.
+For NetherNet, it exposes a loopback RakNet endpoint to the native client and records the decoded backend packets.
+It uses the recording account for the NetherNet session and keeps authentication data private.
 
 A server spawn packet alone does not prove a successful join.
 Recordings require local-player initialization and movement acknowledgments.

@@ -6,7 +6,7 @@ Use completed local physics for Bedrock auth-input motion when a client provides
 Keep frame validation, event state, auth-input construction, and correction handling in ViaBedrock.
 Support direct connections and ViaProxy with the same payload.
 
-A frame carries feet position, motion, and swimming state.
+A frame carries feet position, motion, swimming state, and completed collision axes.
 Core compares the position with the standard Java movement stream and consumes each sample once.
 It discards unmatched samples, including stale samples after a teleport.
 The codec rejects non-finite coordinates, unknown flags, extra fields, and incompatible protocol revisions.
@@ -36,7 +36,7 @@ Remote entities cannot supply local swimming transitions.
 ## Testing and limits
 
 Four targeted tests cover transport, version rejection, finite values, flag validation, frame consumption, teleport staleness, and swimming edges.
-The full build passes with 16 converter tests, 628 core tests, and 603 add-on tests.
+The full build passes with 16 converter tests, 629 core tests, and 603 add-on tests.
 There are 135 skips across core and add-on tests, with no failures or errors.
 Live direct and ViaProxy strict-BDS comparisons match the native water-idle motion field within about 2e-9.
 Both routes complete jump, fall, and water cases without corrections in the controlled water cases.
@@ -45,3 +45,25 @@ A ViaProxy sprint-swim case emits one start and one stop event without an additi
 A native sprint-swim capture confirms start event 29 and stop event 30.
 The add-on aligns its start timing with native; release event ordering remains incomplete.
 Remaining movement cases need separate native comparisons.
+
+## Completed collision state
+
+Native wall and open-water captures clear horizontal collision on the swimming-release frame.
+Sparse Java position packets can omit that stationary frame and leave core with the previous horizontal collision.
+Wire revision 2 carries both completed collision axes independently from grounded state.
+Core uses these axes only for a matching unmounted frame outside dimension changes.
+Ordinary Java clients retain the existing collision translation.
+The codec test covers all eight pose and collision combinations, including stationary motion.
+
+Live direct and ViaProxy strict-BDS runs match four native swimming-stop cases.
+These cover wall and open-water release, forward release with held sprint, and sprint release with held forward.
+Swimming-stop and sprint-stop events follow the native frame order, including completed collision axes and drag 0.9 followed by 0.8.
+The direct journal records one zero-velocity fixture correction; the proxy journal records two.
+No correction occurs during controlled release cases.
+Dry-floor sprint and jump inputs produce movement on both routes.
+The final proxy reset interrupts its jump and receives its second fixture correction.
+
+Each observer case contains 120 server ticks.
+The dependency builds pass with 629 core tests and 603 add-on tests, with no failures or errors.
+The codec test covers all eight pose and collision combinations in stationary frames.
+The rest of the movement matrix remains unverified by these cases.

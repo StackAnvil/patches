@@ -1,4 +1,4 @@
-From 3ef06e1047da618870f8501c01e9bccadd29f10f Mon Sep 17 00:00:00 2001
+From bb17785c3578b6971d41364e08e46c9a1d1498e3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:28 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -20,22 +20,28 @@ Track local swimming transitions from the same completed frame, including
 ViaProxy clients. The client integration sends these frames after normal
 Java movement and before the tick-end packet. Keep correction handling,
 auth-input construction, frame validation and event state in core.
+
+Carry completed horizontal and vertical collision axes with every prediction
+frame, including stationary frames that Java omits from position updates.
+Consume them only for a matching unmounted frame outside dimension changes.
+Native 1.26.51.1 wall and open-water captures distinguish collision from
+grounded state and clear horizontal collision on the release frame.
 ---
- .../api/model/PlayerPrediction.java           | 75 ++++++++++++++++
- .../viabedrock/protocol/BedrockProtocol.java  |  1 +
- .../protocol/packet/ClientPlayerPackets.java  | 13 ++-
- .../protocol/packet/MultiStatePackets.java    | 13 +++
- .../protocol/storage/PlayerInputStorage.java  |  3 +-
- .../storage/PlayerPredictionStorage.java      | 36 ++++++++
- .../api/model/PlayerPredictionTest.java       | 89 +++++++++++++++++++
- 7 files changed, 228 insertions(+), 2 deletions(-)
+ .../api/model/PlayerPrediction.java           |  75 +++++++++++++
+ .../viabedrock/protocol/BedrockProtocol.java  |   1 +
+ .../protocol/packet/ClientPlayerPackets.java  |  20 +++-
+ .../protocol/packet/MultiStatePackets.java    |  13 +++
+ .../protocol/storage/PlayerInputStorage.java  |   3 +-
+ .../storage/PlayerPredictionStorage.java      |  36 ++++++
+ .../api/model/PlayerPredictionTest.java       | 105 ++++++++++++++++++
+ 7 files changed, 248 insertions(+), 5 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java b/src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java
 new file mode 100644
-index 000000000..7ffe22a0f
+index 000000000..c573b4f63
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java
 @@ -0,0 +1,75 @@
@@ -53,32 +59,32 @@ index 000000000..7ffe22a0f
 +import net.raphimc.viabedrock.protocol.model.Position3f;
 +
 +/** Completed local physics for one Java movement frame, never an authoritative position update. */
-+public record PlayerPrediction(Position3f position, Position3f motion, boolean swimming) {
++public record PlayerPrediction(Position3f position, Position3f motion, boolean swimming, boolean horizontalCollision, boolean verticalCollision) {
 +
 +    public static final String CHANNEL = "viabedrock:player_prediction";
 +    public static final Type<PlayerPrediction> TYPE = new Type<>(PlayerPrediction.class) {
 +        @Override
 +        public PlayerPrediction read(final ByteBuf buffer) {
-+            if (Types.VAR_INT.readPrimitive(buffer) != 1
++            if (Types.VAR_INT.readPrimitive(buffer) != 2
 +                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
 +                throw new IllegalArgumentException("Unsupported player prediction");
 +            }
 +            final Position3f position = readVector(buffer);
 +            final Position3f motion = readVector(buffer);
 +            final int flags = buffer.readUnsignedByte();
-+            if ((flags & ~1) != 0) {
++            if ((flags & ~7) != 0) {
 +                throw new IllegalArgumentException("Invalid player prediction flags");
 +            }
-+            return new PlayerPrediction(position, motion, (flags & 1) != 0);
++            return new PlayerPrediction(position, motion, (flags & 1) != 0, (flags & 2) != 0, (flags & 4) != 0);
 +        }
 +
 +        @Override
 +        public void write(final ByteBuf buffer, final PlayerPrediction value) {
-+            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, 2);
 +            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
 +            writeVector(buffer, value.position());
 +            writeVector(buffer, value.motion());
-+            buffer.writeByte(value.swimming() ? 1 : 0);
++            buffer.writeByte((value.swimming() ? 1 : 0) | (value.horizontalCollision() ? 2 : 0) | (value.verticalCollision() ? 4 : 0));
 +        }
 +    };
 +
@@ -127,7 +133,7 @@ index b5ff4df4e..37c44820f 100644
          user.put(new CameraEffectsStorage(user));
          user.put(new PlayerListStorage());
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
-index feb36e9b0..fd9f582c2 100644
+index feb36e9b0..55b531119 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/ClientPlayerPackets.java
 @@ -38,6 +38,7 @@ import net.raphimc.viabedrock.api.util.MathUtil;
@@ -147,7 +153,30 @@ index feb36e9b0..fd9f582c2 100644
              final Position3f prevPosition = clientPlayer.prevPosition();
              final boolean prevOnGround = clientPlayer.prevOnGround();
              final Set<InputFlag> prevInputFlags = clientPlayer.prevInputFlags();
-@@ -638,8 +641,16 @@ public final class ClientPlayerPackets {
+@@ -583,10 +586,12 @@ public final class ClientPlayerPackets {
+             final PlayerInputStorage playerInput = wrapper.user().get(PlayerInputStorage.class);
+             clientPlayer.authInputData().addAll(playerInput.takeButtonEvents());
+             clientPlayer.addAuthInputData(PlayerAuthInputData.BlockBreakingDelayEnabled);
+-            if (clientPlayer.isOnGround()) {
++            final Entity vehicle = predictedVehicle(entityTracker, clientPlayer);
++            final boolean completedPrediction = prediction != null && vehicle == null && clientPlayer.dimensionChangeInfo() == null;
++            if (completedPrediction ? prediction.verticalCollision() : clientPlayer.isOnGround()) {
+                 clientPlayer.addAuthInputData(PlayerAuthInputData.VerticalCollision);
+             }
+-            if (clientPlayer.horizontalCollision()) {
++            if (completedPrediction ? prediction.horizontalCollision() : clientPlayer.horizontalCollision()) {
+                 clientPlayer.addAuthInputData(PlayerAuthInputData.HorizontalCollision);
+             }
+             if (clientPlayer.inputFlags().contains(InputFlag.FORWARD)) {
+@@ -625,7 +630,6 @@ public final class ClientPlayerPackets {
+             }
+             clientPlayer.updateBedrockSneakingInput();
+ 
+-            final Entity vehicle = predictedVehicle(entityTracker, clientPlayer);
+             final Position3f inputPosition;
+             final Position3f positionDelta;
+             if (vehicle != null) {
+@@ -638,8 +642,16 @@ public final class ClientPlayerPackets {
                  inputPosition = clientPlayer.position();
                  positionDelta = inputPosition.subtract(prevPosition);
              }
@@ -159,7 +188,7 @@ index feb36e9b0..fd9f582c2 100644
 +            }
              final Position3f velocity;
 -            if (vehicle != null || clientPlayer.isGliding() || !clientPlayer.isInitiallySpawned() || clientPlayer.dimensionChangeInfo() != null || clientPlayer.abilities().getBooleanValue(AbilitiesIndex.Flying)) {
-+            if (prediction != null && vehicle == null && clientPlayer.dimensionChangeInfo() == null) {
++            if (completedPrediction) {
 +                velocity = prediction.motion();
 +            } else if (vehicle != null || clientPlayer.isGliding() || !clientPlayer.isInitiallySpawned() || clientPlayer.dimensionChangeInfo() != null || clientPlayer.abilities().getBooleanValue(AbilitiesIndex.Flying)) {
                  velocity = positionDelta;
@@ -268,10 +297,10 @@ index 000000000..cc5de3376
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
 new file mode 100644
-index 000000000..af66c7eb6
+index 000000000..dadb4e13a
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,105 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -296,15 +325,15 @@ index 000000000..af66c7eb6
 +        final var buffer = Unpooled.buffer();
 +        try {
 +            final var frame = new PlayerPrediction(new Position3f(-6.5F, 101.86157F, 1.5F),
-+                    new Position3f(0.125F, -0.022315647F, -0.25F), true);
++                    new Position3f(0.125F, -0.022315647F, -0.25F), true, true, false);
 +            PlayerPrediction.TYPE.write(buffer, frame);
 +            assertEquals(frame, PlayerPrediction.TYPE.read(buffer));
 +            assertFalse(buffer.isReadable());
-+            Types.VAR_INT.writePrimitive(buffer, 2);
++            Types.VAR_INT.writePrimitive(buffer, 1);
 +            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
 +            assertThrows(IllegalArgumentException.class, () -> PlayerPrediction.TYPE.read(buffer));
 +            buffer.clear();
-+            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, 2);
 +            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION + 1);
 +            assertThrows(IllegalArgumentException.class, () -> PlayerPrediction.TYPE.read(buffer));
 +        } finally {
@@ -316,15 +345,31 @@ index 000000000..af66c7eb6
 +    void rejectsNonFiniteMotionAndUnknownPoseFlags() {
 +        for (float invalid : new float[]{Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY}) {
 +            assertThrows(IllegalArgumentException.class, () -> new PlayerPrediction(Position3f.ZERO,
-+                    new Position3f(0F, invalid, 0F), false));
++                    new Position3f(0F, invalid, 0F), false, false, false));
 +            assertThrows(IllegalArgumentException.class, () -> new PlayerPrediction(
-+                    new Position3f(invalid, 0F, 0F), Position3f.ZERO, false));
++                    new Position3f(invalid, 0F, 0F), Position3f.ZERO, false, false, false));
 +        }
 +        final var buffer = Unpooled.buffer();
 +        try {
 +            PlayerPrediction.TYPE.write(buffer, frame(Position3f.ZERO, false));
-+            buffer.setByte(buffer.writerIndex() - 1, 4);
++            buffer.setByte(buffer.writerIndex() - 1, 8);
 +            assertThrows(IllegalArgumentException.class, () -> PlayerPrediction.TYPE.read(buffer));
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void preservesIndependentCollisionAxesInStationaryFrames() {
++        final var buffer = Unpooled.buffer();
++        try {
++            for (int flags = 0; flags < 8; flags++) {
++                final var frame = new PlayerPrediction(Position3f.ZERO, Position3f.ZERO,
++                        (flags & 1) != 0, (flags & 2) != 0, (flags & 4) != 0);
++                PlayerPrediction.TYPE.write(buffer, frame);
++                assertEquals(frame, PlayerPrediction.TYPE.read(buffer));
++                buffer.clear();
++            }
 +        } finally {
 +            buffer.release();
 +        }
@@ -357,7 +402,7 @@ index 000000000..af66c7eb6
 +    }
 +
 +    private static PlayerPrediction frame(final Position3f position, final boolean swimming) {
-+        return new PlayerPrediction(position, new Position3f(0F, -0.022315647F, 0F), swimming);
++        return new PlayerPrediction(position, new Position3f(0F, -0.022315647F, 0F), swimming, false, false);
 +    }
 +
 +}

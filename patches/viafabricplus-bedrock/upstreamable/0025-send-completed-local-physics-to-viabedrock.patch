@@ -1,4 +1,4 @@
-From 1448c7f8448bbbbf0f3c61d5e4962d7d33a46e3c Mon Sep 17 00:00:00 2001
+From 23d75e599d27e4715ba003c9e0a52159d26f240c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:53 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -24,12 +24,18 @@ Native sprint swimming starts on the first movement frame. Java updates
 swimming before aiStep computes sprinting, delaying its transition by one
 frame. Refresh the local swimming state after sprint changes and before
 fluid travel on Bedrock connections. Keep ordinary Java timing intact.
+
+Run the local swimming update after sprint decisions and before fluid travel.
+Native 1.26.51.1 wall and open-water captures stop swimming on forward release
+while retaining sprint drag until the next frame. Preserve that physics
+phase directly instead of delaying protocol events independently. Include
+completed collision axes so stationary frames cannot retain stale flags.
 ---
- .../bedrock/ViaFabricPlusBedrock.java         |  2 ++
- .../mixin/features/movement/MixinEntity.java  | 20 ------------
- .../features/movement/MixinLocalPlayer.java   | 32 +++++++++++++++++++
- .../input/PlayerPredictionPayload.java        | 24 ++++++++++++++
- 4 files changed, 58 insertions(+), 20 deletions(-)
+ .../bedrock/ViaFabricPlusBedrock.java         |  2 +
+ .../mixin/features/movement/MixinEntity.java  | 20 -------
+ .../features/movement/MixinLocalPlayer.java   | 58 ++++++++++++++++++-
+ .../input/PlayerPredictionPayload.java        | 24 ++++++++
+ 4 files changed, 83 insertions(+), 21 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
@@ -101,15 +107,18 @@ index 236c05d..0166539 100644
      private void prioritySlowestMovementMultiplier(final Entity instance, final Vec3 value) {
          if (ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST) && this.stuckSpeedMultiplier != Vec3.ZERO) {
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-index e5a8167..a0d1f1f 100644
+index e5a8167..a3d4bf4 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-@@ -21,16 +21,48 @@
+@@ -21,15 +21,71 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
-+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
-+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
++import com.mojang.authlib.GameProfile;
++import net.minecraft.client.multiplayer.ClientLevel;
++import net.minecraft.client.player.AbstractClientPlayer;
++import net.minecraft.client.player.ClientInput;
  import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
 +import com.viaversion.viafabricplus.bedrock.input.PlayerPredictionPayload;
 +import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
@@ -125,14 +134,36 @@ index e5a8167..a0d1f1f 100644
 +import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  
  @Mixin(LocalPlayer.class)
- public abstract class MixinLocalPlayer {
- 
-+    @WrapOperation(method = "aiStep", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;setSprinting(Z)V"))
-+    private void updateSwimmingWithSprinting(final LocalPlayer player, final boolean sprinting, final Operation<Void> original) {
-+        original.call(player, sprinting);
+-public abstract class MixinLocalPlayer {
++public abstract class MixinLocalPlayer extends AbstractClientPlayer {
++
++    @Shadow
++    public ClientInput input;
++
++    protected MixinLocalPlayer(final ClientLevel level, final GameProfile profile) {
++        super(level, profile);
++    }
++
++    @Override
++    public void updateSwimming() {
++        if (!BedrockInputPermissions.isBedrockConnection()) {
++            super.updateSwimming();
++        }
++    }
++
++    @ModifyExpressionValue(method = "shouldStopSwimSprinting", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/ClientInput;hasForwardImpulse()Z"))
++    private boolean retainSprintUntilSwimmingStops(final boolean forward) {
++        // Native checks the previous swimming state before updating this frame's pose.
++        return forward || BedrockInputPermissions.isBedrockConnection();
++    }
++
++    @Inject(method = "aiStep", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/AbstractClientPlayer;aiStep()V"))
++    private void updateSwimmingBeforeTravel(final CallbackInfo ci) {
 +        if (BedrockInputPermissions.isBedrockConnection()) {
-+            // Native 1.26.51 changes swimming on the first sprint frame, before fluid travel.
-+            player.updateSwimming();
++            super.updateSwimming();
++            if (!this.input.hasForwardImpulse()) {
++                this.setSwimming(false);
++            }
 +        }
 +    }
 +
@@ -147,12 +178,11 @@ index e5a8167..a0d1f1f 100644
 +        ClientPlayNetworking.send(new PlayerPredictionPayload(new PlayerPrediction(
 +                new Position3f((float) player.getX(), (float) player.getY(), (float) player.getZ()),
 +                new Position3f((float) motion.x, (float) motion.y, (float) motion.z),
-+                player.isSwimming())));
++                player.isSwimming(), player.horizontalCollision, player.verticalCollision)));
 +    }
-+
+ 
      @Shadow
      protected abstract boolean isSprintingPossible(final boolean allowedInShallowWater);
- 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java
 new file mode 100644
 index 0000000..7b212c2

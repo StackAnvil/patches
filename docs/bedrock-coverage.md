@@ -3793,3 +3793,58 @@ Java emits both events together and retains horizontal collision on the first re
 The next native frame and Java frame share water-floor vertical motion of -0.005.
 The native reference has one zero-velocity correction from the fixture teleport, outside the swimming case.
 Do not treat the matching start frame, acceleration sequence, or a correction-free case as full swimming parity.
+
+### Native swimming release comparison, October 6, 2026
+
+**Reference:** Native 1.26.51.1 protocol 2193 repeats swimming-stop cases at a wall and in open water against strict BDS.
+Four stop cases share the same ordering: swimming-stop event 30, then sprint-stop event 26 on the next frame.
+The release frame clears horizontal collision and has vertical motion -0.005.
+The following frame has vertical collision.
+Open-water motion uses sprint drag 0.9 on release and walking drag 0.8 on the following frame.
+
+Releasing sprint while holding forward keeps swimming active.
+Releasing forward while holding sprint retains the same event and drag ordering.
+
+The reference journal contains 3,393 auth-input frames and visible gameplay.
+Its seven zero-velocity corrections coincide with fixture teleports outside the controlled input cases.
+The additional long pool has stone bounds at x -10 through -4 and z 12 through 30.
+Its y bounds are 101 through 105.
+The existing short wall pool remains intact.
+
+**Implemented:** The add-on updates local swimming after sprint decisions and before fluid travel.
+Sprint decisions use the previous completed swimming state.
+Forward release therefore changes the swimming pose while retaining sprint drag for that frame.
+Other sprint restrictions remain active.
+The implementation changes actual physics and does not postpone protocol events independently.
+
+Prediction wire revision 2 adds completed horizontal and vertical collision axes.
+Core consumes these axes only with a matching unmounted frame outside dimension changes.
+Stationary Java frames therefore cannot retain the previous movement packet's horizontal collision.
+Grounded state and collision remain separate.
+Ordinary Java clients retain their existing translation.
+
+**Direct verification:** The revised direct connection matches all four swimming-stop cases, including held sprint during forward release.
+The wall release flags are [30, 48], then [26, 48, 50], matching native.
+The open-water release uses drag 0.9, then 0.8, with the same vertical motion and flags.
+Different held-input frame counts prevent an identical absolute-position claim.
+
+Releasing sprint while holding forward preserves swimming until forward release.
+One zero-velocity correction coincides with a fixture teleport; controlled release cases have no corrections.
+
+**ViaProxy verification:** The repeated proxy recording matches all four swimming-stop cases and preserves swimming when only the sprint key releases.
+Its open-water release uses drag 0.9, then 0.8.
+Both routes clear horizontal collision on release and add vertical collision on the following frame.
+The direct journal has one zero-velocity correction at a fixture teleport.
+The ViaProxy journal has two, both at fixture teleports; none occurs during a controlled release case.
+Each observer case records 120 server ticks with floor height 101 and no airborne samples.
+Dry-floor sprint and jump inputs also produce movement on both routes.
+The final proxy fixture reset interrupts its jump and receives the second zero-velocity correction.
+
+These results verify the tested release behavior.
+The full fluid movement matrix remains incomplete.
+
+**Automated verification:** The dependency builds pass with 16 converter tests, 629 core tests, and 603 add-on tests.
+There are no failures or errors; 135 tests skip environment-dependent fixtures.
+The new codec test covers all eight combinations of swimming and collision axes in stationary frames.
+`bun run check` passes.
+Swimming surfaces, currents, shallow water, lava, effects, vehicles, latency, and correction reconciliation remain separate requirements.
