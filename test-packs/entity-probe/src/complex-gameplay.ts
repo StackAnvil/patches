@@ -122,7 +122,7 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
           const bounds = entity.getAABB();
           const velocity = entity.getVelocity();
           tagEntity(entity);
-          if (!projectileThreatens(incoming.playerBounds, bounds, velocity)) {
+          if (!projectileThreatens(incoming.playerBounds, bounds, velocity, incoming.collisionObstacles, incoming.clearancePlane)) {
             entity.remove();
             return;
           }
@@ -132,7 +132,7 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
           incoming.frames.push({ tick: system.currentTick, position: { ...bounds.center }, velocity, owner: owner.id });
           current.fixture.projectile = entity;
           // A blaze fires a burst. Keep one genuine shot for a reproducible control.
-          current.fixture.shooter?.remove();
+          if (current.fixture.shooter?.isValid) current.fixture.shooter.remove();
           return;
         }
         if (!current.fixture.ranged) return;
@@ -481,17 +481,28 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
     define(id, "combat", async (player) => {
       await prepareArena(player);
       player.runCommand("difficulty normal");
+      // Rain damages the exposed blaze and can kill it before a qualifying shot.
+      // Separate weather controls cover that interaction.
+      // Bedrock weather duration is in ticks: keep this control dry for two minutes.
+      player.runCommand("weather clear 2400");
       for (let x = -8; x <= 8; x++) for (let z = -8; z <= 14; z++) {
         blockAt(player.dimension, x, -1, z).setType("minecraft:stone");
         for (let y = 0; y <= 5; y++) blockAt(player.dimension, x, y, z).setType("minecraft:air");
       }
+      // The native rain level fades after the command. Let that transition finish.
+      await new Promise<void>((resolve) => system.runTimeout(resolve, 80));
       player.teleport(position(), { rotation: { x: 0, y: 0 } });
       const health = player.getComponent("minecraft:health")?.currentValue;
       if (health === undefined) throw new Error("Player health is unavailable.");
       const incoming: IncomingProjectileObservation = { playerId: player.id, shooterId: "", type: small ? "minecraft:small_fireball" : "minecraft:fireball",
         start: { ...player.location }, end: { ...player.location }, forward: player.getViewDirection(), healthBefore: health, healthAfter: health,
         playerBounds: player.getAABB(),
+        collisionObstacles: [{ center: position(0.5, -0.5, 3.5), extent: { x: 8.5, y: 0.5, z: 11.5 } }],
         frames: [], playerFrames: [], attacks: [], hits: [], damage: [] };
+      if (mode === "dodge") {
+        incoming.clearancePlane = { point: { x: incoming.start.x - incoming.forward.x,
+          y: incoming.start.y, z: incoming.start.z - incoming.forward.z }, normal: { ...incoming.forward } };
+      }
       return { incoming, closed: false as boolean, projectile: undefined as Entity | undefined, shooter: undefined as Entity | undefined };
     }, (player, fixture) => {
       fixture.closed = true;
@@ -516,7 +527,7 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
         await new Promise<void>((resolve) => system.runTimeout(resolve, 1));
       }
       fixture.closed = true;
-      shooter.remove();
+      if (shooter.isValid) shooter.remove();
       throw new Error("The native shooter did not produce a projectile on a collision course within twenty seconds.");
     });
   }

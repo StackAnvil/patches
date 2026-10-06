@@ -437,7 +437,15 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
       if (!start) throw new Error("The projectile start event is unavailable.");
       await start();
       if (id.endsWith("dodge")) await ui(["ui", "key-hold", "d", "650", "--client", "java"]);
-      if (id === "fireball-reflect") await uiMouse(ui, "left", 3500);
+      if (id === "fireball-reflect") {
+        // Holding attack only swings once when the shot is initially outside reach.
+        // Repeated real clicks cover its approach without predicting an attack packet.
+        const until = performance.now() + 3500;
+        do {
+          await uiMouse(ui, "left", 40);
+          await Bun.sleep(40);
+        } while (performance.now() < until);
+      }
       await Bun.sleep(5000);
       return;
     case "creative-flight-ascend":

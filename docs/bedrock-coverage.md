@@ -6421,5 +6421,33 @@ Each then passes movement right, the downward bubble column, large-fireball cont
 All 148 tooling tests, the TypeScript check, and the pack build pass.
 The [complex gameplay record](bedrock-complex-gameplay.md#dead-player-arena-preparation-october-6-2026) describes the evidence and limits.
 
+## Projectile input latency and fixture weather, October 7, 2026
+
+**Implemented:** Integration input shares the capture CLI implementation without a separate Bun process for each command.
+Private measurements average 9 ms per command through the shared API and 220 ms through the CLI on this host.
+Display binding, window checks, and explicit permission for desktop input remain in place.
+
+**Verified within scope:** Actual Java input passes all five projectile controls directly against strict BDS.
+ViaProxy passes large-fireball contact, dodge, and reflection, plus small-fireball contact in the first confirmation.
+The accepted dodge controls record movement two or three server ticks after launch and clearance before contact.
+Reflection uses repeated real clicks during approach and retains ownership, outgoing motion, and no-damage assertions.
+
+**Resolved fixture cause:** The remaining ViaProxy dodge attempt spawns a blaze during rain.
+Its journal records hurt events, death, and removal without a shot.
+Projectile fixtures now request clear weather, and cleanup preserves the timeout diagnosis when the shooter disappears.
+The weather duration covers two minutes, and preparation waits for the native rain level to fade.
+The course observer also rejects a shot whose recorded bounds reach the known stone floor before the stationary player.
+Targeted regressions cover the captured trajectory and obstruction ordering.
+Dodge selection also requires clear flight through its existing pass plane, so a descending shot cannot stop at the floor before that point.
+The final rerun passes both direct small-fireball controls and ViaProxy dodge.
+ViaProxy contact still fails during shooter startup and does not verify its gameplay assertion in that run.
+All 153 tooling tests, the TypeScript check, and the behavior-pack build pass.
+The [complex gameplay record](bedrock-complex-gameplay.md#projectile-input-latency-and-fixture-weather-october-7-2026) retains the evidence and comparison limits.
+
+**Remaining:** Small-fireball dodge passes through ViaProxy in separate trials, but startup remains unreliable.
+A later dry hit trial receives no shot from a living blaze within twenty seconds.
+An earlier ViaProxy recording also fails before spawn after entering Java configuration, despite a successful subsequent join.
+Native comparisons, weather interactions, latency, prediction replay, Boar, CubeCraft, platform joins, the full gameplay matrix, and all eight original groups remain required.
+
 Complete death/respawn parity, native comparisons, dodge timing, and full historical prediction replay remain required.
 All eight original coverage groups and the complete gameplay matrix remain active.

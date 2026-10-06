@@ -1,11 +1,11 @@
 interface Vector { x: number; y: number; z: number }
 interface Bounds { center: Vector; extent: Vector }
+interface Plane { point: Vector; normal: Vector }
 const validVector = (vector: Vector) => [vector.x, vector.y, vector.z].every(Number.isFinite);
+const validBounds = (bounds: Bounds) => [bounds.center, bounds.extent].every(validVector)
+  && [bounds.extent.x, bounds.extent.y, bounds.extent.z].every(value => value >= 0);
 
-/** Linear collision-course check using the server's actual collision bounds. */
-export function projectileThreatens(target: Bounds, projectile: Bounds, velocity: Vector): boolean {
-  if (![target.center, target.extent, projectile.center, projectile.extent, velocity].every(validVector)
-    || [target.extent, projectile.extent].some((extent) => [extent.x, extent.y, extent.z].some((value) => value < 0))) return false;
+function contactTime(target: Bounds, projectile: Bounds, velocity: Vector): number | undefined {
   let enter = 0;
   let exit = Infinity;
   for (const axis of ["x", "y", "z"] as const) {
@@ -13,16 +13,40 @@ export function projectileThreatens(target: Bounds, projectile: Bounds, velocity
     const extent = target.extent[axis] + projectile.extent[axis];
     const speed = velocity[axis];
     if (speed === 0) {
-      if (Math.abs(distance) > extent) return false;
+      if (Math.abs(distance) > extent) return;
       continue;
     }
     const first = (-extent - distance) / speed;
     const last = (extent - distance) / speed;
     enter = Math.max(enter, Math.min(first, last));
     exit = Math.min(exit, Math.max(first, last));
-    if (enter > exit) return false;
+    if (enter > exit) return;
   }
-  return Number.isFinite(enter) && Number.isFinite(exit) && exit > 0;
+  return Number.isFinite(enter) && Number.isFinite(exit) && exit > 0 ? enter : undefined;
+}
+
+/** Linear collision course with clear flight to the target and optional pass plane. */
+export function projectileThreatens(target: Bounds, projectile: Bounds, velocity: Vector,
+  obstacles: readonly Bounds[] = [], clearancePlane?: Plane): boolean {
+  if (!validVector(velocity) || ![target, projectile, ...obstacles].every(validBounds)) return false;
+  const targetTime = contactTime(target, projectile, velocity);
+  if (targetTime === undefined) return false;
+  let throughTime = targetTime;
+  if (clearancePlane) {
+    if (![clearancePlane.point, clearancePlane.normal].every(validVector)) return false;
+    const normal = clearancePlane.normal;
+    const speed = velocity.x * normal.x + velocity.y * normal.y + velocity.z * normal.z;
+    const distance = (clearancePlane.point.x - projectile.center.x) * normal.x
+      + (clearancePlane.point.y - projectile.center.y) * normal.y
+      + (clearancePlane.point.z - projectile.center.z) * normal.z;
+    const planeTime = distance / speed;
+    if (speed >= 0 || !Number.isFinite(planeTime) || planeTime < 0) return false;
+    throughTime = Math.max(throughTime, planeTime);
+  }
+  return obstacles.every(obstacle => {
+    const obstacleTime = contactTime(obstacle, projectile, velocity);
+    return obstacleTime === undefined || obstacleTime > throughTime;
+  });
 }
 
 export interface IncomingProjectileObservation {
@@ -32,6 +56,8 @@ export interface IncomingProjectileObservation {
   start: Vector;
   forward: Vector;
   playerBounds: Bounds;
+  collisionObstacles?: Bounds[];
+  clearancePlane?: Plane;
   projectileExtent?: Vector;
   healthBefore: number;
   healthAfter: number;
@@ -59,7 +85,8 @@ export function incomingProjectilePasses(mode: "hit" | "dodge" | "reflect", obse
   const first = frames[0]!;
   if (first.owner !== observation.shooterId || along(first.position) <= 1 || toward(first.velocity) >= 0) return false;
   if (!observation.projectileExtent || !projectileThreatens(observation.playerBounds,
-    { center: first.position, extent: observation.projectileExtent }, first.velocity)) return false;
+    { center: first.position, extent: observation.projectileExtent }, first.velocity,
+    observation.collisionObstacles, observation.clearancePlane)) return false;
   const hitPlayer = observation.hits.some((hit) => hit.projectile === projectileId && hit.target === observation.playerId
     && hit.tick >= launchedTick);
   const damaged = observation.damage.some((event) => event.tick >= launchedTick && event.amount > 0);

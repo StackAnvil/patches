@@ -23,6 +23,38 @@ test("collision-course checks reject off-axis and departing shots, including par
   expect(projectileThreatens(shot.playerBounds, { ...projectile, extent: { x: -1, y: 1, z: 1 } }, shot.frames[0]!.velocity)).toBe(false);
 });
 
+test("a collision course must reach the player before a known obstruction", () => {
+  const shot = incoming();
+  const projectile = { center: shot.frames[0]!.position, extent: shot.projectileExtent! };
+  const wall = { center: { x: 0, y: 1, z: 4 }, extent: { x: 1, y: 1, z: 0.5 } };
+  expect(projectileThreatens(shot.playerBounds, projectile, shot.frames[0]!.velocity, [wall])).toBe(false);
+  expect(projectileThreatens(shot.playerBounds, projectile, shot.frames[0]!.velocity,
+    [{ ...wall, center: { ...wall.center, z: -4 } }])).toBe(true);
+  expect(incomingProjectilePasses("dodge", { ...shot, collisionObstacles: [wall] })).toBe(false);
+  expect(projectileThreatens(shot.playerBounds, projectile, shot.frames[0]!.velocity,
+    [{ ...wall, extent: { x: Number.NaN, y: 1, z: 1 } }])).toBe(false);
+
+  // The live small fireball grazes the expanded player bounds only after reaching the stone floor.
+  const target = { center: { x: 125.5, y: 250.9, z: 0.5 }, extent: { x: 0.3, y: 0.9, z: 0.3 } };
+  const descending = { center: { x: 125.5, y: 255.955261, z: 11.5 }, extent: { x: 0.155, y: 0.155, z: 0.155 } };
+  const velocity = { x: 0.02974256, y: -0.62218976, z: -1.08132565 };
+  const floor = { center: { x: 125.5, y: 249.5, z: 3.5 }, extent: { x: 8.5, y: 0.5, z: 11.5 } };
+  expect(projectileThreatens(target, descending, velocity)).toBe(true);
+  expect(projectileThreatens(target, descending, velocity, [floor])).toBe(false);
+  expect(projectileThreatens(target, { ...descending, center: { x: 125.5, y: 251, z: 11.5 } },
+    { x: 0, y: 0, z: -1.1 }, [floor])).toBe(true);
+
+  // This later shot reaches the player first but then meets the floor before the required pass plane.
+  const grazing = { ...descending, center: { x: 125.5, y: 253.755127, z: 11.5 } };
+  const grazingVelocity = { x: -0.01209528, y: -0.38048825, z: -1.18137801 };
+  const plane = { point: { x: 125.5, y: 250, z: -0.5 }, normal: { x: 0, y: 0, z: 1 } };
+  expect(projectileThreatens(target, grazing, grazingVelocity, [floor])).toBe(true);
+  expect(projectileThreatens(target, grazing, grazingVelocity, [floor], plane)).toBe(false);
+  expect(projectileThreatens(target, { ...grazing, center: { x: 125.5, y: 251, z: 11.5 } },
+    { x: 0, y: 0, z: -1.1 }, [floor], plane)).toBe(true);
+  expect(projectileThreatens(target, grazing, grazingVelocity, [], { ...plane, normal: { x: 0, y: 0, z: 0 } })).toBe(false);
+});
+
 test("dodging requires a real inbound shot passing the original plane, movement, and no damage", () => {
   const shot = incoming();
   expect(incomingProjectilePasses("dodge", shot)).toBe(true);

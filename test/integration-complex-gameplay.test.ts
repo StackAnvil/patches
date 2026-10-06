@@ -25,7 +25,9 @@ const { prepareGameplay } = await import(new URL("../test-packs/entity-probe/src
 const { registerComplexGameplay } = await import("../test-packs/entity-probe/src/complex-gameplay.ts");
 type Context = Parameters<typeof registerComplexGameplay>[0];
 let active: ReturnType<Context["getActive"]>;
-registerComplexGameplay({ define() {}, getActive: () => active, tagEntity() {},
+const starts = new Map<string, NonNullable<Parameters<Context["define"]>[4]>>();
+registerComplexGameplay({ define(id, _group, _prepare, _inspect, start) { if (start) starts.set(id, start as NonNullable<Parameters<Context["define"]>[4]>); },
+  getActive: () => active, tagEntity() {},
   prepareArena: async () => {}, inventory: () => { throw new Error("Unused fixture setup"); },
   equipment: () => { throw new Error("Unused fixture setup"); }, countItem: () => 0,
   blockAt: () => { throw new Error("Unused fixture setup"); }, position: () => ({ x: 0, y: 0, z: 0 }) });
@@ -237,7 +239,7 @@ test("the incoming control selects an owned collision course and removes only it
     playerBounds: { center: { x: 0, y: 0.9, z: 0 }, extent: { x: 0.3, y: 0.9, z: 0.3 } },
     healthBefore: 20, healthAfter: 20, frames: [], playerFrames: [], attacks: [], hits: [], damage: [] };
   active = { playerName: player.name, fixture: { incoming,
-    shooter: { remove: () => stoppedShooter++ } as unknown as Entity } };
+    shooter: { isValid: true, remove: () => stoppedShooter++ } as unknown as Entity } };
   function shot(owner: string, x: number) {
     callbacks.get("entitySpawn")!({ entity: { id: "shot", typeId: incoming.type,
       getComponent: () => ({ owner: { id: owner } }), getVelocity: () => ({ x: 0, y: 0, z: -0.5 }),
@@ -263,4 +265,31 @@ test("the incoming control selects an owned collision course and removes only it
   Object.assign(player, { location: { x: 2, y: 0, z: 0 } });
   sample();
   expect(incoming.playerFrames).toHaveLength(1);
+});
+
+test("an absent threatening shot retains the timeout failure even if the shooter disappears", async () => {
+  let removals = 0;
+  const shooter = { id: "shooter", isValid: true, addEffect() {}, triggerEvent() {}, remove() { removals++; } };
+  const source = { ...player, dimension: { spawnEntity: () => shooter } } as unknown as Player;
+  const incoming: IncomingProjectileObservation = { playerId: player.id, shooterId: "", type: "minecraft:small_fireball",
+    start: { x: 0, y: 0, z: 0 }, end: { x: 0, y: 0, z: 0 }, forward: { x: 0, y: 0, z: 1 },
+    playerBounds: { center: { x: 0, y: 0.9, z: 0 }, extent: { x: 0.3, y: 0.9, z: 0.3 } },
+    healthBefore: 20, healthAfter: 20, frames: [], playerFrames: [], attacks: [], hits: [], damage: [] };
+  const fixture = { incoming, closed: false };
+  active = { playerName: player.name, fixture };
+  let finished = false;
+  let failure: unknown;
+  const start = starts.get("small-fireball-hit")!(source, fixture).then(
+    () => { finished = true; }, error => { failure = error; finished = true; });
+  shooter.isValid = false;
+  for (let iteration = 0; !finished && iteration < 1000; iteration++) {
+    pending.shift()?.();
+    await Promise.resolve();
+  }
+  expect(finished).toBe(true);
+  await start;
+  expect(failure).toBeInstanceOf(Error);
+  expect(removals).toBe(0);
+  expect(fixture.closed).toBe(true);
+  expect(incoming.projectileId).toBeUndefined();
 });

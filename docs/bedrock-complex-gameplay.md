@@ -658,3 +658,68 @@ All 148 tooling tests, the TypeScript check, and the behavior-pack build pass.
 
 **Remaining:** This fix does not establish complete death/respawn parity, native comparisons, or every hazardous-terrain transition.
 Dodge timing, full prediction replay, the complete gameplay matrix, and all eight original coverage groups remain required.
+
+### Projectile input latency and fixture weather, October 7, 2026
+
+**Implemented:** The integration runner now calls the capture UI API directly.
+The CLI uses the same implementation, and each command still checks the selected window on the bound display.
+Desktop input still requires explicit permission.
+This removes a separate Bun process and redundant private-window focus process from each input command.
+The [capture reference](capture-lab.md#integration-input-timing) describes the shared path.
+
+A private benchmark uses twelve samples per path and a key hold of one millisecond.
+The CLI averages 220 ms per command, and the shared API averages 9 ms on this host.
+These numbers describe driver overhead, not network latency or native gameplay parity.
+The dodge assertion retains the same firing distance, collision-course selection, timely clearance, and absence of attributed damage.
+
+**Verified within scope:** Actual Java input passes all five projectile controls directly against strict BDS 1.26.51.1, build 51061372, protocol 2193.
+These controls cover large-fireball contact, dodge, and reflection, plus small-fireball contact and dodge.
+The accepted dodge shots record initial lateral movement two or three server ticks after launch.
+The player clears the firing lane eight ticks after launch, before projectile contact.
+The earlier slow-driver capture records initial movement nine ticks after launch and clearance on the contact tick.
+
+Reflection now uses repeated real clicks during the projectile approach.
+A held attack emits its first swing outside reach and does not provide a later attack in that capture.
+The repeated-click controls retain reversed motion, changed ownership, and absence of player damage as their requirements.
+Both direct and ViaProxy routes pass large-fireball reflection with this input.
+
+The first ViaProxy confirmation passes four controls, but small-fireball dodge fails during startup.
+Its journal contains a blaze spawn, repeated hurt events, death, and removal, without a small-fireball spawn.
+Rain is active before the shooter appears.
+The [matching blaze definition](https://github.com/Mojang/bedrock-samples/blob/46ba6ea985fb5a92d79a9419198f10dda14c199d/behavior_pack/entities/blaze.json) specifies water-contact damage and a natural ranged attack.
+Projectile fixtures now request clear weather before spawning the shooter.
+The duration uses ticks, as described in the [official command reference](https://learn.microsoft.com/en-us/minecraft/creator/documents/commandspopularcommands?view=minecraft-bedrock-stable#weather).
+The first weather regression used 120 ticks, so rain returned after six seconds and killed another shooter before it fired.
+The fixture now uses 2,400 ticks and waits eighty ticks for the native rain level to fade before spawning the shooter.
+Cleanup checks entity validity so a dead shooter cannot hide the original timeout error.
+Weather-dependent combat remains a separate required comparison.
+
+A further direct dodge trial records timely movement and no damage, but its descending shot disappears before passing the original player position.
+The recorded bounds and velocity place floor contact before contact with the stationary player.
+The initial course check considered only the player bounds.
+It now compares the first contact with known fixture obstructions and records the stone floor in the observation.
+The unit regression covers that captured trajectory, an unobstructed shot, an intervening wall, and a wall behind the player.
+Earlier passing captures retain their result when reevaluated with the known floor bounds.
+The pass assertion still requires a genuine shot that passes the original position after timely clearance.
+
+The first obstruction-aware rerun passes both direct small-fireball controls and ViaProxy contact.
+Its ViaProxy dodge records timely movement and no damage, but a descending shot reaches the floor before the required pass plane.
+This course reaches the player bounds first, so an obstruction check limited to initial contact cannot reject it.
+Dodge selection now requires clear flight through the same pass plane that its assertion uses.
+The captured trajectory forms another regression control.
+This calculation covers linear flight and the fixture's known floor, not arbitrary terrain or curved trajectories.
+
+The final clearance-aware run passes direct small-fireball contact and dodge, plus ViaProxy dodge.
+ViaProxy contact fails during startup, before a qualifying shot arrives, so that assertion remains unverified in this run.
+Both recorders finish successfully, and the owned strict-BDS server stops.
+All 153 tooling tests, the TypeScript check, and the behavior-pack build pass.
+
+A dry ViaProxy hit trial also receives no shot from a living blaze within the twenty-second startup bound.
+Its journal records clear weather and no shooter hurt events.
+That startup problem remains separate from rain damage and remains unresolved.
+
+**Remaining:** An earlier ViaProxy attempt disconnects before spawn with an invalid-NBT decode error after entering Java configuration.
+A subsequent attempt joins successfully, so the intermittent join failure still needs investigation.
+Native trajectory comparisons, controlled network conditions, correction replay, Boar, CubeCraft, actual Windows/macOS joins, and the full gameplay matrix remain required.
+Fresh native launches remain blocked by the current-boot GPU guard.
+All eight original coverage groups remain required.
