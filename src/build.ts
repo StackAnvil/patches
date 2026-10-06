@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -13,6 +13,17 @@ import { prepareViaFabricPlus } from "./viafabricplus.ts";
 interface Coordinates { group: string; artifact: string; version: string }
 
 const localRepo = join(root, ".stackanvil", "maven");
+
+async function builtinAssetArguments(id: string): Promise<string[]> {
+  if (id !== "viafabricplus-bedrock") return [];
+  const { version } = JSON.parse(await readFile(join(root, "bedrock-assets.json"), "utf8")) as { version: string };
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(version)) throw new Error("Invalid bundled Bedrock asset version");
+  const directory = join(root, "assets", "bedrock", version);
+  if (!existsSync(join(directory, "assets", "viafabricplus-bedrock", "builtin", "manifest.json"))) {
+    throw new Error(`Bundled Bedrock assets are missing for ${version}`);
+  }
+  return [`-PbedrockBuiltinAssets=${directory}`];
+}
 
 async function javaHome(version: string): Promise<string> {
   const explicit = process.env[`STACKANVIL_JAVA_${version}`] ?? process.env[`JAVA_HOME_${version}_X64`];
@@ -51,12 +62,13 @@ const buildOne = Effect.fn("buildOne")(function* (id: string, built: Map<string,
   const target = yield* Effect.promise(() => getTarget(id));
   const dir = yield* sync(id);
   const jdk = yield* Effect.promise(() => javaHome(target.java));
+  const builtinAssets = yield* Effect.promise(() => builtinAssetArguments(id));
   const viaFabricPlusVersion = id === "viafabricplus-bedrock" ? built.get("viafabricplus")?.version : undefined;
   if (id === "viafabricplus-bedrock" && !viaFabricPlusVersion) {
     return yield* Effect.fail(new Error("The Bedrock add-on needs a pinned ViaFabricPlus artifact"));
   }
   yield* command("bash", ["./gradlew", "--no-daemon", `-PstackanvilMavenRepo=${localRepo}`,
-    ...(viaFabricPlusVersion ? [`-PstackanvilViaFabricPlusVersion=${viaFabricPlusVersion}`] : []), "clean", target.buildTask,
+    ...(viaFabricPlusVersion ? [`-PstackanvilViaFabricPlusVersion=${viaFabricPlusVersion}`] : []), ...builtinAssets, "clean", target.buildTask,
     `generatePomFileFor${target.publication}Publication`], dir,
     { ...process.env, JAVA_HOME: jdk, PATH: `${join(jdk, "bin")}:${process.env.PATH ?? ""}` });
   const artifacts = yield* Effect.promise(() => listArtifacts(dir));
@@ -118,7 +130,8 @@ export const build = Effect.fn("build")(function* (id: string) {
 export const buildPr = Effect.fn("buildPr")(function* (id: string, patchFile?: string) {
   const target = yield* Effect.promise(() => getTarget(id));
   const dir = yield* sync(id, "pr", patchFile);
-  yield* command("bash", ["./gradlew", "--no-daemon", "clean", target.buildTask], dir);
+  const builtinAssets = yield* Effect.promise(() => builtinAssetArguments(id));
+  yield* command("bash", ["./gradlew", "--no-daemon", ...builtinAssets, "clean", target.buildTask], dir);
   const artifacts = yield* Effect.promise(() => listArtifacts(dir));
   if (!artifacts.length) return yield* Effect.fail(new Error(`No PR JAR artifacts found for ${id}`));
   const output = patchFile

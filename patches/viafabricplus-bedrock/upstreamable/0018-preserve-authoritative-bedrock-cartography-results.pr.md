@@ -54,8 +54,8 @@ Ordinary clients retain the core naming dialog.
 
 The layout follows Mojang's [cartography UI source](https://github.com/Mojang/bedrock-samples/blob/main/resource_pack/ui/cartography_screen.json).
 Its dimensions and captions are compared with Bedrock 1.26.51.1, build 51061372, protocol 2193.
-Accepted converted server images override independently licensed images from the selected account.
-Image acquisition runs off the game thread, and closing releases its textures.
+Accepted converted server images override bundled native images.
+Image decoding runs off the game thread, and closing releases its textures.
 Missing images leave the inventory usable and show an explicit message.
 Production never reads a local Bedrock installation.
 

@@ -20,6 +20,29 @@ bun run bundle
 
 The add-on setup includes one compatibility patch for the current ViaBedrock API. The upstream PR branch does not include setup patches.
 
+## Bundled Bedrock resources
+
+[`bedrock-assets.json`](../bedrock-assets.json) pins the built-in resource bundle to Bedrock 1.26.51.1.
+The build adds [`assets/bedrock/1.26.51.1/`](../assets/bedrock/1.26.51.1/) to the add-on's resources.
+The JAR contains five archives, their checksum manifest, and the native copyright notice.
+Runtime loading uses these resources without Store sign-in or a downloaded asset cache.
+
+To regenerate the bundle from a matching installed game, run:
+
+```bash
+bun scripts/bundle-bedrock-assets.ts /path/to/bedrock-game 1.26.51.1
+```
+
+The game directory must contain `data/resource_packs/`.
+The extractor checks the target vanilla manifest, expands native BR archives, and preserves file contents and paths.
+It selects persona resources and stable vanilla models, animations, controllers, images, sounds, particles, and text.
+It uses original `.bol-orig` files when an installation keeps patched copies beside them.
+
+The normal stack build passes the resource directory to Gradle.
+For a direct add-on Gradle build, pass `-PbedrockBuiltinAssets=/absolute/path/to/assets/bedrock/1.26.51.1`.
+When changing the target Bedrock version, regenerate the bundle and update the pin together.
+The runtime rejects bundles that do not match ViaBedrock's target version.
+
 ## Run a local server
 
 Download the [official Bedrock Dedicated Server](https://www.minecraft.net/en-us/download/server/bedrock), extract it outside this repository, and set `BEDROCK_SERVER_HOME` to that directory. Then run:

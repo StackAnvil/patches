@@ -1024,7 +1024,7 @@ The social patch changes double-click activation during that interval, but does 
 | 0.3.0 | Provider waits for acquisition | Acquisition errors reject resource loading | Present on both transports |
 | 0.3.1 | Provider waits for acquisition | Acquisition errors reject resource loading | Removed on RakNet only |
 | 0.3.2 | Provider waits for acquisition | Optional I/O failures return no images | Still present on NetherNet |
-| Current main | Provider waits for acquisition | Optional I/O failures return no images | Removed on both native transports |
+| Current working stack | Provider reads bundled resources | Store acquisition removed; damaged bundles report an installation error | Removed on both native transports |
 
 [898df4a](https://github.com/StackAnvil/patches/commit/898df4a3cb247a3782e5daaa2e1aa27c7f5c477d) adds licensed vanilla images to resource loading before 0.3.0.
 The resource tracker waits for both server packs and these images before completing the join.
@@ -1037,7 +1037,8 @@ They do not prove the cause of the separate friends-list slowdown.
 [e84bedd](https://github.com/StackAnvil/patches/commit/e84bedd8e09cd043688ad6f0d67076d97919b52f) makes Store assets optional before 0.3.2.
 [ee660e6](https://github.com/StackAnvil/patches/commit/ee660e6ef69720c52bbf34c7425745cec82d1804) extends the timeout fix to NetherNet after 0.3.2.
 Disabling interactive Store sign-in does not remove that older transport timeout or disable acquisition through existing credentials.
-The current source retains cached assets and headless acquisition in every consent mode.
+Before the bundled-resource change, cached assets and headless acquisition remained active in every consent mode.
+The current working stack loads built-in images from its JAR and has no Store acquisition path.
 The current consent and optional-provider suites pass all nine tests, including declining login and missing Store credentials.
 
 Actual macOS joining still needs verification with a build that contains the NetherNet fix.
@@ -4276,3 +4277,26 @@ The preceding main CI run passes builds, tooling, platform permissions, and all 
 Local posture prediction does not establish full ceiling parity.
 Fresh native ceiling and combined swimming-jump captures remain required.
 The broader movement, real-server, and Windows/macOS game-join requirements remain open.
+
+## Bundled native resources, October 6, 2026
+
+The add-on now ships Bedrock 1.26.51.1 built-in resources instead of acquiring the game package during joining.
+Five archives contain 22,264 files and 244,022,807 expanded bytes.
+The supplied PistonDecompiler checkout contains only the executable, so extraction uses the matching installed resource package.
+Every file from the previous licensed cache matches the installed bytes.
+
+The runtime checks versions, archive checksums, paths, counts, and size limits before sharing one indexed library.
+The provider runs on ViaBedrock's resource executor and requires no account, Store sign-in, writable cache, or network fetch.
+Server resource packs retain precedence.
+Owned Marketplace content continues to use receipt-authorized downloads.
+
+This removes the acquisition wait introduced in 0.3.0.
+The reported `RakClientOfflineHandler.onTimeout` occurs during the offline handshake, before ordinary pack preparation.
+Removing acquisition does not by itself establish the cause or resolution of that specific timeout.
+
+**Verification:** The replayed add-on and its dependencies build successfully.
+The add-on suite passes 470 tests; 114 private-fixture tests are skipped.
+All 15 bundled-loader, image-provider, and tint-mask cases pass without skips.
+These include real resource loading, default emote sampling, and native image resolution without account state.
+The tooling suite passes 110 tests, and the first upstream patch still applies to the pinned base.
+A new live server join with the bundled build remains unverified.

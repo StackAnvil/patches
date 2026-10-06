@@ -6,44 +6,39 @@ Owned and freely available persona and emote assets use the current inventory re
 
 ## Built-in persona package
 
-The bundled Xodus-based helper signs into Microsoft Store with the selected Xbox account and obtains a device-bound license. It extracts persona files and the stable vanilla resource layers from the official package. Pin Bedrock 1.26.51.1 / package 1.26.5101.0 to protocol 2193. The pinned header anchors verification of the Merkle tree, metadata, and encrypted pages before decryption.
+Load the matching Bedrock 1.26.51.1 persona and stable vanilla libraries from versioned classpath archives.
+The StackAnvil build supplies them through the `bedrockBuiltinAssets` Gradle property.
+Large native payloads stay outside the exported source patch.
+The resource bundle retains native paths, file bytes, and copyright notices.
 
-Read resident and ordinary multi-run NTFS streams or the package segment index. Unpack BR archives with shared offsets and empty stubs, then atomically publish a versioned cache with file checksums. Decode native PNG face strips and BGRA TGA tint masks and feed equipped built-in pieces into the asset loader. Wave, Clap, Over There, and Follow Me use their extracted animation sources for preview and world playback.
+The supplied PistonDecompiler checkout contains only the executable.
+The bundle comes from the matching installed game package and matches every file in the earlier licensed cache.
+The build-time extractor handles BR shared offsets, identical overlaps, and loose replacements for installed streaming placeholders.
+It rejects conflicting content, invalid paths, and excessive resource sizes.
 
-Local Linux tests acquired the official license and all 57 stable vanilla layers through the bundled helper. Fresh interactive Store sign-in and Windows and macOS runtime flows still need verification. CI builds one helper for each of the four supported platforms. The runtime requires no installed game, copied keys, or user-supplied extractor.
+Validate the protocol version, archive checksums, counts, paths, and expanded sizes before indexing the shared runtime library.
+Built-in assets load without an account, network access, or writable cache.
+Remove Store sign-in screens, package acquisition, platform helper binaries, and their CI jobs.
+Owned Marketplace packs retain their receipt-authorized flow.
+Wave, Clap, Over There, and Follow Me use bundled animation sources for preview and world playback.
 
-The helper runs inside the launcher environment, including Flatpak, without a WebView or host execution permission. It retains Store token expiry checks, selected Xbox identity checks, and fresh device-bound licensing. Missing credentials first use the selected Bedrock account for silent licensing. After in-game consent, device-code authentication opens the system browser under the same application identity.
+Tests load the actual bundle without account state and exercise corruption, missing archives, version mismatches, duplicates, and unsafe paths.
+Face-mask tests retain native TGA decoding coverage.
+The complete native fixture tests use a 2 GiB heap.
+All nine bundled-loader cases, two tint-mask cases, and four image-provider cases pass without skips.
+The full add-on suite passes 470 tests; 114 optional private-fixture tests are skipped.
+Earlier live acquisition and join comparisons remain recorded in the [coverage ledger](../../../docs/bedrock-coverage.md#licensed-archive-overlaps-and-native-collision-baseline-october-6-2026).
+They describe the previous downloader, which this change removes.
 
-Linux Flatpak tests acquired 6,117 official files with valid Store credentials, then indexed 21,770 resources across 57 packs. Missing and expired credentials produced no assets. Java process tests cover early loader exits, private diagnostics, sign-in requirements, and successful response handling. Loader errors no longer appear as a closed stdin stream.
-
-Sources: [Pinned Xodus extraction](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/commands/streaming.rs), [license acquisition](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/license.rs), and [BR archive format](https://github.com/bedrock-crustaceans/brarchive/blob/main/FORMAT.md).
-
-### Identical archive overlaps
-
-A fresh licensed download of Bedrock 1.26.51.1/build 51061372 contains two identical loose/archive overlaps.
-Both `vanilla` and `vanilla_base` repeat `texts/languages.json` inside their text archives.
-The previous unpacker rejects the first overlap, preventing cache publication and repeating acquisition on later joins.
-
-Merge byte-identical copies before counting logical files and bytes. Reject different contents explicitly.
-Preserve raw input limits, archive validation, empty stubs, and atomic cache publication.
-The independently downloaded package contains 6,184 raw files and expands to 22,251 distinct files within the existing limits.
-
-Regressions cover loose/archive and archive/archive overlaps, conflicts, exact logical byte limits, and the maximum logical file count.
-Optional licensed tests use a 2 GiB heap to retain both complete libraries for cache reuse.
-Ordinary tests retain Gradle's default heap. Client runtime memory limits remain separate.
-All 24 asset tests pass with private licensed acquisition and raw-package fixtures enabled, with no skips.
-Cache readback preserves the 57 layers and 72 resolved player aliases, matching the existing native inheritance evidence.
-Two normal production joins pass on strict BDS through the direct add-on route in a private Flatpak Prism instance with 2 GiB.
-The cold join publishes format 10; the second join reuses it unchanged. Both reach visible gameplay without client errors.
-The [coverage ledger](../../../docs/bedrock-coverage.md#licensed-archive-overlaps-and-native-collision-baseline-october-6-2026) records production verification and remaining gaps.
+Source: [BR archive format](https://github.com/bedrock-crustaceans/brarchive/blob/main/FORMAT.md).
 
 ## Classic model library
 
-Expand both base vanilla model archives under their original model paths. Index individual legacy and modern definitions and merge equal duplicates. Cache format 3 refreshes older persona-only and model-only caches before use. Actor compilation requires the player definition, animations, and controllers. Failed acquisition keeps the existing cache.
+Index the bundled base vanilla model layers under their original paths. Merge equal legacy and modern definitions. Actor compilation requires the player definition, animations, and controllers.
 
 Classic imports resolve missing models and parents lazily through the licensed library. Pack definitions retain precedence. Loading runs on a worker; a changed account or closed screen prevents stale results from opening. Self-contained packs require no asset acquisition.
 
-Licensed tests resolve all seven inherited entries from the base skin-model library, including the zombie parent from an entity file. They verify extraction, equal duplicate definitions, model decoding, cache reuse, and schema refresh. The loader now resolves versioned vanilla model overrides. The classic importer applies the native ASCII lowercase rule before legacy bone merges and parent lookup. This rule resolves the Vex model's `rightArm`/`rightarm` mismatch. Native visual comparisons and other inheritance edges remain pending.
+Licensed tests resolve all seven inherited entries from the base skin-model library, including the zombie parent from an entity file. They verify equal duplicate definitions, model decoding, and native inheritance. The loader now resolves versioned vanilla model overrides. The classic importer applies the native ASCII lowercase rule before legacy bone merges and parent lookup. This rule resolves the Vex model's `rightArm`/`rightarm` mismatch. Native visual comparisons and other inheritance edges remain pending.
 
 ## Classic actor graph
 
@@ -88,7 +83,7 @@ Private native 1.26.51 captures establish Battle Cry's pack UUID, 130 ticks, and
 - Full patch stack builds successfully.
 - 106 add-on tests pass with private persona, login, emote, and legacy geometry fixtures enabled.
 - Private Battle Cry, Kadoosh, and four built-in emote tests sample every frame at 60 Hz.
-- Bundled-helper tests verify official acquisition, archive extraction, face-mask decoding, cache reuse, and failed refresh recovery.
+- Bundled-resource tests verify accountless loading, archive integrity, version checks, and face-mask decoding.
 - A Java GUI recording verifies the locally assembled body, face, and animated arms, including open and closed face frames. Geometry parser tests cover native null optional transforms.
 - A Java GUI recording verifies visible Battle Cry motion, attached clothing, completion reset, and readable controls at the default GUI scale.
 - Native arm writes, cape equips, sizes, and account wheel edits have capture evidence. The account is restored after temporary edits.
