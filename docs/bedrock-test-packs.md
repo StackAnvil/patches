@@ -50,7 +50,7 @@ After the gameplay cases, the runner restarts the Java client and checks that it
 
 ## Complex gameplay
 
-Run the 38 BDS cases for ranged use, projectile combat, slowing terrain, fluids, and creative flight:
+Run the 42 BDS cases for ranged use, projectile combat, slowing terrain, fluids, and creative flight:
 
 ```bash
 bun run test:integration -- --route java-bedrock --gameplay-complex
@@ -82,6 +82,8 @@ The Java/Geyser probe does not implement these new fixtures; the runner rejects 
 | `crossbow-multishot` | Load and fire a Multishot crossbow | Three distinct owned arrows in one volley, after completion, with one arrow consumed. |
 | `crossbow-quick-charge-1`, `crossbow-quick-charge-2`, `crossbow-quick-charge-3` | Load and fire each Quick Charge level | One consumed arrow and one owned shot, with completion inside the target BDS timing window. |
 | `crossbow-piercing-0`, `crossbow-piercing-1`, `crossbow-piercing-4` | Fire one crossbow arrow through a stationary target chain | The same arrow damages one, two, or five targets in order. The next target remains untouched. |
+| `bow-knockback-release`, `crossbow-knockback-fire` | Charge through a scripted knockback, then release or fire | Airborne displacement occurs during charging, followed by one owned shot and one consumed arrow. |
+| `bow-knockback-cancel`, `crossbow-knockback-cancel` | Change slot after knockback during charging | Airborne displacement precedes cancellation, with no projectile and unchanged ammunition. |
 | `splash-potion-speed` | Throw a swiftness potion downward | One consumed potion, its owned impact, and a later speed effect with positive duration. |
 | `lingering-potion-slowness` | Throw a lingering slowness potion downward | The matching impact, a nearby cloud, and a later slowness effect. |
 | `fireball-hit`, `small-fireball-hit` | Remain in the firing lane | A natural ghast or blaze shot hits the player and causes health loss. |
@@ -94,6 +96,12 @@ The Java/Geyser probe does not implement these new fixtures; the runner rejects 
 Ranged observations include event ticks, remaining use duration, ammunition counts, projectile IDs, and sampled projectile speed.
 The Script API reports `useDuration` as remaining ticks, not elapsed charge time.
 The movement cases retain up to 200 position, velocity, fluid, flight, and grounded frames.
+Knockback cases apply one Script API impulse four server ticks after the weapon's accepted start event.
+They retain its requested force, position, and velocity before and after the call.
+Their assertions require upward and horizontal displacement during charging.
+A successful shot without that displacement cannot pass.
+Callbacks stop when use ends, the fixture closes, or another fixture replaces it.
+These cases exercise movement and item use together; they do not prove correct impulse timing or historical replay.
 Fluid samples include the block type and liquid depth where available.
 Projectile combat retains bounded trajectories, native collision bounds, ownership, attacks, impacts, and damage.
 The start event waits for a natural shot before the Java driver begins its response.
@@ -103,6 +111,10 @@ This isolates one incoming projectile from the blaze's random burst spread.
 This collision-course check belongs to the test fixture; it does not replace production movement physics.
 These server observations support diagnosis and later native comparison.
 They do not prove local trajectory accuracy, complete charge or damage formulas, potion duration scaling, or correction replay.
+
+The runner detects the drawn selection in any hotbar cell, then selects cell zero before input.
+Cancellation can leave another cell selected.
+That state no longer causes a false loading-screen timeout.
 
 The target headless BDS accepts the fixture APIs and passes the large and small fireball hit controls.
 The initial 29 fixture preparations pass on that server.

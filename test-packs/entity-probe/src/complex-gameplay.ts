@@ -2,6 +2,7 @@ import { EnchantmentType, EquipmentSlot, GameMode, ItemStack, Potions, system, w
   type Block, type Container, type Dimension, type Entity, type EntityEquippableComponent, type Player, type Vector3 } from "@minecraft/server";
 import { potionImpactPasses, rangedHitPasses, rangedObservationPasses, rangedPiercingPasses, type RangedExpectation, type RangedObservation, type RangedTarget } from "../../../src/integration/ranged-observation.ts";
 import { incomingProjectilePasses, projectileThreatens, type IncomingProjectileObservation } from "../../../src/integration/projectile-observation.ts";
+import { rangedKnockbackPasses, type KnockbackImpulse } from "../../../src/integration/knockback-observation.ts";
 
 interface MotionObservation {
   start: Vector3;
@@ -24,6 +25,7 @@ interface Fixture {
   incoming?: IncomingProjectileObservation;
   projectile?: Entity;
   shooter?: Entity;
+  knockback?: { pending: boolean; impulse?: KnockbackImpulse };
   closed?: boolean;
 }
 
@@ -51,11 +53,29 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
     [world.afterEvents.itemReleaseUse, "release"], [world.afterEvents.itemCompleteUse, "complete"],
     [world.afterEvents.itemStopUse, "stop"], [world.afterEvents.itemUse, "use"]] as const) {
     signal.subscribe((event: { source: Player; itemStack?: ItemStack; useDuration?: number }) => {
-      const observation = fixtureFor(event.source)?.ranged;
+      const current = getActive();
+      const fixture = fixtureFor(event.source);
+      const observation = fixture?.ranged;
       if (!observation) return;
       const item = event.itemStack ?? inventory(event.source).getItem(event.source.selectedSlotIndex);
       if (item?.typeId !== observation.item) return;
       observation.events.push({ action, tick: system.currentTick, remainingUseTicks: event.useDuration });
+      if (action === "start" && fixture?.knockback && !fixture.knockback.pending) {
+        fixture.knockback.pending = true;
+        const startTick = system.currentTick;
+        system.runTimeout(() => {
+          if (getActive() !== current || fixture.closed || event.source.selectedSlotIndex !== 0
+              || observation.events.some((entry) => ["stop", "release", "complete"].includes(entry.action) && entry.tick >= startTick)) return;
+          try {
+            const tick = system.currentTick;
+            const position = { ...event.source.location };
+            const velocityBefore = event.source.getVelocity();
+            const force = { x: 0.35, y: 0.4, z: 0 };
+            event.source.applyKnockback({ x: force.x, z: force.z }, force.y);
+            fixture.knockback!.impulse = { tick, position, force, velocityBefore, velocityAfter: event.source.getVelocity() };
+          } catch (error) { observation.error = String(error); }
+        }, 4);
+      }
     });
   }
 
@@ -165,7 +185,10 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
     ["bow-infinity", "bow", "release"], ["bow-infinity-no-ammo", "bow", "empty"],
     ["crossbow-multishot", "crossbow", "fire"],
     ["crossbow-quick-charge-1", "crossbow", "fire"], ["crossbow-quick-charge-2", "crossbow", "fire"],
-    ["crossbow-quick-charge-3", "crossbow", "fire"]] as const) {
+    ["crossbow-quick-charge-3", "crossbow", "fire"],
+    ["bow-knockback-release", "bow", "release"], ["bow-knockback-cancel", "bow", "cancel"],
+    ["crossbow-knockback-fire", "crossbow", "fire"], ["crossbow-knockback-cancel", "crossbow", "cancel"]] as const) {
+    const knockback = id.includes("-knockback-");
     const infinity = id === "bow-infinity" || id === "bow-infinity-no-ammo";
     const multishot = id === "crossbow-multishot";
     const quickCharge = id.startsWith("crossbow-quick-charge-") ? Number(id.at(-1)) : 0;
@@ -207,7 +230,8 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
         ranged.impacts = [];
         player.teleport(position(), { rotation: { x: 5, y: 0 } });
       }
-      const fixture = { ranged, closed: false, motion: motionFixture(player).motion };
+      const fixture = { ranged, closed: false, motion: motionFixture(player).motion,
+        knockback: knockback ? { pending: false, impulse: undefined as KnockbackImpulse | undefined } : undefined };
       return fixture;
     }, (player, fixture) => {
       fixture.closed = true;
@@ -218,9 +242,11 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
       return { passed: rangedObservationPasses(mode, fixture.ranged, expectation)
           && (id !== "bow-short-release" || (charge !== undefined && charge > 0 && charge <= 12))
           && (id !== "bow-water-release" || fixture.motion.waterSamples >= 10)
+          && (!knockback || ((mode === "release" || mode === "fire" || mode === "cancel")
+            && !fixture.motion.error && rangedKnockbackPasses(mode, fixture.ranged, fixture.knockback?.impulse, fixture.motion.frames)))
           && (id !== "bow-hit" || rangedHitPasses("release", fixture.ranged))
           && (id !== "crossbow-hit" || rangedHitPasses("fire", fixture.ranged)),
-        observed: { ...fixture.ranged, charge, motion: fixture.motion },
+        observed: { ...fixture.ranged, charge, motion: fixture.motion, knockback: fixture.knockback?.impulse },
         expected: { mode, ...expectation,
           projectileCount: ["release", "fire", "retain", "throw"].includes(mode) ? expectation.projectileCount : 0 } };
     });

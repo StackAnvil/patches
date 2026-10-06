@@ -42,7 +42,18 @@ test("world readiness waits for the drawn HUD instead of accepting a dimension l
     const y = Math.floor(Number(args[3]) * 479);
     return index < 3 ? "100 13 202" : hud.get(`${x},${y}`) ?? "0 0 0";
   }, () => true, 100, 1);
-  expect(samples).toBe(6);
+  expect(samples).toBe(30);
+});
+
+test("a hotbar selection left by cancellation is still a visible world HUD", async () => {
+  for (const slot of [1, 8]) {
+    const hud = new Map([[`${248 + slot * 40},436`, "246 246 246"],
+      [`${248 + slot * 40},438`, "161 178 157"], [`${244 + slot * 40},448`, "213 232 208"]]);
+    await waitForJavaWorldHud(async (args) => {
+      if (args[1] === "list") return JSON.stringify([{ title: "Minecraft 26.3", width: 854, height: 480 }]);
+      return hud.get(`${Math.floor(Number(args[2]) * 853)},${Math.floor(Number(args[3]) * 479)}`) ?? "0 0 0";
+    }, () => true, 100, 1);
+  }
 });
 
 test("world readiness fails if the client stops or never draws its HUD", async () => {

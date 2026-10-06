@@ -10,6 +10,7 @@ export const complexGameplayCaseIds = [
   "bow-infinity", "bow-infinity-no-ammo", "crossbow-multishot",
   "crossbow-quick-charge-1", "crossbow-quick-charge-2", "crossbow-quick-charge-3",
   "crossbow-piercing-0", "crossbow-piercing-1", "crossbow-piercing-4",
+  "bow-knockback-release", "bow-knockback-cancel", "crossbow-knockback-fire", "crossbow-knockback-cancel",
 ] as const;
 
 export type RangedAction = "start" | "release" | "complete" | "stop" | "use";

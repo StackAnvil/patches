@@ -106,7 +106,7 @@ async function javaWindow(ui: Ui): Promise<{ width: number; height: number }> {
   return window;
 }
 
-/** The probe fixes GUI scale to two and prepares hotbar slot zero before input. */
+/** The probe fixes GUI scale to two. A selected hotbar cell proves the world HUD is drawn. */
 export async function waitForJavaWorldHud(ui: Ui, alive: () => boolean, timeoutMs = 20_000, pollMs = 100): Promise<void> {
   const window = await javaWindow(ui);
   const left = (Math.floor(window.width / 2 / 2) - 92) * 2;
@@ -121,11 +121,13 @@ export async function waitForJavaWorldHud(ui: Ui, alive: () => boolean, timeoutM
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (!alive()) throw new Error("A game process stopped before Java's world HUD became visible.");
-    const pixels = await Promise.all(samples.map(async ({ x, y }) => (await ui([
-      "ui", "pixel", String((left + x * 2 + 0.5) / (window.width - 1)), String((top + y * 2 + 0.5) / (window.height - 1)), "--client", "java",
-    ])).trim().split(/\s+/).map(Number)));
-    if (pixels.every((pixel, index) => pixel.length === 3
-      && pixel.every((channel, channelIndex) => Math.abs(channel - samples[index]!.rgb[channelIndex]!) <= 2))) return;
+    for (let slot = 0; slot < 9; slot++) {
+      const pixels = await Promise.all(samples.map(async ({ x, y }) => (await ui([
+        "ui", "pixel", String((left + (slot * 20 + x) * 2 + 0.5) / (window.width - 1)), String((top + y * 2 + 0.5) / (window.height - 1)), "--client", "java",
+      ])).trim().split(/\s+/).map(Number)));
+      if (pixels.every((pixel, index) => pixel.length === 3
+        && pixel.every((channel, channelIndex) => Math.abs(channel - samples[index]!.rgb[channelIndex]!) <= 2))) return;
+    }
     await Bun.sleep(pollMs);
   }
   throw new Error(`Java's world HUD did not become visible within ${timeoutMs / 1000}s.`);
@@ -353,6 +355,7 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
     case "bow-hit":
     case "bow-infinity":
     case "bow-infinity-no-ammo":
+    case "bow-knockback-release":
       await uiMouse(ui, "right", 1300);
       await Bun.sleep(300);
       return;
@@ -362,6 +365,8 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
       return;
     case "bow-cancel":
     case "crossbow-cancel":
+    case "bow-knockback-cancel":
+    case "crossbow-knockback-cancel":
       await Promise.all([
         uiMouse(ui, "right", 1300),
         (async () => { await Bun.sleep(500); await uiKey(ui, "2"); })(),
@@ -380,6 +385,7 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
     case "crossbow-piercing-0":
     case "crossbow-piercing-1":
     case "crossbow-piercing-4":
+    case "crossbow-knockback-fire":
       await uiMouse(ui, "right", 2000);
       await Bun.sleep(300);
       if (id === "crossbow-retain") {
@@ -663,6 +669,9 @@ export async function runGameplayCases(ids: readonly GameplayCaseId[], options: 
       options.server.stdin?.write(`scriptevent vbprobe:prepare ${id} ${run}\n`);
       await waitForGameplayEvent(id, run, "prepare", log, alive);
       await waitForJavaWorldHud(options.ui, alive);
+      // Cancellation cases leave another cell selected. Set the input precondition
+      // explicitly after the world is visible, rather than treating that as loading.
+      await uiKey(options.ui, "1");
       screenshots.push(await options.ui(["ui", "screenshot", `gameplay-${id}-${run}-before`, "--client", "java",
         "--output-dir", options.artifactDir]));
       await driveGameplay(id, options.ui, async () => {
@@ -693,7 +702,7 @@ export async function runGameplayCases(ids: readonly GameplayCaseId[], options: 
     } catch (error) {
       const connectionError = await options.connectionError?.();
       const message = connectionError ?? String(error);
-      if (screenshots.length === 1 && alive()) {
+      if (screenshots.length < 2 && !connectionError && alive()) {
         try {
           screenshots.push(await options.ui(["ui", "screenshot", `gameplay-${id}-${run}-after`, "--client", "java",
             "--output-dir", options.artifactDir]));

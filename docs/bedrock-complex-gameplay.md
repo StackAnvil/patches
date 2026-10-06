@@ -117,7 +117,7 @@ Retain ordinary Java and ViaProxy coverage where standard translation suffices.
 
 ## Runnable suite
 
-Run the 38 BDS cases:
+Run the 42 BDS cases:
 
 ```bash
 bun run test:integration -- --route java-bedrock --gameplay-complex
@@ -500,3 +500,30 @@ Startup and fixture corrections differ between runs, so their totals do not meas
 The [core correction notes](../patches/viabedrock/upstreamable/0092-retain-completed-client-prediction-frames.pr.md#authoritative-grounded-state) describe the codec and pairing tests.
 Ordinary Java grounded-state limitations, rewind, resimulation, vehicle reconciliation, and the full matrix remain requirements.
 Fresh native execution remains blocked by the current-boot GPU guard.
+
+### Knockback during ranged use, October 6, 2026
+
+Four new cases bring the complex suite to 42.
+They cover bow release, crossbow loading and firing, and either weapon's cancellation after knockback during charging.
+Each fixture applies one scripted impulse four server ticks after accepted use starts.
+It requires upward and horizontal airborne displacement before charging ends.
+Positive cases also require one owned arrow and one consumed arrow.
+Cancellation requires a witnessed slot change, no projectile, and unchanged ammunition.
+
+All four cases pass actual mouse and keyboard input against strict BDS through direct connections and ViaProxy.
+The runner now recognizes the drawn hotbar selection in any cell and selects cell zero before input.
+This corrects a false HUD timeout after a preceding cancellation leaves another cell selected.
+All 144 tooling tests, the TypeScript check, and the behavior-pack build pass.
+
+The direct trace receives each of its four impulses after input T+1 was already sent.
+Each receives a correction for T+1.
+ViaProxy receives each impulse after T but before T+1, with no correction near those impulses.
+This comparison identifies a timing case; it does not establish that either route always has that ordering.
+Core currently discards the tick in `SET_ENTITY_MOTION`.
+The [target packet schema](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/set-actor-motion-packet/) supplies that tick to adjust in-flight predictions.
+Historical impulse application and later-frame replay remain production requirements.
+
+These results verify the item outcomes and the fixture's movement response, including cases with corrections.
+They do not verify exact native trajectories, PvP damage, controlled latency, or anticheat parity.
+Fresh native comparisons remain unavailable under the GPU guard.
+The complete gameplay matrix and all eight original coverage groups remain required.

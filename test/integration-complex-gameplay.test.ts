@@ -10,6 +10,7 @@ const player = { name: "ProbePlayer", id: "player", selectedSlotIndex: 0 } as Pl
 mock.module("@minecraft/server", () => ({
   EnchantmentType: class {}, EquipmentSlot: {}, GameMode: {}, ItemStack: class {}, Potions: {},
   system: { currentTick: 10, run(callback: () => void) { pending.push(callback); },
+    runTimeout(callback: () => void) { pending.push(callback); },
     runInterval(callback: () => void) { sample = callback; } },
   world: { getAllPlayers: () => [player], afterEvents: Object.fromEntries(
     ["itemStartUse", "itemReleaseUse", "itemCompleteUse", "itemStopUse", "itemUse", "entitySpawn",
@@ -71,6 +72,33 @@ test("use events require the active player and item and stop after verification"
   active!.fixture.closed = true;
   started({ source: player, itemStack: { typeId: ranged.item } });
   expect(ranged.events).toHaveLength(1);
+});
+
+test("delayed knockback cannot act on a replaced, closed, or cancelled fixture", () => {
+  let impulses = 0;
+  const source = { ...player, location: { x: 0, y: 0, z: 0 }, getVelocity: () => ({ x: 0, y: 0, z: 0 }),
+    applyKnockback: () => impulses++ };
+  const started = callbacks.get("itemStartUse")!;
+  for (const invalidate of [() => { prepareObservation(); },
+    () => { active!.fixture.closed = true; }, () => { source.selectedSlotIndex = 1; },
+    () => { callbacks.get("itemStopUse")!({ source, itemStack: { typeId: active!.fixture.ranged!.item } }); }]) {
+    source.selectedSlotIndex = 0;
+    const ranged = prepareObservation();
+    active!.fixture.knockback = { pending: false };
+    started({ source, itemStack: { typeId: ranged.item } });
+    invalidate();
+    pending.shift()!();
+  }
+  expect(impulses).toBe(0);
+  source.selectedSlotIndex = 0;
+  const ranged = prepareObservation();
+  active!.fixture.knockback = { pending: false };
+  started({ source, itemStack: { typeId: ranged.item } });
+  started({ source, itemStack: { typeId: ranged.item } });
+  expect(pending).toHaveLength(1);
+  pending.shift()!();
+  expect(impulses).toBe(1);
+  expect(active!.fixture.knockback.impulse?.force).toEqual({ x: 0.35, y: 0.4, z: 0 });
 });
 
 test("hotbar samples record transitions without duplicating stationary frames", () => {

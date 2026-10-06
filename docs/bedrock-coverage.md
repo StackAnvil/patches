@@ -6307,3 +6307,29 @@ The retained tick does not supply rewind or resimulation.
 Ordinary Java ground delivery, vehicle reconciliation, movement metadata/effects history, and the complete gameplay matrix remain requirements.
 Fresh native execution remains blocked by the current-boot GPU guard.
 Boar comparisons, CubeCraft, actual Windows/macOS joins, and all eight original coverage groups remain required.
+
+### Knockback during ranged use, October 6, 2026
+
+**Implemented:** Four fixtures extend the complex suite to 42 cases.
+Bow release, crossbow firing, and either weapon's cancellation must follow witnessed airborne knockback during charging.
+The fixture schedules one impulse after accepted use and rejects late callbacks after use, closure, or replacement.
+Positive cases retain owned-projectile and consumption checks; cancellation retains slot identity and unchanged ammunition.
+The runner detects the drawn hotbar selection in any cell, then explicitly selects the fixture's starting cell.
+A preceding cancellation no longer causes a false HUD loading timeout.
+
+**Verified:** All four new cases pass strict BDS 1.26.51.1, build 51061372, protocol 2193, through direct connections and ViaProxy.
+Both translated clients use the add-on.
+All 144 tooling tests, the TypeScript check, and the behavior-pack build pass.
+This run verifies the four new cases, not the full 42-case suite.
+
+The direct recording receives each of four impulses after the client already sends input T+1.
+Each impulse is followed by a correction for T+1.
+The proxy recording receives each after T and before T+1, with no correction near the impulses.
+Core reads and discards the motion packet's tick, so these traces expose a repeatable history gap.
+The [target motion schema](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/set-actor-motion-packet/) identifies that field as the processed input tick.
+The [complex gameplay record](bedrock-complex-gameplay.md#knockback-during-ranged-use-october-6-2026) retains the assertion boundaries and timing findings.
+
+**Remaining:** Historical impulse application, retained input and world state, and later-frame replay remain incomplete.
+Passing charge and cancellation assertions despite corrections does not establish native movement parity.
+Full trajectories, controlled latency, native baselines, Boar, CubeCraft, actual Windows/macOS joins, and all eight original groups remain required.
+No fresh native launch occurred; the current-boot GPU guard remains in force.
