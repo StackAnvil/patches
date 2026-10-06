@@ -4713,7 +4713,7 @@ It excludes other fields, component creation and removal, owned containers, full
 The executable and fixtures remain private.
 
 **Incomplete:** Trace captured inputs, remaining component ownership, and the complete replay phase.
-Preparation function `0x1433dd810` requires bit 0 in the pending-type mask to be set before its inspected rewind path.
+Replay function `0x1433dd810` requires bit 0 in the pending-type mask to be set before its inspected rewind path.
 The actor-flag command returns a zero type bitset, so its correction mark alone does not establish an immediate physics rewind.
 Production still needs frame correlation and ordered authoritative updates.
 All eight coverage groups, broader movement, both connection routes, and actual Windows/macOS game joins remain requirements.
@@ -4753,3 +4753,54 @@ Core still applies metadata immediately without its historical tick.
 Additional event consumers, custom items, Boar comparisons, and broader movement remain requirements.
 Fresh native visual comparisons remain unavailable under the current-boot GPU guard.
 Actual Windows/macOS game joins and all eight coverage groups remain requirements.
+
+### Native captured inputs and movement replay, October 6, 2026
+
+**Reference:** Matching-build inspection traces the replay system at `0x1461bbc70` into `0x1433dd810`.
+The system first ensures an immutable movement snapshot through `0x14327a6c0`.
+The replay function restores the first corrected frame, then processes retained later inputs.
+For each frame, it applies queued corrections before calling the input's `preApplyInput` method.
+It exposes captured external data, ensures `ActorMovementTickNeededComponent`, performs the movement step, then calls `postApplyInput`.
+The loop stops when a required frame or input is absent.
+After replay, it restores live external data, records the corrected displacement, and clears pending types and correction markers.
+The previously inspected pending-type gate still applies.
+
+ClientLevel getter `0x141177ae0`, at vtable slot `0x940`, returns the movement systems object.
+Its vtable `0x14e98a620` selects function `0x1463b0f30` at slot `0x20` during replay.
+That function installs callback vtable `0x14e98aae0`.
+The callback's target-build RTTI names `EntitySystems::tickMovementCorrectionReplay`.
+This identifies the dispatcher, but does not verify every movement system that it runs.
+
+History frame construction at `0x142bbc060` consumes the next captured input or creates a new one.
+Construction at `0x143271250` also creates this input, with size `0x220` and vtable `0x14e873a00`.
+Its pre-application method is `0x14328b620`; its post-application method is `0x14328c710`.
+The latter applies captured turn changes after the movement step.
+Cached view getter `0x14328dfb0` uses constructor `0x14328ec80` to resolve component storage.
+Executable component-name strings and their hashes establish these four capture methods:
+
+| Component | Capture function | Presence bit | Stored value |
+| --- | --- | --- | --- |
+| `MovementInterpolatorComponent` | `0x14328cfa0` | 16 | 38 bytes from a 40-byte component |
+| `ItemUseSlowdownModifierComponent` | `0x14328d6c0` | 0 | One float |
+| `BuoyancyFloatRequestComponent` | `0x14328d6e0` | 9 | Two booleans stored in the capture bitmap |
+| `MoveInputComponent` | `0x14328da90` | 2 | 95 bytes from a 100-byte component |
+
+The [SDK input interface](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/entity/utilities/IReplayableActorInput.h) supplies method names as research leads.
+Its capture-method order differs from this target executable.
+The target's component bindings establish the field names and slots described here.
+
+**Verified within scope:** Exact native capture and pre-application bytes pass 1,280 cases with no mismatches.
+Cases cover every subset of the four components, every buoyancy boolean combination, and randomized field values.
+Pre-application preserves live values when the captured component is absent.
+It also preserves the uncopied padding in movement input and interpolation components.
+Each invocation reaches its return sentinel.
+The fixture substitutes cached view discovery and supplies existing synthetic ECS storage.
+It excludes component allocation, owned containers, collision data, post-application, full movement replay, and visible native-client behavior.
+The executable, decompilation, and fixtures remain private.
+
+**Incomplete:** Production still needs completed-frame correlation, retained input and world state, ordered corrections, and later-frame simulation.
+The native dispatcher and turn phase need further verification before porting their behavior.
+Local completion timing, broader movement, both connection routes, and all eight coverage groups remain requirements.
+The latest production CI passes build, tooling, and Ubuntu/Windows/macOS permission jobs.
+Actual Windows/macOS game joins remain unverified.
+Fresh native comparisons remain unavailable under the current-boot GPU guard.

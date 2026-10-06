@@ -547,3 +547,17 @@ Repeated eating still receives two movement corrections on each route.
 The last-item movement case receives none directly and one through ViaProxy.
 This change does not predict local completion or implement historical replay.
 The [coverage ledger](../../../docs/bedrock-coverage.md#local-item-use-metadata-independence-october-6-2026) records the native function evidence and verification limits.
+
+## Captured inputs and replay phases
+
+Matching-build inspection traces retained inputs through native movement replay.
+The native loop applies queued corrections and captured input before the movement step, then applies captured turn changes afterward.
+Target callback RTTI identifies the movement dispatcher as `EntitySystems::tickMovementCorrectionReplay`.
+Component-name hashes resolve movement input, interpolation, item slowdown, and buoyancy requests.
+The target capture-method order differs from the SDK, so SDK slots cannot establish these bindings.
+
+Exact native capture and pre-application bytes pass 1,280 cases across these four components.
+The fixture verifies presence handling and preserved padding with existing synthetic storage.
+It substitutes cached view discovery and excludes allocation ownership, collision data, post-application, and full physics replay.
+The [input replay reference](../../../docs/bedrock-coverage.md#native-captured-inputs-and-movement-replay-october-6-2026) records function evidence and verification limits.
+Production frame correlation and later-input simulation remain incomplete.
