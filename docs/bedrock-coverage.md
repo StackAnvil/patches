@@ -5794,3 +5794,23 @@ All eight original coverage groups and the complete complex gameplay matrix rema
 
 The complete 95-patch core stack replays successfully.
 The core build and Checkstyle pass with 675 tests passing and 19 optional skips.
+
+## Firework item components (October 6, 2026)
+
+**Implemented:** ViaBedrock core retains unsigned rocket flight, explosion shapes, ordered colors and fades, trail, and flicker.
+Stars and nested crossbow rockets use standard Java components, which require no add-on payload through ViaProxy.
+Typed native defaults handle missing or incorrect fields.
+The target palette and purple fallback preserve the matching client’s color behavior.
+
+**Verified within scope:** Target BDS creative NBT confirms the layouts and all 16 star colors.
+Focused native inspection confirms field types, shape defaults, flight, and palette lookup.
+The bounded Unicorn fixture passes 512 native color/fade cases across all 256 indices.
+It supplies allocation and random selection; native instructions perform palette lookup and write the particle fields.
+Java tests cover component conversion and network serialization.
+See the [gameplay evidence](bedrock-complex-gameplay.md) and [item patch notes](../patches/viabedrock/upstreamable/0028-translate-java-overrides-and-book-data.pr.md).
+
+**Unverified:** Actual rocket entity simulation, elytra boost timing, damage, audio, visible particles, and both live connection routes remain required.
+These item components do not prove full ranged-combat or movement parity.
+
+The complete 95-patch core stack replays and builds successfully.
+Checkstyle passes, with 679 tests passing, 19 optional skips, and no failures.

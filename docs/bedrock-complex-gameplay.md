@@ -208,8 +208,31 @@ An inventory rocket does not load in this controlled probe.
 The [item patch notes](../patches/viabedrock/upstreamable/0028-translate-java-overrides-and-book-data.pr.md) describe the checks and limits.
 
 **Unverified:** Full Java input and firing timing, native visuals, slot changes, and both connection routes remain required.
-Enchantment-specific behavior and complete firework component translation remain open.
+Enchantment-specific behavior and complete firework playback remain open.
 The synthetic protocol probe does not establish translated gameplay parity.
 
 The complete 95-patch core stack replays successfully.
 The core build and Checkstyle pass with 675 tests passing and 19 optional skips.
+
+### Firework item components, October 6, 2026
+
+**Implemented:** Core exports rocket flight and star/explosion data through standard Java components.
+It preserves supported shapes, ordered colors and fades, trail, and flicker.
+Loaded crossbow rockets use this same converter.
+Flight retains unsigned byte values, including zero and 255.
+Missing or incorrectly typed fields use the target native defaults.
+Invalid shapes become small balls; invalid or empty colors use purple.
+
+**Verified within scope:** The target BDS supplies all 16 creative star colors and the typed rocket/explosion layout.
+Focused inspection of the matching client confirms its palette and defaults.
+A bounded Unicorn fixture passes 512 native spark cases across all color indices, with and without fades.
+Particle allocation and random selection are supplied boundaries; native instructions perform color conversion and write flags.
+Java tests cover multiple explosions, field types, source immutability, unsigned values, and network serialization.
+The [item patch notes](../patches/viabedrock/upstreamable/0028-translate-java-overrides-and-book-data.pr.md) retain evidence and limits.
+
+**Unverified:** Component translation does not establish projectile simulation, damage, boost timing, sound, or visible particle parity.
+Live Java/native firing and both connection routes remain requirements.
+The current-boot GPU guard and occupied private display remain in place.
+
+The complete 95-patch core stack replays and builds successfully.
+Checkstyle passes, with 679 tests passing, 19 optional skips, and no failures.

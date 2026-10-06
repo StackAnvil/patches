@@ -1,4 +1,4 @@
-From 6d1ee7bb91fc1f6fe0b44e5efd3b4d3cd8bad98e Mon Sep 17 00:00:00 2001
+From 5e2864f3f1252ba7e55e89d161510dbf372919f9 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 03:58:56 +0200
 Subject: [PATCH] feat(items): translate Java overrides and book data
@@ -16,18 +16,127 @@ charged arrow, retains auxiliary value 15 for a tipped arrow, and loads a
 rocket from the offhand with its Fireworks tag. Rockets elsewhere in the
 inventory do not load in this controlled probe. Java and ViaProxy live
 charge and firing timing remain unverified; captures stay private.
+
+Preserve rocket Flight as an unsigned byte and all star/explosion fields
+in standard Java fireworks components. Use the target native palette and
+purple invalid/empty-color fallback, retaining shape, fade order, trail
+and flicker. Native readers accept only byte fields and byte arrays;
+wrong types retain native defaults. Missing flight is zero, not one.
+
+Official BDS 1.26.51.1 build 51061372 supplies all 16 creative star colors
+and the rocket/explosion NBT shape. Focused inspection of the matching
+Windows binary confirms typed fields, unsigned flight, shape defaults
+and palette behavior. These components also reach nested charged rockets
+through the shared converter. Projectile entity simulation and visible
+Java/native comparisons remain separate requirements.
 ---
- .../protocol/rewriter/ItemDataRewriter.java   | 179 +++++++++++++++++-
+ .../protocol/model/FireworkData.java          |  86 ++++++++
+ .../protocol/rewriter/ItemDataRewriter.java   | 188 +++++++++++++++++-
  .../protocol/rewriter/ItemRewriter.java       |   5 +-
- .../rewriter/ItemDataRewriterTest.java        | 163 ++++++++++++++++
- 3 files changed, 342 insertions(+), 5 deletions(-)
+ .../protocol/model/FireworkDataTest.java      | 117 +++++++++++
+ .../rewriter/ItemDataRewriterTest.java        | 163 +++++++++++++++
+ 5 files changed, 554 insertions(+), 5 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/FireworkData.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/FireworkDataTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriterTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/model/FireworkData.java b/src/main/java/net/raphimc/viabedrock/protocol/model/FireworkData.java
+new file mode 100644
+index 000000000..fcb59797a
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/model/FireworkData.java
+@@ -0,0 +1,86 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program. If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.nbt.tag.ByteArrayTag;
++import com.viaversion.nbt.tag.ByteTag;
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.nbt.tag.Tag;
++import com.viaversion.viaversion.api.minecraft.item.data.FireworkExplosion;
++import com.viaversion.viaversion.api.minecraft.item.data.Fireworks;
++
++import java.util.ArrayList;
++import java.util.List;
++
++public final class FireworkData {
++
++    // Bedrock 1.26.51 native particle palette, also present in BDS creative stars.
++    // Its entries differ from Java's historical firework dye colors.
++    private static final int[] COLORS = {
++        0x1D1D21, 0xB02E26, 0x5E7C16, 0x835432,
++        0x3C44AA, 0x8932B8, 0x169C9C, 0x9D9D97,
++        0x474F52, 0xF38BAA, 0x80C71F, 0xFED83D,
++        0x3AB3DA, 0xC74EBD, 0xF9801D, 0xF0F0F0
++    };
++
++    public static Fireworks fireworks(final CompoundTag tag) {
++        final List<FireworkExplosion> explosions = new ArrayList<>();
++        if (tag != null && tag.get("Explosions") instanceof ListTag<?> entries) {
++            for (Tag entry : entries) {
++                if (entry instanceof CompoundTag explosion) {
++                    explosions.add(explosion(explosion));
++                }
++            }
++        }
++        return new Fireworks(unsignedByte(tag, "Flight"), explosions.toArray(FireworkExplosion[]::new));
++    }
++
++    public static FireworkExplosion explosion(final CompoundTag tag) {
++        final int type = unsignedByte(tag, "FireworkType");
++        int[] colors = colors(tag, "FireworkColor");
++        if (colors.length == 0) {
++            // Native inserts an out-of-range index, which the particle reader
++            // resolves to purple. Java's empty-color fallback is different.
++            colors = new int[]{COLORS[5]};
++        }
++        return new FireworkExplosion(type <= 4 ? type : 0, colors, colors(tag, "FireworkFade"),
++                unsignedByte(tag, "FireworkTrail") != 0, unsignedByte(tag, "FireworkFlicker") != 0);
++    }
++
++    private static int unsignedByte(final CompoundTag tag, final String key) {
++        return tag != null && tag.get(key) instanceof ByteTag value ? Byte.toUnsignedInt(value.asByte()) : 0;
++    }
++
++    private static int[] colors(final CompoundTag tag, final String key) {
++        if (tag == null || !(tag.get(key) instanceof ByteArrayTag value)) {
++            return new int[0];
++        }
++        final byte[] indices = value.getValue();
++        final int[] colors = new int[indices.length];
++        for (int index = 0; index < indices.length; index++) {
++            final int color = Byte.toUnsignedInt(indices[index]);
++            colors[index] = COLORS[color < COLORS.length ? color : 5];
++        }
++        return colors;
++    }
++
++    private FireworkData() {
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
-index e21bdddba..0e35ec6f8 100644
+index e21bdddba..fddaad428 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriter.java
-@@ -19,25 +19,198 @@ package net.raphimc.viabedrock.protocol.rewriter;
+@@ -19,25 +19,207 @@ package net.raphimc.viabedrock.protocol.rewriter;
  
  import com.viaversion.nbt.tag.*;
  import com.viaversion.viaversion.api.connection.UserConnection;
@@ -55,6 +164,7 @@ index e21bdddba..0e35ec6f8 100644
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.Enchant_Type;
  import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.FireworkData;
  
 +import java.util.ArrayList;
 +import java.util.HashMap;
@@ -205,6 +315,14 @@ index e21bdddba..0e35ec6f8 100644
 -    public static void handleItem(final UserConnection user, final BedrockItem bedrockItem, final CompoundTag bedrockTag, final Item javaItem) {
 +    public static void handleItem(final UserConnection user, final String identifier, final BedrockItem bedrockItem, final CompoundTag bedrockTag, final Item javaItem) {
 +
++        if (identifier.equals("minecraft:firework_rocket")) {
++            javaItem.dataContainer().set(StructuredDataKey.FIREWORKS,
++                    FireworkData.fireworks(bedrockTag == null ? null : bedrockTag.getCompoundTag("Fireworks")));
++        } else if (identifier.equals("minecraft:firework_star") && bedrockTag != null
++                && bedrockTag.get("FireworksItem") instanceof CompoundTag explosion) {
++            javaItem.dataContainer().set(StructuredDataKey.FIREWORK_EXPLOSION, FireworkData.explosion(explosion));
++        }
++
 +        if (identifier.equals("minecraft:crossbow")) {
 +            javaItem.dataContainer().set(VersionedTypes.V26_3.structuredDataKeys().chargedProjectiles,
 +                    chargedProjectiles(bedrockTag, user.get(ItemRewriter.class)::javaItemStack));
@@ -227,7 +345,7 @@ index e21bdddba..0e35ec6f8 100644
              if (bedrockTag.get("Damage") instanceof NumberTag durability) {
                  javaItem.dataContainer().set(StructuredDataKey.DAMAGE, durability.asInt());
              }
-@@ -52,7 +225,9 @@ public final class ItemDataRewriter {
+@@ -52,7 +234,9 @@ public final class ItemDataRewriter {
                      javaEnchantments = enchantmentsData.value();
                  }
  
@@ -261,6 +379,129 @@ index c8f728380..bb94f4e0d 100644
  
          final String tag = BedrockProtocol.MAPPINGS.getBedrockCustomItemTags().get(identifier);
          if (ITEM_NBT_REWRITERS.containsKey(tag)) {
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/model/FireworkDataTest.java b/src/test/java/net/raphimc/viabedrock/protocol/model/FireworkDataTest.java
+new file mode 100644
+index 000000000..1c3355a88
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/model/FireworkDataTest.java
+@@ -0,0 +1,117 @@
++package net.raphimc.viabedrock.protocol.model;
++
++import com.viaversion.nbt.tag.ByteArrayTag;
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.IntArrayTag;
++import com.viaversion.nbt.tag.ListTag;
++import com.viaversion.nbt.tag.StringTag;
++import com.viaversion.viaversion.api.minecraft.item.data.FireworkExplosion;
++import com.viaversion.viaversion.api.minecraft.item.data.Fireworks;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++class FireworkDataTest {
++
++    @Test
++    void retainsAllExplosionFieldsAndTheirOrderWithoutMutatingTheSource() {
++        final CompoundTag star = new CompoundTag();
++        star.putByte("FireworkType", (byte) 3);
++        star.put("FireworkColor", new ByteArrayTag(new byte[]{1, 4, 1}));
++        star.put("FireworkFade", new ByteArrayTag(new byte[]{15, 8}));
++        star.putByte("FireworkTrail", (byte) 2);
++        star.putByte("FireworkFlicker", (byte) -1);
++        final CompoundTag burst = star.copy();
++        burst.putByte("FireworkType", (byte) 4);
++        final ListTag<CompoundTag> entries = new ListTag<>(CompoundTag.class);
++        entries.add(star);
++        entries.add(burst);
++        final CompoundTag rocket = new CompoundTag();
++        rocket.putByte("Flight", (byte) -1);
++        rocket.put("Explosions", entries);
++        final CompoundTag before = rocket.copy();
++
++        final ByteBuf buffer = Unpooled.buffer();
++        final Fireworks result;
++        try {
++            Fireworks.TYPE.write(buffer, FireworkData.fireworks(rocket));
++            result = Fireworks.TYPE.read(buffer);
++            assertEquals(0, buffer.readableBytes());
++        } finally {
++            buffer.release();
++        }
++        assertEquals(255, result.flightDuration());
++        assertEquals(2, result.explosions().length);
++        final FireworkExplosion first = result.explosions()[0];
++        assertEquals(3, first.shape());
++        assertEquals(4, result.explosions()[1].shape());
++        assertArrayEquals(new int[]{11546150, 3949738, 11546150}, first.colors());
++        assertArrayEquals(new int[]{15790320, 4673362}, first.fadeColors());
++        assertTrue(first.hasTrail());
++        assertTrue(first.hasTwinkle());
++        first.colors()[0] = 0;
++        assertEquals(before, rocket);
++    }
++
++    @Test
++    void matchesTargetCreativeStarColorsAndNativeInvalidIndexFallbacks() {
++        // RGB values observed independently in all 16 target BDS creative stars.
++        final int[] expected = {1908001, 11546150, 6192150, 8606770, 3949738, 8991416,
++            1481884, 10329495, 4673362, 15961002, 8439583, 16701501, 3847130,
++            13061821, 16351261, 15790320};
++        final byte[] indices = new byte[256];
++        final int[] colors = new int[256];
++        for (int index = 0; index < indices.length; index++) {
++            indices[index] = (byte) index;
++            colors[index] = index < expected.length ? expected[index] : 8991416;
++        }
++        final CompoundTag star = new CompoundTag();
++        star.put("FireworkColor", new ByteArrayTag(indices));
++        star.put("FireworkFade", new ByteArrayTag(indices));
++        final FireworkExplosion result = FireworkData.explosion(star);
++        assertArrayEquals(colors, result.colors());
++        assertArrayEquals(colors, result.fadeColors());
++        star.put("FireworkColor", new ByteArrayTag(new byte[0]));
++        assertArrayEquals(new int[]{8991416}, FireworkData.explosion(star).colors());
++    }
++
++    @Test
++    void usesNativeDefaultsForMissingAndWrongTagTypes() {
++        assertEquals(0, FireworkData.fireworks(null).flightDuration());
++        final CompoundTag tag = new CompoundTag();
++        tag.putInt("Flight", 3);
++        tag.putInt("FireworkType", 3);
++        tag.putInt("FireworkTrail", 1);
++        tag.putString("FireworkFlicker", "true");
++        tag.put("FireworkColor", new IntArrayTag(new int[]{1}));
++        tag.put("FireworkFade", new IntArrayTag(new int[]{15}));
++        final ListTag<StringTag> invalid = new ListTag<>(StringTag.class);
++        invalid.add(new StringTag("invalid"));
++        tag.put("Explosions", invalid);
++        assertEquals(0, FireworkData.fireworks(tag).flightDuration());
++        assertEquals(0, FireworkData.fireworks(tag).explosions().length);
++        final FireworkExplosion result = FireworkData.explosion(tag);
++        assertEquals(0, result.shape());
++        assertArrayEquals(new int[]{8991416}, result.colors());
++        assertEquals(0, result.fadeColors().length);
++        assertFalse(result.hasTrail());
++        assertFalse(result.hasTwinkle());
++    }
++
++    @Test
++    void preservesUnsignedFlightAndNormalizesOnlyUnsupportedShapes() {
++        final CompoundTag tag = new CompoundTag();
++        for (int value = 0; value < 256; value++) {
++            tag.putByte("Flight", (byte) value);
++            tag.putByte("FireworkType", (byte) value);
++            assertEquals(value, FireworkData.fireworks(tag).flightDuration());
++            assertEquals(value <= 4 ? value : 0, FireworkData.explosion(tag).shape());
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemDataRewriterTest.java
 new file mode 100644
 index 000000000..07942f490
