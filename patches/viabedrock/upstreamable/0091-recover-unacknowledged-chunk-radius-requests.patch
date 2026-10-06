@@ -1,0 +1,397 @@
+From cb71aa45b106fbe367c464451f46730664f0541f Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 02:00:21 +0200
+Subject: [PATCH] fix(chunks): recover unacknowledged join radius requests
+
+Protocol 2193 captures from the macOS CubeCraft regression show a join
+remaining before spawn with no radius acknowledgment or level chunks at
+radius four. Repeating four did not start delivery; requesting eight on
+the same connection immediately yielded the acknowledgment, chunks,
+spawn, initialization, and sustained input frames.
+
+Preserve the Java distance for the initial request. Retry once after five
+seconds, then use radius eight only for an unacknowledged smaller radius.
+Bound the negotiation to thirty seconds, cancel on acknowledgment or
+spawn, and replace pending retries when settings change. Keep this in
+core for direct and ViaProxy routes. This is server interoperability
+recovery, not a claim that native Bedrock always requires radius eight.
+---
+ .../viabedrock/protocol/BedrockProtocol.java  |   1 +
+ .../protocol/packet/JoinPackets.java          |   7 +-
+ .../protocol/packet/MultiStatePackets.java    |   3 +-
+ .../protocol/packet/WorldPackets.java         |   5 +-
+ .../storage/ChunkRadiusNegotiation.java       | 133 +++++++++++++++++
+ .../storage/ChunkRadiusNegotiationTest.java   | 141 ++++++++++++++++++
+ 6 files changed, 283 insertions(+), 7 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkRadiusNegotiation.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkRadiusNegotiationTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+index 9537f7adf..b5ff4df4e 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/BedrockProtocol.java
+@@ -159,6 +159,7 @@ public class BedrockProtocol
+     @Override
+     public void init(final UserConnection user) {
+         user.put(new ClientSettingsStorage("en_us", 12, 0, true, (short) 127, 1, false, true, 0));
++        user.put(new ChunkRadiusNegotiation(user));
+         user.put(new GameSessionStorage(user));
+         user.put(new WorldClockTracker());
+         user.put(new VoxelShapeRegistry());
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+index 50aeb5c13..80584f8ec 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+@@ -48,7 +48,6 @@ import net.raphimc.viabedrock.protocol.BedrockProtocol;
+ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
+ import net.raphimc.viabedrock.protocol.data.DataValues;
+-import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
+ import net.raphimc.viabedrock.protocol.data.enums.Dimension;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
+ import net.raphimc.viabedrock.protocol.data.enums.java.GameEventType;
+@@ -169,6 +168,7 @@ public final class JoinPackets {
+ 
+                     clientPlayer.setRotation(new Position3f(clientPlayer.rotation().x(), clientPlayer.rotation().y(), clientPlayer.rotation().y()));
+                     clientPlayer.setInitiallySpawned();
++                    wrapper.user().get(ChunkRadiusNegotiation.class).markSpawned();
+ 
+                     PacketFactory.sendBedrockLoadingScreen(wrapper.user(), ServerboundLoadingScreenPacketType.EndLoadingScreen, null);
+                     final PacketWrapper setLocalPlayerAsInitialized = PacketWrapper.create(ServerboundBedrockPackets.SET_LOCAL_PLAYER_AS_INITIALIZED, wrapper.user());
+@@ -512,10 +512,7 @@ public final class JoinPackets {
+ 
+     private static void finishJoin(final UserConnection user) {
+         handleJavaClientGameJoin(user);
+-        final PacketWrapper requestChunkRadius = PacketWrapper.create(ServerboundBedrockPackets.REQUEST_CHUNK_RADIUS, user);
+-        requestChunkRadius.write(BedrockTypes.VAR_INT, user.get(ClientSettingsStorage.class).viewDistance()); // radius
+-        requestChunkRadius.write(Types.BYTE, ProtocolConstants.BEDROCK_REQUEST_CHUNK_RADIUS_MAX_RADIUS); // max radius
+-        requestChunkRadius.sendToServer(BedrockProtocol.class);
++        user.get(ChunkRadiusNegotiation.class).start(user.get(ClientSettingsStorage.class).viewDistance());
+         PacketFactory.sendBedrockLoadingScreen(user, ServerboundLoadingScreenPacketType.StartLoadingScreen, null);
+     }
+ 
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+index 58450f532..1f202046c 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+@@ -49,6 +49,7 @@ import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
+ import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+ import net.raphimc.viabedrock.protocol.storage.ChunkTracker;
+ import net.raphimc.viabedrock.protocol.storage.ClientSettingsStorage;
++import net.raphimc.viabedrock.protocol.storage.ChunkRadiusNegotiation;
+ import net.raphimc.viabedrock.protocol.storage.PacketSyncStorage;
+ import net.raphimc.viabedrock.protocol.storage.PlayerInputStorage;
+ import net.raphimc.viabedrock.protocol.storage.HudVisibilityStorage;
+@@ -133,7 +134,7 @@ public final class MultiStatePackets {
+         final int particleStatus = wrapper.read(Types.VAR_INT); // particle status
+         wrapper.user().put(new ClientSettingsStorage(locale, viewDistance, chatVisibility, chatColors, skinParts, mainHand, textFiltering, allowsListing, particleStatus));
+ 
+-        wrapper.write(BedrockTypes.VAR_INT, (int) viewDistance); // radius
++        wrapper.write(BedrockTypes.VAR_INT, wrapper.user().get(ChunkRadiusNegotiation.class).updateRequest(viewDistance)); // radius
+         wrapper.write(Types.BYTE, ProtocolConstants.BEDROCK_REQUEST_CHUNK_RADIUS_MAX_RADIUS); // max radius
+     };
+ 
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+index 3787151ba..52eb705c6 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/WorldPackets.java
+@@ -549,7 +549,10 @@ public final class WorldPackets {
+             @Override
+             public void register() {
+                 map(BedrockTypes.VAR_INT, Types.VAR_INT); // radius
+-                handler(wrapper -> wrapper.user().get(ChunkTracker.class).setRadius(wrapper.get(Types.VAR_INT, 0)));
++                handler(wrapper -> {
++                    wrapper.user().get(ChunkRadiusNegotiation.class).acknowledge();
++                    wrapper.user().get(ChunkTracker.class).setRadius(wrapper.get(Types.VAR_INT, 0));
++                });
+             }
+         });
+         protocol.registerClientbound(ClientboundBedrockPackets.SET_TIME, ClientboundPackets26_3.SET_TIME, wrapper -> {
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkRadiusNegotiation.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkRadiusNegotiation.java
+new file mode 100644
+index 000000000..971a0b9e6
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/ChunkRadiusNegotiation.java
+@@ -0,0 +1,133 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.StoredObject;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.util.concurrent.ScheduledFuture;
++import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++
++import java.util.concurrent.TimeUnit;
++
++public class ChunkRadiusNegotiation extends StoredObject {
++
++    private static final int RECOVERY_RADIUS = 8;
++    private ScheduledFuture<?> retry;
++    private int requestedRadius;
++    private int attempts;
++    private boolean joined;
++    private boolean spawned;
++    private volatile boolean removed;
++
++    public ChunkRadiusNegotiation(final UserConnection user) {
++        super(user);
++    }
++
++    public void start(final int radius) {
++        this.joined = true;
++        this.updateRequest(radius);
++        this.sendRequest(this.requestedRadius);
++    }
++
++    public int updateRequest(final int radius) {
++        this.cancelRetry();
++        this.requestedRadius = Math.clamp(radius, 2, ProtocolConstants.BEDROCK_REQUEST_CHUNK_RADIUS_MAX_RADIUS);
++        this.attempts = 0;
++        if (this.joined && !this.spawned && !this.removed) {
++            this.scheduleRetry(5);
++        }
++        return this.requestedRadius;
++    }
++
++    public void acknowledge() {
++        this.cancelRetry();
++    }
++
++    public void markSpawned() {
++        this.spawned = true;
++        this.cancelRetry();
++    }
++
++    @Override
++    public void onRemove() {
++        this.removed = true;
++        this.cancelRetry();
++    }
++
++    private void scheduleRetry(final int seconds) {
++        this.retry = this.user().getChannel().eventLoop().schedule(this::retry, seconds, TimeUnit.SECONDS);
++    }
++
++    private void retry() {
++        this.retry = null;
++        if (this.removed || !this.user().getChannel().isActive() || this.user().isPendingDisconnect()) {
++            return;
++        }
++        switch (++this.attempts) {
++            case 1 -> {
++                if (this.sendRequest(this.requestedRadius)) {
++                    this.scheduleRetry(5);
++                }
++            }
++            case 2 -> {
++                // Some servers ignore small radii until a larger request starts chunk delivery.
++                if (this.requestedRadius < RECOVERY_RADIUS && !this.sendRequest(RECOVERY_RADIUS)) {
++                    return;
++                }
++                this.scheduleRetry(20);
++            }
++            default -> this.fail();
++        }
++    }
++
++    private void cancelRetry() {
++        if (this.retry != null) {
++            this.retry.cancel(false);
++            this.retry = null;
++        }
++    }
++
++    protected boolean sendRequest(final int radius) {
++        try {
++            final PacketWrapper request = PacketWrapper.create(ServerboundBedrockPackets.REQUEST_CHUNK_RADIUS, this.user());
++            request.write(BedrockTypes.VAR_INT, radius); // radius
++            request.write(Types.BYTE, ProtocolConstants.BEDROCK_REQUEST_CHUNK_RADIUS_MAX_RADIUS); // max radius
++            request.sendToServer(BedrockProtocol.class);
++            if (radius != this.requestedRadius) {
++                ViaBedrock.getPlatform().getLogger().warning("Server did not acknowledge chunk radius "
++                        + this.requestedRadius + "; retrying with radius " + radius);
++            }
++            return true;
++        } catch (final Exception e) {
++            this.cancelRetry();
++            BedrockProtocol.kickForIllegalState(this.user(), "Failed to request Bedrock chunks.", e);
++            return false;
++        }
++    }
++
++    protected void fail() {
++        BedrockProtocol.kickForIllegalState(this.user(), "Server did not acknowledge the chunk radius. Please reconnect.");
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkRadiusNegotiationTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkRadiusNegotiationTest.java
+new file mode 100644
+index 000000000..b882bd731
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkRadiusNegotiationTest.java
+@@ -0,0 +1,141 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2023-2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import java.lang.reflect.Proxy;
++import io.netty.channel.embedded.EmbeddedChannel;
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.List;
++import java.util.concurrent.TimeUnit;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class ChunkRadiusNegotiationTest {
++
++    @Test
++    void retriesSmallRadiusThenRecoversWithoutInventingAnAcknowledgement() {
++        try (var fixture = new Fixture()) {
++            fixture.negotiation.start(4);
++            fixture.advance(5);
++            fixture.advance(5);
++            assertEquals(List.of(4, 4, 8), fixture.negotiation.requests);
++            assertEquals(0, fixture.negotiation.failures);
++            fixture.negotiation.acknowledge();
++            fixture.advance(60);
++            assertEquals(0, fixture.negotiation.failures);
++            assertEquals(List.of(4, 4, 8), fixture.negotiation.requests);
++        }
++    }
++
++    @Test
++    void boundsRetriesAndReportsTheMissingAcknowledgement() {
++        try (var fixture = new Fixture()) {
++            fixture.negotiation.start(12);
++            fixture.advance(5);
++            fixture.advance(5);
++            fixture.advance(20);
++            fixture.advance(60);
++            assertEquals(List.of(12, 12), fixture.negotiation.requests);
++            assertEquals(1, fixture.negotiation.failures);
++        }
++    }
++
++    @Test
++    void settingsReplacePendingRequestsAndSpawnStopsRecovery() {
++        try (var fixture = new Fixture()) {
++            fixture.negotiation.updateRequest(4); // Configuration settings do not start a join timeout.
++            fixture.advance(60);
++            assertTrue(fixture.negotiation.requests.isEmpty());
++            fixture.negotiation.start(4);
++            fixture.advance(3);
++            assertEquals(16, fixture.negotiation.updateRequest(16));
++            fixture.advance(2);
++            assertEquals(List.of(4), fixture.negotiation.requests);
++            fixture.advance(3);
++            assertEquals(List.of(4, 16), fixture.negotiation.requests);
++            fixture.negotiation.markSpawned();
++            fixture.negotiation.updateRequest(4);
++            fixture.advance(60);
++            assertEquals(List.of(4, 16), fixture.negotiation.requests);
++            assertEquals(0, fixture.negotiation.failures);
++        }
++    }
++
++    @Test
++    void removalAndDisconnectCancelPendingRecovery() {
++        try (var fixture = new Fixture()) {
++            fixture.negotiation.start(4);
++            fixture.negotiation.onRemove();
++            fixture.advance(60);
++            assertEquals(List.of(4), fixture.negotiation.requests);
++            assertEquals(0, fixture.negotiation.failures);
++        }
++        try (var fixture = new Fixture()) {
++            fixture.negotiation.start(4);
++            fixture.channel.close();
++            fixture.advance(60);
++            assertEquals(List.of(4), fixture.negotiation.requests);
++            assertEquals(0, fixture.negotiation.failures);
++        }
++    }
++
++    private static final class Fixture implements AutoCloseable {
++        private final EmbeddedChannel channel = new EmbeddedChannel();
++        private final RecordingNegotiation negotiation = new RecordingNegotiation(this.channel);
++
++        private void advance(final int seconds) {
++            this.channel.advanceTimeBy(seconds, TimeUnit.SECONDS);
++            this.channel.runScheduledPendingTasks();
++        }
++
++        @Override
++        public void close() {
++            this.negotiation.onRemove();
++            this.channel.finishAndReleaseAll();
++        }
++    }
++
++    private static final class RecordingNegotiation extends ChunkRadiusNegotiation {
++        private final List<Integer> requests = new ArrayList<>();
++        private int failures;
++
++        private RecordingNegotiation(final EmbeddedChannel channel) {
++            super((UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                    new Class<?>[]{UserConnection.class}, (proxy, method, arguments) -> switch (method.getName()) {
++                        case "getChannel" -> channel;
++                        case "isPendingDisconnect" -> false;
++                        default -> throw new UnsupportedOperationException(method.getName());
++                    }));
++        }
++
++        @Override
++        protected boolean sendRequest(final int radius) {
++            this.requests.add(radius);
++            return true;
++        }
++
++        @Override
++        protected void fail() {
++            this.failures++;
++        }
++    }
++
++}
+-- 
+2.55.0

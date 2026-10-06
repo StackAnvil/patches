@@ -278,3 +278,22 @@ Both guests need long input holds during slow rendering.
 Software graphics establish functional coverage only, without hardware performance claims.
 
 Fresh Store approval, passkeys, Modrinth, the official launcher with Fabric, direct Bedrock connections, Apple Silicon, and movement parity remain unverified.
+
+The macOS reload also exposes a 2 GiB Java heap failure.
+A confirmed 4 GiB test heap permits a successful lobby load and pack unload.
+A live heap dump identifies duplicate actor animation definitions; the add-on now shares these within each accepted pack lifetime.
+The rebuilt add-on now reaches the CubeCraft lobby and unloads its pack with a confirmed 2 GiB heap.
+One shared library serves 27 actor graphs in the live histogram.
+Longer sessions and other packs remain to be tested.
+
+A radius-four CubeCraft join can stall after conversion finishes.
+In the recorded macOS connection, repeating radius four receives no chunks or acknowledgment.
+Requesting radius eight on the same connection receives chunks and spawn status, followed by more than two minutes of initialized gameplay traffic.
+Automatic recovery in ViaBedrock core now reaches the macOS lobby from radius four.
+The packet journal confirms two radius-four requests, radius eight, acknowledgment, spawn, initialization, and sustained input.
+The rebuilt Windows stack reaches the lobby on retry with a confirmed 2 GiB heap.
+Live diagnostics verify an active PLAY connection, completed spawn, and advancing player ticks.
+After more than four minutes, the client unloads its server pack back to the multiplayer menu without heap exhaustion.
+Its first resource reload still disconnects. The successful retry does not close that gap.
+Native negotiation comparison and Windows radius recovery remain open; this Windows run has no packet journal.
+Treat conversion, resource reload, chunk negotiation, and graphics as separate stages when diagnosing a stalled join.

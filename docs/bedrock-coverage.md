@@ -3464,3 +3464,47 @@ Fresh Store authentication, passkeys, Modrinth, the official launcher with Fabri
 CubeCraft also reports unmapped particle effects, player attributes, sub-client headers, and an unsupported dragon variant that need separate investigation.
 Official BDS and the native client remain the primary movement references; experimental Boar flags need independent classification.
 Raw logs, packet journals, identities, thread dumps, and screenshots remain private.
+
+## macOS CubeCraft memory and radius diagnostics, October 6, 2026
+
+The first macOS unload exhausts the test client's 2 GiB Java heap.
+A retry with a confirmed 4 GiB heap reaches the lobby and unloads the pack successfully.
+The live heap dump identifies 26 actor graphs retaining duplicate server animation definitions, totaling 1,340,555,464 bytes.
+Most JSON objects disappear after unloading, so this capture establishes excessive live pack memory rather than a permanent leak.
+The actor reader now shares parsed definitions and effects for each accepted pack lifetime.
+Compiled actor state, variables, command slots, and clocks remain independent.
+Targeted tests verify one parse across actors and new definitions after pack replacement.
+The full add-on stack replays after folding the change into its actor animation patch.
+The rebuilt add-on reaches the CubeCraft lobby and unloads its pack with a confirmed 2 GiB heap.
+The live histogram shows one shared library for 27 actor graphs and about 155,000 Gson map nodes.
+The lobby heap sample uses about 758 MiB before collection.
+This verifies one load and unload on the guest, with longer runs and other packs still required.
+
+A separate join stalls after conversion and resource reload with a requested radius of four.
+The journal contains StartGame and continuing server traffic, but no chunks, radius acknowledgment, or spawn status.
+Repeating radius four on the same connection produces no acknowledgment.
+A diagnostic request for radius eight immediately receives chunks, radius acknowledgment, and spawn status.
+The client reaches a visible lobby and sends initialization plus 3,177 input packets before the recording closes.
+The recovered connection continues for more than two minutes after that request.
+This reproduces a chunk negotiation gap independently of the converter and Java heap limit.
+ViaBedrock core now retries unacknowledged requests and offers a bounded radius-eight recovery for smaller radii.
+Acknowledgment, spawn, settings changes, and disconnect cancel or replace pending work.
+The current macOS stack recovers automatically and reaches the visible lobby.
+Its closed journal records requests at radius four, four, and eight, followed by an acknowledgment 54 ms after the fallback.
+The recording includes spawn, one initialization packet, 2,856 input packets, and 172 chunks.
+The recovered session continues for more than two minutes with the 2 GiB heap.
+Comparison against the native client's radius negotiation remains open.
+The diagnostic probe sends ordinary radius requests; it does not fabricate spawn or initialization packets.
+Heap dumps, packet journals, diagnostic probes, accounts, and screenshots remain private.
+
+The current core also passes an authenticated join against strict BDS 1.26.51.1 through ViaProxy.
+The recording has one radius request and acknowledgment, spawn, one initialization packet, and 793 input frames.
+An unauthenticated HTTP attempt fails before Bedrock traffic; offline HTTP identity compatibility remains separate work.
+These joins do not establish full movement parity.
+
+The rebuilt Windows stack also reaches the CubeCraft lobby on retry with a confirmed 2 GiB heap.
+Live core diagnostics show an active PLAY connection, completed spawn, and advancing player ticks.
+The session remains playable for more than four minutes and unloads the server pack back to the multiplayer menu without heap exhaustion.
+Its first attempt still disconnects during resource reload; the retry does not explain that failure.
+Windows radius recovery remains unverified because this run has no packet journal.
+A particle definition also reports ambiguous motion and needs separate investigation.
