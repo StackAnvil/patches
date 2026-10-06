@@ -4026,3 +4026,42 @@ Sprint cancellation, fluid-state changes, and correction timing need further nat
 The ceiling result is a strict-BDS comparison; a fresh native ceiling capture is still required.
 The host GPU safety condition still prevents fresh native capture until a reboot resolves it.
 Prediction history replay, other movement cases, real-server verification, and Windows and macOS game joins remain requirements.
+
+### Ground-jump events during water rises, October 6, 2026
+
+**Reference:** Saved native 1.26.51.1 protocol 2193 packets distinguish ground jumps from held liquid-rise input.
+The pool-floor reference holds `Jumping`, `JumpDown`, and `WantUp` for 29 frames without `StartJumping`.
+The two-frame dry jump emits `StartJumping` only on its first frame.
+The previous translated water rise already matches native motion, but adds a false ground-jump event on its first frame.
+
+**Implemented:** The add-on observes actual local `jumpFromGround` calls in the completed physics frame.
+It resets the observation before local travel and transports it with position, motion, pose, and collision state.
+Core validates and consumes the frame, then constructs the Bedrock event.
+Revision 3 uses a separate negotiated channel so older payload layouts cannot be mistaken for the new format.
+Connections without a completed sample keep the existing Java approximation.
+The changes are folded into the existing core and add-on prediction patches.
+
+**Verified:** Both direct and matching ViaProxy routes complete join and spawn against strict BDS.
+The direct comparison covers 29 water-rise frames; ViaProxy covers the first 28 native reference frames.
+All flags match, including the absence of a ground-jump event in water.
+Both routes also match the native two-frame dry jump and retain its first-frame ground-jump event.
+Water-rise position differences remain below 0.000008 blocks and motion differences below 0.000000045 blocks per tick.
+Neither route receives a correction during these cases.
+
+Separate 64-frame 35-degree swimming cases preserve native swimming, sprint, surface-exit, and re-entry events on both routes.
+These cases receive no corrections.
+Position differences remain below 0.000031 blocks vertically and 0.000008 blocks horizontally.
+Motion differences remain below 0.000000045 blocks per tick.
+The initial proxy attempt used an older embedded core and is excluded from candidate verification.
+The matching repeat uses the rebuilt ViaProxy JAR with revision-three support.
+
+**Automated verification:** Dependency builds pass with 16 converter, 636 core, and 608 add-on tests.
+There are no failures or errors; 135 environment-dependent tests skip.
+ViaProxy also builds successfully with the updated core.
+The codec covers all sixteen independent pose, collision, and jump combinations, including stationary frames.
+Tests reject unsupported wire revisions and mismatched Bedrock protocols, and discard stale or unmatched frames.
+
+**Incomplete:** Automatic and obstructed jumps need native comparisons.
+Ordinary Java clients still approximate jump events.
+Swimming with jump or flying input, other fluid conditions, blocked-surface transitions, and history resimulation remain requirements.
+The real-server and Windows/macOS game-join requirements remain open.

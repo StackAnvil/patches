@@ -6,7 +6,7 @@ Send completed local physics through the negotiated ViaBedrock prediction channe
 Sample only the local player after standard Java movement and before the tick-end packet.
 Send stationary frames too, so motion and swimming state do not depend on sparse position updates.
 
-The payload carries position, motion, swimming state, and completed collision axes.
+The payload carries position, motion, swimming state, completed collision axes, and the ground-jump event.
 Core validates the sample and builds Bedrock auth input on direct connections and through ViaProxy.
 The add-on supplies local fluid physics; core owns server correction translation.
 
@@ -163,3 +163,27 @@ The new cap test covers all upward directions and both breathing-material states
 **Incomplete:** Resolve the initial blocked-surface sprint and fluid-state transitions.
 Compare a fresh native ceiling capture when the host GPU safety condition permits it.
 Correction history replay, jump and flying swimming, other fluid levels, currents, and the remaining movement matrix remain requirements.
+
+## Ground-jump observation
+
+The saved native 1.26.51.1 protocol 2193 pool-floor reference rises with held jump input without emitting `StartJumping`.
+The first dry-jump frame does emit that event.
+Core's former grounded-plus-held-input heuristic incorrectly emits it during a water rise.
+
+Observe local `jumpFromGround` calls, reset the observation before `aiStep`, and send it with the completed physics frame.
+Use the separately negotiated revision-three prediction channel.
+Core validates the frame and constructs the Bedrock event on both direct and ViaProxy connections.
+Do not infer a ground jump from a velocity threshold or held liquid-rise input.
+
+Live strict-BDS comparisons cover 29 water-rise frames directly and the first 28 through ViaProxy.
+Both routes match native flags and the two dry-jump frames, without corrections during those cases.
+Maximum water-rise position difference is about 0.000008 blocks; motion differences stay below 0.000000045 blocks per tick.
+Both routes also retain the native events and motion in a separate 64-frame 35-degree swimming case, without corrections.
+The ViaProxy repeat uses the rebuilt proxy JAR with the matching embedded core.
+
+The dependency builds pass with 16 converter, 636 core, and 608 add-on tests.
+There are no failures or errors; 135 environment-dependent tests skip.
+The core codec covers all sixteen independent pose, collision, and jump combinations, including stationary frames.
+
+**Incomplete:** Automatic jumps, obstructed jumps, swimming with jump or flying input, other fluid conditions, and correction history need separate verification.
+The initial blocked-surface corrections remain unresolved.
