@@ -3533,3 +3533,47 @@ The two conversion intervals are 1,715 milliseconds and 2,426 milliseconds; thes
 The warm-cache client restart also reaches spawn.
 These successful repeats do not reproduce or explain the earlier first reload disconnect.
 Fresh Store login, other launchers, direct connections, and complete movement parity remain open.
+
+## Strict BDS sneak input timing, October 6, 2026
+
+**Implemented and verified through ViaProxy:** The add-on predicts a permitted keyboard sneak press before Java selects its crouching state.
+The core permission channel activates this behavior for the connection.
+Core retains authoritative input state, packet construction, and permission filtering.
+The client hook is necessary because core receives Java's position after local prediction.
+
+The native 1.26.51 client provides a baseline on flat stone with strict BDS 1.26.51.1, protocol 2193.
+Repeated four-second runs travel about 17.269 blocks walking, 22.449 sprinting, and 5.181 sneaking.
+Periodic jump samples show about 1.249 blocks of rise; this sampling does not establish the exact apex.
+These times include key sampling and do not guarantee equal simulated tick counts.
+
+The first StackAnvil sneak step originally moved 0.098 blocks while BDS expected 0.0294 blocks.
+Each of two repeats received three prediction corrections at sneak startup.
+Java 26.3 computes crouching before `KeyboardInput.tick` refreshes the key sample.
+The add-on now reads the current permitted press during that check.
+It retains Java's pose eligibility, speed attributes, and the existing behavior of other input implementations.
+
+A walking press/release sequence also established BDS's expected final slow step on `StopSneaking`.
+Immediate full-speed release produced two corrections.
+The hook retains the previous pressed sample for that release frame.
+
+The final journal contains six movement segments and no prediction corrections during those segments.
+They cover two sneak starts, a walking press/release sequence, disabled sneak, walking, and sprinting.
+Both sneak starts predict 0.0294 blocks on their first frame.
+Disabled sneak preserves a 0.098-block walking step and sends no simulated sneak flags.
+One stationary zero-velocity correction follows a fixture teleport, outside these segments.
+This separate correction remains recorded rather than counted as a clean complete session.
+
+The native mixed sequence travels about 19.708 blocks; the translated sequence travels about 19.337 blocks.
+The translated run contains 119 forward ticks, including 41 sneak ticks.
+Native packet tick counts remain unavailable for this HTTP route, so these timed runs do not establish exact trajectory equality.
+The earlier sprint difference is explained by 81 translated input ticks in one repeat versus 80 in another.
+
+The complete dependency build passes: 624 core tests and 600 add-on tests, with 19 and 116 skipped respectively.
+Both suites report zero failures and errors. TypeScript checks pass.
+The fix stays in the owning input patch; the full add-on stack replays successfully.
+Raw journals, account data, server logs, and screenshots remain private.
+
+**Remaining:** Verify this change on direct connections and with other input implementations.
+Compare native packet timing, prediction history, release behavior, and server corrections across the full movement matrix.
+Fluids, collision, steps, climbing, effects, knockback, vehicles, latency, and real-server behavior remain open.
+Official BDS remains the primary movement reference. Experimental Boar flags require separate investigation.

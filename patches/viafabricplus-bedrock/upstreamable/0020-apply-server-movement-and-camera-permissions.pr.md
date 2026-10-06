@@ -11,6 +11,11 @@ Send physical samples before filtering only when the core advertises the raw-inp
 Send changed samples and the first sample of each connection.
 Reset raw sample history with connection permissions.
 Remote disconnect and local world exit clear the connection's permissions before another server can receive input.
+Use the current permitted keyboard press during crouch selection, before Java refreshes its input sample.
+Keep the previous pressed sample for the final slow release step expected by BDS.
+Retain Java's pose eligibility and speed attributes.
+The core channel activates this behavior through direct connections and ViaProxy.
+Other input implementations retain their existing behavior.
 
 ## Target evidence
 
@@ -34,3 +39,22 @@ The actual auto-jump method respects jump and movement locks.
 A local exit while camera input is locked clears the permissions to zero.
 Manual vehicle mounting and broader native input comparisons remain incomplete.
 Mount permissions survive transport, but this patch does not block manual mounting interactions.
+
+### Strict BDS sneak transitions
+
+The native 1.26.51 client and strict BDS 1.26.51.1 provide the baseline on flat stone.
+The first Java sneak step originally moved 0.098 blocks while BDS expected 0.0294 blocks.
+Two recorded repeats each received three prediction corrections.
+Java 26.3 computes crouching before `KeyboardInput.tick` updates the current key sample.
+The press hook removes this stale input delay while preserving the server permission check.
+
+Immediate release also produced corrections while the player continued walking.
+BDS expected a final slow step on the `StopSneaking` frame.
+The hook retains the previous pressed sample for this release frame.
+The final ViaProxy journal contains no prediction corrections during six movement segments.
+These include two sneak starts, a walking press/release sequence, disabled sneak, walking, and sprinting.
+Disabled sneak retains an ordinary walking step and sends no simulated sneak flags.
+One stationary zero-velocity correction follows a fixture teleport, outside those segments.
+Core tests pass: 624 total, 19 skipped, no failures.
+Add-on tests pass: 600 total, 116 skipped, no failures.
+Native packet comparisons, other controls, and the complete movement matrix remain open.
