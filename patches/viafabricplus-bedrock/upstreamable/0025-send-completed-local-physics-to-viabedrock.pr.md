@@ -574,3 +574,24 @@ Updates can arrive before the following frame exists, so future correction handl
 Another 402 unique-position samples match completed Java observations to Bedrock input ticks.
 Startup, respawn, repeated positions, and broader server behavior still require explicit frame correlation.
 The [turn, collision, and clock reference](../../../docs/bedrock-coverage.md#native-replay-turns-collision-ownership-and-frame-clocks-october-6-2026) records the methods and verification limits.
+
+## Replay settings and collision selection
+
+Matching-build inspection resolves the retained external-data snapshot into play mode, input mode, rotation smoothing, game type, adventure settings, and menu/pause state.
+Exact native capture, snapshot selection, and getters pass 2,048 cases.
+The fixture supplies a synthetic context registry and preinitialized TLS/type keys.
+It excludes actual menu behavior and full movement simulation.
+
+Movement registration assigns collision reuse and shape refresh to the movement-replay category.
+The main collision system also belongs to that category; the system that captures collision history uses two other categories.
+Registration does not establish the complete execution order.
+
+Native collision-history capture copies the live movement-request buffers before transferring the copies into retained input.
+Exact history selection, copy construction, and capture pass 384 cases, including absent history and large-buffer alignment.
+During replay, captured shapes are reused only when squared distance from the fetch position is below 4.
+Exact reuse and vector transfer pass another 4,096 cases, including boundary and non-finite positions.
+These fixtures substitute allocator or buffer-release boundaries and exclude real block-reference lifetime and complete physics.
+The [settings and collision reference](../../../docs/bedrock-coverage.md#native-replay-settings-and-collision-selection-october-6-2026) records the methods and verification limits.
+
+Production frame identity, retained settings and world state, ordered corrections, and later-input simulation remain incomplete.
+These findings do not add production reconciliation or establish full movement parity.

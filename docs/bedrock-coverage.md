@@ -4858,3 +4858,70 @@ Production frame identity must account for player replacement, startup gaps, and
 Dispatcher system execution, additional state, local completion timing, and broader movement still need verification.
 The current production CI passes build, tooling, and Ubuntu/Windows/macOS permission jobs.
 Actual Windows/macOS game joins, native visual comparisons, and all eight coverage groups remain requirements.
+
+### Native replay settings and collision selection, October 6, 2026
+
+**Captured settings:** Native input capture `0x14328ce00` stores seven external-data fields at input offset `0xc`.
+Snapshot getter `0x14328cdf0` returns that stored data.
+Wrapper vtable `0x14e873840` exposes it through seven getters at `0x14326e440` through `0x14326e4a0`.
+The [SDK snapshot declaration](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/entity/components/ExternalDataSnapshotComponent.h) names the fields.
+Its layout and interface order agree with the inspected target instructions.
+
+| Snapshot offset | Field | Size |
+| --- | --- | --- |
+| `0x0` | Client play mode | 4 bytes |
+| `0x4` | Rotation smoothing speed | 4 bytes |
+| `0x8` | Input mode | 4 bytes |
+| `0xc` | Game type | 4 bytes |
+| `0x10` | Adventure settings | 5 bytes |
+| `0x15` | In world with no menu displayed | 1 byte |
+| `0x16` | Game paused | 1 byte |
+
+These settings belong to the retained frame.
+Using current menu or input settings during replay would replace that frame's original external data.
+
+**Verified within scope:** Exact native capture, snapshot selection, and wrapper getters pass 2,048 cases with no mismatches.
+Cases include randomized scalar bytes, all menu/pause combinations, missing or expired entries, wrong types, null pointers, and hash chains.
+The fixture verifies all 23 stored bytes and preserves padding and unrelated input data.
+It supplies a synthetic context registry and preinitialized TLS and type keys.
+Static initialization, allocation lifetime, actual menu behavior, and full movement simulation remain outside this verification.
+
+**Collision scheduling:** Movement registration `0x14681ac20` installs `CopyCollisionShapesRewindSystem` and `Rewind Solid Shape Refresh` for the client.
+Both register in phase 6 through `0x14681d030`.
+That helper selects the same category key used by movement-replay dispatcher `0x1463b0f30`.
+`MoveCollisionSystem` registers through `0x14681cf20`, whose category list includes that replay category.
+`CollisionShapesCopySystem` registers through `0x142dedf10`, whose two categories exclude it.
+Registration establishes these memberships; it does not verify the complete system execution order.
+
+**Collision history:** Capture kernel `0x1431df520` selects the current retained input from `ReplayStateComponent` history.
+It copies both movement-request vectors through constructor `0x141aa8500`, then calls input capture `0x14328d670`.
+The latter transfers those copies into history.
+The live movement-request buffers remain unchanged.
+History receives the fetch position, collision shapes, block references, nearby-unloaded flag, and fetched bounding box.
+
+Exact native history selection, copy construction, and input capture pass 384 cases with no mismatches.
+Cases include absent, expired, or future history, missing frames or inputs, and empty or populated vectors.
+They verify 96 separate vector allocations, including 32 allocations through the native large-buffer alignment path.
+They also verify 64 releases of previous captured buffers.
+The fixture substitutes allocation, CRT memory copying, and buffer release.
+Real allocator lifetime, block-reference validity, ECS iteration, and full physics remain unverified.
+
+**Collision reuse:** Replay copy kernel `0x148b73aa0` compares the saved fetch position with current state-vector position.
+It reuses the captured shapes only when the float32 squared distance is below 4, meaning less than two blocks.
+At the boundary or beyond it, the kernel leaves the request unchanged.
+NaN and infinite distances also skip reuse.
+Reuse transfers both buffers into `MoveRequestComponent`, copies the nearby-unloaded flag and fetched bounding box, and clears source pointers.
+
+Exact native reuse and vector-transfer bytes pass 4,096 cases with no mismatches.
+Cases cover distance boundaries, randomized positions, non-finite values, both vector lengths, and empty or occupied destination buffers.
+They verify 779 reuse cases, 3,317 skipped cases, 778 prior-buffer releases, and preservation of unrelated bytes.
+The fixture substitutes buffer release.
+It excludes registration, ECS iteration, real ownership lifetime, nearby-actor refresh, and complete movement simulation.
+The separately registered refresh system at `0x1482d8e10` resolves referenced actor shapes through prediction and interpolation state.
+Its complete behavior still needs verification.
+
+**Incomplete:** Production needs frame identity, retained settings and collision state, ordered corrections, and later-input simulation.
+The findings above specify parts of that path; they do not implement production reconciliation or establish full movement parity.
+Current CI passes build, tooling, and Ubuntu/Windows/macOS permission jobs.
+Actual Windows/macOS game joins, direct and ViaProxy comparisons, and all eight coverage groups remain requirements.
+Fresh native visual comparisons remain unavailable under the current-boot GPU guard.
