@@ -13,9 +13,13 @@ import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
 import net.raphimc.viabedrock.api.util.CryptUtil;
 import net.raphimc.viabedrock.netty.*;
 import net.raphimc.viabedrock.netty.raknet.*;
+import net.raphimc.viabedrock.netty.nethernet.BedrockHttpSignaling;
 import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketCompressionAlgorithm;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
+import org.cloudburstmc.netty.channel.nethernet.NetherNetChannelFactory;
+import org.cloudburstmc.netty.channel.nethernet.config.NetherChannelOption;
+import org.cloudburstmc.netty.util.nethernet.OperatorIdentity;
 import org.cloudburstmc.netty.channel.raknet.RakChannelFactory;
 import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
 
@@ -37,16 +41,19 @@ public final class NativeCaptureProxy {
     private final Path directory;
     private final InetSocketAddress target;
     private final String account;
+    private final boolean netherNet;
     private final EventLoopGroup loops;
     private final AtomicBoolean used = new AtomicBoolean();
 
-    private NativeCaptureProxy(Path directory, InetSocketAddress target, String account, EventLoopGroup loops) {
-        this.directory = directory; this.target = target; this.account = account; this.loops = loops;
+    private NativeCaptureProxy(Path directory, InetSocketAddress target, String account, boolean netherNet, EventLoopGroup loops) {
+        this.directory = directory; this.target = target; this.account = account; this.netherNet = netherNet; this.loops = loops;
     }
 
     public static void main(String[] args) {
         try {
-            if (args.length != 5) throw new IllegalArgumentException("NativeCaptureProxy <private-directory> <loopback-port> <host> <port> <account-json|offline>");
+            if (args.length != 5 && (args.length != 6 || !args[5].equals("--nethernet"))) {
+                throw new IllegalArgumentException("NativeCaptureProxy <private-directory> <loopback-port> <host> <port> <account-json|offline> [--nethernet]");
+            }
             Path directory = Path.of(args[0]).toAbsolutePath();
             Files.createDirectories(directory);
             PrivateFiles.protectDirectory(directory);
@@ -55,7 +62,7 @@ public final class NativeCaptureProxy {
             if (args[4].equals("offline") && !target.getAddress().isLoopbackAddress()) throw new IllegalArgumentException("Offline identity is restricted to a local backend");
             EventLoopGroup loops = new MultiThreadIoEventLoopGroup(2, NioIoHandler.newFactory());
             try {
-                NativeCaptureProxy proxy = new NativeCaptureProxy(directory, target, args[4], loops);
+                NativeCaptureProxy proxy = new NativeCaptureProxy(directory, target, args[4], args.length == 6, loops);
                 String motd = "MCPE;StackAnvil native recorder;" + ProtocolConstants.BEDROCK_PROTOCOL_VERSION + ";" + ProtocolConstants.BEDROCK_VERSION_NAME + ";0;1;1;Capture;Survival;1;" + args[1] + ";" + args[1] + ";";
                 Channel server = new ServerBootstrap().group(loops).channelFactory(RakChannelFactory.server(NioDatagramChannel.class))
                         .option(RakChannelOption.RAK_ADVERTISEMENT, Unpooled.copiedBuffer(motd, StandardCharsets.UTF_8))
@@ -66,7 +73,7 @@ public final class NativeCaptureProxy {
                         .childHandler(new ChannelInitializer<Channel>() {
                             @Override protected void initChannel(Channel channel) {
                                 if (!proxy.used.compareAndSet(false, true)) { channel.close(); return; }
-                                pipeline(channel);
+                                pipeline(channel, true);
                                 channel.pipeline().addLast("native-capture", proxy.new Session());
                             }
                         }).bind("127.0.0.1", Integer.parseInt(args[1])).sync().channel();
@@ -81,9 +88,17 @@ public final class NativeCaptureProxy {
         }
     }
 
-    static void pipeline(Channel channel) {
-        channel.pipeline().addLast("message", new MessageCodec());
+    static void pipeline(Channel channel, boolean rakNet) {
+        if (rakNet) channel.pipeline().addLast("message", new MessageCodec());
         channel.pipeline().addLast("batch", new BatchLengthCodec());
+    }
+
+    static void enableEncryption(Channel channel, SecretKey key) throws GeneralSecurityException {
+        // NetherNet already protects its data channels with DTLS. BDS still sends the Bedrock handshake,
+        // but only RakNet switches subsequent game batches to the Bedrock AES stream.
+        if (channel.pipeline().get(MessageCodec.class) != null) {
+            channel.pipeline().addBefore("compression", "encryption", new AesEncryptionCodec(key));
+        }
     }
 
     static String resignClient(String original, KeyPair keys, String destination, PublicKey clientKey) {
@@ -212,50 +227,65 @@ public final class NativeCaptureProxy {
         }
 
         private void connect(Identity identity, String clientJwt) {
-            new Bootstrap().group(loops).channelFactory(RakChannelFactory.client(NioDatagramChannel.class))
-                    .option(RakChannelOption.RAK_PROTOCOL_VERSION, ProtocolConstants.BEDROCK_RAKNET_PROTOCOL_VERSION)
-                    .option(RakChannelOption.RAK_CONNECT_TIMEOUT, 10000L)
-                    .handler(new ChannelInitializer<Channel>() {
-                        @Override protected void initChannel(Channel channel) {
-                            pipeline(channel);
-                            channel.pipeline().addLast("native-relay", new SimpleChannelInboundHandler<ByteBuf>() {
-                                @Override public void channelActive(ChannelHandlerContext ctx) {
-                                    downstream = ctx.channel();
-                                    ByteBuf request = ctx.alloc().buffer();
-                                    Types.VAR_INT.writePrimitive(request, 193);
-                                    request.writeInt(ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
-                                    ctx.writeAndFlush(request);
-                                }
-                                @Override protected void channelRead0(ChannelHandlerContext ctx, ByteBuf input) throws Exception {
-                                    ByteBuf view = input.duplicate();
-                                    int id = BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(view) & 1023;
-                                    if (id == 143) {
-                                        int threshold = view.readUnsignedShortLE();
-                                        PacketCompressionAlgorithm algorithm = PacketCompressionAlgorithm.getByValue(view.readUnsignedShortLE());
-                                        ctx.pipeline().addBefore("batch", "compression", new CompressionCodec(algorithm, threshold));
-                                        ctx.writeAndFlush(login(identity, clientJwt));
-                                        phase = 3;
-                                    } else if (id == 3) {
-                                        var jwt = Jwts.parser().keyLocator(CryptUtil.X5U_KEY_LOCATOR).build().parseSignedClaims(BedrockTypes.STRING.read(view));
-                                        SecretKey key = exchange(identity.keys().getPrivate(), CryptUtil.X5U_KEY_LOCATOR.locate(jwt.getHeader()),
-                                                Base64.getDecoder().decode(jwt.getPayload().get("salt", String.class)));
-                                        ctx.pipeline().addAfter("message", "encryption", new AesEncryptionCodec(key));
-                                        ByteBuf answer = ctx.alloc().buffer(); Types.VAR_INT.writePrimitive(answer, 4); ctx.writeAndFlush(answer);
-                                    } else {
-                                        record(true, input);
-                                        if (id == 85) { fail(new IllegalStateException("Transfer ends this single-host capture")); return; }
-                                        if (!packObservationFailed) {
-                                            try { packs.accept(id, view); }
-                                            catch (Exception error) { packFailure(error); }
-                                        }
-                                        upstream.writeAndFlush(input.retainedDuplicate());
-                                    }
-                                }
-                                @Override public void channelInactive(ChannelHandlerContext ctx) { upstream.close(); }
-                                @Override public void exceptionCaught(ChannelHandlerContext ctx, Throwable error) { fail(error); }
-                            });
+            Bootstrap bootstrap = new Bootstrap().group(loops);
+            if (netherNet) {
+                OperatorIdentity operator = identity.online() ? OperatorIdentity.fromToken(identity.keys(), identity.token(),
+                        "https://authorization.franchise.minecraft-services.net/") : null;
+                bootstrap.channelFactory(NetherNetChannelFactory.client(new BedrockHttpSignaling()))
+                        .option(NetherChannelOption.NETHER_CLIENT_HANDSHAKE_TIMEOUT_MS, 10000)
+                        .option(NetherChannelOption.NETHER_CLIENT_MAX_HANDSHAKE_ATTEMPTS, 1)
+                        .option(NetherChannelOption.NETHER_CLIENT_IDENTITY, operator);
+            } else {
+                bootstrap.channelFactory(RakChannelFactory.client(NioDatagramChannel.class))
+                        .option(RakChannelOption.RAK_PROTOCOL_VERSION, ProtocolConstants.BEDROCK_RAKNET_PROTOCOL_VERSION)
+                        .option(RakChannelOption.RAK_CONNECT_TIMEOUT, 10000L);
+            }
+            bootstrap.handler(new ChannelInitializer<Channel>() {
+                @Override protected void initChannel(Channel channel) {
+                    pipeline(channel, !netherNet);
+                    channel.pipeline().addLast("native-relay", new SimpleChannelInboundHandler<ByteBuf>() {
+                        @Override public void channelActive(ChannelHandlerContext ctx) {
+                            downstream = ctx.channel();
+                            System.out.println("Native backend transport connected");
+                            ByteBuf request = ctx.alloc().buffer();
+                            Types.VAR_INT.writePrimitive(request, 193);
+                            request.writeInt(ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
+                            ctx.writeAndFlush(request).addListener(ChannelFutureListener.FIRE_EXCEPTION_ON_FAILURE);
                         }
-                    }).connect(target).addListener((ChannelFutureListener) future -> { if (!future.isSuccess()) fail(future.cause()); });
+                        @Override protected void channelRead0(ChannelHandlerContext ctx, ByteBuf input) throws Exception {
+                            ByteBuf view = input.duplicate();
+                            int id = BedrockTypes.UNSIGNED_VAR_INT.readPrimitive(view) & 1023;
+                            if (id == 143) {
+                                System.out.println("Native backend network settings received");
+                                int threshold = view.readUnsignedShortLE();
+                                PacketCompressionAlgorithm algorithm = PacketCompressionAlgorithm.getByValue(view.readUnsignedShortLE());
+                                ctx.pipeline().addBefore("batch", "compression", new CompressionCodec(algorithm, threshold));
+                                ByteBuf login = login(identity, clientJwt);
+                                System.out.println("Native backend login bytes: " + login.readableBytes());
+                                ctx.writeAndFlush(login).addListener(ChannelFutureListener.FIRE_EXCEPTION_ON_FAILURE);
+                                phase = 3;
+                            } else if (id == 3) {
+                                System.out.println("Native backend encryption handshake received");
+                                var jwt = Jwts.parser().keyLocator(CryptUtil.X5U_KEY_LOCATOR).build().parseSignedClaims(BedrockTypes.STRING.read(view));
+                                SecretKey key = exchange(identity.keys().getPrivate(), CryptUtil.X5U_KEY_LOCATOR.locate(jwt.getHeader()),
+                                        Base64.getDecoder().decode(jwt.getPayload().get("salt", String.class)));
+                                enableEncryption(ctx.channel(), key);
+                                ByteBuf answer = ctx.alloc().buffer(); Types.VAR_INT.writePrimitive(answer, 4); ctx.writeAndFlush(answer);
+                            } else {
+                                record(true, input);
+                                if (id == 85) { fail(new IllegalStateException("Transfer ends this single-host capture")); return; }
+                                if (!packObservationFailed) {
+                                    try { packs.accept(id, view); }
+                                    catch (Exception error) { packFailure(error); }
+                                }
+                                upstream.writeAndFlush(input.retainedDuplicate());
+                            }
+                        }
+                        @Override public void channelInactive(ChannelHandlerContext ctx) { upstream.close(); }
+                        @Override public void exceptionCaught(ChannelHandlerContext ctx, Throwable error) { fail(error); }
+                    });
+                }
+            }).connect(target).addListener((ChannelFutureListener) future -> { if (!future.isSuccess()) fail(future.cause()); });
         }
 
         private synchronized void record(boolean clientbound, ByteBuf input) throws Exception {

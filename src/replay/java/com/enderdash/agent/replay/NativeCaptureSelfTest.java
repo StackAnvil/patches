@@ -9,6 +9,7 @@ import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.*;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioIoHandler;
+import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.channel.socket.nio.NioDatagramChannel;
 import net.raphimc.viabedrock.api.util.CryptUtil;
 import net.raphimc.viabedrock.netty.CompressionCodec;
@@ -17,6 +18,7 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PacketCompre
 import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ResourcePackResponse;
 import net.raphimc.viabedrock.protocol.types.BedrockTypes;
 import org.cloudburstmc.netty.channel.raknet.RakChannelFactory;
+import org.cloudburstmc.netty.channel.raknet.packet.RakMessage;
 import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
 
 import java.nio.file.*;
@@ -51,12 +53,53 @@ public final class NativeCaptureSelfTest {
         for (boolean bareInfo : List.of(false, true)) {
             for (boolean bareChunk : List.of(false, true)) packExport(bareInfo, bareChunk);
         }
+        for (boolean rakNet : List.of(false, true)) transportFraming(rakNet);
         packIdentityRejections();
         packStackSelection();
         packHttpClose(200);
         packHttpClose(503);
         if (args.length == 2) smoke(Integer.parseInt(args[0]), Path.of(args[1]));
-        System.out.println("PASS native relay JWT claim preservation, trusted multiplayer identity and proof of possession, ECDH, and encrypted chunk-pack export" + (args.length == 2 ? ", local backend reached StartGame" : ""));
+        System.out.println("PASS native relay JWT claim preservation, trusted multiplayer identity and proof of possession, ECDH, transport framing, and encrypted chunk-pack export" + (args.length == 2 ? ", local backend reached StartGame" : ""));
+    }
+
+    private static void transportFraming(boolean rakNet) throws Exception {
+        EmbeddedChannel sender = new EmbeddedChannel(), receiver = new EmbeddedChannel();
+        try {
+            SecretKeySpec key = new SecretKeySpec(new byte[32], "AES");
+            for (EmbeddedChannel channel : List.of(sender, receiver)) {
+                NativeCaptureProxy.pipeline(channel, rakNet);
+                channel.pipeline().addBefore("batch", "compression", new CompressionCodec(PacketCompressionAlgorithm.ZLib, 0));
+                NativeCaptureProxy.enableEncryption(channel, key);
+            }
+            Random random = new Random(2193);
+            // Multiple packets exercise encryption counters and compressible and incompressible batches.
+            for (int size : new int[]{1, 128, 65536}) {
+                byte[] packet = new byte[size];
+                if (size != 128) random.nextBytes(packet);
+                sender.writeOutbound(Unpooled.wrappedBuffer(packet));
+                Object wire = sender.readOutbound();
+                if (rakNet ? !(wire instanceof RakMessage) : !(wire instanceof ByteBuf)) {
+                    io.netty.util.ReferenceCountUtil.release(wire);
+                    throw new AssertionError("Wrong transport framing");
+                }
+                if (!rakNet) {
+                    int compression = ((ByteBuf) wire).getUnsignedByte(((ByteBuf) wire).readerIndex());
+                    if (compression != PacketCompressionAlgorithm.ZLib.getValue()
+                            && compression != (PacketCompressionAlgorithm.None.getValue() & 255)) {
+                        io.netty.util.ReferenceCountUtil.release(wire);
+                        throw new AssertionError("NetherNet batch unexpectedly uses Bedrock AES");
+                    }
+                }
+                receiver.writeInbound(wire);
+                ByteBuf decoded = receiver.readInbound();
+                try {
+                    if (decoded == null || !Arrays.equals(packet, ReplayPackets.bytes(decoded))) {
+                        throw new AssertionError("Transport changed native packet bytes");
+                    }
+                } finally { if (decoded != null) decoded.release(); }
+                if (sender.readOutbound() != null || receiver.readInbound() != null) throw new AssertionError("Unexpected extra frame");
+            }
+        } finally { sender.finishAndReleaseAll(); receiver.finishAndReleaseAll(); }
     }
 
     private static void authenticatedIdentity(KeyPair client, KeyPair relay, String clientJwt) throws Exception {
@@ -443,7 +486,7 @@ public final class NativeCaptureSelfTest {
                     .option(RakChannelOption.RAK_PROTOCOL_VERSION, ProtocolConstants.BEDROCK_RAKNET_PROTOCOL_VERSION)
                     .handler(new ChannelInitializer<Channel>() {
                         @Override protected void initChannel(Channel channel) {
-                            NativeCaptureProxy.pipeline(channel);
+                            NativeCaptureProxy.pipeline(channel, true);
                             channel.pipeline().addLast("test", new SimpleChannelInboundHandler<ByteBuf>() {
                                 private final Map<String, Set<Long>> chunks = new HashMap<>();
                                 private final Map<String, Long> expected = new HashMap<>();

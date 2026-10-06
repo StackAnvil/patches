@@ -3703,3 +3703,27 @@ The rebuilt dependency suites contain 16 converter, 624 core, and 603 add-on tes
 Core and add-on suites skip 19 and 116 optional tests respectively.
 The previous asset-fix CI passes every configured Ubuntu, Windows, and macOS job.
 Licensed assets, raw journals, observer samples, account data, and screenshots remain private.
+
+### Native packet baseline over NetherNet
+
+**Implemented and verified:** The native recorder now connects to the owned HTTP NetherNet endpoint while retaining its loopback RakNet frontend.
+It uses the authenticated account's fresh session key for signaling and game login, preserving native gameplay packet bytes.
+NetherNet uses DTLS. Only RakNet enables the Bedrock AES stream after the game handshake, matching the existing core transport policy.
+The initial recorder attempts incorrectly enabled AES for NetherNet and never reached gameplay. They remain failed references.
+
+The corrected recording completes normally with visible gameplay, local-player initialization, gameplay input, and completed pack observation.
+It captures native single-jump, elevated-fall, water-idle, and water-rise cases, with 120 observer samples each.
+No native water-rise correction occurs in this run.
+Two zero-velocity corrections follow fixture teleports, including the elevated teleport and the water-idle teleport.
+The elevated native case therefore demonstrates that fixture teleports can produce corrections.
+It does not explain the additional moving correction in the translated fall cases. That comparison remains open.
+
+**New field-level gap:** Native water-idle packets carry a vertical delta near -0.0223 at sampled eye height 103.4816.
+The direct route reports nearly the same position but carries a delta near -0.0996.
+Core reconstructs velocity with its air-gravity formula during fluid movement.
+The sampled water endpoints and absence of water-rise corrections do not verify this field's parity.
+Transport or derive the correct predicted motion in core, with client integration where the native prediction state is required.
+
+The recorder self-test checks unchanged packet bytes across compressed batches, RakNet encryption counters, and unencrypted NetherNet game batches.
+All recorder self-tests pass. The four selected journal and native-profile suites pass 38 tests.
+`bun run check` also passes. Raw packet journals and screenshots remain private.

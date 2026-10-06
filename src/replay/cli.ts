@@ -285,7 +285,6 @@ async function main(): Promise<void> {
   if (mode === "record" && input === "local") {
     target = option("--target")!;
     if (!/^(?:nethernet:\/\/)?127\.0\.0\.1:\d+$/.test(target ?? "")) throw new Error("Local recordings require --target 127.0.0.1:port or nethernet://127.0.0.1:port.");
-    if (target.startsWith("nethernet://") && client === "native") throw new Error("Native recording requires a RakNet target. Use --client proxy or addon for NetherNet.");
   } else if (mode === "record" && !target) throw new Error("Unknown server.");
   const jar = await artifact("viaproxy");
   await mkdir(privateRoot, { recursive: true, mode: 0o700 });
@@ -337,10 +336,12 @@ async function main(): Promise<void> {
         "--target-address", target!, "--target-version", "Bedrock 1.26.51", "--auth-method", mode === "record" && (input !== "local" || option("--account")) ? "ACCOUNT" : "NONE", "--minecraft-account-index", "0", "--log-ips", "false"], proxyHome, proxyLog);
       await ready(child, proxyLog, /ViaProxy started successfully/);
     } else if (client === "native") {
-      const separator = target!.lastIndexOf(":");
+      const netherNet = target!.startsWith("nethernet://");
+      const destination = netherNet ? target!.slice("nethernet://".length) : target!;
+      const separator = destination.lastIndexOf(":");
       const account = mode === "replay" || (input === "local" && !option("--account")) ? "offline" : resolve(option("--account") ?? process.env.STACKANVIL_BEDROCK_ACCOUNT ?? accountDefault);
       child = service("java", [`-Dlog4j2.configurationFile=${join(build, "log4j2.xml")}`, "-cp", `${classes}${delimiter}${jar}`,
-        "com.enderdash.agent.replay.NativeCaptureProxy", directory, String(bind), target!.slice(0, separator), target!.slice(separator + 1), account], directory, proxyLog);
+        "com.enderdash.agent.replay.NativeCaptureProxy", directory, String(bind), destination.slice(0, separator), destination.slice(separator + 1), account, ...(netherNet ? ["--nethernet"] : [])], directory, proxyLog);
       await ready(child, proxyLog, /StackAnvil native capture ready/);
     }
     const assetAccount = client === "addon" ? option("--account")

@@ -40,7 +40,7 @@ bun run server-replay record cubecraft --client addon --seconds 120
 bun run server-replay record local --target 127.0.0.1:19132 --client addon --seconds 120
 ```
 
-Direct and proxy recordings accept local HTTP signaling endpoints such as `nethernet://127.0.0.1:19182`.
+Direct, proxy, and native recordings accept local HTTP signaling endpoints such as `nethernet://127.0.0.1:19182`.
 Supply `--account` when the endpoint needs a signed operator identity.
 The private Fabric recorder captures packets before protocol translation and checks initialization and gameplay acknowledgments.
 Add-on recordings allow up to 20 minutes for setup, matching the licensed asset helper's existing download limit.
@@ -54,11 +54,17 @@ Prepare BedrockOnLinux through the capture lab, then use a Bedrock 1.26.51 insta
 ```bash
 bun run capture prepare-launcher
 bun run server-replay record hive --client native --seconds 120
+bun run server-replay record local --target nethernet://127.0.0.1:19182 --client native --seconds 120
 ```
 
 Use `--native-home /absolute/path/to/installation` to select another prepared installation. Its game and Proton directories must be inside that installation. The tool makes a separate private copy and runs it on the lab display. It does not operate the user's running client.
 
 The native client and saved MinecraftAuth account must belong to the same Xbox account. The relay verifies multiplayer tokens against the official issuer's published signing keys and binds native client properties to the authenticated client key. It preserves those properties and authenticates the upstream connection with a fresh session key. It records decrypted packets without translating gameplay. Pack reconstruction checks hashes and decrypts selected assets for replay. Missing bytes from a cached pack fail the capture. Pack parsing errors preserve the raw recording for offline repair. Success requires pack export to finish before shutdown.
+
+For NetherNet recordings, the relay connects to the HTTP signaling endpoint with the same authenticated session key.
+The native client connects to the relay over loopback RakNet. Gameplay packet bytes remain untranslated.
+NetherNet uses DTLS. The relay applies the Bedrock AES stream only to RakNet, matching the core transport behavior.
+Transport tests verify compressed batches on both backends and RakNet encryption counters.
 
 The launcher must pass its normal graphics safety checks. A failed native launch does not authorize changing those checks or joining Hive through ViaBedrock.
 
