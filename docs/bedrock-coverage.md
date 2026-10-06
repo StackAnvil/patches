@@ -4804,3 +4804,57 @@ Local completion timing, broader movement, both connection routes, and all eight
 The latest production CI passes build, tooling, and Ubuntu/Windows/macOS permission jobs.
 Actual Windows/macOS game joins remain unverified.
 Fresh native comparisons remain unavailable under the current-boot GPU guard.
+
+### Native replay turns, collision ownership, and frame clocks, October 6, 2026
+
+**Reference:** Native turn capture `0x14328d7d0` appends two floats to the retained input's turn vector.
+Actor-rotation capture `0x14328d9f0` stores current and previous body rotation with presence bit 4.
+Pre-application restores those rotations through `0x14328b620`.
+After movement, `0x14328c710` applies each retained turn in order.
+It clamps pitch to -90 through 90 degrees and wraps yaw to the interval from -180 through less than 180.
+It also maintains previous body rotation and updates head rotation when that component exists.
+Missing body rotation skips this turn phase.
+The [SDK rotation component](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/entity/components/ActorRotationComponent.h) supplies field names.
+Target executable bindings and instructions establish the behavior.
+
+**Verified within scope:** Exact native turn capture, rotation restoration, and turn application pass 1,280 cases with no mismatches.
+Cases include empty, single, and multiple turn lists, absent body or head components, angle boundaries, and randomized finite values.
+The fixture supplies existing ECS storage and preallocated turn-vector capacity.
+It substitutes cached view discovery and the CRT `fmodf` call with float32-rounded host `fmod`.
+It excludes vector growth, the separate spin callback, real allocation lifetime, full movement replay, and visible native-client behavior.
+
+**Collision ownership:** Capture `0x14328d670` stores `RewindCollisionShapesComponent` with presence bit 7.
+Move helper `0x141aa82d0` transfers both vector buffers into the retained input and clears the source pointers.
+It releases previous captured buffers before replacement.
+Collision application `0x14328cd90` uses copy kernel `0x14328db50` to restore into live component storage.
+The retained vectors remain available after that copy.
+The [SDK collision declaration](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/deps/vanilla_components/utilities/CollisionShapes.h) names shapes, block references, and the nearby-unloaded-chunk flag.
+Its layout agrees with the inspected target's two vectors of 24-byte entries and boolean.
+Block references require explicit lifetime handling in a port.
+
+**Verified within scope:** Exact native collision capture and application pass 256 cases with no mismatches.
+Cases vary both vector lengths, live vector lengths, the boolean, and fresh or reused captured storage.
+They verify transferred ownership, cleared source pointers, copied entries, vector ends, and preserved padding.
+They also record 256 prior-buffer release calls.
+The fixture supplies existing ECS storage and sufficient destination capacity.
+It substitutes cached view discovery, CRT memory copies, and releases of fixture buffers.
+Real allocator lifetime, capacity growth, block-reference validity, full collision simulation, and visuals remain unverified.
+
+**Frame-clock evidence:** The previous strict-BDS recordings contain 161 local metadata updates directly and 160 through ViaProxy.
+Full packet decoding includes compound tags and identifies the local actor from `StartGame`.
+All 159 direct and 158 proxy nonzero metadata ticks match input frames already sent in their recording.
+Each route also contains two zero-tick updates.
+Nonzero updates arrive zero to two input frames behind the latest sent frame.
+Thus, an update can arrive before the following frame required for historical comparison exists.
+The native future-correction queue remains necessary.
+
+Unique float-rounded X/Z positions match 194 direct and 208 proxy completed Java observations to input frames.
+All 402 sampled matches have equal Java-player and Bedrock input tick values.
+These samples exclude repeated positions and do not establish a universal clock mapping.
+Java 26.3 respawn constructs another `LocalPlayer`, while core retains its existing client-player entity and age.
+Production frame identity must account for player replacement, startup gaps, and both connection routes.
+
+**Incomplete:** Implement coherent frame identity, retained collision data, ordered authoritative corrections, and later-input simulation.
+Dispatcher system execution, additional state, local completion timing, and broader movement still need verification.
+The current production CI passes build, tooling, and Ubuntu/Windows/macOS permission jobs.
+Actual Windows/macOS game joins, native visual comparisons, and all eight coverage groups remain requirements.

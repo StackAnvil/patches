@@ -561,3 +561,16 @@ The fixture verifies presence handling and preserved padding with existing synth
 It substitutes cached view discovery and excludes allocation ownership, collision data, post-application, and full physics replay.
 The [input replay reference](../../../docs/bedrock-coverage.md#native-captured-inputs-and-movement-replay-october-6-2026) records function evidence and verification limits.
 Production frame correlation and later-input simulation remain incomplete.
+
+Further inspection verifies the native turn and collision phases independently.
+Exact turn capture, body-rotation restoration, and post-movement turn application pass 1,280 cases.
+Exact collision capture and application pass 256 cases with preallocated buffers.
+Native capture transfers collision-buffer ownership into history and clears the source pointers.
+Replay copies retained collision data back into live storage.
+The fixtures exclude real allocator lifetime, capacity growth, full movement simulation, and visible native-client behavior.
+
+Full metadata decoding of the existing strict-BDS recordings matches all 317 nonzero local update ticks to already-sent input frames.
+Updates can arrive before the following frame exists, so future correction handling remains necessary.
+Another 402 unique-position samples match completed Java observations to Bedrock input ticks.
+Startup, respawn, repeated positions, and broader server behavior still require explicit frame correlation.
+The [turn, collision, and clock reference](../../../docs/bedrock-coverage.md#native-replay-turns-collision-ownership-and-frame-clocks-october-6-2026) records the methods and verification limits.
