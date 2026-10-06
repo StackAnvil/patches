@@ -1,4 +1,4 @@
-From 23f8c3763c192bd1b3a8a762c87e647d542950ed Mon Sep 17 00:00:00 2001
+From c00ece033d1632cec970138dcbb9ef283e239276 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:53 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -237,30 +237,46 @@ random lifespan. Other clients and remote entities retain Java behavior.
 Core native arithmetic matches 8,732 controlled execution cases. Snapshot
 phase scheduling, speculative item prediction, correction replay, actual
 native flight trajectories and both live routes remain unverified.
+
+Receive core underwater movement snapshots on direct and ViaProxy sessions
+and clear them on disconnect or actor removal. Use the shared native
+acceleration and damping only for a swimming local player with a confirmed
+dolphin boost and a known authoritative underwater attribute. Preserve zero
+and do not substitute an inferred default speed for missing server state.
+
+Matching 1.26.51.1 callbacks 0x148b99e40, 0x14207c030 and 0x142dee630 establish
+boost admission, full Depth Strider scaling, sprint drag and unmodified
+water drag during boosts. The core kernels match all 6,992 speed/damping
+native cases exactly. The client supplies equipped enchantment and water
+trait observations; core owns calculation, authoritative state and wire
+format. Phase timing, trait mapping, speculative admission, correction
+replay and actual boosted trajectories on both routes remain unverified.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   4 +
  .../access/IBedrockPlayerPosture.java         |  14 ++
  .../mixin/features/movement/MixinAvatar.java  |  27 +++
  .../mixin/features/movement/MixinEntity.java  |  25 +--
  .../movement/MixinFireworkRocketEntity.java   |  28 +++
- .../features/movement/MixinLivingEntity.java  |  34 +++
+ .../features/movement/MixinLivingEntity.java  |  68 ++++++
  .../features/movement/MixinLocalPlayer.java   | 194 +++++++++++++++++-
  .../mixin/features/movement/MixinPlayer.java  |  55 +++--
- .../bedrock/input/BedrockMovementEffects.java |  43 ++++
+ .../bedrock/input/BedrockMovementEffects.java |  68 ++++++
  .../bedrock/input/MovementEffectPayload.java  |  24 +++
  .../input/PlayerPredictionPayload.java        |  24 +++
+ .../input/UnderwaterMovementPayload.java      |  24 +++
  .../bedrock/movement/BedrockFluidPhysics.java |  86 ++++++++
  .../movement/BedrockPlayerPosture.java        |  63 ++++++
  .../viafabricplus-bedrock.mixins.json         |   2 +
  .../movement/BedrockFluidPhysicsTest.java     | 121 +++++++++++
  .../movement/BedrockPlayerPostureTest.java    |  45 ++++
- 16 files changed, 748 insertions(+), 41 deletions(-)
+ 17 files changed, 831 insertions(+), 41 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinFireworkRocketEntity.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/MovementEffectPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/UnderwaterMovementPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPosture.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
@@ -439,10 +455,10 @@ index 0000000..b648ca3
 +
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-index 1c9125e..978b292 100644
+index 1c9125e..4bdd6cb 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-@@ -21,18 +21,27 @@
+@@ -21,18 +21,32 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -452,11 +468,16 @@ index 1c9125e..978b292 100644
 +import com.viaversion.viafabricplus.bedrock.input.BedrockMovementEffects;
 +import net.minecraft.client.player.LocalPlayer;
  import net.minecraft.core.Holder;
++import net.minecraft.core.registries.Registries;
  import net.minecraft.world.effect.MobEffect;
  import net.minecraft.world.effect.MobEffectInstance;
  import net.minecraft.world.effect.MobEffects;
++import net.minecraft.world.entity.EquipmentSlot;
  import net.minecraft.world.entity.LivingEntity;
++import net.minecraft.world.item.enchantment.EnchantmentHelper;
++import net.minecraft.world.item.enchantment.Enchantments;
  import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.model.DolphinBoostMovement;
 +import net.raphimc.viabedrock.api.model.GlideMovement;
 +import net.raphimc.viabedrock.protocol.model.Position3f;
  import org.jetbrains.annotations.Nullable;
@@ -470,10 +491,39 @@ index 1c9125e..978b292 100644
  import org.spongepowered.asm.mixin.injection.Redirect;
  import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  
-@@ -42,6 +51,31 @@ public abstract class MixinLivingEntity {
+@@ -42,6 +56,60 @@ public abstract class MixinLivingEntity {
      @Shadow
      public abstract @Nullable MobEffectInstance getEffect(final Holder<MobEffect> effect);
  
++    @Shadow
++    protected abstract float getWaterSlowDown();
++
++    @WrapOperation(method = "travelInWater", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;moveRelative(FLnet/minecraft/world/phys/Vec3;)V"))
++    private void applyDolphinBoostAcceleration(final LivingEntity entity, final float speed, final Vec3 input, final Operation<Void> original) {
++        if (entity instanceof LocalPlayer player && player.isSwimming() && BedrockInputPermissions.isBedrockConnection()
++                && BedrockMovementEffects.hasDolphinBoost(player.getId())) {
++            final Float underwaterSpeed = BedrockMovementEffects.underwaterSpeed(player.getId());
++            if (underwaterSpeed != null) {
++                final var depthStrider = player.level().registryAccess().lookupOrThrow(Registries.ENCHANTMENT).getOrThrow(Enchantments.DEPTH_STRIDER);
++                final int level = EnchantmentHelper.getItemEnchantmentLevel(depthStrider, player.getItemBySlot(EquipmentSlot.FEET));
++                original.call(entity, DolphinBoostMovement.acceleration(underwaterSpeed, level), input);
++                return;
++            }
++        }
++        original.call(entity, speed, input);
++    }
++
++    @WrapOperation(method = "travelInWater", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/phys/Vec3;multiply(DDD)Lnet/minecraft/world/phys/Vec3;"))
++    private Vec3 applyDolphinBoostDamping(final Vec3 motion, final double x, final double y, final double z, final Operation<Vec3> original) {
++        if ((Object) this instanceof LocalPlayer player && player.isSwimming() && BedrockInputPermissions.isBedrockConnection()
++                && BedrockMovementEffects.hasDolphinBoost(player.getId()) && BedrockMovementEffects.underwaterSpeed(player.getId()) != null) {
++            final Position3f result = DolphinBoostMovement.damp(new Position3f((float) motion.x, (float) motion.y, (float) motion.z),
++                    player.isSprinting(), this.getWaterSlowDown());
++            return new Vec3(result.x(), result.y(), result.z());
++        }
++        return original.call(motion, x, y, z);
++    }
++
 +    @Inject(method = "updateFallFlyingMovement", at = @At("HEAD"), cancellable = true)
 +    private void applyNativeGlideTravel(final Vec3 movement, final CallbackInfoReturnable<Vec3> cir) {
 +        if (!BedrockInputPermissions.isBedrockConnection() || !((Object) this instanceof LocalPlayer player)) {
@@ -829,10 +879,10 @@ index 49a37ac..9b2d80b 100644
          }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java
 new file mode 100644
-index 0000000..599d81e
+index 0000000..7c10b41
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,68 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -845,14 +895,20 @@ index 0000000..599d81e
 +import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 +import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 +import net.raphimc.viabedrock.api.model.MovementEffectTimeline;
++import org.jetbrains.annotations.Nullable;
++
++import java.util.HashMap;
++import java.util.Map;
 +
 +public final class BedrockMovementEffects {
 +    private static final MovementEffectTimeline TIMELINE = new MovementEffectTimeline();
++    private static final Map<Integer, Float> UNDERWATER_SPEEDS = new HashMap<>();
 +
 +    private BedrockMovementEffects() {}
 +
 +    public static void register() {
 +        PayloadTypeRegistry.clientboundPlay().register(MovementEffectPayload.TYPE, MovementEffectPayload.CODEC);
++        PayloadTypeRegistry.clientboundPlay().register(UnderwaterMovementPayload.TYPE, UnderwaterMovementPayload.CODEC);
 +        ClientPlayConnectionEvents.INIT.register((listener, client) ->
 +            ClientPlayNetworking.registerReceiver(MovementEffectPayload.TYPE,
 +                (payload, context) -> {
@@ -860,10 +916,21 @@ index 0000000..599d81e
 +                        TIMELINE.accept(payload.effect());
 +                    }
 +                }));
-+        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> TIMELINE.clear());
++        ClientPlayConnectionEvents.INIT.register((listener, client) ->
++            ClientPlayNetworking.registerReceiver(UnderwaterMovementPayload.TYPE,
++                (payload, context) -> {
++                    if (context.client().getConnection() == listener) {
++                        UNDERWATER_SPEEDS.put(payload.attribute().entityId(), payload.attribute().speed());
++                    }
++                }));
++        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> {
++            TIMELINE.clear();
++            UNDERWATER_SPEEDS.clear();
++        });
 +        ClientTickEvents.END_CLIENT_TICK.register(client -> {
 +            if (client.level != null) {
 +                TIMELINE.retainEntities(id -> client.level.getEntity(id) != null);
++                UNDERWATER_SPEEDS.keySet().removeIf(id -> client.level.getEntity(id) == null);
 +            }
 +        });
 +    }
@@ -874,6 +941,14 @@ index 0000000..599d81e
 +
 +    public static boolean hasGlideBoost(final int entityId) {
 +        return TIMELINE.hasGlideBoost(entityId);
++    }
++
++    public static boolean hasDolphinBoost(final int entityId) {
++        return TIMELINE.hasDolphinBoost(entityId);
++    }
++
++    public static @Nullable Float underwaterSpeed(final int entityId) {
++        return UNDERWATER_SPEEDS.get(entityId);
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/MovementEffectPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/MovementEffectPayload.java
@@ -933,6 +1008,36 @@ index 0000000..7b212c2
 +
 +    @Override
 +    public Type<PlayerPredictionPayload> type() {
++        return TYPE;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/UnderwaterMovementPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/UnderwaterMovementPayload.java
+new file mode 100644
+index 0000000..8c0bbbb
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/UnderwaterMovementPayload.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.UnderwaterMovementAttribute;
++
++public record UnderwaterMovementPayload(UnderwaterMovementAttribute attribute) implements CustomPacketPayload {
++    public static final Type<UnderwaterMovementPayload> TYPE = new Type<>(Identifier.parse(UnderwaterMovementAttribute.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, UnderwaterMovementPayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> UnderwaterMovementAttribute.TYPE.write(buffer, payload.attribute),
++            buffer -> new UnderwaterMovementPayload(UnderwaterMovementAttribute.TYPE.read(buffer)));
++
++    @Override
++    public Type<UnderwaterMovementPayload> type() {
 +        return TYPE;
 +    }
 +}

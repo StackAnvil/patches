@@ -5911,3 +5911,52 @@ Core checks pass with 691 tests passing and 19 optional skips.
 Add-on checks pass with 478 tests passing and 114 optional skips.
 Checkstyle passes for both stacks.
 These checks verify compilation and the named tests; live flight and correction replay remain unverified.
+
+### Confirmed dolphin boost and underwater attributes (October 6, 2026)
+
+**Implemented:** Core retains `minecraft:underwater_movement` and sends its clamped server value through a versioned client channel.
+Snapshots wait for PLAY, player spawn, and channel registration, including late registration through ViaProxy.
+Zero remains a valid speed. An absent attribute does not become an invented default.
+The add-on clears retained attributes on disconnect and removes entries for missing actors.
+
+The shared `DolphinBoostMovement` calculator supplies boosted acceleration and float damping.
+The add-on invokes it for a swimming local player with a confirmed dolphin effect and a known underwater attribute.
+It reads equipped Depth Strider and preserves the shared confirmation clock.
+Normal fluid travel and unknown attribute values retain their existing path.
+
+**Target evidence:** Build 1.26.51.1, protocol 2193 registers `DolphinBoostSystem::swimSpeedModifier` in `148b64570`.
+Admission callback `148b99e40` requires SWIMMING and a valid slot-one movement effect before setting multiplier two.
+Water-speed getter `14207c030` uses the underwater attribute and the full clamped Depth Strider fraction during a boost, including airborne frames.
+Its float formula is `underwaterSpeed * (fraction * 0.3F + 0.7F) * 2F`.
+Damping callback `142dee630` uses sprint drag `0.9F` or the water-slowdown component, with vertical drag `0.8F`.
+A boost bypasses ordinary Depth Strider drag interpolation.
+
+**Verified within scope:** Native admission passes 2,048 controlled cases.
+The production Java calculator matches all 6,992 native speed and damping cases exactly, including float sign bits.
+Fixtures supply ECS storage, attributes, enchantment lookup and maximum level, and plain-player traits.
+Native instructions perform admission, clamping, interpolation, multiplication, and damping.
+Targeted Java tests cover numeric regressions, independent effects, codec limits, pre-spawn retention, late channel registration, clamping, and explicit zero.
+
+An isolated strict BDS 1.26.51.1 synthetic probe reaches spawn and sends player underwater speed `0.02` in its initial attributes.
+The summoned dolphin's underwater speed is `0.15`.
+The probe receives 16 movement corrections and no dolphin confirmation.
+It establishes attribute delivery and does not establish dolphin movement parity.
+Owned processes stop after the probe; existing servers and the private display remain intact.
+
+**Incomplete:** Missing attribute defaults, speculative dolphin proximity, custom water-slowdown trait transport, native confirmation/history handling, correction replay, and geyser physics remain required.
+Native geyser callback `146655f00` depends on world and block queries; it cannot be replaced with a constant upward impulse.
+Ordinary water and lava calculations, currents, bubble columns, and the complete mixed movement/item matrix remain open.
+Ordinary Java clients retain core confirmations without the add-on physics.
+
+**Unverified:** Runtime phase scheduling, actual boost trajectories, collisions, late corrections, actor ID reuse, dimension changes, and live native/direct/ViaProxy comparisons remain required.
+Strict-BDS, Boar, CubeCraft, and actual platform joins remain part of the goal.
+The current-boot native GPU guard and occupied private display remain in place.
+All original coverage groups and the complete complex gameplay matrix remain required.
+
+The complete core and add-on stacks replay and build against the pinned ViaFabricPlus artifact.
+Core checks pass with 695 tests passing and 19 optional skips.
+Add-on checks pass with 478 tests passing and 114 optional skips.
+CubeConverter passes all 16 tests, and Checkstyle passes for both Java stacks.
+ViaProxy also builds and embeds the updated movement classes.
+The rebuilt production calculator still matches all 6,992 native speed/damping cases exactly.
+These checks establish the named calculations and transport tests; live boosted trajectories remain unverified.

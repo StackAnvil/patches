@@ -812,3 +812,30 @@ Core checks pass with 691 tests passing and 19 optional skips.
 Add-on checks pass with 478 tests passing and 114 optional skips.
 Checkstyle passes for both stacks.
 These checks verify compilation and the named tests; live flight and correction replay remain unverified.
+
+
+## Confirmed dolphin boost and authoritative underwater speed
+
+Core retains and transports `minecraft:underwater_movement` after PLAY, spawn, and channel registration.
+Late registration receives retained values, including through ViaProxy.
+The channel preserves clamping and zero without inventing a default for absent attributes.
+The add-on applies shared boosted acceleration and damping only to the swimming local player with a confirmed effect and a known attribute.
+
+Target 1.26.51.1 callbacks `148b99e40`, `14207c030`, and `142dee630` establish admission, full Depth Strider efficiency, and drag during boosts.
+Production Java matches all 6,992 native speed/damping cases exactly.
+Native admission passes 2,048 cases.
+Fixtures supply ECS storage, attribute and enchantment boundaries, and plain-player traits.
+Java tests exercise numeric regressions, independent effects, codec limits, pre-spawn retention, late registration, clamping, and zero.
+
+An isolated strict-BDS synthetic probe receives initial player underwater speed `0.02` but no dolphin confirmation.
+Its 16 corrections do not establish client trajectory parity.
+Custom drag traits, missing attribute defaults, speculative dolphin admission, confirmation/history handling, correction replay, geyser physics, and live route comparisons remain incomplete or unverified.
+The [coverage ledger](../../../docs/bedrock-coverage.md#confirmed-dolphin-boost-and-underwater-attributes-october-6-2026) retains the full goal and platform requirements.
+
+The complete core and add-on stacks replay and build against the pinned ViaFabricPlus artifact.
+Core checks pass with 695 tests passing and 19 optional skips.
+Add-on checks pass with 478 tests passing and 114 optional skips.
+CubeConverter passes all 16 tests, and Checkstyle passes for both Java stacks.
+ViaProxy also builds and embeds the updated movement classes.
+The rebuilt production calculator still matches all 6,992 native speed/damping cases exactly.
+These checks establish the named calculations and transport tests; live boosted trajectories remain unverified.

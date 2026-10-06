@@ -338,3 +338,28 @@ Core checks pass with 691 tests passing and 19 optional skips.
 Add-on checks pass with 478 tests passing and 114 optional skips.
 Checkstyle passes for both stacks.
 These checks verify compilation and the named tests; live flight and correction replay remain unverified.
+
+### Confirmed dolphin boost (October 6, 2026)
+
+**Implemented:** Core transports the authoritative underwater-speed attribute after spawn and channel registration.
+It preserves server clamping and zero without inventing missing values.
+The add-on applies shared native acceleration and damping when the local player swims with a confirmed dolphin effect and a known attribute.
+Both direct and ViaProxy use the same payload and confirmation clock.
+
+**Verified within scope:** Production speed and damping match all 6,992 controlled native execution cases exactly.
+Native admission passes another 2,048 cases.
+The target keeps full Depth Strider efficiency during boosted airborne frames and bypasses normal drag interpolation.
+An isolated strict-BDS synthetic probe confirms the initial player underwater attribute `0.02`.
+It receives corrections and no dolphin confirmation, so it does not establish boosted trajectory parity.
+The [coverage ledger](bedrock-coverage.md#confirmed-dolphin-boost-and-underwater-attributes-october-6-2026) records addresses, fixtures, transport tests, and limits.
+
+**Incomplete or unverified:** Live dolphin admission and trajectories, custom drag traits, unknown attribute defaults, native phase timing, correction replay, geysers, ordinary fluid travel, currents, and bubble columns remain required.
+All ranged weapons, potions, fireball cases, powder snow, combat, inventory, route, and platform requirements stay in the matrix.
+
+The complete core and add-on stacks replay and build against the pinned ViaFabricPlus artifact.
+Core checks pass with 695 tests passing and 19 optional skips.
+Add-on checks pass with 478 tests passing and 114 optional skips.
+CubeConverter passes all 16 tests, and Checkstyle passes for both Java stacks.
+ViaProxy also builds and embeds the updated movement classes.
+The rebuilt production calculator still matches all 6,992 native speed/damping cases exactly.
+These checks establish the named calculations and transport tests; live boosted trajectories remain unverified.
