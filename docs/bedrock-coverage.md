@@ -3918,3 +3918,32 @@ Other fluid levels, currents, lava, effects, vehicles, latency, and history repl
 There are no failures or errors; 135 tests skip environment-dependent fixtures.
 All 107 tooling tests, the three replay self-test suites, and `bun run check` pass.
 The previous main CI run completes successfully, including Linux, Windows, and macOS jobs.
+
+### Swimming re-entry observations, October 6, 2026
+
+**Implemented:** The private Fabric recorder samples local movement before `aiStep`, before input processing, and after physics.
+It records position, motion, pose, fluid state, eye height, and completed collision axes.
+It does not change input or physics.
+The observer stops after 18,000 samples and writes to the private recording directory.
+
+**Verified:** A direct strict-BDS recording completes with 6,030 samples across the three phases.
+At 35 degrees, Java detects submerged eyes one frame before its cached underwater state changes.
+The swimming update then uses that cached state and starts two frames before the saved native reference.
+At 45 degrees, the same cache sequence starts swimming one frame early.
+These observations identify the Java trigger; they do not establish the correct native trigger.
+
+A separate direct recording completes join and spawn with 1,816 auth-input frames.
+Its BDS script observer records 120 server frames without changing movement.
+The server reports a head offset of about 1.52 blocks while standing and 0.30 blocks while swimming.
+The [Script API](https://github.com/MicrosoftDocs/minecraft-creator/blob/main/creator/ScriptAPI/minecraft/server/Entity.md) defines `getHeadLocation()` as the entity head position.
+This server measurement does not establish the native client's head position or swimming start condition.
+Matching-build executable inspection distinguishes the head-in-water component from the swimming flag.
+
+**Incomplete:** The exact native swimming start condition and tick order still need verification.
+Do not infer a replacement eye height or add a fixed delay from these two trajectories.
+The native capture launcher currently requires a host reboot after an earlier GPU shutdown did not complete.
+Saved native captures, direct and ViaProxy tests, and executable research remain available.
+The existing surface-exit results and remaining correction gaps still apply.
+
+**Automated verification:** All 107 tooling tests, the three replay self-test suites, and `bun run check` pass.
+Live observer output has file mode `0600`.
