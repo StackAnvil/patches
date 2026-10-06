@@ -4101,6 +4101,54 @@ CI for the preceding main commit passes builds, tooling, permissions on Linux, W
 Runner checks do not establish game-join parity on those platforms.
 
 **Incomplete:** No fresh native combined swimming-and-jump capture establishes the complete input sequence yet.
-The head-in-water branch, exact native phases, dry jumps with residual blend, flying, other fluid conditions, and crawling need separate comparisons.
+The following section implements the head-in-water branch and records its narrower verification scope.
+Exact native phases, dry jumps with residual blend, flying, other fluid conditions, and crawling need separate comparisons.
 Initial blocked-surface corrections and prediction history replay remain unresolved.
 Real-server behavior and Windows/macOS game joins remain requirements.
+
+### Swimming jumps at the head-water boundary, October 6, 2026
+
+**Reference:** Matching Windows 1.26.51.1 executable inspection identifies the head-water condition in `MobJumpSystem`.
+Water rises stop when swimming is active and the head-water flag is absent.
+The fractional-blend condition remains independently active.
+The flag update queries the breathing point at interpolation zero and compares its height strictly with the water surface.
+
+The native water-depth calculation uses single-precision operations.
+Source and falling water reach the block top.
+Flowing depths one through seven subtract their depth divided by nine, with the native division and offset order.
+Java's source-water height would stop rising before the native boundary.
+
+**Implemented:** The add-on applies both head and blend conditions within the water and jumping gates.
+It uses the native surface calculation and the existing unmounted breathing-point integration.
+Core continues to validate completed frames and construct auth input on direct connections and ViaProxy.
+The changes belong to the existing add-on prediction patch.
+
+**Direct verification:** The previous short strict-BDS case receives three nonzero corrections in 47 held-jump swimming frames before reaching the wall.
+The revised case receives none in 48 frames and holds the accepted surface height.
+A separate 150-frame repeat reaches the pool wall without corrections during the held input.
+The release-and-jump case retains suppression while the blend decays and resumes rising at zero.
+The completed recording joins and spawns, with 3,016 auth-input frames, one zero-velocity fixture correction, and no nonzero corrections.
+
+Separate regressions match 64 saved native surface frames, 29 ordinary water-rise frames, and two initial dry-jump frames, without corrections.
+The surface comparison retains native swimming and sprint events.
+Maximum surface differences remain below 0.000031 blocks vertically, 0.000008 blocks horizontally, and 0.000000045 blocks per tick in motion.
+
+**ViaProxy verification:** Both the 48-frame surface case and 150-frame wall repeat receive no corrections during the held input.
+All short-case positions, motion values, and input flags match the direct route exactly.
+The release-and-jump blend gate also remains active.
+The same 64 native surface frames, 29 ordinary water-rise frames, and two initial dry-jump frames match without corrections.
+The completed recording joins and spawns, with 2,599 auth-input frames, four zero-velocity fixture corrections, and no nonzero corrections.
+
+**Automated verification:** The dependency build passes 16 converter, 636 core, and 610 add-on tests.
+There are no failures or errors; 135 environment-dependent tests skip.
+Two focused tests cover head and blend combinations and water-depth arithmetic at positive and negative world heights.
+`bun run check` passes.
+The full add-on patch stack replays successfully.
+The preceding main CI run passes the build, tooling, platform permissions, and native helpers on Linux, Windows, and both macOS architectures.
+Those runner checks do not establish game-join parity on Windows or macOS.
+
+**Incomplete:** A fresh native combined swimming-and-jump capture remains required.
+Player-specific breathing offsets, mounted geometry, exact system phases, and wall-climbing behavior need native comparison.
+Flowing and falling water, currents, waterlogged blocks, flying, and residual-blend dry jumps need live verification.
+The separate initial ceiling corrections and prediction history remain unresolved.
+Real-server interoperability and actual Windows/macOS game joins remain requirements.

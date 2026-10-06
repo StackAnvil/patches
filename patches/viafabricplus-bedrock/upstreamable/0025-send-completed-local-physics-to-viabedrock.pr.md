@@ -218,5 +218,43 @@ The dependency build passes 16 converter, 636 core, and 608 add-on tests, with n
 `bun run check` also passes.
 
 **Incomplete:** A fresh native capture with swimming and jump held together is still required.
-The native head-in-water branch, exact system phases, residual blend during dry jumps, flying, and other fluid conditions need separate verification.
+The following section implements and exercises the native head-water branch.
+Exact system phases, residual blend during dry jumps, flying, and other fluid conditions need separate verification.
 The initial blocked-surface corrections and prediction history remain unresolved.
+
+## Swimming jumps at the head-water boundary
+
+The matching Windows 1.26.51.1 executable identifies another `MobJumpSystem` condition.
+It suppresses water rises when swimming is active and `ActorHeadInWaterFlagComponent` is absent.
+The fractional-blend condition remains independently active.
+The head-water update uses the breathing-point query at interpolation zero and a strict comparison with the water surface.
+
+The native depth calculation uses single-precision division and subtraction.
+Source and falling water reach the block top; flowing depths one through seven subtract their depth divided by nine.
+Preserve the native operation order and strict boundary comparison.
+The Java source-fluid height would suppress rising before that boundary.
+Apply these conditions within the existing water and jumping gates.
+Core still owns completed-frame validation and auth-input construction on both connection routes.
+
+The previous short strict-BDS case receives three nonzero corrections in 47 held-jump swimming frames, before reaching the wall.
+The revised direct case receives none in 48 frames and remains at the server's accepted surface height.
+A separate 150-frame direct repeat reaches the pool wall without corrections during the held input.
+The release-and-jump case retains its blend suppression and resumes rising at zero.
+
+ViaProxy repeats both 48-frame and 150-frame cases without corrections during the held input.
+All 48 short-case positions, motion values, and input flags match the direct route exactly.
+It also preserves the release-and-jump blend gate and matches the same native surface, ordinary water-rise, and dry-jump regression frames.
+Both completed recordings join and spawn: 3,016 auth-input frames directly and 2,599 through ViaProxy.
+They receive one and four zero-velocity fixture corrections respectively, with no nonzero corrections.
+
+The direct regression also matches 64 saved native surface frames, 29 ordinary water-rise frames, and two initial dry-jump frames.
+Those cases receive no corrections.
+Two focused tests cover the head gate, blend combinations, and water-depth arithmetic at positive and negative world heights.
+The dependency build passes 16 converter, 636 core, and 610 add-on tests.
+There are no failures or errors; 135 environment-dependent tests skip.
+`bun run check` passes.
+
+**Incomplete:** A fresh native combined swimming-and-jump capture remains required.
+The implementation uses the existing unmounted breathing-point integration; player-specific offset overrides and mounted geometry need further comparison.
+Other water depths, falling water, currents, waterlogged blocks, exact system phases, and wall-climbing behavior need live native verification.
+The separate initial ceiling corrections and prediction history remain unresolved.
