@@ -1,17 +1,28 @@
-From 97948dec02b6edb08c4df89e3d028ac6e9a4db37 Mon Sep 17 00:00:00 2001
+From 42e81cc685a8663304e27fafe1ab9708d858bd48 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 12:27:00 +0200
-Subject: [PATCH] fix(entities): decode actor flag words as unsigned masks
+Subject: [PATCH] fix(entities): retain all three unsigned actor flag words
 
-Mask each retained Bedrock flag word to 64 bits before composing the two words. Signed bit 63 previously sign-extended into the upper word, inventing flags including the internal nametag depth flag. Preserve sparse updates independently and test both high bits and clearing.
+Mask each retained Bedrock flag word to 64 bits before composing the actor
+flags. Signed bit 63 must not invent flags in the following word. Retain
+sparse updates independently, including the third word at metadata ID 139.
+
+The 1.26.51.1 native client registers the same flag handler for IDs 0, 92
+and 139 in function 0x142a3f010. Its value reader 0x142a397a0 and merge
+kernel 0x142dea7a0 map them to consecutive 64-bit words. The third word
+contains uniform air drag, nameplate depth and inside-pickability flags.
+Keeping these flags is separate from implementing their client behavior.
+
+Exercise unsigned boundaries, third-word replacement and sparse clearing
+without protocol mappings or server fixtures.
 ---
- .../viabedrock/api/model/entity/Entity.java   |  6 ++-
- .../api/model/entity/EntityFlagsTest.java     | 41 +++++++++++++++++++
- 2 files changed, 45 insertions(+), 2 deletions(-)
+ .../viabedrock/api/model/entity/Entity.java   |  9 ++-
+ .../api/model/entity/EntityFlagsTest.java     | 65 +++++++++++++++++++
+ 2 files changed, 72 insertions(+), 2 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/EntityFlagsTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index 0fb3e14ef..8ee334efd 100644
+index 0fb3e14ef..830fc8d36 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 @@ -47,6 +47,8 @@ import java.util.logging.Level;
@@ -23,7 +34,7 @@ index 0fb3e14ef..8ee334efd 100644
      protected final UserConnection user;
      protected final long uniqueId;
      protected final long runtimeId;
-@@ -252,10 +254,10 @@ public class Entity {
+@@ -252,10 +254,13 @@ public class Entity {
      public Set<ActorFlags> entityFlags() {
          BigInteger combinedFlags = BigInteger.ZERO;
          if (this.entityData.containsKey(ActorDataIds.RESERVED_0)) {
@@ -33,15 +44,18 @@ index 0fb3e14ef..8ee334efd 100644
          if (this.entityData.containsKey(ActorDataIds.RESERVED_092)) {
 -            combinedFlags = combinedFlags.add(BigInteger.valueOf(this.entityData.get(ActorDataIds.RESERVED_092).<Long>value().longValue()).shiftLeft(64));
 +            combinedFlags = combinedFlags.or(BigInteger.valueOf(this.entityData.get(ActorDataIds.RESERVED_092).<Long>value()).and(UNSIGNED_LONG_MASK).shiftLeft(Long.SIZE));
++        }
++        if (this.entityData.containsKey(ActorDataIds.RESERVED_139)) {
++            combinedFlags = combinedFlags.or(BigInteger.valueOf(this.entityData.get(ActorDataIds.RESERVED_139).<Long>value()).and(UNSIGNED_LONG_MASK).shiftLeft(Long.SIZE * 2));
          }
          return EnumUtil.getEnumSetFromBitmask(ActorFlags.class, combinedFlags, ActorFlags::getValue);
      }
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/EntityFlagsTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/EntityFlagsTest.java
 new file mode 100644
-index 000000000..c4e972568
+index 000000000..982e09e4c
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/entity/EntityFlagsTest.java
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,65 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -75,6 +89,30 @@ index 000000000..c4e972568
 +        put(actor, ActorDataIds.RESERVED_092, 1L);
 +        assertEquals(Set.of(ActorFlags.LAYING_DOWN), actor.entityFlags());
 +        put(actor, ActorDataIds.RESERVED_092, 0L);
++        assertTrue(actor.entityFlags().isEmpty());
++    }
++
++    @Test
++    void retainsTheThirdWordIndependentlyAcrossSparseUpdates() {
++        final Entity actor = new Entity(null, 1, 1, "minecraft:test", 1, UUID.randomUUID(), EntityTypes26_3.INTERACTION);
++        put(actor, ActorDataIds.RESERVED_139, 7L);
++        assertEquals(Set.of(ActorFlags.USES_UNIFORM_AIR_DRAG, ActorFlags.NAMEPLATE_DEPTH_TESTED,
++                ActorFlags.NOT_PICKABLE_FROM_INSIDE), actor.entityFlags());
++        put(actor, ActorDataIds.RESERVED_0, Long.MIN_VALUE);
++        put(actor, ActorDataIds.RESERVED_092, Long.MIN_VALUE);
++        assertEquals(Set.of(ActorFlags.EATING, ActorFlags.USES_LEGACY_FRICTION,
++                ActorFlags.USES_UNIFORM_AIR_DRAG, ActorFlags.NAMEPLATE_DEPTH_TESTED,
++                ActorFlags.NOT_PICKABLE_FROM_INSIDE), actor.entityFlags());
++        put(actor, ActorDataIds.RESERVED_139, 1L);
++        assertEquals(Set.of(ActorFlags.EATING, ActorFlags.USES_LEGACY_FRICTION,
++                ActorFlags.USES_UNIFORM_AIR_DRAG), actor.entityFlags());
++        put(actor, ActorDataIds.RESERVED_139, Long.MIN_VALUE | 4L);
++        assertEquals(Set.of(ActorFlags.EATING, ActorFlags.USES_LEGACY_FRICTION,
++                ActorFlags.NOT_PICKABLE_FROM_INSIDE), actor.entityFlags());
++        put(actor, ActorDataIds.RESERVED_0, 0L);
++        put(actor, ActorDataIds.RESERVED_092, 0L);
++        assertEquals(Set.of(ActorFlags.NOT_PICKABLE_FROM_INSIDE), actor.entityFlags());
++        put(actor, ActorDataIds.RESERVED_139, 0L);
 +        assertTrue(actor.entityFlags().isEmpty());
 +    }
 +

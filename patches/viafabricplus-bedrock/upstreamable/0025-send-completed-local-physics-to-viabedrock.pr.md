@@ -344,3 +344,24 @@ The 48-frame held swimming-jump case matches the preceding accepted reference ex
 ViaProxy matches another 192 saved native open-water frames without corrections.
 Its held swimming-jump case receives no corrections; the first 48 of 49 frames match the direct reference exactly.
 Both routes still require fresh native ceiling and combined swimming-jump captures.
+
+### Native water contact and input scaling
+
+The matching 1.26.51.1 calculator at `0x1404495e0` bypasses posture slowdown during flight, swimming, or water contact.
+Adapter `0x14669d7d0` identifies the water argument as `WasInWaterFlagComponent`.
+The add-on uses core's shared decision and samples water contact before input.
+Revision 5 transports that sample with the completed motion and posture.
+Core can construct the same move vector on direct connections and through ViaProxy.
+The first crawl-to-water frame now bypasses slowdown before the posture trigger changes its flags.
+Swift Sneak, item-use slowdown, authoritative history replay, and fresh native ceiling comparisons remain separate requirements.
+
+Verification after the water-contact change passes all four project builds and both complete patch stacks.
+The build passes 16 converter, 651 core, and 584 add-on test cases, with 133 skips and no failures or errors.
+`bun run check` passes.
+Both strict-BDS routes complete the 35-degree and 45-degree ceiling cases without corrections.
+Both held-sneak swimming cases also receive no corrections.
+All 302 comparable frames across the five cases match the direct route exactly in position, motion, and input flags.
+Each route matches 64 saved native open-water frames without event mismatches.
+Both 48-frame held swimming-jump cases match the preceding accepted reference exactly.
+Fixture teleports produce one zero-velocity correction directly and two through ViaProxy, outside the movement cases.
+Fresh native ceiling comparisons and broader movement verification remain requirements.

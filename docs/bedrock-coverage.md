@@ -4300,3 +4300,45 @@ All 15 bundled-loader, image-provider, and tint-mask cases pass without skips.
 These include real resource loading, default emote sampling, and native image resolution without account state.
 The tooling suite passes 110 tests, and the first upstream patch still applies to the pinned base.
 A new live server join with the bundled build remains unverified.
+
+### Native water input and the third actor flag word, October 6, 2026
+
+**Reference:** Matching 1.26.51.1 executable inspection identifies the native input calculator at `0x1404495e0`.
+It bypasses posture slowdown during flight, previous swimming, or water contact before input.
+Caller adapter `0x14669d7d0` identifies the water argument as `WasInWaterFlagComponent`.
+The request writer at `0x148b58fe0` copies the processed movement coordinates.
+
+**Implemented:** Core holds the shared input decision in `PlayerPosture.slowsMovementInput`.
+The add-on samples water contact before input and uses the same decision for local physics.
+Revision 5 carries the sample through direct connections and ViaProxy.
+Core applies the water bypass before the crawl-to-swim posture transition.
+Codec tests cover all 128 flag combinations and reject incompatible revisions and unknown bits.
+
+**Actor flags:** Native registration function `0x142a3f010` assigns one flag handler to metadata IDs 0, 92, and 139.
+Core now retains all three unsigned words, with independent sparse updates and clearing.
+The third word contains uniform air drag, nameplate depth, and inside-pickability flags.
+Their physics, rendering, and interaction behavior remain separate requirements.
+
+**Direct verification:** The 35-degree and 45-degree strict-BDS ceiling cases each complete 64 forward frames without corrections.
+Both re-entry frames use full forward input, restart sprinting, start swimming, and stop crawling in the same frame.
+The 64-frame swimming case with held sneak also receives no corrections.
+The open-water case matches 64 saved native frames without event mismatches or corrections.
+Its maximum position difference is less than `0.000008` blocks.
+The 48-frame held swimming-jump case matches the preceding accepted reference exactly in position, motion, and input flags.
+The recording contains one zero-velocity fixture correction outside those cases.
+
+**ViaProxy verification:** The 45-degree ceiling case completes 64 forward frames, and the 35-degree case completes 63, without corrections.
+The swimming case with held sneak completes another 63 frames without corrections.
+The open-water case matches 64 saved native frames with the same small float differences as the direct route.
+The 48-frame held swimming-jump case matches the direct reference exactly.
+All 302 comparable frames across the five cases match the direct route exactly in position, motion, and input flags.
+The recording contains two zero-velocity fixture corrections outside those cases.
+
+**Build verification:** All four projects build, and both patch stacks replay successfully.
+The build passes 16 converter, 651 core, and 584 add-on test cases, with 133 skips and no failures or errors.
+`bun run check` passes.
+
+**Incomplete:** Swift Sneak scalars, item-use slowdown, native history replay, and fresh native ceiling comparisons remain requirements.
+The current-boot native GPU guard still prevents a fresh native launch.
+Passing strict BDS does not establish full native movement parity.
+Broader movement, real-server, and Windows/macOS game-join requirements remain open.

@@ -1,4 +1,4 @@
-From b0206d3a422615e05cfae131ff699c65aa684565 Mon Sep 17 00:00:00 2001
+From af445d650c0d8d4493fa3ef241894266fead840c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:53 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -58,16 +58,15 @@ the breathing point is outside liquid, rather than applying a fitted
 look-Y cutoff of 0.55. Preserve swimming when the standing-space probe
 is blocked, as the native swimming trigger does.
 
-Strict-BDS ceiling tests expose an additional sprint and fluid-state
-transition gap. The revised path settles at the server's capped surface
-after two direct corrections or three ViaProxy corrections instead of
-repeatedly changing pose and receiving 22 direct corrections. Keep that
-remaining transition gap explicit; the native open-water comparison still
-covers separate unobstructed cases.
+Ceiling re-entry requires the native water-contact input bypass described
+below. The revised strict-BDS cases pass without corrections on both
+routes. Metadata tick handling and history resimulation remain separate
+incomplete requirements. Native open-water captures cover the separate
+unobstructed cases.
 
 Sample ground-jump impulses from the local jumpFromGround method in the
 same completed physics frame. Reset the observation before aiStep and
-carry it over the negotiated revision-three prediction channel. Core
+carry it over the negotiated revision-five prediction channel. Core
 constructs StartJumping from that observation on direct and ViaProxy
 connections. Liquid-rise input does not imply a ground-jump impulse.
 
@@ -113,10 +112,9 @@ Matching 1.26.51.1 executable inspection establishes the required view
 component. Strict-BDS direct and ViaProxy cases now retain the accepted
 first air-frame motion at both 35 and 45 degrees. Saved unobstructed
 native surface frames and the held swimming jump remain unchanged.
-Ceiling re-entry still receives two corrections per tested angle on
-both routes. Packet and local-frame evidence identifies server actor
-metadata clearing the predicted swimming state; metadata tick handling
-and reconciliation remain separate incomplete requirements.
+The water-contact input bypass below also removes the ceiling re-entry
+corrections on both routes. Server actor metadata still requires tick-aware
+history reconciliation for broader prediction parity.
 
 Retain the core crawling pose when Java recalculates the local player pose each tick. Strict BDS 1.26.51.1 clears SWIMMING while setting CRAWLING under a ceiling and retains its 0.6-block body. Use the existing native actor state channel for both direct and ViaProxy connections. Do not change the swimming flag or overwrite sleeping, gliding or spin attack poses. Core supplies the pose for remote players, whose Java updatePlayerPose method is empty.
 
@@ -127,7 +125,7 @@ SneakTriggerIntentSystem switches swimming into crawling when body water
 ends under a ceiling, then restores swimming on water entry. Keep the
 local crawling state independent from delayed actor snapshot arrival.
 
-Send the three completed posture flags on core's revision-four channel.
+Send the three completed posture flags on core's revision-five channel.
 Core emits crawling/swimming edges and distinguishes physical sneak from
 forced crouching. Preserve input scaling before this frame's posture
 change and native block-space probes during Java pose selection. Keep
@@ -137,21 +135,27 @@ This follows private inspection of the pinned 1.26.51.1 executable's
 SneakTriggerIntentSystem, PlayerBoundingBoxStateUpdateSystem and MoveInput
 function. Metadata history rewind, native breathing offsets, other input
 controllers and broader posture conditions still require verification.
+
+Use core's prior-posture input scaling decision in local physics. Matching
+1.26.51.1 calculator 0x1404495e0 and adapter 0x14669d7d0 bypass sneak/crawl
+slowdown during flight, previous SWIMMING, or WasInWaterFlagComponent.
+Sample water contact before input and carry it in the revision-5 frame so
+core emits the same move vector, including initial crawl-to-water input.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
  .../access/IBedrockPlayerPosture.java         |  14 ++
  .../mixin/features/movement/MixinAvatar.java  |  27 ++++
  .../mixin/features/movement/MixinEntity.java  |  25 +---
  .../features/movement/MixinLivingEntity.java  |   7 +
- .../features/movement/MixinLocalPlayer.java   | 125 +++++++++++++++++-
+ .../features/movement/MixinLocalPlayer.java   | 130 +++++++++++++++++-
  .../mixin/features/movement/MixinPlayer.java  |  55 +++++---
  .../input/PlayerPredictionPayload.java        |  24 ++++
  .../bedrock/movement/BedrockFluidPhysics.java |  86 ++++++++++++
  .../movement/BedrockPlayerPosture.java        |  63 +++++++++
  .../viafabricplus-bedrock.mixins.json         |   1 +
- .../movement/BedrockFluidPhysicsTest.java     | 121 +++++++++++++++++
- .../movement/BedrockPlayerPostureTest.java    |  45 +++++++
- 13 files changed, 554 insertions(+), 41 deletions(-)
+ .../movement/BedrockFluidPhysicsTest.java     | 121 ++++++++++++++++
+ .../movement/BedrockPlayerPostureTest.java    |  45 ++++++
+ 13 files changed, 559 insertions(+), 41 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java
@@ -323,10 +327,10 @@ index 1c9125e..a06c283 100644
      private boolean changeFluidGravityCondition(final LivingEntity instance) {
          return BedrockInputPermissions.isBedrockConnection() ? instance.isSwimming() : instance.isSprinting();
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-index e5a8167..5ea04b2 100644
+index e5a8167..aa53e44 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-@@ -21,22 +21,143 @@
+@@ -21,22 +21,148 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -367,6 +371,9 @@ index e5a8167..5ea04b2 100644
 +    private boolean viaFabricPlusBedrock$wasSwimming;
 +
 +    @Unique
++    private boolean viaFabricPlusBedrock$inputInWater;
++
++    @Unique
 +    private boolean viaFabricPlusBedrock$groundJump;
 +
 +    @Unique
@@ -391,6 +398,7 @@ index e5a8167..5ea04b2 100644
 +    @Inject(method = "aiStep", at = @At("HEAD"))
 +    private void rememberPreviousSwimming(final CallbackInfo ci) {
 +        this.viaFabricPlusBedrock$wasSwimming = this.isSwimming();
++        this.viaFabricPlusBedrock$inputInWater = this.isInWater();
 +        this.viaFabricPlusBedrock$groundJump = false;
 +    }
 +
@@ -404,8 +412,8 @@ index e5a8167..5ea04b2 100644
 +    private boolean usePreviousNativePostureForInput(final boolean movingSlowly) {
 +        // MoveInput scales input before this frame's posture trigger runs.
 +        return BedrockInputPermissions.isBedrockConnection()
-+                ? !this.getAbilities().flying && (this.input.keyPresses.shift()
-+                        || this.viaFabricPlusBedrock$posture.sneaking() || this.viaFabricPlusBedrock$posture.crawling())
++                ? this.viaFabricPlusBedrock$posture.slowsMovementInput(this.input.keyPresses.shift(), this.getAbilities().flying,
++                        this.viaFabricPlusBedrock$inputInWater)
 +                : movingSlowly;
 +    }
 +
@@ -459,7 +467,8 @@ index e5a8167..5ea04b2 100644
 +        ClientPlayNetworking.send(new PlayerPredictionPayload(new PlayerPrediction(
 +                new Position3f((float) player.getX(), (float) player.getY(), (float) player.getZ()),
 +                new Position3f((float) motion.x, (float) motion.y, (float) motion.z),
-+                this.viaFabricPlusBedrock$posture, player.horizontalCollision, player.verticalCollision, this.viaFabricPlusBedrock$groundJump)));
++                this.viaFabricPlusBedrock$posture, player.horizontalCollision, player.verticalCollision, this.viaFabricPlusBedrock$groundJump,
++                this.viaFabricPlusBedrock$inputInWater)));
 +    }
  
      @Shadow

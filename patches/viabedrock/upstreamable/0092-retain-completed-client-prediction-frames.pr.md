@@ -149,3 +149,31 @@ Open-water comparisons and held swimming-jump regressions remain within the prec
 ViaProxy can receive a further correction while an earlier correction is in transit.
 Server-tick history, authoritative flag reconciliation, and resimulation remain requirements.
 Fresh native ceiling captures remain required; these tests do not establish full movement parity.
+
+## Native water contact and input scaling
+
+The matching 1.26.51.1 input calculator at `0x1404495e0` bypasses posture input slowdown during flight, swimming, or water contact.
+Its caller adapter at `0x14669d7d0` identifies the water argument as `WasInWaterFlagComponent`.
+The optional scalar comes from `SneakingComponent`.
+The request writer at `0x148b58fe0` copies the processed movement coordinates.
+
+Core exposes the bypass as `PlayerPosture.slowsMovementInput`.
+The add-on samples water contact before input.
+Revision 5 carries that contact through `viabedrock:player_prediction_v5`, keeping packet construction aligned with client physics.
+The water bypass applies on the first crawl-to-water frame, before the posture trigger clears crawling.
+Earlier prediction channels remain incompatible and cannot send completed frames to the new channel.
+
+Tests cover physical sneak, forced sneak, crawling, all three bypasses, and the water re-entry boundary.
+The codec covers all 128 flag combinations and rejects incompatible revisions, protocols, non-finite vectors, and unknown bits.
+Swift Sneak scalars, item-use slowdown, and server-tick history remain separate requirements.
+
+Verification after the water-contact change passes all four project builds and both complete patch stacks.
+The build passes 16 converter, 651 core, and 584 add-on test cases, with 133 skips and no failures or errors.
+`bun run check` passes.
+Both strict-BDS routes complete the 35-degree and 45-degree ceiling cases without corrections.
+Both held-sneak swimming cases also receive no corrections.
+All 302 comparable frames across the five cases match the direct route exactly in position, motion, and input flags.
+Each route matches 64 saved native open-water frames without event mismatches.
+Both 48-frame held swimming-jump cases match the preceding accepted reference exactly.
+Fixture teleports produce one zero-velocity correction directly and two through ViaProxy, outside the movement cases.
+Fresh native ceiling comparisons and broader movement verification remain requirements.
