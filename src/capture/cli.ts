@@ -9,17 +9,18 @@ import { Effect } from "effect";
 import { root } from "../model.ts";
 import { displayEnv } from "../lab/display.ts";
 import { captureUiEnvironment } from "./ui-environment.ts";
+import { createCaptureUi, type Client } from "./ui.ts";
 
 const execute = promisify(execFile);
 const uiEnvironment = captureUiEnvironment(() => displayEnv(), process.env);
 const captureRoot = join(root, ".stackanvil", "captures");
 const currentPath = join(captureRoot, "current.json");
 const caDirectory = join(captureRoot, "ca");
-const nativeSource = join(root, "native", "capture-x11.c");
 const nativeBinary = join(root, ".stackanvil", "tools", "capture-x11");
-const gnomeRemote = join(root, "scripts", "gnome_remote.py");
 const mitmdump = Bun.which("mitmdump") ?? join(root, ".stackanvil", "tools", "mitmproxy", "bin", "mitmdump");
 const launcher = process.env.BEDROCK_LAUNCHER ?? Bun.which("bedrock-on-linux") ?? join(homedir(), "AppImages", "bedrockonlinux.appimage");
+const ui = createCaptureUi({ captureDirectory: async () => capturePath((await load()).id), environment: uiEnvironment });
+const { windows, chosenWindow, screenshot, click, key, buttonHold, typeText } = ui;
 const extractedLauncher = join(root, ".stackanvil", "tools", "bedrock-on-linux");
 
 async function muteBedrockSettings(): Promise<void> {
@@ -48,15 +49,6 @@ interface Session {
   stoppedAt?: string;
 }
 
-interface WindowInfo {
-  id: string;
-  title: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
 type Step =
   | { action: "mark"; label: string }
   | { action: "wait"; ms: number }
@@ -71,7 +63,6 @@ type Step =
   | { action: "keyHold"; key: string; ms: number }
   | { action: "videoStart"; name: string; fps?: number }
   | { action: "videoStop" };
-type Client = "bedrock" | "java";
 
 const capturePath = (id: string) => join(captureRoot, id);
 const sessionFile = (id: string) => join(capturePath(id), "session.json");
@@ -327,126 +318,6 @@ async function stopGame(): Promise<void> {
   console.log("Stopped the captured Bedrock client.");
 }
 
-async function compileUi(): Promise<void> {
-  if (!(await uiEnvironment()).DISPLAY) throw new Error("Set DISPLAY to the game's X display.");
-  await mkdir(join(root, ".stackanvil", "tools"), { recursive: true });
-  if (!existsSync(nativeBinary) || statSync(nativeBinary).mtimeMs < statSync(nativeSource).mtimeMs) {
-    await run("cc", ["-O2", "-Wall", "-Wextra", "-o", nativeBinary, nativeSource, "-lX11", "-lXtst"]);
-  }
-}
-
-async function windows(): Promise<WindowInfo[]> {
-  await compileUi();
-  return JSON.parse(await run(nativeBinary, ["list"], root, await uiEnvironment())) as WindowInfo[];
-}
-
-async function chosenWindow(id?: string, client: Client = "bedrock"): Promise<WindowInfo> {
-  const available = await windows();
-  if (id) {
-    const chosen = available.find((window) => window.id === id);
-    if (chosen) return chosen;
-    throw new Error(`Window ${id} is not visible. Run bun run capture ui list.`);
-  }
-  const matches = available.filter((window) => client === "bedrock"
-    ? /^minecraft(?: for windows| bedrock)?$/i.test(window.title)
-    : /^minecraft\*?\s/i.test(window.title));
-  if (matches.length === 1) return matches[0]!;
-  throw new Error(`Select the ${client} window with --window-id <id>. Run bun run capture ui list.`);
-}
-
-async function screenshot(name: string, windowId?: string, client?: Client, outputDir?: string): Promise<string> {
-  checkId(name);
-  const window = await chosenWindow(windowId, client);
-  const directory = outputDir ? resolve(outputDir) : capturePath((await load()).id);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const imagePath = join(directory, `${name}.png`);
-  const ppmPath = join(directory, `${name}.ppm`);
-  try {
-    await run(nativeBinary, ["screenshot", window.id, ppmPath], root, await uiEnvironment());
-    await run("ffmpeg", ["-loglevel", "error", "-y", "-i", ppmPath, imagePath]);
-  } finally {
-    await rm(ppmPath, { force: true });
-  }
-  console.log(imagePath);
-  return imagePath;
-}
-
-async function pixel(x: number, y: number, windowId?: string, client?: Client): Promise<string> {
-  if (![x, y].every((value) => Number.isFinite(value) && value >= 0 && value <= 1)) {
-    throw new Error("Pixel coordinates must be ratios between 0 and 1.");
-  }
-  const window = await chosenWindow(windowId, client);
-  const localX = Math.floor(x * (window.width - 1));
-  const localY = Math.floor(y * (window.height - 1));
-  return run(nativeBinary, ["pixel", window.id, String(localX), String(localY)], root, await uiEnvironment());
-}
-
-async function click(x: number, y: number, windowId?: string, client?: Client, allowFocus = false,
-  button: "left" | "right" = "left", durationMs?: number, doubleClick = false): Promise<void> {
-  if (![x, y].every((value) => Number.isFinite(value) && value >= 0 && value <= 1)) {
-    throw new Error("Click coordinates must be ratios between 0 and 1.");
-  }
-  const window = await chosenWindow(windowId, client);
-  const localX = Math.floor(x * (window.width - 1));
-  const localY = Math.floor(y * (window.height - 1));
-  const env = await uiEnvironment();
-  const isolated = env.STACKANVIL_UI_ISOLATED === "1";
-  if (!isolated && !allowFocus) throw new Error("Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.");
-  await run(nativeBinary, ["focus", window.id], root, env);
-  if (!isolated && process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes("gnome")) {
-    if (button !== "left" || durationMs !== undefined || doubleClick) {
-      throw new Error("Right clicks, double clicks, and mouse holds require the private display on GNOME Wayland.");
-    }
-    await run("python3", [gnomeRemote, nativeBinary, "click", String(window.x + localX), String(window.y + localY)]);
-  } else {
-    await run(nativeBinary, durationMs === undefined
-      ? [doubleClick ? "double-click" : "click", window.id, String(localX), String(localY), button]
-      : ["mouse-hold", window.id, String(localX), String(localY), button, String(durationMs)], root, env);
-  }
-}
-
-async function key(name: string, windowId?: string, client?: Client, allowFocus = false,
-  durationMs?: number, doubleTap = false): Promise<void> {
-  if (!/^[A-Za-z0-9_+]{1,32}$/.test(name)) throw new Error("Use a key name such as Escape, Return, Tab, or Control+b.");
-  const window = await chosenWindow(windowId, client);
-  const env = await uiEnvironment();
-  const isolated = env.STACKANVIL_UI_ISOLATED === "1";
-  if (!isolated && !allowFocus) throw new Error("Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.");
-  await run(nativeBinary, ["focus", window.id], root, env);
-  if (!isolated && process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes("gnome")) {
-    if (doubleTap) throw new Error("Double key presses require the private display on GNOME Wayland.");
-    if (durationMs !== undefined) throw new Error("Key holds require the private display on GNOME Wayland.");
-    await run("python3", [gnomeRemote, nativeBinary, "key", name]);
-  } else {
-    await run(nativeBinary, durationMs === undefined
-      ? [doubleTap ? "double-key" : "key", window.id, name]
-      : ["key-hold", window.id, name, String(durationMs)], root, env);
-  }
-}
-
-async function buttonHold(button: "left" | "right", durationMs: number, windowId?: string, client?: Client,
-  allowFocus = false): Promise<void> {
-  if (!Number.isInteger(durationMs) || durationMs < 1 || durationMs > 10_000) throw new Error("Button hold must be 1 to 10000 ms.");
-  const window = await chosenWindow(windowId, client);
-  const env = await uiEnvironment();
-  const isolated = env.STACKANVIL_UI_ISOLATED === "1";
-  if (!isolated && !allowFocus) throw new Error("Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.");
-  if (!isolated && process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes("gnome")) {
-    throw new Error("Button holds require the private display on GNOME Wayland.");
-  }
-  await run(nativeBinary, ["focus", window.id], root, env);
-  await run(nativeBinary, ["button-hold", window.id, button, String(durationMs)], root, env);
-}
-
-async function typeText(value: string, windowId?: string, client?: Client, allowFocus = false): Promise<void> {
-  if (!/^[a-z0-9 .-]{1,120}$/.test(value)) throw new Error("Text must contain 1 to 120 lowercase ASCII letters, digits, spaces, periods, or hyphens.");
-  const window = await chosenWindow(windowId, client);
-  const env = await uiEnvironment();
-  const isolated = env.STACKANVIL_UI_ISOLATED === "1";
-  if (!isolated && !allowFocus) throw new Error("Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.");
-  await run(nativeBinary, ["type", window.id, value], root, env);
-}
-
 async function scenario(file: string, windowId?: string, client: Client = "bedrock", allowFocus = false): Promise<void> {
   const path = resolve(root, file);
   const recipe = JSON.parse(await readFile(path, "utf8")) as { name: string; steps: Step[] };
@@ -459,7 +330,7 @@ async function scenario(file: string, windowId?: string, client: Client = "bedro
         if (!Number.isInteger(step.ms) || step.ms < 0 || step.ms > 120_000) throw new Error("Wait must be 0 to 120000 ms.");
         await Bun.sleep(step.ms);
         break;
-      case "screenshot": await screenshot(step.name, windowId, client); break;
+      case "screenshot": console.log(await screenshot(step.name, windowId, client)); break;
       case "click": await click(step.x, step.y, windowId, client, allowFocus, step.button); break;
       case "doubleClick": await click(step.x, step.y, windowId, client, allowFocus, step.button, undefined, true); break;
       case "mouseHold": await click(step.x, step.y, windowId, client, allowFocus, step.button, step.ms); break;
@@ -586,46 +457,16 @@ async function main(): Promise<void> {
       throw new Error("Usage: bun run capture video <start name|stop|compare before after> [--client bedrock|java] [--fps 1..120]");
     }
     case "ui": {
-      const [action, ...input] = args;
-      const windowId = input.indexOf("--window-id") >= 0 ? input[input.indexOf("--window-id") + 1] : undefined;
-      const clientInput = input.indexOf("--client") >= 0 ? input[input.indexOf("--client") + 1] : "bedrock";
-      if (clientInput !== "bedrock" && clientInput !== "java") throw new Error("--client must be bedrock or java.");
-      const client: Client = clientInput;
-      const allowFocus = input.includes("--allow-focus");
-      const outputDir = input.indexOf("--output-dir") >= 0 ? input[input.indexOf("--output-dir") + 1] : undefined;
-      if (input.includes("--output-dir") && (!outputDir || outputDir.startsWith("--"))) throw new Error("--output-dir needs a directory.");
-      switch (action) {
-        case "list": console.log(JSON.stringify(await windows(), null, 2)); return;
-        case "screenshot": if (!input[0]) throw new Error("Supply a screenshot name."); await screenshot(input[0], windowId, client, outputDir); return;
-        case "pixel": console.log(await pixel(Number(input[0]), Number(input[1]), windowId, client)); return;
-        case "click":
-        case "double-click": {
-          if (input[2] && !input[2].startsWith("--") && input[2] !== "left" && input[2] !== "right") {
-            throw new Error("Use left or right mouse button.");
-          }
-          await click(Number(input[0]), Number(input[1]), windowId, client, allowFocus,
-            input[2] === "right" ? "right" : "left", undefined, action === "double-click");
-          return;
-        }
-        case "mouse-hold": {
-          const button = input[2];
-          if (button !== "left" && button !== "right") throw new Error("Use left or right mouse button.");
-          await click(Number(input[0]), Number(input[1]), windowId, client, allowFocus, button, Number(input[3]));
-          return;
-        }
-        case "button-hold": {
-          const button = input[0];
-          if (button !== "left" && button !== "right") throw new Error("Use left or right mouse button.");
-          await buttonHold(button, Number(input[1]), windowId, client, allowFocus);
-          return;
-        }
-        case "key": if (!input[0]) throw new Error("Supply a key name."); await key(input[0], windowId, client, allowFocus); return;
-        case "double-key": if (!input[0]) throw new Error("Supply a key name."); await key(input[0], windowId, client, allowFocus, undefined, true); return;
-        case "key-hold": if (!input[0]) throw new Error("Supply a key name."); await key(input[0], windowId, client, allowFocus, Number(input[1])); return;
-        case "type": if (!input[0]) throw new Error("Supply text."); await typeText(input[0], windowId, client, allowFocus); return;
-        case "run": if (!input[0]) throw new Error("Supply a scenario JSON file."); await scenario(input[0], windowId, client, allowFocus); return;
+      if (args[0] === "run") {
+        if (!args[1]) throw new Error("Supply a scenario JSON file.");
+        const windowId = args.indexOf("--window-id") >= 0 ? args[args.indexOf("--window-id") + 1] : undefined;
+        const client = args.indexOf("--client") >= 0 ? args[args.indexOf("--client") + 1] : "bedrock";
+        if (client !== "bedrock" && client !== "java") throw new Error("--client must be bedrock or java.");
+        return scenario(args[1], windowId, client, args.includes("--allow-focus"));
       }
-      throw new Error("Usage: bun run capture ui <list|screenshot|pixel|click|double-click|mouse-hold|button-hold|key|double-key|key-hold|run>");
+      const result = await ui.command(["ui", ...args]);
+      if (result) console.log(result);
+      return;
     }
     default: throw new Error("Usage: bun run capture <doctor|start|launch|game-stop|mark|stop|status|report|compare|video|ui>");
   }

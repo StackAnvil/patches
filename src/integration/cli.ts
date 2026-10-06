@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { Effect } from "effect";
+import { createCaptureUi } from "../capture/ui.ts";
 import { activeDisplay, displayEnv, ensureDisplay, stopDisplay } from "../lab/display.ts";
 import { root } from "../model.ts";
 import { artifact, installPrism, prismProcess } from "../prism.ts";
@@ -23,6 +24,12 @@ import { configureShaders, graphicsFailures, installGraphicsProfile, readGraphic
 const execute = promisify(execFile);
 const privateRoot = join(root, ".stackanvil", "integration");
 const captureCli = join(root, "src", "capture", "cli.ts");
+const captureUi = createCaptureUi({ captureDirectory: async () => {
+  const captures = join(root, ".stackanvil", "captures");
+  const { id } = JSON.parse(await readFile(join(captures, "current.json"), "utf8")) as { id: string };
+  if (!/^[a-z0-9][a-z0-9-]{0,90}$/.test(id)) throw new Error("Invalid capture session ID.");
+  return join(captures, id);
+} });
 const prismData = join(homedir(), ".var", "app", "org.prismlauncher.PrismLauncher", "data", "PrismLauncher");
 const bdsSource = resolve(process.env.BEDROCK_SERVER_HOME ?? join(homedir(), "bedrock-server"));
 const proxyBdsSource = resolve(process.env.STACKANVIL_JAVA_BEDROCK_SERVER_HOME ?? bdsSource);
@@ -365,6 +372,7 @@ async function javaJoin(route: "java-java" | "java-bedrock" | "java-geyser", pro
 }
 
 async function capture(args: string[], env = process.env): Promise<string> {
+  if (args[0] === "ui") return captureUi.command(args);
   return command(process.execPath, [captureCli, ...args], env);
 }
 

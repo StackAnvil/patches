@@ -55,6 +55,19 @@ Click and pixel coordinates are fractions of the chosen client window, from 0 to
 
 For an integration run without a capture session, pass `--output-dir` to `ui screenshot`. The gameplay probe saves its screenshots under `.stackanvil/integration/runs/`.
 
+### Integration input timing
+
+The integration runner uses `createCaptureUi` from `src/capture/ui.ts` directly.
+It shares the CLI's command handling without starting another Bun process for each input or pixel read.
+One UI session binds its display once and checks the selected window on every command.
+The native helper focuses the private window before emitting input, so the runner omits a separate focus process there.
+Desktop input still requires explicit permission.
+
+Private benchmark measurements include a key hold of one millisecond and use twelve samples for each path.
+The CLI averages about 220 ms per command; the shared API averages about 9 ms.
+These measurements describe driver overhead on the test host, not network latency or native gameplay parity.
+Projectile controls still require movement before the shot passes, attributed damage for contact, and changed ownership and outgoing motion for reflection.
+
 ## Record before and after video
 
 Record a short private video around each action. Start a recording after its client window appears, mark the step, run the action, and stop the recording. The video contains no audio.
