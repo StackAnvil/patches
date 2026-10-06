@@ -1,4 +1,4 @@
-From 9a190a97fcb2f14399dc20297d8a0b161daa87c7 Mon Sep 17 00:00:00 2001
+From f8f8fe9211209b0ac888f7c6b37dcedb5fa08824 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:53 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -51,14 +51,28 @@ The first revised strict-BDS run exposed that difference on the second
 surface exit after re-entry. The completed direct comparison now matches
 the native pose and sprint events at all three reference angles without
 corrections during the controlled swimming cases.
+
+Use the matching native SwimControlSystem's breathing-material condition
+for non-jumping, non-flying upward swimming. Clear vertical motion whenever
+the breathing point is outside liquid, rather than applying a fitted
+look-Y cutoff of 0.55. Preserve swimming when the standing-space probe
+is blocked, as the native swimming trigger does.
+
+Strict-BDS ceiling tests expose an additional sprint and fluid-state
+transition gap. The revised path settles at the server's capped surface
+after two direct corrections or three ViaProxy corrections instead of
+repeatedly changing pose and receiving 22 direct corrections. Keep that
+remaining transition gap explicit; the native open-water comparison still
+covers separate unobstructed cases.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |  2 +
- .../mixin/features/movement/MixinEntity.java  | 25 +-----
- .../features/movement/MixinLocalPlayer.java   | 88 ++++++++++++++++++-
+ .../mixin/features/movement/MixinEntity.java  | 25 +----
+ .../features/movement/MixinLocalPlayer.java   | 93 +++++++++++++++++-
+ .../mixin/features/movement/MixinPlayer.java  |  9 +-
  .../input/PlayerPredictionPayload.java        | 24 +++++
- .../bedrock/movement/BedrockFluidPhysics.java | 58 ++++++++++++
- .../movement/BedrockFluidPhysicsTest.java     | 83 +++++++++++++++++
- 6 files changed, 256 insertions(+), 24 deletions(-)
+ .../bedrock/movement/BedrockFluidPhysics.java | 62 ++++++++++++
+ .../movement/BedrockFluidPhysicsTest.java     | 95 +++++++++++++++++++
+ 7 files changed, 283 insertions(+), 27 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
@@ -147,10 +161,10 @@ index 236c05d..dda48a4 100644
              return box;
          }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-index e5a8167..c8959ea 100644
+index e5a8167..30561d7 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
-@@ -21,22 +21,106 @@
+@@ -21,22 +21,111 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -218,6 +232,11 @@ index e5a8167..c8959ea 100644
 +    @Inject(method = "aiStep", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/AbstractClientPlayer;aiStep()V"))
 +    private void updateSwimmingBeforeTravel(final CallbackInfo ci) {
 +        if (BedrockInputPermissions.isBedrockConnection()) {
++            if (this.viaFabricPlusBedrock$wasSwimming && !this.canPlayerFitWithinBlocksAndEntitiesWhen(Pose.STANDING)) {
++                // Native cannot leave the swimming pose until its standing-space probe is clear.
++                this.setSwimming(true);
++                return;
++            }
 +            super.updateSwimming();
 +            final boolean breathingInAir = this.level().getBlockState(BlockPos.containing(this.getEyePosition(0F))).isAir();
 +            if (!this.input.hasForwardImpulse()) {
@@ -259,6 +278,33 @@ index e5a8167..c8959ea 100644
      }
  
  }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
+index 49a37ac..37ba54f 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
+@@ -25,6 +25,7 @@ import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
+ import com.llamalad7.mixinextras.sugar.Local;
+ import com.viaversion.viafabricplus.ViaFabricPlus;
+ import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import com.viaversion.viafabricplus.bedrock.movement.BedrockFluidPhysics;
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.world.entity.Avatar;
+ import net.minecraft.world.entity.Entity;
+@@ -88,9 +89,11 @@ public abstract class MixinPlayer extends Avatar {
+             return instance.isSwimming();
+         }
+ 
+-        final double lookY = this.getLookAngle().y;
+-        // TODO: The value used here (0.55) isn't entirely correct, however in most cases it should be fine.
+-        if (this.level().getFluidState(BlockPos.containing(this.getX(), this.getY() + 0.4, this.getZ())).isEmpty() && lookY > 0 && lookY < 0.55) {
++        if (instance.getAbilities().flying || instance.isJumping()) {
++            return true;
++        }
++        final boolean breathingInLiquid = this.level().getBlockState(BlockPos.containing(this.getEyePosition(0F))).liquid();
++        if (BedrockFluidPhysics.shouldCapSwimming(this.getLookAngle().y, breathingInLiquid)) {
+             instance.setDeltaMovement(instance.getDeltaMovement().x(), 0, instance.getDeltaMovement().z());
+             return false;
+         }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java
 new file mode 100644
 index 0000000..7b212c2
@@ -291,10 +337,10 @@ index 0000000..7b212c2
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java
 new file mode 100644
-index 0000000..9abadc3
+index 0000000..10682e9
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,62 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2021-2026 the original authors
@@ -336,6 +382,10 @@ index 0000000..9abadc3
 +        return BlockPos.containing(x, y, z).above();
 +    }
 +
++    public static boolean shouldCapSwimming(final double lookY, final boolean breathingInLiquid) {
++        return lookY > 0 && !breathingInLiquid;
++    }
++
 +    public static boolean canRemainSwimmingAtSurface(final Vec3 look) {
 +        final float x = (float) look.x;
 +        final float z = (float) look.z;
@@ -355,10 +405,10 @@ index 0000000..9abadc3
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
 new file mode 100644
-index 0000000..e53091e
+index 0000000..b6fb840
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,95 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2021-2026 the original authors
@@ -392,6 +442,18 @@ index 0000000..e53091e
 +import static org.junit.jupiter.api.Assertions.assertTrue;
 +
 +class BedrockFluidPhysicsTest {
++
++    @Test
++    void everyUpwardDirectionCapsOutsideLiquidEvenWhenThePoseCannotChange() {
++        for (final double lookY : new double[]{Double.MIN_VALUE, 0.5, 0.57357644, 0.70710677, 1}) {
++            assertTrue(BedrockFluidPhysics.shouldCapSwimming(lookY, false));
++            assertFalse(BedrockFluidPhysics.shouldCapSwimming(lookY, true));
++        }
++        for (final double lookY : new double[]{-1, -0.5, 0}) {
++            assertFalse(BedrockFluidPhysics.shouldCapSwimming(lookY, false));
++            assertFalse(BedrockFluidPhysics.shouldCapSwimming(lookY, true));
++        }
++    }
 +
 +    @Test
 +    void surfaceRetentionUsesTheNativeHorizontalDotProduct() {

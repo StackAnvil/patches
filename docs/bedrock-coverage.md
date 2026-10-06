@@ -3990,3 +3990,39 @@ They do not establish parity for all movement directions, blocked standing space
 Native input permissions, movement history replay, and the rest of the movement matrix remain requirements.
 Fresh native capture and shutdown verification still require the host GPU safety condition to be resolved by a reboot.
 Windows and macOS game joins and real-server verification remain separate requirements.
+
+### Swimming beneath blocked standing space, October 6, 2026
+
+**Reference:** Matching-build executable inspection separates the swimming trigger from the swimming-motion calculation.
+For ordinary non-jumping, non-flying swimming, every upward direction clears vertical motion when the breathing block is outside liquid.
+The trigger can emit a swimming stop only when its standing-space probe is clear.
+These checks replace the fitted look-Y cutoff and prevent Java from repeatedly dropping the swimming pose under a ceiling.
+
+**Implemented:** Apply the breathing-material cap during local travel.
+Preserve swimming before Java refreshes its pose when standing space is blocked.
+Core still owns completed-frame validation, auth-input construction, and server corrections.
+Both changes are folded into the existing local-prediction patch.
+
+**Verified:** The strict-BDS fixture adds a ceiling at Y=106 over the existing water pool.
+The original 45-degree case receives 22 nonzero corrections and repeatedly changes pose.
+The revised direct case receives two initial corrections, then settles at the server's capped surface with zero vertical motion.
+ViaProxy receives three initial corrections and then also settles.
+The ceiling is removed after each recording.
+Both routes complete join and spawn.
+
+Separate 64-frame open-water cases remain consistent with the saved native 30-, 35-, and 45-degree references.
+Swimming and sprint events match, with no correction during those controlled cases.
+Maximum position differences remain below 0.000031 blocks vertically and 0.000008 blocks horizontally.
+Motion-component differences remain below 0.000000060 blocks per tick.
+
+**Automated verification:** The dependency build passes 16 converter, 636 core, and 608 add-on tests.
+There are no failures or errors; 135 environment-dependent tests skip.
+The cap test covers upward, level, and downward directions with both breathing-material states.
+CI for the preceding main commit passes tooling, builds, permissions checks on Linux, Windows, and macOS, and all four native helper targets.
+Those runner checks do not establish Windows or macOS game-join parity.
+
+**Incomplete:** The blocked-surface transition still receives initial corrections on both routes.
+Sprint cancellation, fluid-state changes, and correction timing need further native comparison.
+The ceiling result is a strict-BDS comparison; a fresh native ceiling capture is still required.
+The host GPU safety condition still prevents fresh native capture until a reboot resolves it.
+Prediction history replay, other movement cases, real-server verification, and Windows and macOS game joins remain requirements.

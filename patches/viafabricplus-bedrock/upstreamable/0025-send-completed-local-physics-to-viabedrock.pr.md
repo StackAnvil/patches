@@ -133,3 +133,33 @@ Dependency builds pass with 16 converter tests, 636 core tests, and 607 add-on t
 There are no failures or errors; 135 environment-dependent tests skip.
 These results resolve the recorded re-entry gap.
 Other movement directions, blocked standing space, fluid levels, currents, effects, and reconciliation history remain unverified.
+
+## Breathing-material cap and blocked standing space
+
+The matching 1.26.51.1 executable supplies a separate `SwimControlSystem` calculation.
+For ordinary non-jumping, non-flying swimming, upward motion stops when the breathing block is outside liquid.
+That check applies to every upward look direction.
+Remove the former look-Y cutoff of 0.55 and use the breathing material.
+Keep the existing flying and jump paths outside this change.
+
+The swimming trigger cannot emit a swimming stop when its standing-space probe is blocked.
+Preserve that swimming state before Java refreshes its pose.
+This avoids repeated pose changes beneath a low ceiling.
+
+A strict-BDS ceiling case swims upward at 45 degrees beneath blocks at Y=106.
+The initial implementation receives 22 nonzero corrections and repeatedly changes its swimming state.
+The revised direct case receives two initial corrections, then stays at the server's capped surface with zero vertical motion.
+ViaProxy receives three initial corrections, then also settles.
+These are server comparisons, not a fresh native ceiling capture.
+The initial transition and correction timing remain incomplete on both routes.
+
+Separate 64-frame open-water cases still match the saved native 30-, 35-, and 45-degree references on both routes.
+Swimming and sprint events match, with no correction during those cases.
+Position differences remain below 0.000031 blocks vertically and 0.000008 blocks horizontally.
+The dependency build passes 16 converter, 636 core, and 608 add-on tests, with no failures or errors.
+There are 135 environment-dependent skips.
+The new cap test covers all upward directions and both breathing-material states.
+
+**Incomplete:** Resolve the initial blocked-surface sprint and fluid-state transitions.
+Compare a fresh native ceiling capture when the host GPU safety condition permits it.
+Correction history replay, jump and flying swimming, other fluid levels, currents, and the remaining movement matrix remain requirements.
