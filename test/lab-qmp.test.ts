@@ -72,11 +72,13 @@ test("guest identity mismatch blocks the operation before input or shutdown", as
   });
 });
 
-test("guest clicks keep the button pressed across input sampling frames", async () => {
+test("guest clicks settle the cursor before holding the button across sampling frames", async () => {
+  let movedAt = 0;
   const events: { down: boolean; time: number }[] = [];
   await fixture((socket, request) => {
     const args = (request as { arguments?: { events?: { type: string; data: { down?: boolean } }[] } }).arguments;
     for (const event of args?.events ?? []) {
+      if (event.type === "abs") movedAt = performance.now();
       if (event.type === "btn") events.push({ down: event.data.down!, time: performance.now() });
     }
     socket.write(JSON.stringify({ id: request.id, return: {} }) + "\n");
@@ -84,6 +86,7 @@ test("guest clicks keep the button pressed across input sampling frames", async 
     await withQmp(path, (command) => clickPointer(command, 0.5, 0.5, "left", 150));
   });
   expect(events.map((event) => event.down)).toEqual([true, false]);
+  expect(events[0]!.time - movedAt).toBeGreaterThanOrEqual(90);
   expect(events[1]!.time - events[0]!.time).toBeGreaterThanOrEqual(140);
 });
 

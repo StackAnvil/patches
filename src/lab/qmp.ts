@@ -87,7 +87,11 @@ export function pointerEvents(x: number, y: number, button: string): Record<stri
 
 export async function clickPointer(command: QmpCommand, x: number, y: number, button: string, holdMs = 100): Promise<void> {
   validateHoldMs(holdMs);
-  await command("input-send-event", { events: pointerEvents(x, y, button) });
+  const events = pointerEvents(x, y, button);
+  await command("input-send-event", { events: events.slice(0, 2) });
+  // SDL can process a click with the previous cursor position in the same input batch.
+  await new Promise<void>((resolve) => setTimeout(resolve, 100));
+  await command("input-send-event", { events: events.slice(2) });
   try {
     // Guests can sample input once per frame and miss an immediate press/release.
     await new Promise<void>((resolve) => setTimeout(resolve, holdMs));
