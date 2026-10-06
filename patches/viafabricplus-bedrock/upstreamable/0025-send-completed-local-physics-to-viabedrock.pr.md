@@ -719,3 +719,25 @@ Actual nearby-solid collection, history creation and lifetime, and complete sche
 Production still uses Java collision solving.
 Native collision integration needs coherent frame identity, retained world state, ordered corrections, and later-frame simulation.
 These comparisons establish one native replay kernel's behavior and do not establish complete movement parity.
+
+
+## Native nearby-actor collision collection
+
+Matching-build native collectors establish forward and reverse eligibility for actor collision boxes.
+They expand query boxes by two blocks, validate component generations, and exclude the mover and foreign contexts.
+Forward collection reads collidable and stackable properties.
+Reverse collection also handles falling-block recipients and excludes actors on their first tick.
+
+Nearby boxes use a map keyed by entity identity and entity context.
+The native map updates duplicate actors without adding nodes or changing their traversal position.
+Fresh comparisons establish traversal order within the supplied map capacity.
+
+Exact native collector, map insertion, and reverse view-check instructions pass 6,144 cases across 38,509 candidate records.
+They check all 64 reverse eligibility combinations, 9,991 node allocations, 2,212 duplicate eligible records, and repeated box updates without mismatches.
+The [collector reference](../../../docs/bedrock-coverage.md#native-nearby-actor-collision-collectors-october-6-2026) records addresses, separate counts, and fixture boundaries.
+World results, component discovery, allocator memory, existing nearby components, and sufficient map capacity are supplied by fixtures.
+Actual query inclusion and ordering, component creation, map growth, tag lifetime, and complete scheduling remain unverified.
+
+Production still uses Java collision solving.
+Remaining overlap-state producers, one-way list creation, coherent frame identity, retained world state, and ordered corrections remain incomplete.
+These comparisons do not establish full movement parity or actual platform joins.

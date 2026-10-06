@@ -5567,7 +5567,8 @@ The fixture executes the native storage checks, history index arithmetic, linked
 Feature checks, registry discovery, paired-view creation, and the virtual position getter are explicit fixture boundaries.
 Three verified Ghidra names and comments were saved through MCP and matched after a fresh program query.
 
-**Incomplete:** Actual nearby-solid collection, history creation and lifetime, full ECS scheduling, and production collision replay still need implementation and verification.
+**Incomplete:** World-backed nearby-solid collection, history creation and lifetime, full ECS scheduling, and production collision replay still need implementation and verification.
+The [collector comparisons](#native-nearby-actor-collision-collectors-october-6-2026) now verify collector kernels with supplied world results.
 Production continues to use Java collision solving.
 Coherent frame identity, retained world state, ordered corrections, native block shapes, and the full movement matrix remain requirements.
 All eight coverage groups and actual Windows/macOS game joins remain active requirements.
@@ -5575,3 +5576,63 @@ The current-boot GPU guard still prevents fresh native visual comparisons.
 
 **CI:** The preceding stair-connection revision passes build, tooling, and Ubuntu/Windows/macOS permission jobs in [CI run 37486490963](https://github.com/StackAnvil/patches/actions/runs/37486490963).
 These permission jobs do not establish successful game joins on those platforms.
+
+
+## Native nearby-actor collision collectors (October 6, 2026)
+
+**Reference:** The target remains official Bedrock 1.26.51.1, build 51061372, protocol 2193, with the executable hash recorded above.
+Native type strings and their component hashes identify `IsSolidMobNearbyComponent`, `IsSolidMobComponent`, `MobFlagComponent`, and `FallingBlockFlagComponent`.
+The [versioned nearby-component declaration](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/entity/components/IsSolidMobNearbyComponent.h) identifies overlap minima and a map keyed by entity context.
+The [solid-component declaration](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/entity/components/IsSolidMobComponent.h) identifies collision and stacking flags.
+Native instructions establish the rules below.
+
+**Forward collection:** Kernel `0x1482a5790` requests actors around the mover's box, expanded by float32 two blocks on each axis.
+It normalizes the expanded endpoints before the world query.
+It excludes the mover and actors from another entity context.
+Candidates need valid, matching generations in both the solid-component and bounding-box pools.
+
+A collidable candidate qualifies when the mover has `MobFlagComponent`.
+A stackable candidate also qualifies when the mover is marked stackable.
+Accepted candidates raise the mover's overlap minima by componentwise maximum and store their boxes under their entity-context keys.
+
+**Reverse collection:** Callback `0x1482d7e80` sends a solid actor's box to eligible nearby actors.
+Its query uses the same expansion and normalization.
+The native view check at `0x141a78430` requires `ActorOwnerComponent` and `AABBShapeComponent` and excludes `ActorIsFirstTickFlagComponent`.
+Context and generation checks also apply.
+
+A recipient qualifies when the source is collidable and the recipient has `MobFlagComponent`.
+A recipient with `FallingBlockFlagComponent` also qualifies.
+A stackable recipient qualifies when the source is stackable.
+Each accepted recipient raises its overlap minima and stores the source's box.
+
+**Collider map:** Both collectors use native insertion kernel `0x1482d7820`.
+Its key contains both entity identity and entity context.
+Repeated actors update an existing box without allocating another node or moving that node within traversal order.
+
+For the supplied 64-bucket map, first encounters establish bucket order.
+New keys that collide with an occupied bucket precede that bucket's existing keys.
+This order affects the collision list later consumed by the movement solver.
+Map growth and traversal order after rehash remain unverified.
+
+**Verified within scope:** The forward fixture passes 4,096 cases and 8,192 native calls across 25,674 candidate records.
+It checks 6,689 eligible records, 5,575 node allocations, 5,575 existing-box updates, and 1,114 duplicate eligible records.
+It also checks 3,668 foreign-context rejections and 3,809 invalid-pair rejections.
+
+The reverse fixture passes 2,048 cases and 4,096 native calls across 12,835 candidate records.
+It checks 7,777 paired-view candidates, 5,514 eligible records, 4,416 node allocations, and 1,098 duplicate eligible records.
+All 64 reverse eligibility combinations occur.
+
+Both fixtures report zero mismatches and verify native map links, bucket membership, saved boxes, overlap minima, and repeated updates.
+Three verified Ghidra names and comments were saved through MCP and matched after a fresh program query.
+
+**Incomplete:** Fixtures supply world-query results, component discovery, existing nearby components, allocator memory, and sufficient map capacity.
+They execute the collector, view checks, keyed insertion, and box writes with unchanged native instructions.
+Actual world-query inclusion and ordering, component creation, tag lifetime, map growth, and complete ECS scheduling remain unverified.
+
+One-way collision-list creation and remaining overlap-state producers also need verification.
+Production still uses Java collision solving and lacks coherent frame identity, retained world state, and ordered correction replay.
+All movement comparisons, connection routes, platform joins, and the eight coverage groups remain requirements.
+The current-boot GPU guard still prevents fresh native visual comparisons.
+
+**CI:** The published actor-refresh revision passes build, tooling, and Ubuntu/Windows/macOS permission jobs in [CI run 37488088697](https://github.com/StackAnvil/patches/actions/runs/37488088697).
+Those jobs do not verify actual Windows/macOS game joins or native collision parity.
