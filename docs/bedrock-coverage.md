@@ -6496,3 +6496,18 @@ Rebuilt direct and ViaProxy clients pass initialization, spawn, and movement con
 Both recorders exit successfully, and the owned server stops.
 The add-on build reports 594 tests with zero failures and 114 skips; ViaProxy also builds successfully.
 Unknown references, late arrival, despawn, projectile ownership transport, live native comparisons, and the full coverage goal remain required.
+
+## Entity reference lifecycle, October 7, 2026
+
+ViaBedrock now retains unavailable native references while clearing stale Java metadata.
+Indexed dependencies restore tameable owners, guardian and elder guardian targets, and wither head targets after Java spawning.
+Target removal clears dependent fields; returning targets resolve to their new Java IDs or UUIDs.
+Source removal, explicit clearing, superseded references, and respawn preparation prevent obsolete bindings from returning.
+The change stays in core and coalesces multiple changed fields per source.
+Nine standalone lifecycle and packet-order regressions pass; the full core build reports 755 tests with zero failures and 19 skips.
+The rebuilt direct and ViaProxy clients each pass a strict-BDS join and movement control.
+The add-on build reports 594 tests with zero failures and 114 skips; ViaProxy also builds successfully.
+
+The [complex gameplay record](bedrock-complex-gameplay.md#entity-reference-lifecycle-october-7-2026) records lifecycle coverage and the separate projectile ownership gap.
+Existing strict-BDS fireball traffic contains valid blaze owner IDs, while the Java spawn translation writes zero ownership data.
+Projectile ownership transport, native visible comparisons, real-server and platform joins, the complete gameplay matrix, and all eight coverage groups remain required.

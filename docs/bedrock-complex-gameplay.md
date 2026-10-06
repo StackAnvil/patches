@@ -818,3 +818,39 @@ These controls verify integration and do not establish live reference-clearing v
 Unknown references, late actor arrival, target despawn, projectile ownership transport, and visible native comparisons remain required.
 The native GPU guard remains in force.
 All eight coverage groups and the complete movement, combat, item-use, block-action, and inventory matrix remain active.
+
+### Entity reference lifecycle, October 7, 2026
+
+**Implemented core behavior:** Unavailable owners and attack targets now clear stale Java metadata while retaining their native IDs.
+ViaBedrock indexes dependencies by target ID and restores references after the target's Java spawn packet.
+Target removal clears dependent fields without erasing authoritative native state.
+A returning target resolves to its new Java ID or UUID.
+Explicit clearing, superseded references, source removal, and respawn preparation discard obsolete bindings.
+Updates for multiple wither heads on one source share one metadata packet.
+This covers tameable owners, guardians, elder guardians, and all three wither heads through both connection routes.
+
+The production packet regression verifies that target spawning precedes dependent metadata.
+Lifecycle regressions cover late arrival, repeated spawn notification, target unload and return, owner UUID changes, reference replacement, source replacement, and respawn cleanup.
+Assertions serialize and decode Java 26.3 metadata.
+All nine regressions pass independently on pinned upstream with an external test-classpath init script.
+The full core build passes with 755 tests, zero failures, and 19 skips.
+Checkstyle also passes.
+The [entity reference record](../patches/viabedrock/upstreamable/0094-clear-authoritative-entity-references.pr.md) retains target evidence and verification limits.
+
+The rebuilt add-on and ViaProxy each pass a real strict-BDS join and movement control.
+Both recorders exit successfully, and the owned server stops.
+The add-on build reports 594 tests with zero failures and 114 skips; ViaProxy also builds successfully.
+All 1,232 original core files match the add-on bundle, and all changed core classes match ViaProxy.
+The reviewed artifact replacements preserve 26 unrelated distribution and Maven files, with rollback copies outside those directories.
+These controls verify integration and do not establish visible native reference behavior.
+
+**Confirmed separate gap:** Existing strict-BDS traffic contains small fireballs whose owner IDs resolve to their blaze shooters.
+Java 26.3 projectile reconstruction reads ownership from spawn data, but ViaBedrock currently writes zero.
+Tameable owner metadata does not supply projectile ownership.
+Known-owner spawning, delayed owner arrival, owner changes, and client lifecycle handling remain required.
+Raw traffic and client bytecode inspection remain private.
+
+**Remaining:** Native visible reference behavior, active elder guardian and additional wither-head cycles, live tameable owner removal, and projectile ownership transport still need verification or implementation.
+The current-boot native GPU guard remains in force.
+All eight original groups and the complete movement, combat, item-use, block-action, inventory, network, and world-boundary matrix remain active.
+Strict BDS remains the primary server reference; Boar diagnostics, native comparisons, CubeCraft, and actual Windows/macOS joins remain required.

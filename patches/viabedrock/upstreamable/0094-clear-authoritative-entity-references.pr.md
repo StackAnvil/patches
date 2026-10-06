@@ -1,4 +1,4 @@
-# Clear authoritative owner and attack targets
+# Synchronize authoritative entity references
 
 ## Behavior
 
@@ -10,6 +10,13 @@ Tameable owners use a null optional UUID.
 Guardian attack targets and all three wither head targets use Java entity ID zero.
 Elder guardians share the guardian translation.
 Known targets still resolve through the entity tracker, without truncating native actor IDs.
+An unavailable target clears the Java value immediately while the native reference remains available.
+Indexed dependencies restore the reference after the target's Java spawn packet.
+Target removal clears dependent metadata and retains the native ID for a later return.
+A returning actor resolves to its new Java entity ID or UUID.
+Explicit clearing, reference replacement, source removal, and respawn preparation discard obsolete bindings.
+Multiple changed fields on one source share one metadata packet.
+The dependency index avoids scanning every actor on each spawn.
 This change stays in ViaBedrock core and requires no add-on implementation.
 
 ## Target evidence
@@ -27,14 +34,17 @@ Raw server traffic, command logs, and client inspection files remain private.
 
 ## Verification
 
-Three sequence regressions fail before the production fix and pass afterward.
+The original three sequence regressions fail before the clearing fix and pass afterward.
 They exercise real entity updates and the entity tracker, then serialize every result through the Java 26.3 metadata codec.
 The sequences cover guardian and elder guardian bind/clear/restore, independent clearing of all wither heads, and owner clear/reassignment.
 They also retain the large negative native IDs from the BDS observation.
+Six additional regressions cover late arrival, target unload and return, coalesced wither updates, owner UUID changes, superseded references, source replacement, and respawn cleanup.
+The real actor packet handler test verifies that Java spawning precedes dependent metadata.
+Repeated spawn notifications do not emit duplicate reference updates.
 
-The full core build passes with 749 tests, zero failures, and 19 skips.
+The full core build passes with 755 tests, zero failures, and 19 skips.
 The patch applies independently to pinned upstream without StackAnvil setup.
-Its three standalone tests pass with an external init script that supplies the full stack's test classpath and JUnit configuration.
+Its nine standalone tests pass with an external init script that supplies the full stack's test classpath and JUnit configuration.
 
 The add-on build passes with 594 tests, zero failures, and 114 skips; ViaProxy also builds successfully.
 Every original core file matches the add-on's bundled core, with only Loom's added Fabric metadata.
@@ -48,5 +58,8 @@ These route controls verify integration and do not establish live guardian beam 
 The live BDS session observes an active guardian target and the first wither head's active target.
 It does not establish an active elder guardian cycle, active cycles for the other heads, or a live tameable ownership removal.
 Those paths have sequence and wire-codec coverage.
-Unknown references, late actor arrival, target despawn, and projectile ownership transport remain separate gaps.
+Projectile ownership transport remains a separate gap.
+An existing strict-BDS capture contains small-fireball owner IDs that resolve to the corresponding blaze actors.
+Java 26.3 projectile reconstruction reads the owner from spawn data, while ViaBedrock currently writes zero there.
+Tameable owner metadata cannot substitute for projectile spawn ownership or later owner changes.
 This change does not establish complete entity relationship or visible beam parity.
