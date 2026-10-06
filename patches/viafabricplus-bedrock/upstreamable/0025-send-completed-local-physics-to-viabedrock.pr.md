@@ -736,8 +736,28 @@ Exact native collector, map insertion, and reverse view-check instructions pass 
 They check all 64 reverse eligibility combinations, 9,991 node allocations, 2,212 duplicate eligible records, and repeated box updates without mismatches.
 The [collector reference](../../../docs/bedrock-coverage.md#native-nearby-actor-collision-collectors-october-6-2026) records addresses, separate counts, and fixture boundaries.
 World results, component discovery, allocator memory, existing nearby components, and sufficient map capacity are supplied by fixtures.
-Actual query inclusion and ordering, component creation, map growth, tag lifetime, and complete scheduling remain unverified.
+Actual query inclusion and ordering, ECS allocation, tag lifetime, and complete scheduling remain unverified.
+The [map construction comparison](../../../docs/bedrock-coverage.md#native-collider-map-construction-and-growth-october-6-2026) now verifies initialization stores and rehash behavior with explicit fixture boundaries.
 
 Production still uses Java collision solving.
 Remaining overlap-state producers, one-way list creation, coherent frame identity, retained world state, and ordered corrections remain incomplete.
 These comparisons do not establish full movement parity or actual platform joins.
+
+
+## Native collider map growth
+
+Matching-build native construction initializes an empty 80-byte nearby component and an eight-bucket collider map.
+Its default load factor is one.
+Native insertion preserves existing keyed nodes and grows capacity before adding a new collider.
+Rehash groups the existing traversal by the new bucket mask and reverses the nodes within each group.
+Capacity changes can alter collision-list order while preserving every box.
+
+Exact native component initialization, map construction, insertion, and rehash instructions pass 1,024 cases with no mismatches.
+They verify 32,871 distinct insertions, 3,299 duplicate updates, 717 automatic growth events, and 896 explicit rehashes.
+The comparisons check 135,691 boxes and node addresses, plus large-buffer alignment and 1,221 matching prior-bucket releases.
+The [map growth reference](../../../docs/bedrock-coverage.md#native-collider-map-construction-and-growth-october-6-2026) records capacity rules, addresses, counts, and fixture boundaries.
+
+Fixtures supply allocator memory, release, CRT copying and ceiling, ECS emplacement, and the component slot.
+Actual ECS registration, allocation lifetime, failure recovery, world-query ordering, and complete scheduling remain unverified.
+One-way list creation, remaining overlap-state producers, retained world state, frame identity, and ordered corrections remain incomplete.
+Production still uses Java collision solving; these comparisons do not establish complete movement parity.

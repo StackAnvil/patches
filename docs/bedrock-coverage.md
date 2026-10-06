@@ -5612,7 +5612,8 @@ Repeated actors update an existing box without allocating another node or moving
 For the supplied 64-bucket map, first encounters establish bucket order.
 New keys that collide with an occupied bucket precede that bucket's existing keys.
 This order affects the collision list later consumed by the movement solver.
-Map growth and traversal order after rehash remain unverified.
+The [map growth comparison](#native-collider-map-construction-and-growth-october-6-2026) now verifies native traversal after rehash.
+Actual allocator lifetime and ECS registration remain unverified.
 
 **Verified within scope:** The forward fixture passes 4,096 cases and 8,192 native calls across 25,674 candidate records.
 It checks 6,689 eligible records, 5,575 node allocations, 5,575 existing-box updates, and 1,114 duplicate eligible records.
@@ -5627,7 +5628,7 @@ Three verified Ghidra names and comments were saved through MCP and matched afte
 
 **Incomplete:** Fixtures supply world-query results, component discovery, existing nearby components, allocator memory, and sufficient map capacity.
 They execute the collector, view checks, keyed insertion, and box writes with unchanged native instructions.
-Actual world-query inclusion and ordering, component creation, tag lifetime, map growth, and complete ECS scheduling remain unverified.
+Actual world-query inclusion and ordering, ECS allocation, tag lifetime, and complete scheduling remain unverified.
 
 One-way collision-list creation and remaining overlap-state producers also need verification.
 Production still uses Java collision solving and lacks coherent frame identity, retained world state, and ordered correction replay.
@@ -5636,3 +5637,58 @@ The current-boot GPU guard still prevents fresh native visual comparisons.
 
 **CI:** The published actor-refresh revision passes build, tooling, and Ubuntu/Windows/macOS permission jobs in [CI run 37488088697](https://github.com/StackAnvil/patches/actions/runs/37488088697).
 Those jobs do not verify actual Windows/macOS game joins or native collision parity.
+
+
+## Native collider map construction and growth (October 6, 2026)
+
+**Reference:** The target remains official Bedrock 1.26.51.1, build 51061372, protocol 2193, with the executable hash recorded above.
+Both nearby-actor collectors initialize newly inserted components through `0x1432903d0`.
+That kernel clears the 80-byte component and calls map constructor `0x140db0270` at offset 16.
+The constructor installs a 48-byte sentinel, eight buckets, a bucket mask of seven, and a default load factor of one.
+Fixture boundaries supply ECS emplacement and the allocated component address.
+Native instructions perform the component stores and map construction.
+
+**Capacity:** Insertion kernel `0x1482d7820` checks float32 load before adding a new collider.
+Growth calls rehash kernel `0x1432908d0`.
+When the current bucket count is below 512, the map prefers eight times that count when the result satisfies the required capacity.
+At 512 buckets or beyond, the required capacity determines the next power of two.
+The default map grows from eight to 64 buckets on its ninth distinct collider.
+Duplicate keys update the existing node without increasing cardinality or triggering growth.
+
+**Traversal order:** Rehash starts from the existing linked traversal.
+It groups those nodes by their keys under the new bucket mask.
+The first encounter of each bucket determines that group's place in traversal.
+Within each group, rehash reverses node order.
+Insertion then places a new colliding key before the existing keys in that bucket.
+Existing node addresses and their 24-byte boxes remain intact.
+
+Changing capacity can therefore change collision-list order without changing any collider box.
+Explicit rehash to a smaller bucket count can retain a larger backing array.
+The active mask and bucket count determine lookup and traversal grouping.
+Backing-array length alone does not establish active bucket count.
+
+**Verified within scope:** Exact component, constructor, insertion, and rehash instructions pass 1,024 cases with no mismatches.
+They verify 1,024 component constructions, 32,871 distinct collider insertions, and 3,299 duplicate updates.
+They also verify 717 automatic growth events, 896 explicit rehashes, and 135,691 box and node comparisons.
+Cases cover collisions under successive masks, different entity contexts, repeated keys, retained arrays, and growth beyond 512 buckets.
+The constructor always sets the default load factor to one.
+Fixtures additionally supply load factors of `0.5` and `2` to exercise the insertion kernel.
+
+The native paths allocate 32,871 collider nodes, excluding the 1,024 constructor sentinels.
+They allocate 2,245 bucket arrays, including 337 allocations through the native large-buffer alignment path.
+All 1,221 prior-array releases match an allocation's pointer and byte count, with no double releases.
+Each completed map retains one active bucket allocation.
+Three verified Ghidra names and comments were saved through MCP and matched after a fresh program query.
+The names identify the verified nearby-component use; compiler folding can share template instructions with other types.
+
+**Incomplete:** Fixtures supply allocator memory, release, CRT copying and ceiling, ECS emplacement, and dense-slot lookup.
+They execute unchanged native component initialization, linked insertion, capacity selection, alignment, and rehash instructions.
+Actual ECS registration, allocator lifetime, allocation-failure recovery, world-query inclusion and ordering, and complete scheduling remain unverified.
+One-way collision-list creation and remaining overlap-state producers still need verification.
+
+Production still uses Java collision solving and lacks coherent frame identity, retained world state, and ordered correction replay.
+All movement comparisons, direct and ViaProxy routes, actual platform joins, and the eight coverage groups remain requirements.
+The current-boot GPU guard still prevents fresh native visual comparisons.
+
+**CI:** The published collector revision passes build, tooling, and Ubuntu/Windows/macOS permission jobs in [CI run 37489427416](https://github.com/StackAnvil/patches/actions/runs/37489427416).
+Those jobs do not establish successful platform game joins or full native movement parity.
