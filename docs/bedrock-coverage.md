@@ -6466,3 +6466,17 @@ The rebuilt clients pass one direct and two ViaProxy joins, with initialization,
 Each proxy log records one translated success and no omitted-login fallback.
 All recorders finish successfully, and the owned test server stops.
 Other join failures, living-blaze startup, native comparisons, complete movement and action parity, real-server and platform verification, and all eight original coverage groups remain required.
+
+## Projectile startup evidence, October 7, 2026
+
+Incoming-projectile fixtures now retain rejected launches and startup geometry.
+The runner saves the complete failed server event alongside the error message.
+An instrumented ViaProxy hit/dodge/hit sequence passes three controls against strict BDS.
+The server records eight launches, while the packet journal contains only the three accepted shots.
+An empty journal therefore cannot establish that the shooter never fired.
+The [complex gameplay record](bedrock-complex-gameplay.md#projectile-startup-evidence-october-7-2026) records the evidence and comparison limits.
+The earlier startup timeout's exact cause remains unresolved.
+The final diagnostic format passes contact and dodge through both direct and ViaProxy routes, four controls against strict BDS.
+Both recorders finish successfully, and the owned server stops.
+All 154 tooling tests, the TypeScript check, and the behavior-pack build pass.
+The full gameplay matrix, native comparisons, platform and real-server verification, and all eight original coverage groups remain required.

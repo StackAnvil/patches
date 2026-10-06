@@ -757,3 +757,33 @@ All three recorders exit successfully, and the owned test server stops.
 The living-blaze startup gap, native comparisons, prediction replay, controlled network conditions, Boar, CubeCraft, actual Windows/macOS joins, and the full gameplay matrix remain required.
 The current-boot native GPU guard remains in force.
 All eight original coverage groups remain active.
+
+### Projectile startup evidence, October 7, 2026
+
+**Resolved evidence gap:** An empty packet journal does not establish that the native shooter never fired.
+The fixture removes unsuitable shots before they can reach the client.
+It now records each launch's owner, bounds, velocity, tick, and selection decision.
+Startup errors retain those launches, the player bounds, known obstructions, and the required pass plane.
+The runner preserves the complete failed server event in its error cause and results file.
+
+An instrumented ViaProxy hit/dodge/hit sequence passes all three controls against strict BDS.
+The server observes eight genuine launches and rejects five unsuitable shots.
+The packet journal contains only the three accepted shots.
+This establishes the journal's visibility limit in this run.
+The earlier timeout's exact cause remains unresolved because its fixture did not record rejected launches.
+
+The fixtures retain the twenty-second startup bound, genuine projectile ownership, collision-course selection, attributed damage, and timely dodge requirements.
+No shooter behavior, player bounds, movement policy, or success assertion changes.
+The regression verifies that error, failed, and unexpected startup statuses retain structured evidence through serialization.
+
+The final diagnostic format passes contact and dodge through both direct and ViaProxy connections, four controls in total.
+The server records ten genuine launches.
+Course selection rejects five misses and one trajectory that reaches the known floor before the player.
+Both accepted contact shots produce attributed damage; both dodge controls pass without damage.
+Both recorders exit successfully, and the owned strict-BDS server stops.
+All 154 tooling tests, the TypeScript check, and the behavior-pack build pass.
+The diagnostic pack replacement preserves all 201 unrelated pack and configuration files, with rollback copies outside the server directory.
+
+**Remaining:** Native comparisons, complete prediction replay, controlled network conditions, Boar, CubeCraft, platform joins, and the full gameplay matrix remain required.
+The current-boot GPU guard still prevents fresh native launches.
+All eight original coverage groups remain active.

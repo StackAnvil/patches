@@ -117,12 +117,17 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
         const entity = event.entity;
         const owner = entity.getComponent("minecraft:projectile")?.owner;
         if (current.fixture.incoming && entity.typeId === current.fixture.incoming.type
-            && owner?.id === current.fixture.incoming.shooterId && !current.fixture.incoming.projectileId) {
+            && !current.fixture.incoming.projectileId) {
           const incoming = current.fixture.incoming;
           const bounds = entity.getAABB();
           const velocity = entity.getVelocity();
+          const accepted = owner?.id === incoming.shooterId
+            && projectileThreatens(incoming.playerBounds, bounds, velocity, incoming.collisionObstacles, incoming.clearancePlane);
+          incoming.launches?.push({ tick: system.currentTick, bounds, velocity,
+            owner: owner?.id, accepted });
+          if (owner?.id !== incoming.shooterId) return;
           tagEntity(entity);
-          if (!projectileThreatens(incoming.playerBounds, bounds, velocity, incoming.collisionObstacles, incoming.clearancePlane)) {
+          if (!accepted) {
             entity.remove();
             return;
           }
@@ -498,7 +503,7 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
         start: { ...player.location }, end: { ...player.location }, forward: player.getViewDirection(), healthBefore: health, healthAfter: health,
         playerBounds: player.getAABB(),
         collisionObstacles: [{ center: position(0.5, -0.5, 3.5), extent: { x: 8.5, y: 0.5, z: 11.5 } }],
-        frames: [], playerFrames: [], attacks: [], hits: [], damage: [] };
+        launches: [], frames: [], playerFrames: [], attacks: [], hits: [], damage: [] };
       if (mode === "dodge") {
         incoming.clearancePlane = { point: { x: incoming.start.x - incoming.forward.x,
           y: incoming.start.y, z: incoming.start.z - incoming.forward.z }, normal: { ...incoming.forward } };

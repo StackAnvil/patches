@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { gameplayEvents, gameplayCasesForBackend, minecartDismountHasClearance, waitForGameplayEvent, waitForJavaWorldHud } from "../src/integration/gameplay-probe.ts";
+import { gameplayEvents, gameplayCasesForBackend, minecartDismountHasClearance, waitForGameplayEvent, waitForJavaWorldHud, type GameplayEvent } from "../src/integration/gameplay-probe.ts";
 
 test("gameplay events match their case, run, and phase", async () => {
   const log = [
@@ -21,6 +21,22 @@ test("gameplay events match their case, run, and phase", async () => {
 test("a stopped client fails a pending gameplay case", async () => {
   await expect(waitForGameplayEvent("movement-left", "run", "verify", async () => "", () => false, 10, 1))
     .rejects.toThrow("stopped");
+});
+
+test("a failed projectile startup retains its authoritative evidence in the error cause", async () => {
+  const bounds = { center: { x: 0, y: 1, z: 0 }, extent: { x: 0.3, y: 0.9, z: 0.3 } };
+  const event: GameplayEvent = { id: "small-fireball-hit", run: "probe", phase: "start", status: "error", tick: 400,
+    projectileStartup: { shooterId: "shooter", playerBounds: bounds, launches: [
+      { tick: 100, bounds, velocity: { x: 1, y: 0, z: 0 }, owner: "shooter", accepted: false },
+    ] } };
+  for (const status of ["error", "fail", "pass"] as const) {
+    const result = { ...event, status };
+    const log = `[ViaBedrock Gameplay Probe] ${JSON.stringify(result)}`;
+    const error = await waitForGameplayEvent("small-fireball-hit", event.run, "start", async () => log, () => true, 10, 1)
+      .then(() => undefined, (error: unknown) => error);
+    expect(error).toBeInstanceOf(Error);
+    expect(JSON.parse(JSON.stringify((error as Error).cause))).toEqual(result);
+  }
 });
 
 test("minecart dismount remains near the rail height and within the track", () => {

@@ -64,6 +64,7 @@ export interface IncomingProjectileObservation {
   end: Vector;
   projectileId?: string;
   launchedTick?: number;
+  launches?: { tick: number; bounds: Bounds; velocity: Vector; owner?: string; accepted: boolean }[];
   frames: { tick: number; position: Vector; velocity: Vector; owner?: string }[];
   playerFrames: { tick: number; position: Vector; velocity: Vector }[];
   attacks: { tick: number; player: string; target: string }[];

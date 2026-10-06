@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { root } from "../model.ts";
 import { geyserCaseIds, geyserNegativeControlIds } from "./geyser.ts";
 import { complexGameplayCaseIds } from "./ranged-observation.ts";
+import type { IncomingProjectileObservation } from "./projectile-observation.ts";
 
 const prefix = "[ViaBedrock Gameplay Probe] ";
 
@@ -36,6 +37,8 @@ export interface GameplayEvent {
   observed?: unknown;
   expected?: unknown;
   error?: string;
+  projectileStartup?: Pick<IncomingProjectileObservation,
+    "shooterId" | "playerBounds" | "collisionObstacles" | "clearancePlane" | "launches">;
 }
 
 export function gameplayEvents(log: string): GameplayEvent[] {
@@ -76,10 +79,11 @@ export async function waitForGameplayEvent(id: GameplayCaseId, run: string, phas
     const event = gameplayEvents(await log()).find((entry) => entry.id === id && entry.run === run && entry.phase === phase);
     if (event) {
       if (event.status === "error" || (event.status === "fail" && expectedStatus !== "fail")) {
-        throw new Error(`${id} ${phase} ${event.status}: ${event.error ?? JSON.stringify({ observed: event.observed, expected: event.expected })}`);
+        throw new Error(`${id} ${phase} ${event.status}: ${event.error ?? JSON.stringify({ observed: event.observed, expected: event.expected })}`,
+          { cause: event });
       }
       if (event.status !== expectedStatus) {
-        throw new Error(`${id} ${phase} returned unexpected status ${event.status}.`);
+        throw new Error(`${id} ${phase} returned unexpected status ${event.status}.`, { cause: event });
       }
       return event;
     }
@@ -665,7 +669,8 @@ export async function runGameplayCases(ids: readonly GameplayCaseId[], options: 
   connectionError?: () => Promise<string | undefined>;
   inspectClient?: (id: GameplayCaseId, log: () => Promise<string>, event: GameplayEvent) => Promise<void>;
 }): Promise<void> {
-  const results: { id: GameplayCaseId; status: "pass" | "fail" | "skip"; observed?: unknown; error?: string; screenshots: string[]; negativeControl?: GameplayEvent }[] = [];
+  const results: { id: GameplayCaseId; status: "pass" | "fail" | "skip"; observed?: unknown; error?: string;
+    cause?: unknown; screenshots: string[]; negativeControl?: GameplayEvent }[] = [];
   const serverAlive = () => {
     if (!options.server.pid) return false;
     try { process.kill(options.server.pid, 0); return true; } catch { return false; }
@@ -723,7 +728,7 @@ export async function runGameplayCases(ids: readonly GameplayCaseId[], options: 
             "--output-dir", options.artifactDir]));
         } catch { /* Preserve the original failure. */ }
       }
-      results.push({ id, status: "fail", error: message, screenshots });
+      results.push({ id, status: "fail", error: message, cause: error instanceof Error ? error.cause : undefined, screenshots });
       console.error(`FAIL gameplay ${id}: ${message}${screenshots.length ? ` Screenshots: ${screenshots.join(", ")}.` : ""}`);
       stopped = !alive() || Boolean(connectionError);
     }

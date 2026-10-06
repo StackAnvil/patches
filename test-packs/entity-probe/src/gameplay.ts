@@ -863,7 +863,11 @@ export async function startGameplay(id, run, player) {
     if (active !== current || current.fixture.closed) throw new Error("The gameplay fixture changed during its start action.");
     record(id, run, "start", "ready", { observed: { location: player.location } });
   } catch (error) {
-    record(id, run, "start", "error", { error: String(error) });
+    const incoming = current.fixture.incoming;
+    record(id, run, "start", "error", { error: String(error), projectileStartup: incoming && {
+      shooterId: incoming.shooterId, playerBounds: incoming.playerBounds,
+      collisionObstacles: incoming.collisionObstacles, clearancePlane: incoming.clearancePlane, launches: incoming.launches,
+    } });
   }
 }
 
