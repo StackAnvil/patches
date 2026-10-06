@@ -383,3 +383,16 @@ The [coverage ledger](bedrock-coverage.md#ordinary-water-travel-and-local-state-
 **Incomplete or unverified:** This increment does not establish full native water travel.
 Broader phases, custom traits, rotation, collision, gravity, currents, boosts, lava, bubbles, geysers, latency, and history replay remain required.
 Boar, real-server joins, platform gameplay, and the complete movement/combat/inventory matrix remain part of the goal.
+
+### Liquid current arithmetic, October 6, 2026
+
+**Implemented:** Core shares native float current accumulation, normalization, and motion updates through `FluidCurrent`.
+The add-on supplies observed flows and selects water strength `0.014F` or lava strength `0.0035F` on either connection route.
+
+**Verified within scope:** The complete pinned native callback passes 1,962 controlled executions with supplied world/contact observations and per-cell flow vectors.
+The production Java calculator matches all 654 admitted cases exactly.
+The [coverage ledger](bedrock-coverage.md#liquid-current-accumulation-and-strengths-october-6-2026) records live route checks and remaining gaps.
+
+**Incomplete or unverified:** Per-cell flow generation, native contact gates, cell enumeration, mixed-fluid selection, loading, gravity, and complete native trajectories remain required.
+Respawn corrections, lava travel, bubble columns, geysers, latency, Boar, CubeCraft, and actual platform joins remain separate requirements.
+The complete matrix above remains required.

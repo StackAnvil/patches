@@ -311,7 +311,9 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
       for (let y = 0; y <= 2; y++) for (const x of [-1, 1]) blockAt(player.dimension, x, y, z).setType("minecraft:stone");
     }
     for (const z of [-1, 8]) for (let y = 0; y <= 2; y++) blockAt(player.dimension, 0, y, z).setType("minecraft:stone");
-    blockAt(player.dimension, 0, 0, 0).setType("minecraft:water");
+    // Server commands schedule fluid updates; a Script API permutation can remain stationary.
+    const source = blockAt(player.dimension, 0, 0, 0).location;
+    player.runCommand(`setblock ${source.x} ${source.y} ${source.z} flowing_water`);
     await new Promise<void>((resolve) => system.runTimeout(resolve, 40));
     player.teleport(position(0.5, 0, 1.5), { rotation: { x: 0, y: 0 } });
     return motionFixture(player);

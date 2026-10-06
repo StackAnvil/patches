@@ -400,3 +400,34 @@ Core passes 697 tests with 19 optional skips; the add-on passes 478 tests with 1
 CubeConverter passes 16 tests; both Java stacks pass Checkstyle and complete replay/build.
 ViaProxy builds with the updated calculator embedded.
 The [coverage ledger](../../../docs/bedrock-coverage.md#ordinary-water-travel-and-local-state-across-respawn-october-6-2026) records evidence, route checks, and remaining fluid, prediction, platform, and full-goal requirements.
+
+## Liquid current arithmetic
+
+Core now owns `FluidCurrent` accumulation, normalization, and motion updates.
+The add-on supplies observed cell flows on direct and ViaProxy connections.
+It resets the accumulator each frame and preserves entering motion when flows cancel completely.
+Water uses `0.014F`; lava uses `0.0035F`, independent from Java's fast-lava policy.
+The previous double-normalization injections are removed.
+
+The pinned 1.26.51.1 callback `1495e44e0` accumulates each flow in float.
+Its squared length uses `z*z + (y*y + x*x)` in that instruction order.
+It preserves zero-sum motion and normalizes nonzero currents at length `0.0001F`.
+Separate float multiplication and addition update motion.
+The full native callback passes 1,962 controlled executions with supplied world/contact observations and cell-flow vectors.
+The production Java calculator matches all 654 admitted cases exactly, including sign bits.
+Three Java tests retain numeric, threshold, cancellation, and reset regressions.
+
+Per-cell flow generation, native contact gates, cell enumeration, mixed water/lava selection, loading, and phase scheduling remain incomplete or unverified.
+These fixtures verify the named arithmetic and do not simulate the complete native world.
+The [coverage ledger](../../../docs/bedrock-coverage.md#liquid-current-accumulation-and-strengths-october-6-2026) records live route results and remaining requirements.
+
+Rebuilt direct and ViaProxy clients reach actual strict-BDS spawn.
+Idle current cases pass on both routes, and both plain-water cases contain 22 controlled input frames without corrections during input.
+A rebuilt fresh-channel fixture places its source through a server command.
+Its ViaProxy run records 236 water/flowing samples and about 6.2 blocks of downstream displacement, with no correction after the final fixture teleport.
+Current onset produces two nonzero corrections in a separate ViaProxy recording.
+Joining beside the older channel wall produces 99 earlier corrections, with positive client current motion against server-cleared horizontal motion.
+That wall/collision/loading gap remains required work; the arithmetic fix does not establish complete movement parity.
+Core passes 700 tests with 19 optional skips; the add-on passes 478 tests with 114 optional skips.
+Both stacks pass replay, build, and Checkstyle. CubeConverter passes 16 tests, and ViaProxy builds with the shared calculator embedded.
+The TypeScript check, pack build, and all 135 tooling tests pass.

@@ -6020,3 +6020,61 @@ Both complete stacks replay and build against the pinned ViaFabricPlus artifact.
 Core passes 697 tests with 19 optional skips; the add-on passes 478 tests with 114 optional skips.
 CubeConverter passes all 16 tests, and Checkstyle passes for both Java stacks.
 ViaProxy builds with the shared water calculator embedded.
+
+### Liquid current accumulation and strengths (October 6, 2026)
+
+**Implemented:** Core owns native current accumulation, normalization, and float motion updates through `FluidCurrent`.
+The add-on supplies observed cell flows, resets each frame, and preserves entering motion when flows cancel completely.
+It selects water strength `0.014F` and lava strength `0.0035F` independently from Java's fast-lava policy.
+The former double-normalization injections are removed.
+
+**Target evidence:** The matching 1.26.51.1 executable has SHA-256 `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+Liquid callback `1495e44e0` accumulates cell flows in float, with squared length `z*z + (y*y + x*x)`.
+The instruction order matters for rounding; the decompiler's reassociated sum does not establish equivalent float results.
+Zero sums preserve motion.
+Nonzero sums normalize at length `0.0001F`; separate float multiplication and addition update motion.
+Per-cell helper `14345de50` reads material and depth, checks flow faces, and handles falling fluid beside blocking neighbors.
+Its complete observation rules remain a separate implementation requirement.
+
+**Verified within scope:** The full native callback passes 1,962 controlled executions.
+These cases supply loaded-world/contact observations, depth and material data, an empty optional ECS handle, and cell-flow vectors.
+Native instructions perform policy gates, float accumulation, normalization, strength selection, and motion updates.
+The production Java calculator matches all 654 admitted cases exactly, including sign bits.
+Three Java tests cover numeric regressions, the normalization threshold, cancellation, and reset behavior.
+These fixtures do not simulate the complete world or client.
+
+Rebuilt direct and ViaProxy clients reach actual spawn on strict BDS 1.26.51.1, protocol 2193.
+The direct idle-current fixture records 328 water and flowing-water samples and downstream displacement of about 6.2 blocks.
+Its six corrections include three during early fixture preparation and one final fixture teleport with current motion.
+No correction occurs after that final teleport before the next fixture.
+Its 22-frame plain-water case has no correction during controlled input.
+
+The first ViaProxy current fixture records no water samples and no displacement because the channel never fills.
+That failed setup does not establish a movement mismatch or a passed current comparison.
+A separate ViaProxy recording receives flowing water after a server placement command and passes the current assertion.
+It records 155 water and flowing-water samples and about 6.2 blocks of downstream displacement.
+Two nonzero corrections occur at current onset; no later downstream correction occurs in that recording.
+Two earlier corrections acknowledge fixture teleports.
+The earlier ViaProxy plain-water case has 22 input frames without corrections during controlled input.
+
+The current fixture now places its source through a server command instead of a Script API permutation.
+A fresh-terrain ViaProxy run with the rebuilt pack records 236 water and flowing-water samples and about 6.2 blocks of displacement.
+Its final fixture teleport carries current motion; no correction occurs afterward through recording completion.
+It also records 99 earlier corrections at the old channel wall before fixture preparation.
+Those inputs retain positive current motion while the server clears horizontal motion at the wall.
+Wall geometry, quantized positions, collision solving, and chunk loading need further investigation.
+These earlier failures remain evidence of a joining/collision gap.
+A manual lava replacement retains old flowing water and does not count as a valid lava comparison.
+An input attempt after its recording deadline also does not count.
+Raw records, licensed executable data, server logs, and screenshots remain private.
+
+**Incomplete or unverified:** Native cell-flow generation, contact policy, cell enumeration, mixed-fluid selection, loading, and phase scheduling remain required.
+Respawn relocation, current onset, and joining beside an existing channel wall still produce nonzero corrections.
+Lava travel, full native trajectories, bubble columns, geysers, latency, history replay, Boar, CubeCraft, and actual platform joins remain required.
+The native GPU guard remains active for this boot.
+All original coverage groups and the complete complex gameplay matrix remain required.
+
+Both complete Java stacks replay and build against the pinned ViaFabricPlus artifact, with Checkstyle passing.
+Core passes 700 tests with 19 optional skips; the add-on passes 478 tests with 114 optional skips.
+CubeConverter passes 16 tests, and ViaProxy builds with the shared current calculator embedded.
+The TypeScript check, pack build, and all 135 tooling tests pass.

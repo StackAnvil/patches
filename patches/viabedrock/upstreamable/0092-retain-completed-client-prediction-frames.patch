@@ -1,4 +1,4 @@
-From bd122efce1bb2b3a2c9124c82c6ee23a468bcb6e Mon Sep 17 00:00:00 2001
+From 1a5d9c287f6ed56de6cdbbef2be7a97e6ffb732e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:28 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -197,7 +197,19 @@ walking-speed virtual boundary. The add-on supplies local speed, equipment,
 ground and water-trait observations on direct and ViaProxy sessions.
 Native phase ordering, custom trait mapping, input/collision solving,
 complete fluid gravity, currents and history replay remain requirements.
+
+Match native LiquidPhysicsSystem 0x1495e44e0 in the pinned executable.
+Accumulate observed cell flows in float, preserve the inner Y/X square sum,
+normalize at length .0001F, and add the float impulse to entering motion.
+Water uses .014F and lava .0035F; Java retains a different lava strength.
+The full native callback passes 1,962 controlled executions, including
+policy gates, cancellation, tiny currents, and water/lava selection.
+The production Java arithmetic matches all 654 admitted cases exactly.
+Fixtures supply loaded-world/contact observations and per-cell flow vectors;
+flow generation, iteration order, contact policy and scheduling remain open.
+Share this arithmetic with client integration on both connection routes.
 ---
+ .../viabedrock/api/model/FluidCurrent.java    |  44 +++++
  .../viabedrock/api/model/GlideMovement.java   |  64 ++++++++
  .../viabedrock/api/model/MovementEffect.java  |  59 +++++++
  .../api/model/MovementEffectTimeline.java     |  60 +++++++
@@ -223,6 +235,7 @@ complete fluid gravity, currents and history replay remain requirements.
  .../protocol/storage/EntityTracker.java       |  18 +++
  .../protocol/storage/PlayerInputStorage.java  |   3 +-
  .../storage/PlayerPredictionStorage.java      |  78 +++++++++
+ .../api/model/FluidCurrentTest.java           |  56 +++++++
  .../api/model/GlideMovementTest.java          | 115 +++++++++++++
  .../api/model/MovementEffectTest.java         |  51 ++++++
  .../api/model/MovementEffectTimelineTest.java |  61 +++++++
@@ -239,7 +252,8 @@ complete fluid gravity, currents and history replay remain requirements.
  .../packet/ClientPlayerPacketsTest.java       |  32 +++-
  .../packet/MovementEffectPacketsTest.java     | 116 +++++++++++++
  .../packet/PlayerCorrectionPacketTest.java    | 105 ++++++++++++
- 41 files changed, 2092 insertions(+), 42 deletions(-)
+ 43 files changed, 2192 insertions(+), 42 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FluidCurrent.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/GlideMovement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/MovementEffect.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java
@@ -252,6 +266,7 @@ complete fluid gravity, currents and history replay remain requirements.
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiers.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPackets.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/FluidCurrentTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/GlideMovementTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java
@@ -268,6 +283,56 @@ complete fluid gravity, currents and history replay remain requirements.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPacketsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/FluidCurrent.java b/src/main/java/net/raphimc/viabedrock/api/model/FluidCurrent.java
+new file mode 100644
+index 000000000..45fe897b6
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/FluidCurrent.java
+@@ -0,0 +1,44 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.protocol.model.Position3f;
++
++/** Native 1.26.51 accumulation and motion update for observed liquid flows. */
++public final class FluidCurrent {
++
++    public static final float WATER_STRENGTH = 0.014F;
++    public static final float LAVA_STRENGTH = 0.0035F;
++
++    private float x;
++    private float y;
++    private float z;
++
++    public void reset() {
++        this.x = this.y = this.z = 0F;
++    }
++
++    public void accumulate(final float x, final float y, final float z) {
++        this.x += x;
++        this.y += y;
++        this.z += z;
++    }
++
++    public Position3f apply(final Position3f motion, final float strength) {
++        // Preserve the instruction order, including the inner Y/X sum.
++        final float squaredLength = this.z * this.z + (this.y * this.y + this.x * this.x);
++        if (squaredLength <= 0F) {
++            return motion;
++        }
++        final float length = (float) Math.sqrt(squaredLength);
++        final boolean normalize = length >= 0.0001F;
++        final float normalizedX = normalize ? this.x / length : 0F;
++        final float normalizedY = normalize ? this.y / length : 0F;
++        final float normalizedZ = normalize ? this.z / length : 0F;
++        return new Position3f(normalizedX * strength + motion.x(), normalizedY * strength + motion.y(), normalizedZ * strength + motion.z());
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/GlideMovement.java b/src/main/java/net/raphimc/viabedrock/api/model/GlideMovement.java
 new file mode 100644
 index 000000000..e3df1f47a
@@ -1660,6 +1725,68 @@ index 000000000..0418f7c68
 +        }
 +        this.posture = posture;
 +        return transitions;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/FluidCurrentTest.java b/src/test/java/net/raphimc/viabedrock/api/model/FluidCurrentTest.java
+new file mode 100644
+index 000000000..7bbf5c907
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/FluidCurrentTest.java
+@@ -0,0 +1,56 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertSame;
++
++class FluidCurrentTest {
++
++    @Test
++    void matchesNativeWaterAndLavaMotionBits() {
++        final FluidCurrent current = new FluidCurrent();
++        current.accumulate(0.3F, -0.8F, 0.52F);
++        final Position3f motion = new Position3f(0.03F, -0.5F, -0.09F);
++        assertBits(current.apply(motion, FluidCurrent.WATER_STRENGTH), 0x3D0C146B, 0xBF02DDDB, 0xBDA969DE);
++        assertBits(current.apply(motion, FluidCurrent.LAVA_STRENGTH), 0x3CFE5C21, 0xBF00B777, 0xBDB497E9);
++    }
++
++    @Test
++    void usesNativeNormalizationThresholdWithoutJavaSmallCurrentBoost() {
++        final FluidCurrent current = new FluidCurrent();
++        final Position3f motion = new Position3f(0.03F, -0.5F, -0.09F);
++        current.accumulate(0.0001F, 0F, 0F);
++        assertBits(current.apply(motion, FluidCurrent.WATER_STRENGTH), 0x3D343958, 0xBF000000, 0xBDB851EC);
++        current.reset();
++        current.accumulate(0.000099F, 0F, 0F);
++        assertBits(current.apply(motion, FluidCurrent.WATER_STRENGTH), 0x3CF5C28F, 0xBF000000, 0xBDB851EC);
++    }
++
++    @Test
++    void roundsEachAccumulationAndClearsThePreviousFrame() {
++        final FluidCurrent current = new FluidCurrent();
++        final Position3f motion = new Position3f(0F, -0F, 0F);
++        current.accumulate(1F, 0F, 0F);
++        current.accumulate(0.00000002F, 0F, 0F);
++        current.accumulate(-1F, 0F, 0F);
++        assertSame(motion, current.apply(motion, FluidCurrent.WATER_STRENGTH));
++        current.accumulate(1F, 0F, 0F);
++        assertBits(current.apply(motion, FluidCurrent.LAVA_STRENGTH), 0x3B656042, 0, 0);
++        current.reset();
++        assertSame(motion, current.apply(motion, FluidCurrent.WATER_STRENGTH));
++    }
++
++    private static void assertBits(final Position3f actual, final int x, final int y, final int z) {
++        assertEquals(x, Float.floatToRawIntBits(actual.x()));
++        assertEquals(y, Float.floatToRawIntBits(actual.y()));
++        assertEquals(z, Float.floatToRawIntBits(actual.z()));
 +    }
 +
 +}
