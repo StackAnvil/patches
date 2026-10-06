@@ -119,3 +119,18 @@ The core resolver is independently reviewable in `0087-inherit-client-entity-des
 The actor visibility fixture now initializes its offset before comparing it with zero.
 The shared core evaluator distinguishes missing members from zero, so this regression supplies its intended initial state explicitly.
 The complete build passes with the updated fixture.
+
+## Share server resource definitions across actors
+
+A macOS CubeCraft heap dump identifies 26 actor graphs retaining separate copies of the same animation definitions.
+These copies retain 1,340,555,464 bytes, leaving too little room for resource reloads in a 2 GiB client heap.
+The graph reader now parses animation definitions, controller definitions, and effect resources once per accepted pack storage.
+Weak storage keys preserve the pack lifetime without keeping disconnected storage alive.
+Cached values contain resources and cannot retain their storage key.
+Each graph and playback keeps its own compiled channels, controller state, variables, command slots, and clocks.
+Replacement storage receives new definitions.
+A targeted regression checks parsing across two actors, independent variables, and replacement resources.
+
+The rebuilt client reaches the CubeCraft lobby and unloads its pack with a confirmed 2 GiB heap on the macOS guest.
+A live histogram shows one shared resource library across 27 actor graphs and about 155,000 Gson map nodes.
+The lobby heap sample uses about 758 MiB before collection. This verifies one load and unload, with longer sessions still required.
