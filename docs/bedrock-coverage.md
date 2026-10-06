@@ -4653,7 +4653,8 @@ These results define the behavior needed for core prediction history.
 Command dispatcher `0x142890390` first checks for the corrected frame at server tick T.
 When that frame exists, it compares the command with captured state from T+1.
 Snapshot accessor `0x143297c50` reads actor flags at snapshot offset `0x160` only when presence bit 46 is set.
-The matching component-name string identifies the capture as `MovementDataExtractionUtility::MovementSnapshotComponent`, with storage stride 600 bytes.
+The matching component-name string identifies the capture as `MovementDataExtractionUtility::MovementSnapshotComponent`.
+Function `0x1433dd810` indexes its storage with stride `0x600`, or 1,536 bytes.
 Missing target frames skip historical comparison and use live flags.
 An available frame without a snapshot component also uses live flags for comparison.
 If a captured component lacks its flags presence bit, the command cannot compare those historical flags and applies through its live-state fallback.
