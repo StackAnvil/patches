@@ -493,3 +493,19 @@ ViaProxy contains 161 and 101, respectively.
 Both last-item cases finish with an empty held stack and no correction.
 Direct repeated eating receives three nonzero corrections; ViaProxy receives none in this recording.
 These observations verify the bounded counter and inventory flow, while completion and correction timing remain incomplete.
+
+## Completion handlers and historical actor flags
+
+Further matching-build inspection proves that the constructor-installed item and actor handlers return continuation without accessing inventory.
+Additional listeners and later handler replacement remain untraced.
+The native client also skips the server food event before updating nutrition and saturation.
+
+Native actor-data assignment carries the server tick into prediction history.
+Its predicted flag mask includes using-item bit 4.
+Emulation executes both native flag kernels for 3,194 cases without mismatches.
+An unchanged historical bit preserves a newer local start, while an authoritative clear still requires later-frame replay.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-completion-handlers-and-historical-actor-flags-october-6-2026) records the function evidence and verification scope.
+
+Core currently applies metadata immediately and discards its tick.
+Historical state, ordered corrections, and later-input replay remain requirements before local completion can reproduce native timing.
+These findings do not add completion prediction or establish movement parity.

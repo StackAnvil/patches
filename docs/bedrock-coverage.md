@@ -4587,3 +4587,57 @@ These results do not establish synchronized native completion, so the production
 **Incomplete:** Trace item and actor event consumers, local completion order, and repeated-use inventory and metadata synchronization.
 Compare fresh native captures when the current-boot GPU guard permits them.
 Custom items, ordinary Java clients, Boar, correction history, broader movement, and actual Windows/macOS joins remain requirements.
+
+### Native completion handlers and historical actor flags, October 6, 2026
+
+**Reference:** Further inspection uses the matching 1.26.51.1 executable through PistonDecompiler and Ghidra.
+The native executable, decompiled functions, and emulation fixtures remain private.
+
+Base Level constructor `0x14114e0c0` selects client coordinator constructor `0x142d94f80` when LevelArguments byte `0x120` is true.
+That constructor retains the base actor and item coordinators from `0x141133690`.
+Their owner fields are manager offsets `0x8` and `0x28`.
+Their coordinator pointers occupy `0x10` and `0x30`.
+Each coordinator stores its gameplay handler at offset `0x60`.
+
+The constructor-installed item handler dispatches local event 7 through `0x1411842f0` and `0x1411843b0` to handler slot `0x28`.
+Its target, `0x141183e60`, returns the continuation result without accessing inventory.
+The constructor-installed actor handler dispatches acknowledgment event 19 through `0x141183c80` to slot `0xa8`.
+Its target, `0x1400e19a0`, also returns continuation without accessing inventory.
+Additional listeners and later handler replacement remain untraced.
+These results establish the default handlers, not every possible event consumer.
+
+Native food function `0x1401eae60` checks the same client-side getter before its player event 8 dispatch.
+The client branch skips that dispatch but still reaches the nutrition and saturation update at `0x14020a000`.
+This narrows the local completion investigation without assuming that Java's consumable implementation matches Bedrock.
+
+**Historical flags:** Packet dispatcher `0x1417332d0` selects handler slot `0x670`.
+The specialized client receiver at vtable `0x14e7af110` supplies handler `0x141341480`.
+The base receiver's empty slot does not establish that native ignores actor metadata.
+The specialized handler queues metadata with the packet's nonzero server tick through `0x142a1e830`.
+Assignment callback `0x1490464b0` applies the historical flag command and invokes `0x14326d6a0` when the using-item bit changes.
+That client callback removes component `0x6b006dfe` when the bit clears, or refreshes it from the item definition when set.
+
+Native kernels `0x142dea7a0` and `0x142dea8a0` compare server flags with historical flags before merging into replayed state.
+The first two predicted masks are `0x030010811000011a` and `0x00041018100000e0`.
+The first mask includes using-item bit 4.
+Metadata IDs 0, 92, and 139 update their selected word independently.
+The third word assigns its three defined flags without prediction masking.
+
+**Verified within scope:** Emulation executes the matching native bytes for 3,194 cases with no mismatches.
+The cases cover all three metadata IDs, random historical and current words, every single-bit server value, and returned changes.
+An unchanged historical using-item bit preserves a newer local start.
+A server change from historical use to stopped use still clears the bit and requires later-frame replay.
+Ignoring every server clear would therefore discard authoritative changes.
+This verifies the flag kernels, not complete movement replay or visible item-use timing.
+
+The [official movement overview](https://mojang.github.io/bedrock-protocol-docs/guides/player-movement-overview/) describes historical actor updates and replay before the next input simulation.
+Its current portal targets a newer protocol.
+The executable inspection establishes the target-build implementation described here.
+
+**Incomplete:** Core still discards the actor-data tick and applies translated metadata immediately.
+The production fix requires historical movement state, ordered corrections, and replay of later inputs, including item-use transitions.
+It must retain immediate handling when usable history is absent and preserve ordinary Java clients and both connection routes.
+Local completion remains incomplete until delayed metadata, acknowledgments, inventory counts, custom items, and repeated-use timing agree.
+The latest CI passes Ubuntu, Windows, and macOS build/tooling checks.
+Actual Windows and macOS game joins remain unverified.
+All eight coverage groups and the broader movement requirements remain active.
