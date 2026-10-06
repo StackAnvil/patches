@@ -787,3 +787,34 @@ The diagnostic pack replacement preserves all 201 unrelated pack and configurati
 **Remaining:** Native comparisons, complete prediction replay, controlled network conditions, Boar, CubeCraft, platform joins, and the full gameplay matrix remain required.
 The current-boot GPU guard still prevents fresh native launches.
 All eight original coverage groups remain active.
+
+### Authoritative entity reference clearing, October 7, 2026
+
+**Resolved core defect:** Explicit empty owner and target updates previously left stale Java metadata.
+ViaBedrock now clears tameable owner UUIDs, guardian and elder guardian attack targets, and each wither head target.
+The change requires no add-on implementation.
+
+Official BDS 1.26.51.1, build 51061372 and protocol 2193, supplies the reference values.
+Its guardian changes from target zero to a large negative actor ID, then back to zero.
+Its first wither head changes from minus one to another large negative actor ID, then back to minus one.
+The elder guardian defaults to target zero, all wither heads default to minus one, and an untamed wolf defaults to owner minus one.
+The translator preserves valid negative actor IDs and checks each field's exact empty value.
+
+Three sequence regressions fail before the fix and pass afterward.
+Each assertion also passes through the Java 26.3 metadata wire codec.
+Coverage includes elder guardians, independent wither heads, owner reassignment, and restoration after clearing.
+The full core build passes with 749 tests, zero failures, and 19 skips.
+The patch applies independently to pinned upstream without setup.
+Its three tests pass with an external init script that supplies the test classpath already present in the full stack.
+See the [entity reference evidence](../patches/viabedrock/upstreamable/0094-clear-authoritative-entity-references.pr.md).
+
+The rebuilt add-on and ViaProxy pass actual initialization, spawn, and movement controls against strict BDS, one run through each route.
+Both recorders exit successfully, and the owned server stops.
+The add-on build reports 594 tests with zero failures and 114 skips; ViaProxy also builds successfully.
+Artifact replacement preserves all 26 unrelated distribution and Maven files, with rollback copies outside those directories.
+These controls verify integration and do not establish live reference-clearing visuals.
+
+**Remaining:** The BDS capture does not establish active elder guardian cycles, active cycles for the other wither heads, or live owner removal.
+Unknown references, late actor arrival, target despawn, projectile ownership transport, and visible native comparisons remain required.
+The native GPU guard remains in force.
+All eight coverage groups and the complete movement, combat, item-use, block-action, and inventory matrix remain active.

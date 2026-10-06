@@ -1,0 +1,295 @@
+From d140b979605526a336bd9a0ac9ef7a21e661e9ff Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 00:57:32 +0200
+Subject: [PATCH] fix(entities): clear authoritative owner and attack targets
+
+Translate explicit native reference clearing into Java metadata instead of
+omitting the update and leaving the previous owner or attack target active.
+Use the guardian hierarchy so elder guardians share the same target path.
+Consolidate the three wither head translations while retaining their distinct
+fields and full-width native actor identities.
+
+BDS 1.26.51.1 build 51061372, protocol 2193, sends guardian TARGET 0 after an
+active negative unique ID and wither TARGET_A -1 after an active target.
+The other wither heads initialize to -1, and an untamed wolf has OWNER -1.
+Java 26.3 guardian and wither code uses integer zero for an absent target;
+tameable ownership uses the existing nullable UUID serializer.
+
+Sequence regressions fail before the fix. They cover binding, clearing,
+restoration, large negative native IDs, elder guardians, all wither heads,
+and owner replacement, including Java metadata encoding and decoding.
+Late reference resolution and visible native/client comparisons remain
+separate verification requirements.
+---
+ .../rewriter/EntityMetadataRewriter.java      |  85 ++++-------
+ .../rewriter/EntityReferenceMetadataTest.java | 143 ++++++++++++++++++
+ 2 files changed, 173 insertions(+), 55 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityReferenceMetadataTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
+index ed40425a3..15d340e51 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
+@@ -319,7 +319,11 @@ public final class EntityMetadataRewriter {
+             case OWNER -> {
+                 final long ownerId = readNumber(entityData).longValue();
+                 if (ownerId == -1) {
+-                    break; // No owner
++                    if (entity.javaType().isOrHasParent(EntityTypes26_3.TAMABLE_ANIMAL)) {
++                        javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.OWNERUUID),
++                                VersionedTypes.V26_3.entityDataTypes().optionalUUIDType, null));
++                    }
++                    break;
+                 }
+                 final Entity ownerEntity = entityTracker.getEntityByUid(ownerId);
+                 if (ownerEntity == null) {
+@@ -575,66 +579,23 @@ public final class EntityMetadataRewriter {
+                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received INV for non-WITHER entity " + entity.type());
+                 }
+             }
+-            case TARGET_A -> {
+-                if (entity.javaType().is(EntityTypes26_3.WITHER)) {
+-                    final long targetFirstId = readNumber(entityData).longValue();
+-                    if (targetFirstId == -1) {
+-                        break; // No target
+-                    }
+-                    final Entity targetFirstEntity = entityTracker.getEntityByUid(targetFirstId);
+-                    if (targetFirstEntity == null) {
+-                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to find TARGET_A entity with id " + targetFirstId + " for entity " + entity.type());
+-                        break;
+-                    }
+-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.TARGET_A), VersionedTypes.V26_3.entityDataTypes().varIntType, targetFirstEntity.javaId()));
+-                } else {
+-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received TARGET_A for non-WITHER entity " + entity.type());
+-                }
+-            }
+-            case TARGET_B -> {
+-                if (entity.javaType().is(EntityTypes26_3.WITHER)) {
+-                    final long targetSecondId = readNumber(entityData).longValue();
+-                    if (targetSecondId == -1) {
+-                        break; // No target
+-                    }
+-                    final Entity targetSecondEntity = entityTracker.getEntityByUid(targetSecondId);
+-                    if (targetSecondEntity == null) {
+-                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to find TARGET_B entity with id " + targetSecondId + " for entity " + entity.type());
+-                        break;
+-                    }
+-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.TARGET_B), VersionedTypes.V26_3.entityDataTypes().varIntType, targetSecondEntity.javaId()));
+-                } else {
+-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received TARGET_B for non-WITHER entity " + entity.type());
+-                }
+-            }
+-            case TARGET_C -> {
++            case TARGET_A, TARGET_B, TARGET_C -> {
+                 if (entity.javaType().is(EntityTypes26_3.WITHER)) {
+-                    final long targetThirdId = readNumber(entityData).longValue();
+-                    if (targetThirdId == -1) {
+-                        break; // No target
+-                    }
+-                    final Entity targetThirdEntity = entityTracker.getEntityByUid(targetThirdId);
+-                    if (targetThirdEntity == null) {
+-                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to find TARGET_C entity with id " + targetThirdId + " for entity " + entity.type());
+-                        break;
+-                    }
+-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.TARGET_C), VersionedTypes.V26_3.entityDataTypes().varIntType, targetThirdEntity.javaId()));
++                    final String field = switch (id) {
++                        case TARGET_A -> EntityDataFields.TARGET_A;
++                        case TARGET_B -> EntityDataFields.TARGET_B;
++                        case TARGET_C -> EntityDataFields.TARGET_C;
++                        default -> throw new IllegalArgumentException("Not a wither head: " + id);
++                    };
++                    rewriteTarget(entity, field, readNumber(entityData).longValue(), -1L, entityTracker, javaEntityData);
+                 } else {
+-                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received TARGET_C for non-WITHER entity " + entity.type());
++                    ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received " + id + " for non-WITHER entity " + entity.type());
+                 }
+             }
+             case TARGET -> {
+                 final long targetId = readNumber(entityData).longValue();
+-                if (entity.javaType().is(EntityTypes26_3.GUARDIAN)) {
+-                    if (targetId == 0) {
+-                        break; // No target
+-                    }
+-                    final Entity targetEntity = entityTracker.getEntityByUid(targetId);
+-                    if (targetEntity == null) {
+-                        ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to find TARGET entity with id " + targetId + " for entity " + entity.type());
+-                        break;
+-                    }
+-                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.ATTACK_TARGET), VersionedTypes.V26_3.entityDataTypes().varIntType, targetEntity.javaId()));
++                if (entity.javaType().isOrHasParent(EntityTypes26_3.GUARDIAN)) {
++                    rewriteTarget(entity, EntityDataFields.ATTACK_TARGET, targetId, 0L, entityTracker, javaEntityData);
+                 } else if (targetId != 0) {
+                     ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received TARGET for non-GUARDIAN entity " + entity.type() + " with non-zero value " + targetId);
+                 }
+@@ -649,6 +610,20 @@ public final class EntityMetadataRewriter {
+         return true;
+     }
+ 
++    private static void rewriteTarget(final Entity entity, final String field, final long targetId, final long emptyId,
++                                      final EntityTracker tracker, final List<EntityData> javaEntityData) {
++        int javaTarget = 0;
++        if (targetId != emptyId) {
++            final Entity target = tracker.getEntityByUid(targetId);
++            if (target == null) {
++                ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Failed to find " + field + " entity with id " + targetId + " for entity " + entity.type());
++                return;
++            }
++            javaTarget = target.javaId();
++        }
++        javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(field), VersionedTypes.V26_3.entityDataTypes().varIntType, javaTarget));
++    }
++
+     private static Number readNumber(final EntityData data) {
+         if (data.dataType() == null || data.getValue() == null) {
+             throw new IllegalArgumentException("EntityData " + data.id() + " has null data type or value");
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityReferenceMetadataTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityReferenceMetadataTest.java
+new file mode 100644
+index 000000000..2f4ff7803
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityReferenceMetadataTest.java
+@@ -0,0 +1,143 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.rewriter;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
++import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
++import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
++import net.raphimc.viabedrock.protocol.storage.EntityTracker;
++import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Field;
++import java.lang.reflect.Proxy;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++import java.util.concurrent.atomic.AtomicReference;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class EntityReferenceMetadataTest {
++
++    private final Map<Field, Object> previousMappings = new HashMap<>();
++    private UserConnection user;
++    private EntityTracker tracker;
++
++    @BeforeAll
++    static void initializeTypes() throws Exception {
++        Class.forName("com.viaversion.viaversion.api.minecraft.data.StructuredDataKey");
++    }
++
++    @BeforeEach
++    void setUp() throws Exception {
++        this.replaceMapping("bedrockEntityDataTypes", Map.of());
++        this.replaceMapping("javaEntityDataFields", Map.of(
++                EntityTypes26_3.GUARDIAN, List.of(EntityDataFields.ATTACK_TARGET),
++                EntityTypes26_3.ELDER_GUARDIAN, List.of(EntityDataFields.ATTACK_TARGET),
++                EntityTypes26_3.WITHER, List.of(EntityDataFields.TARGET_A, EntityDataFields.TARGET_B, EntityDataFields.TARGET_C),
++                EntityTypes26_3.WOLF, List.of(EntityDataFields.OWNERUUID)));
++        final AtomicReference<EntityTracker> storage = new AtomicReference<>();
++        this.user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(), new Class<?>[]{UserConnection.class},
++                (proxy, method, args) -> method.getName().equals("get") && args[0] == EntityTracker.class ? storage.get() : null);
++        this.tracker = new EntityTracker(this.user);
++        storage.set(this.tracker);
++    }
++
++    @AfterEach
++    void restoreMappings() throws Exception {
++        for (final var entry : this.previousMappings.entrySet()) {
++            entry.getKey().set(BedrockProtocol.MAPPINGS, entry.getValue());
++        }
++    }
++
++    @Test
++    void clearsAndRestoresGuardianTargetsIncludingEldersWithoutTruncatingNativeIds() {
++        final Entity target = this.target(-231928233983L, 41);
++        for (final EntityTypes26_3 type : new EntityTypes26_3[]{EntityTypes26_3.GUARDIAN, EntityTypes26_3.ELDER_GUARDIAN}) {
++            final Entity guardian = this.actor(type);
++            assertEquals(target.javaId(), this.value(this.update(guardian, ActorDataIds.TARGET, target.uniqueId()), 0));
++            assertEquals(0, this.value(this.update(guardian, ActorDataIds.TARGET, 0), 0));
++            assertEquals(0L, (long) guardian.entityData().get(ActorDataIds.TARGET).value());
++            assertEquals(target.javaId(), this.value(this.update(guardian, ActorDataIds.TARGET, target.uniqueId()), 0));
++        }
++    }
++
++    @Test
++    void clearsEveryWitherHeadIndependentlyAndRestoresItsTarget() {
++        final Entity target = this.target(-231928233974L, 73);
++        final Entity wither = this.actor(EntityTypes26_3.WITHER);
++        final ActorDataIds[] heads = {ActorDataIds.TARGET_A, ActorDataIds.TARGET_B, ActorDataIds.TARGET_C};
++        for (int index = 0; index < heads.length; index++) {
++            assertEquals(target.javaId(), this.value(this.update(wither, heads[index], target.uniqueId()), index));
++        }
++        for (int index = 0; index < heads.length; index++) {
++            assertEquals(0, this.value(this.update(wither, heads[index], -1), index));
++            assertEquals(-1L, (long) wither.entityData().get(heads[index]).value());
++            assertEquals(target.javaId(), this.value(this.update(wither, heads[index], target.uniqueId()), index));
++        }
++    }
++
++    @Test
++    void clearsAndRestoresTameableOwnerUuidWhileRetainingNativeIdentity() {
++        final Entity first = this.target(-9L, 11);
++        final Entity second = this.target(-12L, 12);
++        final Entity wolf = this.actor(EntityTypes26_3.WOLF);
++        assertEquals(first.javaUuid(), this.value(this.update(wolf, ActorDataIds.OWNER, first.uniqueId()), 0));
++        assertNull(this.value(this.update(wolf, ActorDataIds.OWNER, -1), 0));
++        assertEquals(-1L, (long) wolf.entityData().get(ActorDataIds.OWNER).value());
++        assertEquals(second.javaUuid(), this.value(this.update(wolf, ActorDataIds.OWNER, second.uniqueId()), 0));
++    }
++
++    private Entity actor(final EntityTypes26_3 type) {
++        return new Entity(this.user, 10, 10, type.identifier(), 5, UUID.randomUUID(), type);
++    }
++
++    private Entity target(final long id, final int javaId) {
++        return this.tracker.addEntity(new Entity(null, id, javaId, EntityTypes26_3.PLAYER.identifier(), javaId,
++                UUID.randomUUID(), EntityTypes26_3.PLAYER), false);
++    }
++
++    private List<EntityData> update(final Entity actor, final ActorDataIds field, final long value) {
++        final List<EntityData> result = new ArrayList<>();
++        actor.updateEntityData(new EntityData[]{new EntityData(field.getValue(), EntityDataTypesBedrock.LONG, value)}, result);
++        return result;
++    }
++
++    private Object value(final List<EntityData> data, final int index) {
++        assertEquals(1, data.size());
++        assertEquals(index, data.get(0).id());
++        final var buffer = Unpooled.buffer();
++        try {
++            VersionedTypes.V26_3.entityDataList.write(buffer, data);
++            final List<EntityData> decoded = VersionedTypes.V26_3.entityDataList.read(buffer);
++            assertEquals(0, buffer.readableBytes());
++            assertEquals(data, decoded);
++            return decoded.get(0).value();
++        } finally {
++            buffer.release();
++        }
++    }
++
++    private void replaceMapping(final String name, final Object value) throws Exception {
++        final Field field = BedrockProtocol.MAPPINGS.getClass().getDeclaredField(name);
++        field.setAccessible(true);
++        this.previousMappings.put(field, field.get(BedrockProtocol.MAPPINGS));
++        field.set(BedrockProtocol.MAPPINGS, value);
++    }
++
++}
+-- 
+2.55.0

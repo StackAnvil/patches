@@ -6480,3 +6480,19 @@ The final diagnostic format passes contact and dodge through both direct and Via
 Both recorders finish successfully, and the owned server stops.
 All 154 tooling tests, the TypeScript check, and the behavior-pack build pass.
 The full gameplay matrix, native comparisons, platform and real-server verification, and all eight original coverage groups remain required.
+
+## Authoritative entity reference clearing, October 7, 2026
+
+ViaBedrock now translates explicit empty owners and attack targets instead of retaining stale Java references.
+This covers tameable owner UUIDs, guardians, elder guardians, and all three wither heads in core.
+Official BDS 1.26.51.1 supplies the empty values and active guardian and first-head transitions.
+The translator preserves valid large negative actor IDs.
+
+Three sequence regressions and Java metadata round trips pass.
+The full core build reports 749 tests with zero failures and 19 skips.
+The independent patch applies to pinned upstream, and its tests pass with an external test-classpath init script.
+The [complex gameplay record](bedrock-complex-gameplay.md#authoritative-entity-reference-clearing-october-7-2026) records the evidence and limits.
+Rebuilt direct and ViaProxy clients pass initialization, spawn, and movement controls against strict BDS.
+Both recorders exit successfully, and the owned server stops.
+The add-on build reports 594 tests with zero failures and 114 skips; ViaProxy also builds successfully.
+Unknown references, late arrival, despawn, projectile ownership transport, live native comparisons, and the full coverage goal remain required.
