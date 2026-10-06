@@ -5383,3 +5383,34 @@ Metadata tests cover preparation, removal at apply, and stale reload completion.
 Native connectivity production, collision-query iteration at extreme coordinates, ordered resolution, rendered vanilla fence meshes, and complete visible comparisons remain incomplete.
 The native profile's graphics guard still blocks a matched game comparison until the host graphics session is repaired.
 Full frame state, correction replay, the other coverage groups, and Windows/macOS game joins remain required.
+
+## Focused native research and fence camera verification (October 6, 2026)
+
+PistonDecompiler now exposes focused Ghidra queries through its existing bridge and seven MCP tools.
+Queries cover individual functions, callers, references, memory, pointer tables, and batches of up to 32 operations.
+Annotation writeback compares inspected names and comments before applying the complete batch.
+Saved operation markers support retries after an uncertain result.
+Structured types retain the existing isolated preview and indexed export workflow.
+The shared Unicorn/Capstone runner also supports exact comparisons with local Java translations.
+The [research guide](https://github.com/AlexProgrammerDE/PistonDecompiler/blob/7b4f24a258bdb16a0576fe7d6e7b497cc35e07fa/docs/how-to/focused-ghidra-research.md) describes both interfaces.
+Its matching CI revision passed on Linux, Windows, and macOS.
+These tooling checks do not establish game joins on those platforms.
+
+**Native camera verified:** FenceBlock's collision envelope occupies vtable slot `0x20` at `0x147ac0db0`.
+The generic camera wrapper occupies slot `0x28` at `0x143182db0`.
+It invokes the collision envelope, copies six float bounds, and rejects a box unless every minimum is less than its maximum.
+A private fixture executes the actual FenceBlock vtable dispatch for 4,096 supplied states and positions.
+All bounds match, and the wrapper rejects 257 collapsed boxes without mismatches.
+The fixture supplies initialized state maps and the indirect-call guard and security-cookie boundaries.
+Constructor behavior, connectivity production, vector growth, and native game physics remain outside this comparison.
+Production already consumes the same envelope, so this result requires no geometry change.
+
+**Persistent research verified:** MCP saves the corrected collision-envelope name and the verified camera-wrapper name in the real imported program.
+A fresh query reopens the program and matches both names and comments.
+The helper releases program ownership after the operations finish.
+Focused queries also identify the shared connection dispatcher and a standard connection callback.
+Their connection-state producer still needs executable tests and matching vanilla block registration evidence before replacing core's neighbor rules.
+
+**Validation:** The existing production revision's build, tooling, and capture-permission jobs passed.
+Capture-permission checks ran on Ubuntu 24.04, Windows 2025, and macOS 15.
+The full Bedrock goal remains incomplete, including native world state, correction replay, account and appearance flows, and actual platform joins.
