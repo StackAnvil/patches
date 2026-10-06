@@ -4917,7 +4917,8 @@ They verify 779 reuse cases, 3,317 skipped cases, 778 prior-buffer releases, and
 The fixture substitutes buffer release.
 It excludes registration, ECS iteration, real ownership lifetime, nearby-actor refresh, and complete movement simulation.
 The separately registered refresh system at `0x1482d8e10` resolves referenced actor shapes through prediction and interpolation state.
-Its complete behavior still needs verification.
+The [actor refresh comparison](#native-actor-collision-shape-refresh-october-6-2026) now verifies its selection and box reconstruction.
+Actual history lifetime, nearby-solid collection, and complete scheduling remain unverified.
 
 **Incomplete:** Production needs frame identity, retained settings and collision state, ordered corrections, and later-input simulation.
 The findings above specify parts of that path; they do not implement production reconciliation or establish full movement parity.
@@ -5532,3 +5533,45 @@ Core reports 664 passing tests and 19 skips; CubeConverter reports 16 passing te
 All eight neighbor-shape tests pass, with no failures or errors.
 Fresh Java comparisons match the 4,096 stair cases and the earlier 4,096 gate, slab, and snow cases.
 Live joins and complete movement parity were not verified in this run.
+
+
+## Native actor collision shape refresh (October 6, 2026)
+
+**Reference:** Client registration `0x14681ac20` names `Rewind Solid Shape Refresh` through the literal at `0x14ec46c0d`.
+It installs vtable `0x14ea1a580`.
+The tick and per-entity entries at `0x1482d9430` and `0x1482d9950` both call refresh kernel `0x1482d8e10`.
+This system updates saved nearby-actor boxes during replay.
+It does not collect the nearby actors or create their history.
+
+The kernel follows linked-list order and validates referenced entity generations against component storage.
+An enabled prediction component, enabled feature check, and nonempty history take priority over interpolation.
+The selected history slot is `(first + length - 1) & (capacity - 1)`.
+The kernel obtains that item's position through virtual slot `0x28`.
+If prediction cannot supply a position, any nonzero interpolation step field enables the interpolation position.
+The three step fields occupy offsets 24, 28, and 32.
+The [versioned interpolation declaration](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/entity/components/MovementInterpolatorComponent.h) supports their identity.
+
+A valid bounding-box and actor-offset pair is also required to replace the cached box.
+The kernel reconstructs X/Z bounds from position plus or minus float32 `width * 0.5`.
+Its lower Y is `positionY - actorYOffset`; the opposite Y endpoint adds height.
+It normalizes each axis after these float32 operations, including zero and negative dimensions.
+Missing positions, stale components, or an excluded pair preserve the cached box.
+Source components, actor references, list links, and unrelated bytes remain unchanged.
+
+**Verified within scope:** Exact native refresh instructions pass 4,096 cases with zero mismatches across 16,380 actor records.
+They refresh 9,907 boxes and retain 6,473 boxes.
+Position selection uses 6,814 prediction values and 7,179 interpolation values.
+Cases cover missing and stale components, disabled prediction, empty history, wrapped history slots, zero interpolation steps, and unavailable paired data.
+They also verify 3,072 lazy pool lookups and 341 paired-view refreshes.
+The fixture executes the native storage checks, history index arithmetic, linked-list traversal, and box reconstruction.
+Feature checks, registry discovery, paired-view creation, and the virtual position getter are explicit fixture boundaries.
+Three verified Ghidra names and comments were saved through MCP and matched after a fresh program query.
+
+**Incomplete:** Actual nearby-solid collection, history creation and lifetime, full ECS scheduling, and production collision replay still need implementation and verification.
+Production continues to use Java collision solving.
+Coherent frame identity, retained world state, ordered corrections, native block shapes, and the full movement matrix remain requirements.
+All eight coverage groups and actual Windows/macOS game joins remain active requirements.
+The current-boot GPU guard still prevents fresh native visual comparisons.
+
+**CI:** The preceding stair-connection revision passes build, tooling, and Ubuntu/Windows/macOS permission jobs in [CI run 37486490963](https://github.com/StackAnvil/patches/actions/runs/37486490963).
+These permission jobs do not establish successful game joins on those platforms.

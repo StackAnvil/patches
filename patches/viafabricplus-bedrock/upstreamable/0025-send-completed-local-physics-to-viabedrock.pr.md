@@ -700,3 +700,22 @@ The independent models follow executable float32 order, including differences ob
 The [block offset reference](../../../docs/bedrock-coverage.md#native-block-offsets-and-component-collision-shapes-october-6-2026) records addresses and fixture boundaries.
 Wire definitions, range validation, per-type overrides, and production integration remain incomplete.
 Production still uses Java collision solving; the converted custom-block properties currently omit random offsets.
+
+
+## Native actor collision refresh
+
+Matching-build registration identifies the separate `Rewind Solid Shape Refresh` system.
+Its refresh kernel updates saved actor boxes in linked-list order during replay.
+It prefers an enabled prediction history position and otherwise uses interpolation when any step field is nonzero.
+Valid bounding-box and actor-offset components are also required.
+Missing or stale state preserves the saved box.
+
+Exact native refresh instructions pass 4,096 cases across 16,380 actor records with no mismatches.
+They verify wrapped history selection, component generations, lazy lookups, fallback selection, float32 reconstruction, and preservation of unrelated data.
+The [actor refresh reference](../../../docs/bedrock-coverage.md#native-actor-collision-shape-refresh-october-6-2026) records addresses, counts, and fixture boundaries.
+Registry discovery, feature checks, paired-view creation, and the virtual position getter are fixture boundaries.
+Actual nearby-solid collection, history creation and lifetime, and complete scheduling remain unverified.
+
+Production still uses Java collision solving.
+Native collision integration needs coherent frame identity, retained world state, ordered corrections, and later-frame simulation.
+These comparisons establish one native replay kernel's behavior and do not establish complete movement parity.
