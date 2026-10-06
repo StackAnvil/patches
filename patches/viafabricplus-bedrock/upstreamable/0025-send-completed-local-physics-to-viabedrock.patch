@@ -1,4 +1,4 @@
-From 3e086cb2f09404f50eff0b422861730b6be6e16e Mon Sep 17 00:00:00 2001
+From f2d87471e53f9e4efbbdf9282584fbf8f343fec6 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:53 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -292,8 +292,15 @@ Native contact distances within 0.000001F still block that face.
 Preserve unblocked double displacement and the ordinary Java path.
 Native actor overlap recovery, shape ordering, axis sequencing,
 and stepping remain incomplete and are not claimed by this change.
+
+Apply core-provided grounded state after the matching Java position
+correction. Standard player-position packets omit this state, while a
+zero-relative entity teleport starts local interpolation in Java 26.3.
+Use core's player and teleport identity pairing without changing
+position, velocity, acknowledgments, or other entities. Clear pending
+state across connection changes and mismatched position packets.
 ---
- .../bedrock/ViaFabricPlusBedrock.java         |   4 +
+ .../bedrock/ViaFabricPlusBedrock.java         |   6 +
  .../access/IBedrockPlayerPosture.java         |  14 ++
  .../mixin/features/movement/MixinAvatar.java  |  27 +++
  .../mixin/features/movement/MixinEntity.java  |  25 +--
@@ -303,25 +310,31 @@ and stepping remain incomplete and are not claimed by this change.
  .../features/movement/MixinLivingEntity.java  |  72 +++++++
  .../features/movement/MixinLocalPlayer.java   | 194 +++++++++++++++++-
  .../mixin/features/movement/MixinPlayer.java  |  55 +++--
+ .../MixinPlayerCorrectionPacketListener.java  |  23 +++
  .../features/movement/MixinVoxelShape.java    |  28 +++
  .../bedrock/input/BedrockMovementEffects.java |  72 +++++++
+ .../input/BedrockPlayerCorrections.java       |  44 ++++
  .../bedrock/input/MovementEffectPayload.java  |  24 +++
+ .../input/PlayerCorrectionPayload.java        |  24 +++
  .../input/PlayerPredictionPayload.java        |  24 +++
  .../input/UnderwaterMovementPayload.java      |  24 +++
  .../movement/BedrockCollisionContacts.java    |  50 +++++
  .../bedrock/movement/BedrockFluidPhysics.java |  86 ++++++++
  .../movement/BedrockPlayerPosture.java        |  63 ++++++
- .../viafabricplus-bedrock.mixins.json         |   3 +
+ .../viafabricplus-bedrock.mixins.json         |   4 +
  .../BedrockCollisionContactsTest.java         |  39 ++++
  .../movement/BedrockFluidPhysicsTest.java     | 121 +++++++++++
  .../movement/BedrockPlayerPostureTest.java    |  45 ++++
- 22 files changed, 1002 insertions(+), 61 deletions(-)
+ 25 files changed, 1096 insertions(+), 61 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinFireworkRocketEntity.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayerCorrectionPacketListener.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinVoxelShape.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockPlayerCorrections.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/MovementEffectPayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerCorrectionPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/UnderwaterMovementPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContacts.java
@@ -332,23 +345,25 @@ and stepping remain incomplete and are not claimed by this change.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPostureTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-index 924035a..99b3682 100644
+index 924035a..64aaea6 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
-@@ -55,6 +55,8 @@ import com.viaversion.viafabricplus.bedrock.camera.CameraShakePayload;
+@@ -55,6 +55,9 @@ import com.viaversion.viafabricplus.bedrock.camera.CameraShakePayload;
  import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraShake;
  import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
  import com.viaversion.viafabricplus.bedrock.input.RawInputPayload;
 +import com.viaversion.viafabricplus.bedrock.input.PlayerPredictionPayload;
++import com.viaversion.viafabricplus.bedrock.input.BedrockPlayerCorrections;
 +import com.viaversion.viafabricplus.bedrock.input.BedrockMovementEffects;
  import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
  import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusSkinProvider;
  import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusBuiltinResourcePackProvider;
-@@ -116,6 +118,8 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+@@ -116,6 +119,9 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
          ClientPlayNetworking.registerGlobalReceiver(NativeParticlePlaybackPayload.TYPE,
                  (payload, context) -> BedrockServerParticles.accept(payload.message()));
          PayloadTypeRegistry.serverboundPlay().register(RawInputPayload.TYPE, RawInputPayload.CODEC);
 +        PayloadTypeRegistry.serverboundPlay().register(PlayerPredictionPayload.TYPE, PlayerPredictionPayload.CODEC);
++        BedrockPlayerCorrections.register();
 +        BedrockMovementEffects.register();
          PayloadTypeRegistry.clientboundPlay().register(InputPermissionsPayload.TYPE, InputPermissionsPayload.CODEC);
          ClientPlayNetworking.registerGlobalReceiver(InputPermissionsPayload.TYPE,
@@ -1038,6 +1053,35 @@ index 49a37ac..9b2d80b 100644
              instance.setDeltaMovement(instance.getDeltaMovement().x(), 0, instance.getDeltaMovement().z());
              return false;
          }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayerCorrectionPacketListener.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayerCorrectionPacketListener.java
+new file mode 100644
+index 0000000..906163e
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayerCorrectionPacketListener.java
+@@ -0,0 +1,23 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
++
++import com.viaversion.viafabricplus.bedrock.input.BedrockPlayerCorrections;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.multiplayer.ClientPacketListener;
++import net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(ClientPacketListener.class)
++public abstract class MixinPlayerCorrectionPacketListener {
++    @Inject(method = "handleMovePlayer", at = @At("TAIL"))
++    private void applyCorrectionGroundState(final ClientboundPlayerPositionPacket packet, final CallbackInfo ci) {
++        BedrockPlayerCorrections.apply(Minecraft.getInstance().player, packet.id());
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinVoxelShape.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinVoxelShape.java
 new file mode 100644
 index 0000000..39a52c2
@@ -1150,6 +1194,56 @@ index 0000000..143b1f8
 +        return UNDERWATER_SPEEDS.get(entityId);
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockPlayerCorrections.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockPlayerCorrections.java
+new file mode 100644
+index 0000000..3857fae
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockPlayerCorrections.java
+@@ -0,0 +1,44 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
++import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
++import net.minecraft.client.player.LocalPlayer;
++import net.raphimc.viabedrock.api.model.PlayerCorrection;
++import net.raphimc.viabedrock.api.model.PlayerCorrectionTracker;
++
++public final class BedrockPlayerCorrections {
++    private static final PlayerCorrectionTracker TRACKER = new PlayerCorrectionTracker();
++
++    private BedrockPlayerCorrections() {}
++
++    public static void register() {
++        PayloadTypeRegistry.clientboundPlay().register(PlayerCorrectionPayload.TYPE, PlayerCorrectionPayload.CODEC);
++        ClientPlayConnectionEvents.INIT.register((listener, client) -> {
++            TRACKER.clear();
++            ClientPlayNetworking.registerReceiver(PlayerCorrectionPayload.TYPE,
++                (payload, context) -> {
++                    if (context.client().getConnection() == listener && BedrockInputPermissions.isBedrockConnection()) {
++                        TRACKER.accept(payload.correction());
++                    }
++                });
++        });
++        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> TRACKER.clear());
++    }
++
++    public static void apply(final LocalPlayer player, final int teleportId) {
++        if (player == null || !BedrockInputPermissions.isBedrockConnection()) {
++            TRACKER.clear();
++            return;
++        }
++        final PlayerCorrection correction = TRACKER.consume(player.getId(), teleportId);
++        if (correction != null && !player.isPassenger()) {
++            player.setOnGround(correction.onGround());
++        }
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/MovementEffectPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/MovementEffectPayload.java
 new file mode 100644
 index 0000000..7e1745e
@@ -1177,6 +1271,36 @@ index 0000000..7e1745e
 +
 +    @Override
 +    public Type<MovementEffectPayload> type() {
++        return TYPE;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerCorrectionPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerCorrectionPayload.java
+new file mode 100644
+index 0000000..8ddfa18
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerCorrectionPayload.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.PlayerCorrection;
++
++public record PlayerCorrectionPayload(PlayerCorrection correction) implements CustomPacketPayload {
++    public static final Type<PlayerCorrectionPayload> TYPE = new Type<>(Identifier.parse(PlayerCorrection.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, PlayerCorrectionPayload> CODEC = CustomPacketPayload.codec(
++        (payload, buffer) -> PlayerCorrection.TYPE.write(buffer, payload.correction),
++        buffer -> new PlayerCorrectionPayload(PlayerCorrection.TYPE.read(buffer)));
++
++    @Override
++    public Type<PlayerCorrectionPayload> type() {
 +        return TYPE;
 +    }
 +}
@@ -1458,10 +1582,10 @@ index 0000000..0f102d6
 +
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 794e12a..9af8a39 100644
+index 794e12a..f87f3a1 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -110,11 +110,14 @@
+@@ -110,12 +110,16 @@
      "features.input.MixinMouseHandler",
      "features.input.MixinInputPermissionConnection",
      "features.input.MixinMinecraftInputPermissions",
@@ -1474,8 +1598,10 @@ index 794e12a..9af8a39 100644
      "features.movement.MixinLivingEntity",
 +    "features.movement.MixinFireworkRocketEntity",
      "features.movement.MixinLocalPlayer",
++    "features.movement.MixinPlayerCorrectionPacketListener",
      "features.movement.MixinPlayer",
      "features.sound.MixinBedrockChannelAccess",
+     "features.sound.MixinBedrockChannel",
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContactsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContactsTest.java
 new file mode 100644
 index 0000000..6094186

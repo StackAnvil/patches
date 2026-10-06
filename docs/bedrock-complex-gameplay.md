@@ -106,7 +106,8 @@ The October 6 audit found these limits:
 - `ClientPlayerPackets.predictedVehicle` selects Java boat and abstract horse types. Other controlled mounts need an authority audit.
 - Core now handles `UPDATE_EQUIP` and ordinary horse, donkey, and mule menus. Cargo mapping and request identity have unit coverage. Live transfers, mounted opening, rejection recovery, and destruction remain unverified.
 - `ItemAnimationData` carries kinetic timing for animation. It does not model spear reach or relative-speed attack conditions.
-- `PlayerPredictionStorage` retains one pending sample. It does not provide coherent tick-indexed world history and correction replay.
+- `PlayerPredictionStorage` pairs completed physics and retains input-to-client frame IDs. It lacks tick-indexed world history and correction replay.
+- Core forwards authoritative correction position and motion. The add-on now also applies paired grounded state. Full correction replay remains incomplete.
 - Bundle containers and rewriting exist. End-to-end capacity, cursor, transfer, and rollback parity remain to verify.
 - Fluid physics, player posture, shield timing, boat movement, and rocket paths exist. The complete matrix above remains unverified.
 
@@ -473,3 +474,29 @@ The constructor call chain is verified from instructions.
 This corrects the player limit while Java still selects and solves step candidates.
 Variable creature heights, native obstacle order, overlap recovery, and complete movement history remain required.
 The [coverage ledger](bedrock-coverage.md#native-player-step-height-october-6-2026) records runtime checks and verification boundaries.
+
+### Grounded player corrections, October 6, 2026
+
+The ranged recordings expose a first-frame knockback mismatch.
+An airborne server correction updates Java position and motion but leaves the earlier grounded state active.
+The next frame applies ground drag of 0.546 instead of air drag of 0.91.
+
+Core now transports the missing grounded state through a versioned correction channel.
+The add-on applies it after the exact matching player-position packet.
+The player ID and teleport ID prevent another update from consuming stale state.
+Core retains the native correction tick, but full history replay remains incomplete.
+
+A live Java 26.3 probe rules out ordinary entity teleports as an alternative.
+Even a zero-relative teleport starts two-step interpolation on the local player.
+The injected handler instead preserves exact position and velocity and leaves interpolation inactive.
+
+Both strict-BDS routes finish normally and pass all three Piercing controls.
+Each route observes two airborne corrections with next-frame horizontal drag near 0.91.
+A later grounded correction on each route retains drag near 0.546.
+Runtime snapshots verify grounded state before physics at the matching correction positions and velocities.
+The direct route records four corrections across 819 inputs; ViaProxy records six across 821 inputs.
+Startup and fixture corrections differ between runs, so their totals do not measure the fix in isolation.
+
+The [core correction notes](../patches/viabedrock/upstreamable/0092-retain-completed-client-prediction-frames.pr.md#authoritative-grounded-state) describe the codec and pairing tests.
+Ordinary Java grounded-state limitations, rewind, resimulation, vehicle reconciliation, and the full matrix remain requirements.
+Fresh native execution remains blocked by the current-boot GPU guard.

@@ -6271,3 +6271,39 @@ Knockback and correction replay remain open; these firing checks do not establis
 The final spacing tests distinct targets; it does not establish client parity for repeated overlap contacts.
 Wall stops, shields, moving targets, local projectile trajectories, native-client comparisons, and the full gameplay matrix remain required.
 The [complex gameplay record](bedrock-complex-gameplay.md#crossbow-piercing-fixtures-october-6-2026) explains fixture boundaries and version evidence.
+
+### Grounded player corrections, October 6, 2026
+
+**Implemented:** Core retains the native correction tick and sends the grounded state that Java player-position packets omit.
+The add-on applies that state after the matching player and teleport ID update.
+Core owns the versioned codec and single-use pairing tracker.
+Mismatched packets and connection changes invalidate pending state.
+Passengers do not receive this player ground update.
+
+**Java protocol evidence:** A live Java 26.3 probe shows that a zero-relative entity teleport starts two-step interpolation.
+Ordinary movement and position-sync handlers ignore grounded updates for locally authoritative players.
+The standard player-position packet carries no grounded field.
+The add-on supplies this missing integration while core retains position, motion, and packet translation.
+
+**Verified:** Six focused tests cover the codec, lifecycle, and 64 packet combinations.
+The actual injected Java handler preserves position and velocity, applies both grounded states, and leaves interpolation inactive.
+Mismatched and previously consumed corrections cannot change ground state.
+
+Both rebuilt routes complete strict-BDS spawn, finish normally, and pass all three Piercing controls.
+The direct route sends 819 auth-input frames and receives four corrections; ViaProxy sends 821 frames and receives six.
+Each route has two airborne motion corrections and one later grounded motion correction.
+Runtime snapshots verify authoritative ground state before physics at their matching positions and velocities.
+Airborne next-frame horizontal drag is about 0.91 on both routes; grounded drag remains about 0.546.
+The earlier direct recording incorrectly applies 0.546 after its first airborne correction.
+Startup and fixture placement differ between runs, so total correction counts do not isolate this change.
+
+The full build passes 706 core tests, 480 add-on tests, and 16 converter tests, with no failures or errors.
+There are 19 core and 114 add-on optional skips.
+Both stacks replay, all four project builds pass, and the TypeScript check passes.
+The [complex gameplay record](bedrock-complex-gameplay.md#grounded-player-corrections-october-6-2026) explains the comparison and limits.
+
+**Remaining:** Corrections still occur after velocity impulses and landing.
+The retained tick does not supply rewind or resimulation.
+Ordinary Java ground delivery, vehicle reconciliation, movement metadata/effects history, and the complete gameplay matrix remain requirements.
+Fresh native execution remains blocked by the current-boot GPU guard.
+Boar comparisons, CubeCraft, actual Windows/macOS joins, and all eight original coverage groups remain required.

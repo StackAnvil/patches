@@ -925,3 +925,44 @@ The [coverage ledger](../../../docs/bedrock-coverage.md#native-collision-contact
 The rebuilt ViaProxy comparison also reaches strict-BDS spawn and sends 1,618 input frames with zero corrections.
 It includes the same rounded teleport, 22 backward-input frames, 22 forward-input frames, and later idle current contact.
 Both routes verify this regression; complete native collision and the full gameplay matrix remain required.
+
+## Grounded state after player corrections
+
+Core retains and negotiates the grounded state that Java player-position packets omit.
+The add-on pairs it with the player and teleport ID, then applies it after the standard position handler.
+Position, motion, rotation, and teleport acknowledgments retain their existing translation.
+Unmatched packets consume and invalidate pending state.
+Connection initialization and disconnect also clear it.
+The handler excludes passengers.
+
+A live Java 26.3 probe establishes that zero-relative entity teleports start local interpolation even without displacement.
+This alternative cannot provide faithful correction behavior.
+Core's [correction notes](../../viabedrock/upstreamable/0092-retain-completed-client-prediction-frames.pr.md#authoritative-grounded-state) describe the wire format, version evidence, and pairing tests.
+History rewind, input resimulation, vehicle state, and the full movement matrix remain requirements.
+
+A private live JVM probe exercises the actual injected Java 26.3 position handler after BDS spawn.
+Both grounded states apply with exact position and velocity preservation and no active interpolation.
+A mismatched teleport ID invalidates the pending correction, including a later packet with its former matching ID.
+This probe supplies state directly to the tracker; it does not establish negotiated wire delivery.
+
+## Grounded correction verification, October 6, 2026
+
+Both rebuilt routes complete actual spawn and finish normally against strict BDS 1.26.51.1.
+The direct route sends 819 auth-input frames and receives four corrections.
+ViaProxy sends 821 frames and receives six corrections.
+Each recording includes two airborne motion corrections and one later grounded motion correction.
+Other corrections carry zero motion around startup or fixture placement.
+All three Piercing controls pass on each route.
+
+Runtime snapshots match the authoritative grounded state before local physics after each nonzero correction.
+Both airborne corrections on each route apply horizontal drag of about 0.91 on the next frame.
+Each grounded correction applies drag of about 0.546.
+The earlier direct recording incorrectly uses 0.546 after its first airborne correction.
+These observations verify the grounded-state fix in these cases.
+They do not establish correction-free movement or complete prediction parity.
+
+Core passes 706 tests with 19 optional skips, and the add-on passes 480 tests with 114 optional skips.
+CubeConverter passes all 16 tests.
+Both complete patch stacks replay, all four project builds pass, and the TypeScript check passes.
+Native GPU execution remains blocked by the current-boot guard.
+Fresh native comparisons, rewind, resimulation, vehicle reconciliation, and the full gameplay matrix remain required.

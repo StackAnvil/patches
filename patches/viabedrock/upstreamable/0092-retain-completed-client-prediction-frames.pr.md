@@ -89,6 +89,35 @@ They verify position, motion, relative flags, grounded state, and complete packe
 Corrections inside history still need rewind and input resimulation.
 Vehicle velocity, angular velocity, and movement-related metadata, attributes, and effects need matching reconciliation.
 
+## Authoritative grounded state
+
+Strict-BDS Piercing recordings expose a separate correction mismatch.
+An airborne correction carries horizontal motion of about -0.076424 and -0.273441.
+The first local frame reduces both components by 0.546 because Java retains the prior grounded state.
+The target server expects airborne drag at this point.
+Java's player-position packet carries position and motion, but no grounded field.
+
+A live Java 26.3 probe checks a zero-relative entity teleport as an alternative.
+It changes grounded state but starts two-step interpolation on the local player.
+Java ignores ordinary relative movement and position-sync ground updates for locally authoritative entities.
+The [movement guide](https://mojang.github.io/bedrock-protocol-docs/guides/player-movement-overview/) requires corrections without interpolation.
+These findings establish why faithful ground delivery needs client integration.
+
+Core negotiates `viabedrock:player_correction_v1` and sends the missing state before the standard position packet.
+The versioned codec retains the Java player ID, teleport ID, native correction tick, and grounded state.
+Core also owns the one-use pairing tracker.
+The add-on applies this state after the matching standard packet updates position and motion.
+A different player, another position packet, connection changes, or prior consumption invalidate the pending state.
+Passengers do not receive a player ground update from this path.
+Clients without the channel retain standard position and velocity translation.
+
+Six focused test cases cover codec compatibility, pairing lifecycle, and 64 packet combinations.
+The packet combinations include both channel states, both grounded states, both gliding states, two velocities, and four correction ages.
+
+**Incomplete:** The retained tick identifies the correction but does not provide rewind or input resimulation.
+Ordinary Java clients still lack faithful grounded-state delivery.
+Vehicle motion and broader movement-related history remain requirements.
+
 ## Ground-jump events
 
 Native 1.26.51.1 protocol 2193 separates held liquid-rise input from a ground-jump impulse.
@@ -485,3 +514,25 @@ Controlled walking has no corrections on either route.
 Those setup and fluid/prediction gaps remain open.
 Core passes 704 tests with 19 optional skips, the add-on passes 480 tests with 114 optional skips, and CubeConverter passes 16 tests.
 Both Java stacks pass Checkstyle; core, add-on, converter, and ViaProxy stacks replay and build.
+
+## Grounded correction verification, October 6, 2026
+
+Both rebuilt routes complete actual spawn and finish normally against strict BDS 1.26.51.1.
+The direct route sends 819 auth-input frames and receives four corrections.
+ViaProxy sends 821 frames and receives six corrections.
+Each recording includes two airborne motion corrections and one later grounded motion correction.
+Other corrections carry zero motion around startup or fixture placement.
+All three Piercing controls pass on each route.
+
+Runtime snapshots match the authoritative grounded state before local physics after each nonzero correction.
+Both airborne corrections on each route apply horizontal drag of about 0.91 on the next frame.
+Each grounded correction applies drag of about 0.546.
+The earlier direct recording incorrectly uses 0.546 after its first airborne correction.
+These observations verify the grounded-state fix in these cases.
+They do not establish correction-free movement or complete prediction parity.
+
+Core passes 706 tests with 19 optional skips, and the add-on passes 480 tests with 114 optional skips.
+CubeConverter passes all 16 tests.
+Both complete patch stacks replay, all four project builds pass, and the TypeScript check passes.
+Native GPU execution remains blocked by the current-boot guard.
+Fresh native comparisons, rewind, resimulation, vehicle reconciliation, and the full gameplay matrix remain required.
