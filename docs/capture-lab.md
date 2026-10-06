@@ -99,6 +99,8 @@ For skin behavior, see [the Bedrock skin flow](skin-flow.md). It explains what H
 Fabric replay recordings save `movement-audit.jsonl` in the private recording directory.
 The observer samples the local player before `aiStep`, before input application, and after travel at `sendChanges`.
 Each row includes the tick, position, motion, pose, swimming blend, fluid state, eye height, and collision axes.
+Item-use rows also include active state, remaining and elapsed ticks, the item identifier, and active and held stack counts.
+Compare the counters and counts around completion packets to distinguish local use timing from authoritative inventory updates.
 Compare these phases with the packet journal to locate changes that occur before or after physics.
 
 The observer does not change movement or input.

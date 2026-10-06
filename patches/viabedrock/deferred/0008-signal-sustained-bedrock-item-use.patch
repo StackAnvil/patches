@@ -1,4 +1,4 @@
-From 0634723f0288f210dbad2cfa426e454ab7e1055e Mon Sep 17 00:00:00 2001
+From 5d941108e68b57b60417fe466e2e01c2624f1904 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 03:58:50 +0200
 Subject: [PATCH] fix(interaction): signal sustained Bedrock item use
@@ -15,16 +15,25 @@ The previously discarded completion leaves Java consumption state out of
 phase with BDS and causes corrections during repeated eating. Verify this
 boundary separately from bow charging and release. Packet tests exercise
 signed IDs, use methods, replacement protection, and unchanged counts.
+
+Matching build 1.26.51.1 executable inspection traces packet 142 from
+its ID/name vtable through factory dispatcher 0x141734170 (handler slot
+0x4b8) to ClientNetworkHandler 0x141306470. The handler looks up the
+short item ID and rejects unsigned use methods above 16 before emitting
+its event. Apply the same method range to Java translation so malformed
+acknowledgments cannot complete a valid active use. Boundary packet tests
+cover negative values, 16, 17, and signed integer extremes. This does not
+resolve local prediction or late acknowledgments for a new same-item use.
 ---
- .../protocol/packet/InteractionPackets.java   | 35 ++++++-
- .../packet/CompletedItemUsePacketTest.java    | 97 +++++++++++++++++++
+ .../protocol/packet/InteractionPackets.java   | 40 +++++++-
+ .../packet/CompletedItemUsePacketTest.java    | 98 +++++++++++++++++++
  .../packet/InteractionPacketsTest.java        | 31 ++++++
- 3 files changed, 160 insertions(+), 3 deletions(-)
+ 3 files changed, 166 insertions(+), 3 deletions(-)
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedItemUsePacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/InteractionPacketsTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
-index 2ae3ace9f..24ae5ff29 100644
+index 2ae3ace9f..3eff2df25 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InteractionPackets.java
 @@ -43,6 +43,7 @@ import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
@@ -72,13 +81,18 @@ index 2ae3ace9f..24ae5ff29 100644
              if (transaction == null) {
                  wrapper.cancel();
                  if (hand == InteractionHand.OFF_HAND && !"minecraft:shield".equals(itemIdentifier)) {
-@@ -330,6 +339,19 @@ public final class InteractionPackets {
+@@ -330,6 +339,24 @@ public final class InteractionPackets {
                  }
              }
          });
 +        protocol.registerClientbound(ClientboundBedrockPackets.COMPLETED_USING_ITEM, ClientboundPackets26_3.ENTITY_EVENT, wrapper -> {
 +            final short usedItemId = wrapper.read(BedrockTypes.SHORT_LE);
-+            wrapper.read(BedrockTypes.INT_LE); // use method; Java completion is independent of the native method
++            final int useMethod = wrapper.read(BedrockTypes.INT_LE);
++            // The matching native handler accepts only use methods 0 through 16.
++            if (useMethod < 0 || useMethod > 16) {
++                wrapper.cancel();
++                return;
++            }
 +            final InventoryTracker inventory = wrapper.user().get(InventoryTracker.class);
 +            final BedrockItem heldItem = inventory.getInventoryContainer().getSelectedHotbarItem();
 +            if (heldItem.isEmpty() || heldItem.identifier() != usedItemId) {
@@ -92,7 +106,7 @@ index 2ae3ace9f..24ae5ff29 100644
          protocol.registerClientbound(ClientboundBedrockPackets.SET_ENTITY_LINK, null, wrapper -> {
              wrapper.cancel();
              final EntityTracker entityTracker = wrapper.user().get(EntityTracker.class);
-@@ -339,6 +361,10 @@ public final class InteractionPackets {
+@@ -339,6 +366,10 @@ public final class InteractionPackets {
  
      }
  
@@ -103,7 +117,7 @@ index 2ae3ace9f..24ae5ff29 100644
      static void sendPassengerUpdates(final PacketWrapper source, final EntityTracker entityTracker) {
          for (Entity vehicle : entityTracker.drainPassengerUpdates()) {
              final PacketWrapper passengersPacket = PacketWrapper.create(ClientboundPackets26_3.SET_PASSENGERS,
-@@ -360,7 +386,7 @@ public final class InteractionPackets {
+@@ -360,7 +391,7 @@ public final class InteractionPackets {
  
      static BedrockInventoryTransaction beginItemUse(final ClientPlayerEntity player,
              final InteractionHand hand, final int hotbarSlot, final BedrockItem item,
@@ -112,7 +126,7 @@ index 2ae3ace9f..24ae5ff29 100644
          if (item.isEmpty()) {
              return null;
          }
-@@ -372,6 +398,9 @@ public final class InteractionPackets {
+@@ -372,6 +403,9 @@ public final class InteractionPackets {
              return null;
          }
          player.setShieldBlockingHand(null);
@@ -124,10 +138,10 @@ index 2ae3ace9f..24ae5ff29 100644
                  new InventoryTransactionData.UseItemTransactionData(
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedItemUsePacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedItemUsePacketTest.java
 new file mode 100644
-index 000000000..0641bf591
+index 000000000..45f4a6a31
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/CompletedItemUsePacketTest.java
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,98 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -164,8 +178,8 @@ index 000000000..0641bf591
 +class CompletedItemUsePacketTest {
 +
 +    @ParameterizedTest
-+    @ValueSource(ints = {-1, 0, 1, 3, 5, 15, 16})
-+    void completesTheMatchingHeldItemWithoutChangingAuthoritativeInventory(final int useMethod) throws Exception {
++    @ValueSource(ints = {Integer.MIN_VALUE, -1, 0, 1, 3, 5, 15, 16, 17, Integer.MAX_VALUE})
++    void completesOnlyValidMatchingUsesWithoutChangingAuthoritativeInventory(final int useMethod) throws Exception {
 +        for (short itemId : new short[]{258, -1234}) {
 +            for (boolean matching : new boolean[]{false, true}) {
 +                final Map<Class<?>, Object> stores = new HashMap<>();
@@ -194,10 +208,11 @@ index 000000000..0641bf591
 +                    input.writeIntLE(useMethod);
 +                    final PacketWrapper packet = new PacketWrapperImpl(ClientboundBedrockPackets.COMPLETED_USING_ITEM, input, user);
 +                    new TestProtocol().translate(packet);
-+                    assertEquals(!matching, packet.isCancelled());
++                    final boolean completes = matching && useMethod >= 0 && useMethod <= 16;
++                    assertEquals(!completes, packet.isCancelled());
 +                    assertEquals(8, inventory.getInventoryContainer().getSelectedHotbarItem().amount());
 +                    assertFalse(input.isReadable());
-+                    if (matching) {
++                    if (completes) {
 +                        packet.writeToBuffer(output);
 +                        assertEquals(ClientboundPackets26_3.ENTITY_EVENT.getId(), Types.VAR_INT.readPrimitive(output));
 +                        assertEquals(player.javaId(), output.readInt());

@@ -4500,3 +4500,44 @@ Removal callback `0x14c5f5cb0` instead checks the actor's `USINGITEM` flag befor
 Zero remaining duration alone therefore does not establish the correct local completion transition.
 Full query membership, local completion, acknowledgments, and correction history still require research.
 Fresh native captures, custom modifiers, ordinary Java clients, Boar comparisons, broader movement, and actual Windows/macOS joins remain requirements.
+
+### Native item-use acknowledgment validation, October 6, 2026
+
+**Implemented:** Core rejects `COMPLETED_USING_ITEM` use methods outside 0–16 before it sends Java completion.
+This change belongs to the sustained item-use patch 0008.
+Ten parameterized packet cases cover valid methods, both range boundaries, negative values, integer extremes, replaced items, and unchanged inventory counts.
+
+Matching executable inspection confirms packet ID 142 and its `CompletedUsingItemPacket` name through vtable `0x14e8974b0`.
+Factory `0x1416bbec0` installs dispatcher `0x15185b618`.
+Dispatch function `0x141734170` selects handler slot `0x4b8`, which resolves to native handler `0x141306470`.
+The handler resolves the short item ID and accepts only unsigned use methods below 17.
+It dispatches an event through `0x142fea260` and marks the packet handled.
+A native diagnostic string identifies that event path as `ActorEventCoordinator::sendActorUseItem`, carrying actor, item, and use method.
+This handler does not directly call the actor's local completion function.
+Its downstream listeners still require inspection.
+
+The native actor tick function separately checks active and held item identity, selected slot, and container.
+Its zero-duration branch calls completion function `0x1401eb190`, then clears active use.
+That completion function emits an event before a world-side gate and can construct an inventory transaction and completion packet.
+The side gate and event subscribers remain unverified.
+Current SDK vtable offsets differ from the matching executable, so they cannot establish these mappings alone.
+
+**Verification:** All four projects build, including complete core and add-on stack replay.
+The build passes 16 converter, 672 core, and 584 add-on test cases, with 133 skips and no failures or errors.
+`bun run check` passes.
+The preceding inventory snapshot change also passes GitHub CI, including Ubuntu, Windows, and macOS tooling gates.
+Actual platform game joins remain separate requirements.
+
+The private movement observer now records item-use state, remaining and elapsed ticks, item identity, and active and held counts.
+Direct and updated ViaProxy strict-BDS recordings reach join and spawn with protocol 2193.
+Both show Java's counter reaching zero and sometimes −1 before the acknowledgment resets use or clears the last stack.
+The matching native duration callback instead stops decrementing at zero.
+Direct repeated eating contains 160 moving frames and five nonzero corrections around the observed completion period.
+Its last-item case contains 101 moving frames and no correction.
+ViaProxy repeated eating contains 158 moving frames and two corrections.
+Its last-item capture shows completion, an empty held stack, and restored full movement input without a correction.
+That capture ends after 23 moving frames, before the full planned five-second hold, so it is a partial movement case.
+
+**Incomplete:** Local completion prediction and late acknowledgment correlation for repeated same-item use remain unresolved.
+These observations locate a timing difference but do not establish the cause of every correction.
+Fresh native captures, custom modifiers, ordinary Java clients, Boar comparisons, broader movement, and actual Windows/macOS joins remain requirements.

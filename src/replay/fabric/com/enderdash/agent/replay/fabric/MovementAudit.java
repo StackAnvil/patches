@@ -48,6 +48,13 @@ public final class MovementAudit {
             row.put("ground", call(player, "onGround"));
             row.put("horizontalCollision", player.getClass().getField("horizontalCollision").getBoolean(player));
             row.put("verticalCollision", player.getClass().getField("verticalCollision").getBoolean(player));
+            row.put("usingItem", call(player, "isUsingItem"));
+            row.put("useRemainingTicks", call(player, "getUseItemRemainingTicks"));
+            row.put("useElapsedTicks", call(player, "getTicksUsingItem"));
+            Object usedItem = call(player, "getUseItem");
+            row.put("usedItem", call(call(usedItem, "getItem"), "getDescriptionId"));
+            row.put("usedItemCount", call(usedItem, "getCount"));
+            row.put("heldItemCount", call(call(player, "getMainHandItem"), "getCount"));
             output.write(JSON.toJson(row));
             output.newLine();
             if (++samples % 40 == 0) output.flush();
