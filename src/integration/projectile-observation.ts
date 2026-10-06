@@ -39,6 +39,7 @@ export interface IncomingProjectileObservation {
   projectileId?: string;
   launchedTick?: number;
   frames: { tick: number; position: Vector; velocity: Vector; owner?: string }[];
+  playerFrames: { tick: number; position: Vector; velocity: Vector }[];
   attacks: { tick: number; player: string; target: string }[];
   hits: { tick: number; projectile: string; target: string }[];
   damage: { tick: number; amount: number; projectile?: string }[];
@@ -67,7 +68,13 @@ export function incomingProjectilePasses(mode: "hit" | "dodge" | "reflect", obse
   if (hitPlayer || damaged || healthAfter < healthBefore) return false;
   if (mode === "dodge") {
     const lateral = Math.abs((end.x - start.x) * -forward.z + (end.z - start.z) * forward.x);
-    return lateral > 1 && frames.some((frame) => along(frame.position) < -1);
+    const passed = frames.find((frame) => along(frame.position) < -1);
+    if (!passed || lateral <= 1 || observation.playerFrames.length < 2
+        || observation.playerFrames.some((frame, index) => !validVector(frame.position) || !validVector(frame.velocity)
+          || !Number.isInteger(frame.tick) || frame.tick < launchedTick
+          || (index > 0 && frame.tick <= observation.playerFrames[index - 1]!.tick))) return false;
+    return observation.playerFrames.some((frame) => frame.tick <= passed.tick
+      && Math.abs((frame.position.x - start.x) * -forward.z + (frame.position.z - start.z) * forward.x) > 1);
   }
   const attack = observation.attacks.find((event) => event.player === observation.playerId
     && event.target === projectileId && event.tick >= launchedTick);

@@ -88,13 +88,16 @@ The Java/Geyser probe does not implement these new fixtures; the runner rejects 
 | `splash-potion-speed` | Throw a swiftness potion downward | One consumed potion, its owned impact, and a later speed effect with positive duration. |
 | `lingering-potion-slowness` | Throw a lingering slowness potion downward | The matching impact, a nearby cloud, and a later slowness effect. |
 | `fireball-hit`, `small-fireball-hit` | Remain in the firing lane | A natural ghast or blaze shot hits the player and causes health loss. |
-| `fireball-dodge`, `small-fireball-dodge` | Move aside after launch | A shot on a collision course passes the original player position without contact or damage. |
+| `fireball-dodge`, `small-fireball-dodge` | Move aside after launch | Player samples show sideways movement before the shot passes the original position, without contact or damage. |
 | `fireball-reflect` | Attack after launch | The player's attack changes projectile ownership and reverses its motion without player damage. |
 | `water-current` | Remain idle in flowing water | At least ten flowing-water samples and downstream displacement. |
 | `lava-forward` | Hold forward with fire resistance | At least ten lava samples and forward displacement. |
 | `bubble-column-up`, `bubble-column-down` | Remain idle above soul sand or magma | At least ten bubble-column samples and displacement in the column's direction. |
 
 Ranged observations include event ticks, remaining use duration, ammunition counts, projectile IDs, and sampled projectile speed.
+Incoming-shot observations also retain player positions and velocities after launch.
+The dodge assertion rejects movement that occurs only after the projectile passes.
+It rejects absent, stale, unordered, or non-finite player samples.
 The Script API reports `useDuration` as remaining ticks, not elapsed charge time.
 The movement cases retain up to 200 position, velocity, fluid, flight, and grounded frames.
 Knockback cases apply one Script API impulse four server ticks after the weapon's accepted start event.

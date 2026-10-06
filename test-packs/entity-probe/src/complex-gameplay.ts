@@ -339,6 +339,12 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
     const player = world.getAllPlayers().find((candidate) => candidate.name === current.playerName);
     if (!player) return;
     const incoming = current.fixture.incoming;
+    if (incoming?.projectileId && incoming.playerFrames.length < 200
+        && incoming.playerFrames.at(-1)?.tick !== system.currentTick) {
+      try {
+        incoming.playerFrames.push({ tick: system.currentTick, position: { ...player.location }, velocity: player.getVelocity() });
+      } catch (error) { incoming.error = String(error); }
+    }
     if (incoming && current.fixture.projectile?.isValid && incoming.frames.length < 200
         && incoming.frames.at(-1)?.tick !== system.currentTick) {
       try {
@@ -485,7 +491,7 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
       const incoming: IncomingProjectileObservation = { playerId: player.id, shooterId: "", type: small ? "minecraft:small_fireball" : "minecraft:fireball",
         start: { ...player.location }, end: { ...player.location }, forward: player.getViewDirection(), healthBefore: health, healthAfter: health,
         playerBounds: player.getAABB(),
-        frames: [], attacks: [], hits: [], damage: [] };
+        frames: [], playerFrames: [], attacks: [], hits: [], damage: [] };
       return { incoming, closed: false as boolean, projectile: undefined as Entity | undefined, shooter: undefined as Entity | undefined };
     }, (player, fixture) => {
       fixture.closed = true;

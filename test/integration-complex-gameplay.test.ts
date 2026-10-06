@@ -1,6 +1,7 @@
 import { expect, mock, test } from "bun:test";
 import type { Entity, Player } from "@minecraft/server";
 import type { RangedObservation } from "../src/integration/ranged-observation.ts";
+import type { IncomingProjectileObservation } from "../src/integration/projectile-observation.ts";
 
 const callbacks = new Map<string, (event: any) => void>();
 const pending: (() => void)[] = [];
@@ -196,10 +197,10 @@ test("each Piercing target keeps its own damage attribution and health", () => {
 test("the incoming control selects an owned collision course and removes only its off-course shots", () => {
   let removedShots = 0;
   let stoppedShooter = 0;
-  const incoming = { playerId: player.id, shooterId: "shooter", type: "minecraft:fireball", start: { x: 0, y: 0, z: 0 },
+  const incoming: IncomingProjectileObservation = { playerId: player.id, shooterId: "shooter", type: "minecraft:fireball", start: { x: 0, y: 0, z: 0 },
     end: { x: 0, y: 0, z: 0 }, forward: { x: 0, y: 0, z: 1 },
     playerBounds: { center: { x: 0, y: 0.9, z: 0 }, extent: { x: 0.3, y: 0.9, z: 0.3 } },
-    healthBefore: 20, healthAfter: 20, frames: [], attacks: [], hits: [], damage: [] };
+    healthBefore: 20, healthAfter: 20, frames: [], playerFrames: [], attacks: [], hits: [], damage: [] };
   active = { playerName: player.name, fixture: { incoming,
     shooter: { remove: () => stoppedShooter++ } as unknown as Entity } };
   function shot(owner: string, x: number) {
@@ -219,4 +220,12 @@ test("the incoming control selects an owned collision course and removes only it
   expect(incoming.frames).toHaveLength(1);
   expect(stoppedShooter).toBe(1);
   expect(removedShots).toBe(1);
+  Object.assign(player, { location: { x: 1, y: 0, z: 0 }, getVelocity: () => ({ x: 0.2, y: 0, z: 0 }) });
+  sample();
+  sample();
+  expect(incoming.playerFrames).toEqual([{ tick: 10, position: { x: 1, y: 0, z: 0 }, velocity: { x: 0.2, y: 0, z: 0 } }]);
+  active!.fixture.closed = true;
+  Object.assign(player, { location: { x: 2, y: 0, z: 0 } });
+  sample();
+  expect(incoming.playerFrames).toHaveLength(1);
 });

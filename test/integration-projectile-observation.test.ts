@@ -7,6 +7,8 @@ function incoming(): IncomingProjectileObservation {
     playerBounds: { center: { x: 0, y: 0.9, z: 0 }, extent: { x: 0.3, y: 0.9, z: 0.3 } }, projectileExtent: { x: 0.5, y: 0.5, z: 0.5 },
     frames: [{ tick: 10, position: { x: 0, y: 1, z: 8 }, velocity: { x: 0, y: 0, z: -0.5 }, owner: "ghast" },
       { tick: 40, position: { x: 0, y: 1, z: -2 }, velocity: { x: 0, y: 0, z: -0.5 } }],
+    playerFrames: [{ tick: 10, position: { x: 0, y: 0, z: 0 }, velocity: { x: 0, y: 0, z: 0 } },
+      { tick: 20, position: { x: 2, y: 0, z: 0 }, velocity: { x: 0.2, y: 0, z: 0 } }],
     attacks: [], hits: [], damage: [] };
 }
 
@@ -31,6 +33,21 @@ test("dodging requires a real inbound shot passing the original plane, movement,
   expect(incomingProjectilePasses("dodge", { ...shot, healthAfter: 19 })).toBe(false);
   expect(incomingProjectilePasses("dodge", { ...shot, damage: [{ tick: 15, amount: 1 }] })).toBe(false);
   expect(incomingProjectilePasses("dodge", { ...shot, hits: [{ tick: 15, projectile: shot.projectileId!, target: shot.playerId }] })).toBe(false);
+});
+
+test("a dodge must move before the projectile passes, with valid ordered player samples", () => {
+  const shot = incoming();
+  for (const playerFrames of [[], [shot.playerFrames[0]!],
+    shot.playerFrames.map((frame) => ({ ...frame, position: shot.start })),
+    [shot.playerFrames[0]!, { ...shot.playerFrames[1]!, tick: 41 }],
+    [shot.playerFrames[0]!, { ...shot.playerFrames[1]!, tick: 10 }],
+    [{ ...shot.playerFrames[0]!, tick: 9 }, shot.playerFrames[1]!],
+    [shot.playerFrames[0]!, { ...shot.playerFrames[1]!, position: { x: NaN, y: 0, z: 0 } }],
+    [shot.playerFrames[0]!, { ...shot.playerFrames[1]!, velocity: { x: Infinity, y: 0, z: 0 } }]]) {
+    expect(incomingProjectilePasses("dodge", { ...shot, playerFrames })).toBe(false);
+  }
+  shot.playerFrames[1]!.tick = 40;
+  expect(incomingProjectilePasses("dodge", shot)).toBe(true);
 });
 
 test("a hit control requires both projectile contact and health loss", () => {
