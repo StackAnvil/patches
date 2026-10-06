@@ -3727,3 +3727,46 @@ Transport or derive the correct predicted motion in core, with client integratio
 The recorder self-test checks unchanged packet bytes across compressed batches, RakNet encryption counters, and unencrypted NetherNet game batches.
 All recorder self-tests pass. The four selected journal and native-profile suites pass 38 tests.
 `bun run check` also passes. Raw packet journals and screenshots remain private.
+
+### Completed client prediction frames, October 6, 2026
+
+**Implemented:** Core accepts versioned, negotiated local prediction frames on direct connections and through ViaProxy.
+Each frame carries feet position, completed motion, and local swimming state.
+Core matches the sample against standard Java movement and consumes it once at the next tick-end packet.
+Unmatched positions, non-finite values, unknown flags, extra fields, and incompatible revisions are rejected or discarded.
+Vehicle prediction and server corrections keep their existing paths.
+Ordinary Java clients retain the previous motion approximation.
+
+The add-on samples `LocalPlayer.sendChanges` after normal movement and before Java's tick-end packet.
+It sends stationary frames too.
+The former Entity-wide swimming hook is removed, so remote entity pose changes cannot produce local swimming input.
+Core emits swimming edges from the completed local sample.
+
+**Verified motion:** Native 1.26.51.1 protocol 2193 reports water-idle motion of about -0.022315647 at eye Y 103.4815826.
+Both new direct and ViaProxy captures report -0.022315646 at the matching eye Y 103.4815903.
+The previous core reported about -0.0996117 because it applied air gravity.
+New stationary water-floor frames report -0.005, matching native.
+The extended native trace also confirms -0.0784 during dry-floor gameplay; zero-motion dry-floor frames occur during startup.
+The implementation forwards completed motion without another gravity approximation.
+
+Both routes reach visible gameplay on strict BDS and complete jump, fall, water-idle, and held water-rise cases.
+The observer samples 120 server ticks per case.
+Jump peaks are 102.2521973. The sampled fall reaches 101 with minimum vertical velocity about -0.78113556.
+Both water-rise peaks are 104.8655014, within about 0.000008 of the native packet baseline's sampled peak.
+Neither controlled water case receives prediction corrections.
+Different input and observation timing prevents a claim of identical trajectories.
+
+The direct journal includes eight corrections during initial joining at the previous elevated water position.
+It also includes two corrections around the elevated fixture teleport.
+The ViaProxy journal includes two corrections around that teleport.
+The initial joining behavior and teleport timing remain open gaps.
+A final reset places the player on the dry floor before each following join.
+
+A ViaProxy sprint-swim test emits one start event (29) and one stop event (30), with no additional correction.
+Native and direct swimming comparisons remain to verify.
+Swimming poses, currents, shallow water, lava, effects, vehicles, latency, and the remaining movement matrix still need comparisons.
+
+**Tests:** The full local build passes with 16 converter tests, 628 core tests, and 603 add-on tests.
+Core and add-on suites have 135 skips in total, with no failures or errors.
+Four new tests cover payload validation, protocol revisions, frame consumption, teleport staleness, and swimming edges.
+Both complete stacks replay and pass Checkstyle; `bun run check` passes.

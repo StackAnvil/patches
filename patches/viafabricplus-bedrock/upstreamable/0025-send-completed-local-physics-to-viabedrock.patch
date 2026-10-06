@@ -1,0 +1,170 @@
+From 0f725d43e855f0571c1b7cbde62ff6daa2aa2080 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Tue, 6 Oct 2026 04:35:53 +0200
+Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
+
+Send the local player's position, predicted motion and swimming
+state after sendChanges and before Java CLIENT_TICK_END. Use the
+negotiated, versioned core channel on direct connections and ViaProxy.
+A stationary player still sends a fresh sample, so fluid gravity and pose
+transitions do not depend on Java's sparse position updates.
+
+Remove the Entity-wide swimming hook, which could turn another entity's
+pose change into local auth input and required an in-process core tracker.
+The core now validates and consumes local frames and emits swimming edges.
+This integrates the existing Bedrock fluid physics with auth-input packet
+construction without changing server corrections or vehicle prediction.
+
+Native 1.26.51.1 protocol 2193 captures report -0.022315647 fluid motion
+where the old core's air approximation reports -0.0996117 at the same
+water position. Java 26.3 bytecode confirms the sampled method runs after
+local physics and standard movement, before the tick-end packet.
+---
+ .../bedrock/ViaFabricPlusBedrock.java         |  2 ++
+ .../mixin/features/movement/MixinEntity.java  | 20 ----------------
+ .../features/movement/MixinLocalPlayer.java   | 21 ++++++++++++++++
+ .../input/PlayerPredictionPayload.java        | 24 +++++++++++++++++++
+ 4 files changed, 47 insertions(+), 20 deletions(-)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+index 924035a..e053b23 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+@@ -55,6 +55,7 @@ import com.viaversion.viafabricplus.bedrock.camera.CameraShakePayload;
+ import com.viaversion.viafabricplus.bedrock.camera.BedrockCameraShake;
+ import com.viaversion.viafabricplus.bedrock.hud.BedrockHudVisibility;
+ import com.viaversion.viafabricplus.bedrock.input.RawInputPayload;
++import com.viaversion.viafabricplus.bedrock.input.PlayerPredictionPayload;
+ import com.viaversion.viafabricplus.bedrock.appearance.BedrockAppearanceStore;
+ import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusSkinProvider;
+ import com.viaversion.viafabricplus.bedrock.appearance.ViaFabricPlusBuiltinResourcePackProvider;
+@@ -116,6 +117,7 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+         ClientPlayNetworking.registerGlobalReceiver(NativeParticlePlaybackPayload.TYPE,
+                 (payload, context) -> BedrockServerParticles.accept(payload.message()));
+         PayloadTypeRegistry.serverboundPlay().register(RawInputPayload.TYPE, RawInputPayload.CODEC);
++        PayloadTypeRegistry.serverboundPlay().register(PlayerPredictionPayload.TYPE, PlayerPredictionPayload.CODEC);
+         PayloadTypeRegistry.clientboundPlay().register(InputPermissionsPayload.TYPE, InputPermissionsPayload.CODEC);
+         ClientPlayNetworking.registerGlobalReceiver(InputPermissionsPayload.TYPE,
+             (payload, context) -> BedrockInputPermissions.accept(payload.permissions()));
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java
+index 236c05d..0166539 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java
+@@ -25,21 +25,16 @@ import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
+ import com.llamalad7.mixinextras.injector.ModifyReturnValue;
+ import com.viaversion.viafabricplus.ViaFabricPlus;
+ import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
+-import com.viaversion.viaversion.api.connection.UserConnection;
+ import net.minecraft.world.entity.Entity;
+ import net.minecraft.world.phys.AABB;
+ import net.minecraft.world.phys.Vec3;
+ import net.raphimc.viabedrock.api.BedrockProtocolVersion;
+-import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayerAuthInputData;
+-import net.raphimc.viabedrock.protocol.storage.EntityTracker;
+ import org.jspecify.annotations.Nullable;
+ import org.objectweb.asm.Opcodes;
+ import org.spongepowered.asm.mixin.Mixin;
+ import org.spongepowered.asm.mixin.Shadow;
+ import org.spongepowered.asm.mixin.injection.At;
+-import org.spongepowered.asm.mixin.injection.Inject;
+ import org.spongepowered.asm.mixin.injection.Redirect;
+-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+ 
+ @Mixin(Entity.class)
+ public abstract class MixinEntity {
+@@ -47,21 +42,6 @@ public abstract class MixinEntity {
+     @Shadow
+     protected Vec3 stuckSpeedMultiplier;
+ 
+-    @Shadow
+-    public abstract boolean isSwimming();
+-
+-    @Inject(method = "setSwimming", at = @At("HEAD"))
+-    private void trackSwimming(final boolean swimming, final CallbackInfo ci) {
+-        if (!ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST)) {
+-            return;
+-        }
+-
+-        final UserConnection connection = ViaFabricPlus.api().userConnection();
+-        if (connection != null && swimming != this.isSwimming()) {
+-            connection.get(EntityTracker.class).getClientPlayer().addAuthInputData(swimming ? PlayerAuthInputData.StartSwimming : PlayerAuthInputData.StopSwimming);
+-        }
+-    }
+-
+     @Redirect(method = "makeStuckInBlock", at = @At(value = "FIELD", target = "Lnet/minecraft/world/entity/Entity;stuckSpeedMultiplier:Lnet/minecraft/world/phys/Vec3;", opcode = Opcodes.PUTFIELD))
+     private void prioritySlowestMovementMultiplier(final Entity instance, final Vec3 value) {
+         if (ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST) && this.stuckSpeedMultiplier != Vec3.ZERO) {
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
+index e5a8167..a127025 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
+@@ -22,15 +22,36 @@
+ package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
+ 
+ import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import com.viaversion.viafabricplus.bedrock.input.PlayerPredictionPayload;
++import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
++import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.model.PlayerPrediction;
++import net.raphimc.viabedrock.protocol.model.Position3f;
+ import net.minecraft.client.player.LocalPlayer;
+ import org.spongepowered.asm.mixin.Mixin;
+ import org.spongepowered.asm.mixin.Shadow;
+ import org.spongepowered.asm.mixin.injection.At;
+ import org.spongepowered.asm.mixin.injection.Redirect;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+ 
+ @Mixin(LocalPlayer.class)
+ public abstract class MixinLocalPlayer {
+ 
++    @Inject(method = "sendChanges", at = @At("RETURN"))
++    private void sendBedrockPrediction(final CallbackInfo ci) {
++        final LocalPlayer player = (LocalPlayer) (Object) this;
++        if (!BedrockInputPermissions.isBedrockConnection() || !player.connection.hasClientLoaded()
++                || !ClientPlayNetworking.canSend(PlayerPredictionPayload.TYPE)) {
++            return;
++        }
++        final Vec3 motion = player.getDeltaMovement();
++        ClientPlayNetworking.send(new PlayerPredictionPayload(new PlayerPrediction(
++                new Position3f((float) player.getX(), (float) player.getY(), (float) player.getZ()),
++                new Position3f((float) motion.x, (float) motion.y, (float) motion.z),
++                player.isSwimming())));
++    }
++
+     @Shadow
+     protected abstract boolean isSprintingPossible(final boolean allowedInShallowWater);
+ 
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java
+new file mode 100644
+index 0000000..7b212c2
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.input;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.PlayerPrediction;
++
++public record PlayerPredictionPayload(PlayerPrediction prediction) implements CustomPacketPayload {
++    public static final Type<PlayerPredictionPayload> TYPE = new Type<>(Identifier.parse(PlayerPrediction.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, PlayerPredictionPayload> CODEC = CustomPacketPayload.codec(
++        (payload, buffer) -> PlayerPrediction.TYPE.write(buffer, payload.prediction),
++        buffer -> new PlayerPredictionPayload(PlayerPrediction.TYPE.read(buffer)));
++
++    @Override
++    public Type<PlayerPredictionPayload> type() {
++        return TYPE;
++    }
++}
+-- 
+2.55.0
