@@ -1,6 +1,6 @@
 import { EnchantmentType, EquipmentSlot, GameMode, ItemStack, Potions, system, world,
   type Block, type Container, type Dimension, type Entity, type EntityEquippableComponent, type Player, type Vector3 } from "@minecraft/server";
-import { potionImpactPasses, rangedHitPasses, rangedObservationPasses, rangedPiercingPasses, type RangedExpectation, type RangedObservation, type RangedTarget } from "../../../src/integration/ranged-observation.ts";
+import { potionImpactPasses, rangedHitPasses, rangedObservationPasses, rangedPiercingPasses, serverSlotUsePasses, type RangedExpectation, type RangedObservation, type RangedTarget, type ServerSlotUse } from "../../../src/integration/ranged-observation.ts";
 import { incomingProjectilePasses, projectileThreatens, type IncomingProjectileObservation } from "../../../src/integration/projectile-observation.ts";
 import { rangedKnockbackPasses, type KnockbackImpulse } from "../../../src/integration/knockback-observation.ts";
 
@@ -26,6 +26,7 @@ interface Fixture {
   projectile?: Entity;
   shooter?: Entity;
   knockback?: { pending: boolean; impulse?: KnockbackImpulse };
+  serverSlotUse?: ServerSlotUse;
   closed?: boolean;
 }
 
@@ -55,11 +56,24 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
     signal.subscribe((event: { source: Player; itemStack?: ItemStack; useDuration?: number }) => {
       const current = getActive();
       const fixture = fixtureFor(event.source);
-      const observation = fixture?.ranged;
+      const observation = fixture?.serverSlotUse && event.itemStack?.typeId === fixture.serverSlotUse.followup.item
+        ? fixture!.serverSlotUse!.followup : fixture?.ranged;
       if (!observation) return;
       const item = event.itemStack ?? inventory(event.source).getItem(event.source.selectedSlotIndex);
       if (item?.typeId !== observation.item) return;
       observation.events.push({ action, tick: system.currentTick, remainingUseTicks: event.useDuration });
+      if (action === "start" && fixture?.serverSlotUse && !fixture.serverSlotUse.pending) {
+        fixture.serverSlotUse.pending = true;
+        const startTick = system.currentTick;
+        system.runTimeout(() => {
+          if (getActive() !== current || fixture.closed || event.source.selectedSlotIndex !== 0
+              || observation.events.some((entry) => ["stop", "release", "complete"].includes(entry.action) && entry.tick >= startTick)) return;
+          try {
+            event.source.selectedSlotIndex = 1;
+            fixture.serverSlotUse!.selection = { tick: system.currentTick, from: 0, to: 1 };
+          } catch (error) { observation.error = String(error); }
+        }, 4);
+      }
       if (action === "start" && fixture?.knockback && !fixture.knockback.pending) {
         fixture.knockback.pending = true;
         const startTick = system.currentTick;
@@ -95,7 +109,7 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
       });
       return;
     }
-    if (!["minecraft:arrow", "minecraft:splash_potion", "minecraft:lingering_potion", "minecraft:fireball", "minecraft:small_fireball"].includes(event.entity.typeId)) return;
+    if (!["minecraft:arrow", "minecraft:splash_potion", "minecraft:lingering_potion", "minecraft:snowball", "minecraft:fireball", "minecraft:small_fireball"].includes(event.entity.typeId)) return;
     // Ownership and launch velocity can be assigned after the spawn notification.
     system.run(() => {
       if (getActive() !== current || current.fixture.closed) return;
@@ -124,7 +138,9 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
         if (!current.fixture.ranged) return;
         if (owner?.typeId !== "minecraft:player" || (owner as Player).name !== current.playerName) return;
         const velocity = entity.getVelocity();
-        current.fixture.ranged!.projectiles.push({ id: entity.id, type: entity.typeId, tick: system.currentTick,
+        const ranged = event.entity.typeId === current.fixture.serverSlotUse?.followup.item
+          ? current.fixture.serverSlotUse.followup : current.fixture.ranged;
+        ranged.projectiles.push({ id: entity.id, type: entity.typeId, tick: system.currentTick,
           speed: Math.hypot(velocity.x, velocity.y, velocity.z) });
       } catch (error) {
         const observation = current.fixture.ranged ?? current.fixture.incoming;
@@ -187,8 +203,10 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
     ["crossbow-quick-charge-1", "crossbow", "fire"], ["crossbow-quick-charge-2", "crossbow", "fire"],
     ["crossbow-quick-charge-3", "crossbow", "fire"],
     ["bow-knockback-release", "bow", "release"], ["bow-knockback-cancel", "bow", "cancel"],
-    ["crossbow-knockback-fire", "crossbow", "fire"], ["crossbow-knockback-cancel", "crossbow", "cancel"]] as const) {
+    ["crossbow-knockback-fire", "crossbow", "fire"], ["crossbow-knockback-cancel", "crossbow", "cancel"],
+    ["bow-server-slot-use", "bow", "cancel"], ["crossbow-server-slot-use", "crossbow", "cancel"]] as const) {
     const knockback = id.includes("-knockback-");
+    const serverSlotUse = id.endsWith("-server-slot-use");
     const infinity = id === "bow-infinity" || id === "bow-infinity-no-ammo";
     const multishot = id === "crossbow-multishot";
     const quickCharge = id.startsWith("crossbow-quick-charge-") ? Number(id.at(-1)) : 0;
@@ -216,6 +234,7 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
           level: quickCharge || 1 });
       }
       container.setItem(0, weapon);
+      if (serverSlotUse) container.setItem(1, new ItemStack("minecraft:snowball", 4));
       const ammunition = mode === "throw" ? itemId : "minecraft:arrow";
       if (mode !== "empty" && mode !== "throw") container.setItem(9, new ItemStack(ammunition, 4));
       const initialCount = countItem(container, ammunition);
@@ -231,22 +250,27 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
         player.teleport(position(), { rotation: { x: 5, y: 0 } });
       }
       const fixture = { ranged, closed: false, motion: motionFixture(player).motion,
+        serverSlotUse: serverSlotUse ? { pending: false, selection: undefined as ServerSlotUse["selection"],
+          followup: { item: "minecraft:snowball", ammunition: "minecraft:snowball", initialCount: 4, remainingCount: 4,
+            events: [], projectiles: [] } as RangedObservation } : undefined,
         knockback: knockback ? { pending: false, impulse: undefined as KnockbackImpulse | undefined } : undefined };
       return fixture;
     }, (player, fixture) => {
       fixture.closed = true;
       fixture.ranged.remainingCount = countItem(inventory(player), fixture.ranged.ammunition);
+      if (fixture.serverSlotUse) fixture.serverSlotUse.followup.remainingCount = countItem(inventory(player), "minecraft:snowball");
       const release = fixture.ranged.events.find((event) => event.action === "release");
       const start = fixture.ranged.events.find((event) => event.action === "start");
       const charge = release && start ? release.tick - start.tick : undefined;
       return { passed: rangedObservationPasses(mode, fixture.ranged, expectation)
+          && (!serverSlotUse || serverSlotUsePasses(fixture.ranged, fixture.serverSlotUse))
           && (id !== "bow-short-release" || (charge !== undefined && charge > 0 && charge <= 12))
           && (id !== "bow-water-release" || fixture.motion.waterSamples >= 10)
           && (!knockback || ((mode === "release" || mode === "fire" || mode === "cancel")
             && !fixture.motion.error && rangedKnockbackPasses(mode, fixture.ranged, fixture.knockback?.impulse, fixture.motion.frames)))
           && (id !== "bow-hit" || rangedHitPasses("release", fixture.ranged))
           && (id !== "crossbow-hit" || rangedHitPasses("fire", fixture.ranged)),
-        observed: { ...fixture.ranged, charge, motion: fixture.motion, knockback: fixture.knockback?.impulse },
+        observed: { ...fixture.ranged, charge, motion: fixture.motion, knockback: fixture.knockback?.impulse, serverSlotUse: fixture.serverSlotUse },
         expected: { mode, ...expectation,
           projectileCount: ["release", "fire", "retain", "throw"].includes(mode) ? expectation.projectileCount : 0 } };
     });

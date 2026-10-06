@@ -6333,3 +6333,25 @@ The [complex gameplay record](bedrock-complex-gameplay.md#knockback-during-range
 Passing charge and cancellation assertions despite corrections does not establish native movement parity.
 Full trajectories, controlled latency, native baselines, Boar, CubeCraft, actual Windows/macOS joins, and all eight original groups remain required.
 No fresh native launch occurred; the current-boot GPU guard remains in force.
+
+### Server hotbar selection during charging, October 6, 2026
+
+**Implemented:** Core updates its selected inventory slot before translating an accepted `PLAYER_HOTBAR` packet.
+Use, drop, interaction, and equipment translation now reference the server-selected stack.
+The update itself does not send a client equipment request.
+Java carried-item values undergo bounds checks before narrowing, preventing invalid shorts from becoming valid hotbar slots.
+Two new fixtures for charging and server selection extend the complex suite to 44 cases.
+
+**Verified:** Eighteen new packet tests pass, including repeated selection, held-stack identity, unchanged inventory, unsigned bounds, and Java byte aliases.
+All 146 tooling tests pass, as do the TypeScript check and behavior-pack build.
+Full converter, core, add-on, and ViaProxy builds succeed.
+There are 16 converter, 724 core, and 480 add-on passes, with 133 optional skips and no failures.
+Both new cases and four existing knockback cases pass actual input through direct connections and ViaProxy against strict BDS.
+Both recordings exit successfully, and the owned server stops.
+Both Java clients have the add-on installed; this fix requires no new add-on channel or code.
+
+**Incomplete:** This run covers six cases per route, not the full 44-case suite.
+Fresh native baselines remain blocked by the GPU guard.
+Exact native action timing, historical impulse application, later-frame replay, and the complete movement matrix remain requirements.
+The [complex gameplay record](bedrock-complex-gameplay.md#server-hotbar-selection-during-charging-october-6-2026) describes the fixture boundaries.
+All eight original coverage groups remain required.

@@ -112,6 +112,36 @@ test("hotbar samples record transitions without duplicating stationary frames", 
   Object.assign(player, { selectedSlotIndex: 0 });
 });
 
+test("forced server selection runs once and cannot leak into another charging session", () => {
+  const started = callbacks.get("itemStartUse")!;
+  const source = { ...player, selectedSlotIndex: 0 };
+  const prepare = () => {
+    const ranged = prepareObservation();
+    active!.fixture.serverSlotUse = { pending: false, followup: { item: "minecraft:snowball", ammunition: "minecraft:snowball",
+      initialCount: 4, remainingCount: 4, events: [], projectiles: [] } };
+    return ranged;
+  };
+  for (const invalidate of [() => { prepareObservation(); }, () => { active!.fixture.closed = true; },
+    () => { callbacks.get("itemStopUse")!({ source, itemStack: { typeId: "minecraft:bow" } }); }]) {
+    source.selectedSlotIndex = 0;
+    prepare();
+    started({ source, itemStack: { typeId: "minecraft:bow" } });
+    invalidate();
+    pending.shift()!();
+    expect(source.selectedSlotIndex).toBe(0);
+  }
+  prepare();
+  started({ source, itemStack: { typeId: "minecraft:bow" } });
+  started({ source, itemStack: { typeId: "minecraft:bow" } });
+  expect(pending).toHaveLength(1);
+  pending.shift()!();
+  expect(source.selectedSlotIndex).toBe(1);
+  expect(active!.fixture.serverSlotUse!.selection).toEqual({ tick: 10, from: 0, to: 1 });
+  callbacks.get("itemUse")!({ source, itemStack: { typeId: "minecraft:snowball" } });
+  expect(active!.fixture.serverSlotUse!.followup.events).toEqual([{ action: "use", tick: 10 }]);
+  expect(active!.fixture.ranged!.events.every((event) => event.action === "start")).toBe(true);
+});
+
 test("impact and effect observations exclude other players and close with their fixture", () => {
   const ranged = prepareObservation();
   ranged.impacts = [];

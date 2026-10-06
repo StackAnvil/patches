@@ -363,6 +363,13 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
       await uiMouse(ui, "right", 250);
       await Bun.sleep(300);
       return;
+    case "bow-server-slot-use":
+    case "crossbow-server-slot-use":
+      await uiMouse(ui, "right", 500);
+      await Bun.sleep(350);
+      await uiMouse(ui, "right");
+      await Bun.sleep(300);
+      return;
     case "bow-cancel":
     case "crossbow-cancel":
     case "bow-knockback-cancel":

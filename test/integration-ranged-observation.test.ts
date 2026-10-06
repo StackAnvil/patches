@@ -1,11 +1,30 @@
 import { expect, test } from "bun:test";
-import { potionImpactPasses, rangedHitPasses, rangedObservationPasses, rangedPiercingPasses, type RangedObservation } from "../src/integration/ranged-observation.ts";
+import { potionImpactPasses, rangedHitPasses, rangedObservationPasses, rangedPiercingPasses, serverSlotUsePasses, type RangedObservation, type ServerSlotUse } from "../src/integration/ranged-observation.ts";
 
 function chargedShot(): RangedObservation {
   return { item: "minecraft:bow", ammunition: "minecraft:arrow", initialCount: 4, remainingCount: 3,
     events: [{ action: "start", tick: 10 }, { action: "release", tick: 35, remainingUseTicks: 71975 }],
     projectiles: [{ id: "owned-arrow", tick: 36, type: "minecraft:arrow", speed: 3 }] };
 }
+
+test("server slot changes cancel charging and require a later use from the replacement stack", () => {
+  const ranged = { ...chargedShot(), remainingCount: 4, projectiles: [],
+    events: [{ action: "start" as const, tick: 10 }, { action: "stop" as const, tick: 15 }],
+    slots: [{ slot: 0, tick: 10 }, { slot: 1, tick: 15 }] };
+  const switched: ServerSlotUse = { pending: true, selection: { tick: 14, from: 0, to: 1 },
+    followup: { item: "minecraft:snowball", ammunition: "minecraft:snowball", initialCount: 4, remainingCount: 3,
+      events: [{ action: "use", tick: 20 }], projectiles: [{ id: "owned-snowball", tick: 20, type: "minecraft:snowball", speed: 1.5 }] } };
+  expect(serverSlotUsePasses(ranged, switched)).toBe(true);
+  for (const selection of [undefined, { tick: 10, from: 0, to: 1 }, { tick: 21, from: 0, to: 1 },
+    { tick: 14, from: 2, to: 1 }, { tick: 14, from: 0, to: 2 }]) {
+    expect(serverSlotUsePasses(ranged, { ...switched, selection })).toBe(false);
+  }
+  expect(serverSlotUsePasses({ ...ranged, remainingCount: 3 }, switched)).toBe(false);
+  expect(serverSlotUsePasses({ ...ranged, slots: [{ slot: 1, tick: 13 }] }, switched)).toBe(false);
+  expect(serverSlotUsePasses(ranged, { ...switched, followup: { ...switched.followup, remainingCount: 4 } })).toBe(false);
+  expect(serverSlotUsePasses(ranged, { ...switched, followup: { ...switched.followup,
+    projectiles: [{ ...switched.followup.projectiles[0]!, type: "minecraft:arrow" }] } })).toBe(false);
+});
 
 test("a shot requires an ordered use cycle, one moving projectile, and one consumed arrow", () => {
   const shot = chargedShot();

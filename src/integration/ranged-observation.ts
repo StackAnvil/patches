@@ -11,6 +11,7 @@ export const complexGameplayCaseIds = [
   "crossbow-quick-charge-1", "crossbow-quick-charge-2", "crossbow-quick-charge-3",
   "crossbow-piercing-0", "crossbow-piercing-1", "crossbow-piercing-4",
   "bow-knockback-release", "bow-knockback-cancel", "crossbow-knockback-fire", "crossbow-knockback-cancel",
+  "bow-server-slot-use", "crossbow-server-slot-use",
 ] as const;
 
 export type RangedAction = "start" | "release" | "complete" | "stop" | "use";
@@ -40,6 +41,24 @@ export interface RangedObservation {
   target?: RangedTarget;
   targets?: RangedTarget[];
   error?: string;
+}
+
+export interface ServerSlotUse {
+  pending: boolean;
+  selection?: { tick: number; from: number; to: number };
+  followup: RangedObservation;
+}
+
+/** A forced switch must cancel charging and preserve use of the newly selected stack. */
+export function serverSlotUsePasses(ranged: RangedObservation, switched: ServerSlotUse | undefined): boolean {
+  if (!switched?.selection || !rangedObservationPasses("cancel", ranged)
+      || !rangedObservationPasses("throw", switched.followup)) return false;
+  const selection = switched.selection;
+  const start = ranged.events.find((event) => event.action === "start")!;
+  const use = switched.followup.events.find((event) => event.action === "use")!;
+  return Number.isInteger(selection.tick) && selection.tick > start.tick
+    && selection.from === 0 && selection.to === 1 && use.tick > selection.tick
+    && !!ranged.slots?.some((entry) => entry.slot === 1 && entry.tick >= selection.tick && entry.tick <= use.tick);
 }
 
 /** One arrow must hit the ordered chain and leave the next target untouched. */

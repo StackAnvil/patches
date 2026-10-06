@@ -117,7 +117,7 @@ Retain ordinary Java and ViaProxy coverage where standard translation suffices.
 
 ## Runnable suite
 
-Run the 42 BDS cases:
+Run the 44 BDS cases:
 
 ```bash
 bun run test:integration -- --route java-bedrock --gameplay-complex
@@ -527,3 +527,34 @@ These results verify the item outcomes and the fixture's movement response, incl
 They do not verify exact native trajectories, PvP damage, controlled latency, or anticheat parity.
 Fresh native comparisons remain unavailable under the GPU guard.
 The complete gameplay matrix and all eight original coverage groups remain required.
+
+### Server hotbar selection during charging, October 6, 2026
+
+Two new cases bring the runnable complex suite to 44.
+The server selects snowballs four ticks after accepted bow or crossbow charging starts.
+The client releases its use button, then clicks again without a local slot-selection command.
+The fixture requires cancellation, unchanged arrows, a witnessed server selection, one consumed snowball, and one owned snowball projectile.
+Callback guards prevent a delayed selection from affecting another or completed fixture.
+
+Core previously sent Java's held-slot update without changing its tracked selected item.
+It now updates that state before forwarding the packet.
+Subsequent use, drop, interaction, and equipment translations therefore read the server-selected stack.
+Java slot values also undergo bounds checks before byte narrowing.
+The [inventory patch notes](../patches/viabedrock/deferred/0003-translate-server-authoritative-bedrock-requests.pr.md#server-hotbar-selection) record the packet contract and tests.
+The target [PlayerHotbar schema](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/player-hotbar-packet/) carries the slot, container, and selection flag.
+
+Both new cases and the four preceding knockback cases pass actual mouse and keyboard input through direct connections and ViaProxy.
+Both Java clients have the add-on installed; the hotbar fix uses standard Java packets in core.
+Strict official BDS remains enabled.
+This run verifies six cases on each route, not the complete 44-case suite.
+Both recordings exit successfully, and the owned server stops.
+
+All 146 tooling tests pass.
+The complete builds pass with 16 converter, 724 core, and 480 add-on tests, plus 133 optional skips and no failures.
+ViaProxy builds successfully.
+Eighteen new core tests cover server selection, held-stack identity, ignored notifications, and invalid slot encodings.
+
+These checks verify cancellation and subsequent item use against BDS.
+They do not establish complete native action timing or movement parity.
+Fresh native comparisons remain blocked by the current-boot GPU guard.
+Historical impulses, correction replay, the complete complex matrix, and all eight original coverage groups remain required.

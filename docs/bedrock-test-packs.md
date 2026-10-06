@@ -50,7 +50,7 @@ After the gameplay cases, the runner restarts the Java client and checks that it
 
 ## Complex gameplay
 
-Run the 42 BDS cases for ranged use, projectile combat, slowing terrain, fluids, and creative flight:
+Run the 44 BDS cases for ranged use, projectile combat, slowing terrain, fluids, and creative flight:
 
 ```bash
 bun run test:integration -- --route java-bedrock --gameplay-complex
@@ -84,6 +84,7 @@ The Java/Geyser probe does not implement these new fixtures; the runner rejects 
 | `crossbow-piercing-0`, `crossbow-piercing-1`, `crossbow-piercing-4` | Fire one crossbow arrow through a stationary target chain | The same arrow damages one, two, or five targets in order. The next target remains untouched. |
 | `bow-knockback-release`, `crossbow-knockback-fire` | Charge through a scripted knockback, then release or fire | Airborne displacement occurs during charging, followed by one owned shot and one consumed arrow. |
 | `bow-knockback-cancel`, `crossbow-knockback-cancel` | Change slot after knockback during charging | Airborne displacement precedes cancellation, with no projectile and unchanged ammunition. |
+| `bow-server-slot-use`, `crossbow-server-slot-use` | Let the server select snowballs during charging, then use the selected stack | Charging cancels without spending an arrow; the new stack loses one snowball and launches one owned projectile. |
 | `splash-potion-speed` | Throw a swiftness potion downward | One consumed potion, its owned impact, and a later speed effect with positive duration. |
 | `lingering-potion-slowness` | Throw a lingering slowness potion downward | The matching impact, a nearby cloud, and a later slowness effect. |
 | `fireball-hit`, `small-fireball-hit` | Remain in the firing lane | A natural ghast or blaze shot hits the player and causes health loss. |

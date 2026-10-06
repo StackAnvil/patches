@@ -108,3 +108,29 @@ Other mount types and their storage layouts remain unsupported.
 
 The full 95-patch stack replays successfully.
 CubeConverter and the complete ViaBedrock build pass, including Checkstyle and 672 passing core tests with 19 optional skips.
+
+## Server hotbar selection
+
+Protocol 2193's [PlayerHotbar packet](https://mojang.github.io/bedrock-protocol-docs/1.26.51/packets/player-hotbar-packet/) carries a slot, container, and selection flag.
+Core previously forwarded the slot to Java without updating its inventory model.
+Later use, drop, interaction, and equipment translations read that stale model.
+Accepted selections now update the core slot before Java receives `SET_HELD_SLOT`.
+The state update does not itself send a client equipment request.
+Invalid slots and notifications without selection leave the held state unchanged.
+The existing wrong-container rejection remains active.
+
+Java carried-item requests now validate the full short value before narrowing it to a byte.
+Values such as 256 and 264 previously became valid slots 0 and 8.
+Invalid requests now cancel without changing the selected stack.
+Eighteen packet tests cover repeated server selections, held-stack identity, unchanged inventory, ignored notifications, unsigned bounds, and Java aliases.
+This behavior lives in core and requires no add-on channel.
+
+The complete converter, core, add-on, and ViaProxy builds pass after replaying the stack.
+All 146 tooling tests pass.
+Two new strict-BDS cases force selection during bow or crossbow charging, then use the selected snowballs.
+Both pass through direct connections and ViaProxy, alongside all four existing charging-through-knockback cases.
+Neither weapon spends an arrow during cancellation; each follow-up uses one snowball and produces one owned projectile.
+Both Java clients have the add-on installed, but this fix changes only core.
+Both recordings exit successfully, and the owned server stops.
+Fresh native comparisons remain blocked by the current-boot GPU guard.
+The [complex gameplay record](../../../docs/bedrock-complex-gameplay.md#server-hotbar-selection-during-charging-october-6-2026) retains the verification scope.

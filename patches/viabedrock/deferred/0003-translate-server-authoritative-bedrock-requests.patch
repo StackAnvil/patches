@@ -1,4 +1,4 @@
-From 01c65c188249fd78672907fa94754b3b2c02dc0d Mon Sep 17 00:00:00 2001
+From 5b3adbf65b462c9604cd825ffef1dcc5afdb5aef Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 12:56:10 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -149,6 +149,15 @@ equipment restrictions, hidden cells, all cargo/player mappings, native
 network IDs, compact snapshots and rejection snapshot identity.
 Keep proprietary captures private; full native, direct and ViaProxy mount
 inventory comparisons remain required.
+
+Reconcile protocol-2193 PlayerHotbar selections in the core inventory
+before forwarding Java SET_HELD_SLOT. Subsequent use, drop, interaction,
+and equipment packets must reference the server-selected stack. Keep
+server-origin state updates separate from client equipment requests.
+Validate the full Java slot value before narrowing it, so malformed
+short values cannot alias a valid hotbar slot. Packet tests cover
+repeated selections, unchanged inventory, ignored notifications,
+unsigned wire bounds, and Java byte aliases.
 ---
  build.gradle                                  |    3 +-
  .../api/model/container/ChestContainer.java   |   52 +-
@@ -172,7 +181,7 @@ inventory comparisons remain required.
  .../container/dynamic/BundleContainer.java    |   19 +-
  .../container/player/ArmorContainer.java      |   12 +
  .../model/container/player/HudContainer.java  |   31 +-
- .../container/player/InventoryContainer.java  |   72 +-
+ .../container/player/InventoryContainer.java  |   87 +-
  .../player/InventorySubContainer.java         |    6 +
  .../container/player/OffhandContainer.java    |   50 +-
  .../definition/ItemDefinitions.java           |   37 +-
@@ -182,7 +191,7 @@ inventory comparisons remain required.
  .../generated/bedrock/CustomBlockTags.java    |    5 +-
  .../protocol/packet/ClientPlayerPackets.java  |   61 +-
  .../protocol/packet/InteractionPackets.java   |   49 +-
- .../protocol/packet/InventoryPackets.java     | 1741 +++++++++++++----
+ .../protocol/packet/InventoryPackets.java     | 1740 +++++++++++++----
  .../protocol/packet/WorldPackets.java         |   12 +
  .../protocol/rewriter/ItemRewriter.java       |  246 ++-
  .../protocol/rewriter/ItemStackSizes.java     |   59 +
@@ -203,6 +212,7 @@ inventory comparisons remain required.
  .../api/util/ContainerContentPacketTest.java  |   95 +
  .../packet/ClientPlayerPacketsTest.java       |   30 +
  .../protocol/packet/DropTransactionTest.java  |   46 +
+ .../packet/HotbarSelectionPacketTest.java     |  155 ++
  .../protocol/packet/InventoryPacketsTest.java |  247 +++
  .../packet/MountInventoryPacketTest.java      |  152 ++
  .../ItemRewriterBlockEntityItemTest.java      |   68 +
@@ -212,7 +222,7 @@ inventory comparisons remain required.
  .../storage/InventoryRequestTrackerTest.java  |  330 ++++
  .../storage/InventoryTrackerTest.java         |  124 ++
  .../storage/StonecutterRecipePacketTest.java  |   53 +
- 62 files changed, 9528 insertions(+), 836 deletions(-)
+ 63 files changed, 9695 insertions(+), 838 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/AnvilContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/BeaconContainer.java
@@ -243,6 +253,7 @@ inventory comparisons remain required.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/container/player/OffhandRequestSlotsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/util/ContainerContentPacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/DropTransactionTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/HotbarSelectionPacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/MountInventoryPacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriterBlockEntityItemTest.java
@@ -3894,7 +3905,7 @@ index 5ec975db5..4e784b7df 100644
              return false;
          }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainer.java
-index 1d1423dd3..abaad1eee 100644
+index 1d1423dd3..b5ae97d51 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainer.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/player/InventoryContainer.java
 @@ -24,16 +24,20 @@ import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
@@ -3974,7 +3985,7 @@ index 1d1423dd3..abaad1eee 100644
      @Override
      public Item[] getJavaItems() {
          final InventoryTracker inventoryTracker = this.user.get(InventoryTracker.class);
-@@ -101,7 +143,8 @@ public class InventoryContainer extends Container {
+@@ -101,29 +143,47 @@ public class InventoryContainer extends Container {
      }
  
      public void sendSelectedHotbarSlotToClient() {
@@ -3984,7 +3995,25 @@ index 1d1423dd3..abaad1eee 100644
          setHeldSlot.write(Types.VAR_INT, (int) this.selectedHotbarSlot);
          setHeldSlot.send(BedrockProtocol.class);
      }
-@@ -114,16 +157,22 @@ public class InventoryContainer extends Container {
+ 
+-    public void setSelectedHotbarSlot(final byte slot, final PacketWrapper mobEquipment) {
++    public boolean setSelectedHotbarSlot(final int slot) {
++        if (slot < 0 || slot >= 9) {
++            return false;
++        }
++        this.selectedHotbarSlot = (byte) slot;
++        return true;
++    }
++
++    public void setSelectedHotbarSlot(final int slot, final PacketWrapper mobEquipment) {
+         final BedrockItem oldItem = this.getItem(this.selectedHotbarSlot);
++        if (!this.setSelectedHotbarSlot(slot)) {
++            mobEquipment.cancel();
++            return;
++        }
+         final BedrockItem newItem = this.getItem(slot);
+-        this.selectedHotbarSlot = slot;
+         this.onSelectedHotbarSlotChanged(oldItem, newItem, mobEquipment);
      }
  
      @Override
@@ -4011,7 +4040,7 @@ index 1d1423dd3..abaad1eee 100644
          if (oldItem.isDifferent(newItem)) {
              final PacketWrapper interact = PacketWrapper.create(ServerboundBedrockPackets.INTERACT, this.user);
              interact.write(Types.UNSIGNED_BYTE, (short) InteractPacketPayload_Action.InteractUpdate.getValue()); // action
-@@ -132,7 +181,12 @@ public class InventoryContainer extends Container {
+@@ -132,7 +192,12 @@ public class InventoryContainer extends Container {
              interact.sendToServer(BedrockProtocol.class);
          }
  
@@ -6363,7 +6392,7 @@ index 1db7752e0..2ae3ace9f 100644
  
      public static void sendUseItemOnBlock(final UserConnection user, final BlockPosition position, final int faceInt,
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
-index fb8b236b5..300d9ae61 100644
+index fb8b236b5..52e48ba0f 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/InventoryPackets.java
 @@ -18,17 +18,19 @@
@@ -6478,7 +6507,7 @@ index fb8b236b5..300d9ae61 100644
  
      public static void register(final BedrockProtocol protocol) {
          protocol.registerClientbound(ClientboundBedrockPackets.PLAYER_START_ITEM_COOLDOWN,
-@@ -95,447 +148,1105 @@ public final class InventoryPackets {
+@@ -95,447 +148,1104 @@ public final class InventoryPackets {
                      wrapper.write(Types.STRING, ItemCooldown.javaGroup(wrapper.read(BedrockTypes.STRING)));
                      wrapper.write(Types.VAR_INT, Math.max(0, wrapper.read(BedrockTypes.VAR_INT)));
                  });
@@ -7386,10 +7415,9 @@ index fb8b236b5..300d9ae61 100644
 +                    final byte containerId = wrapper.read(Types.BYTE); // container id
 +                    final boolean shouldSelectSlot =
 +                            wrapper.read(Types.BOOLEAN); // should select slot
-+                    if (slot >= 0
-+                            && slot < 9
-+                            && containerId == inventoryContainer.containerId()
-+                            && shouldSelectSlot) {
++                    if (containerId == inventoryContainer.containerId()
++                            && shouldSelectSlot
++                            && inventoryContainer.setSelectedHotbarSlot(slot)) {
 +                        wrapper.write(Types.VAR_INT, slot); // slot
 +                    } else {
 +                        wrapper.cancel();
@@ -7987,7 +8015,7 @@ index fb8b236b5..300d9ae61 100644
          protocol.registerServerbound(
                  ServerboundPackets26_3.EDIT_BOOK,
                  null,
-@@ -586,29 +1297,51 @@ public final class InventoryPackets {
+@@ -586,29 +1296,51 @@ public final class InventoryPackets {
                      updatedTag.put("pages", updatedPages);
                      book.setTag(updatedTag);
                  });
@@ -8011,7 +8039,7 @@ index fb8b236b5..300d9ae61 100644
 +                    wrapper.user()
 +                            .get(InventoryTracker.class)
 +                            .getInventoryContainer()
-+                            .setSelectedHotbarSlot((byte) slot, wrapper); // slot
++                            .setSelectedHotbarSlot(slot, wrapper); // slot
 +                });
 +        protocol.registerServerbound(
 +                ServerboundPackets26_3.PICK_ITEM_FROM_BLOCK,
@@ -8060,7 +8088,7 @@ index fb8b236b5..300d9ae61 100644
      }
  
      private static void sendBookEdits(final UserConnection user, final int slot,
-@@ -643,13 +1376,122 @@ public final class InventoryPackets {
+@@ -643,13 +1375,122 @@ public final class InventoryPackets {
          }
      }
  
@@ -8185,7 +8213,7 @@ index fb8b236b5..300d9ae61 100644
                  for (String line : BedrockTextUtils.split(text, "\n")) {
                      final TextInput textInput = new TextInput(TextUtil.stringToTextComponent(line));
                      textInput.setMaxLength(Integer.MAX_VALUE);
-@@ -657,12 +1499,51 @@ public final class InventoryPackets {
+@@ -657,12 +1498,51 @@ public final class InventoryPackets {
                      dialog.getInputs().add(new Input("dummy", textInput));
                  }
              } else { // VB compatibility
@@ -11277,6 +11305,167 @@ index 000000000..141c4aa4f
 +            assertEquals(held.amount(), debit.toItem().amount() + world.toItem().amount());
 +        }
 +        assertEquals(4, held.amount());
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/HotbarSelectionPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/HotbarSelectionPacketTest.java
+new file mode 100644
+index 000000000..50ae8ed9e
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/HotbarSelectionPacketTest.java
+@@ -0,0 +1,155 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.container.player.InventoryContainer;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.storage.InventoryRequestTracker;
++import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
++
++import java.lang.reflect.Proxy;
++import java.util.HashMap;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class HotbarSelectionPacketTest {
++
++    @Test
++    void serverSelectionReconcilesHeldStackWithoutSendingClientEquipment() throws Exception {
++        final Fixture fixture = new Fixture();
++        final BedrockItem[] items = fixture.inventory.getItems();
++        for (int slot = 0; slot < 9; slot++) {
++            final BedrockItem item = new BedrockItem(slot + 1);
++            item.setAmount(slot + 2);
++            items[slot] = item;
++        }
++        fixture.inventory.setItems(items);
++
++        for (int slot : new int[]{8, 3, 0, 3, 3, 7}) {
++            fixture.serverSelection(slot, true, true);
++            assertEquals(slot, fixture.inventory.getSelectedHotbarSlot());
++            assertSame(items[slot], fixture.inventory.getSelectedHotbarItem());
++            assertArrayEquals(items, fixture.inventory.getItems());
++        }
++    }
++
++    @ParameterizedTest
++    @ValueSource(ints = {Integer.MIN_VALUE, -1, 9, 255, 256, 264, Integer.MAX_VALUE})
++    void invalidServerSelectionsLeaveHeldStateUntouched(final int slot) throws Exception {
++        final Fixture fixture = new Fixture();
++        assertTrue(fixture.inventory.setSelectedHotbarSlot(4));
++        fixture.serverSelection(slot, true, false);
++        assertEquals(4, fixture.inventory.getSelectedHotbarSlot());
++    }
++
++    @Test
++    void serverNotificationWithoutSelectionDoesNotChangeHeldState() throws Exception {
++        final Fixture fixture = new Fixture();
++        assertTrue(fixture.inventory.setSelectedHotbarSlot(4));
++        fixture.serverSelection(8, false, false);
++        assertEquals(4, fixture.inventory.getSelectedHotbarSlot());
++    }
++
++    @ParameterizedTest
++    @ValueSource(ints = {Short.MIN_VALUE, -257, -256, -1, 9, 255, 256, 264, Short.MAX_VALUE})
++    void javaSlotsAreRejectedBeforeByteNarrowing(final int slot) throws Exception {
++        final Fixture fixture = new Fixture();
++        assertTrue(fixture.inventory.setSelectedHotbarSlot(4));
++        final var input = Unpooled.buffer();
++        try {
++            input.writeShort(slot);
++            final PacketWrapper packet = new PacketWrapperImpl(ServerboundPackets26_3.SET_CARRIED_ITEM, input, fixture.user);
++            fixture.protocol.serverbound(packet);
++            assertTrue(packet.isCancelled());
++            assertFalse(input.isReadable());
++            assertEquals(4, fixture.inventory.getSelectedHotbarSlot());
++        } finally {
++            input.release();
++        }
++    }
++
++    private static final class Fixture {
++        private final Map<Class<?>, Object> stores = new HashMap<>();
++        private final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, args) -> {
++                    if (method.getName().equals("get")) {
++                        return this.stores.get(args[0]);
++                    }
++                    throw new AssertionError(method);
++                });
++        private final TestProtocol protocol = new TestProtocol();
++        private final InventoryContainer inventory;
++
++        private Fixture() {
++            this.stores.put(InventoryRequestTracker.class, new InventoryRequestTracker(this.user) {
++                @Override
++                public boolean isPredictingClick() {
++                    return true;
++                }
++            });
++            final InventoryTracker tracker = new InventoryTracker(this.user);
++            this.stores.put(InventoryTracker.class, tracker);
++            this.inventory = tracker.getInventoryContainer();
++        }
++
++        private void serverSelection(final int slot, final boolean select, final boolean accepted) throws Exception {
++            final var input = Unpooled.buffer();
++            final var output = Unpooled.buffer();
++            try {
++                BedrockTypes.UNSIGNED_VAR_INT.write(input, slot);
++                input.writeByte(this.inventory.containerId());
++                input.writeBoolean(select);
++                final PacketWrapper packet = new PacketWrapperImpl(ClientboundBedrockPackets.PLAYER_HOTBAR, input, this.user);
++                this.protocol.clientbound(packet);
++                assertEquals(!accepted, packet.isCancelled());
++                assertFalse(input.isReadable());
++                if (accepted) {
++                    packet.writeToBuffer(output);
++                    assertEquals(ClientboundPackets26_3.SET_HELD_SLOT.getId(), Types.VAR_INT.readPrimitive(output));
++                    assertEquals(slot, Types.VAR_INT.readPrimitive(output));
++                    assertFalse(output.isReadable());
++                }
++            } finally {
++                input.release();
++                output.release();
++            }
++        }
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++        private TestProtocol() {
++            InventoryPackets.register(this);
++        }
++
++        private void clientbound(final PacketWrapper packet) throws Exception {
++            final var mapping = this.clientboundMappings.mappedPacket(State.PLAY, packet.getId());
++            mapping.applyType(packet);
++            mapping.handler().handle(packet);
++        }
++
++        private void serverbound(final PacketWrapper packet) throws Exception {
++            final var mapping = this.serverboundMappings.mappedPacket(State.PLAY, packet.getId());
++            mapping.applyType(packet);
++            mapping.handler().handle(packet);
++        }
 +    }
 +
 +}
