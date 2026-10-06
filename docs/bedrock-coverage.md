@@ -6451,3 +6451,18 @@ Native comparisons, weather interactions, latency, prediction replay, Boar, Cube
 
 Complete death/respawn parity, native comparisons, dodge timing, and full historical prediction replay remain required.
 All eight original coverage groups and the complete gameplay matrix remain active.
+
+## Early resource packs and duplicate login success, October 7, 2026
+
+**Resolved core ordering defect:** One Bedrock login-success packet produced two translated successes when pack traffic arrived before Java's acknowledgment.
+The failed ViaProxy log records the omitted-login fallback between those successes.
+ViaBedrock now advances only its server state to configuration after the first success and waits for acknowledgment on the client side.
+The sequence regression retains omitted-login and older-client controls.
+
+Core, add-on, and ViaProxy builds pass.
+Core reports 746 tests with zero failures and 19 skips; the add-on reports 594 tests with zero failures and 114 skips.
+The [complex gameplay record](bedrock-complex-gameplay.md#early-resource-packs-and-duplicate-login-success-october-7-2026) records the ordering evidence and standalone test setup.
+The rebuilt clients pass one direct and two ViaProxy joins, with initialization, spawn, and real movement controls.
+Each proxy log records one translated success and no omitted-login fallback.
+All recorders finish successfully, and the owned test server stops.
+Other join failures, living-blaze startup, native comparisons, complete movement and action parity, real-server and platform verification, and all eight original coverage groups remain required.

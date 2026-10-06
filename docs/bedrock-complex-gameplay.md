@@ -723,3 +723,37 @@ A subsequent attempt joins successfully, so the intermittent join failure still 
 Native trajectory comparisons, controlled network conditions, correction replay, Boar, CubeCraft, actual Windows/macOS joins, and the full gameplay matrix remain required.
 Fresh native launches remain blocked by the current-boot GPU guard.
 All eight original coverage groups remain required.
+
+### Early resource packs and duplicate login success, October 7, 2026
+
+**Resolved core ordering defect:** The failed ViaProxy journal contains one Bedrock login-success packet.
+Its proxy log records two translated successes, with `Skipping LOGIN state` between them.
+The Java 26.3 client then rejects a configuration disconnect while reading NBT.
+The proxy's later cleanup exception follows that client failure.
+Java login success and configuration disconnect both use packet ID 2, so the second login body reaches the wrong decoder after the state change.
+
+ViaVersion leaves modern connections in `LOGIN` until the Java acknowledgment arrives.
+Early Bedrock resource-pack traffic can therefore trigger the omitted-login fallback after success has already been sent.
+ViaBedrock now advances its server state to `CONFIGURATION` after the first success.
+Its client state stays pending the Java acknowledgment.
+The genuinely omitted-login fallback and the older-client `PLAY` transition remain supported.
+This change belongs in core and applies to direct and ViaProxy connections.
+
+The sequence regression fails before the fix and passes afterward.
+It covers early pack traffic, repeated success status, omitted success, and clients without configuration.
+The full core build passes with 746 tests, zero failures, and 19 skips.
+The add-on build passes with 594 tests, zero failures, and 114 skips; ViaProxy also builds successfully.
+The independent patch applies to pinned upstream without setup.
+Its three sequence tests pass there with an external init script supplying the test classpath that our full stack already provides.
+See the [login patch evidence](../patches/viabedrock/upstreamable/0093-complete-login-before-resource-pack-negotiation.pr.md).
+
+**Verified within scope:** The rebuilt clients pass one direct join and two ViaProxy joins against strict BDS.
+All three reach initialization and spawn, then pass a real movement control.
+Each journal contains one Bedrock login success.
+Both proxy logs record one translated success and no omitted-login fallback.
+All three recorders exit successfully, and the owned test server stops.
+
+**Remaining:** This resolves the duplicate-success ordering path, not every join or configuration failure.
+The living-blaze startup gap, native comparisons, prediction replay, controlled network conditions, Boar, CubeCraft, actual Windows/macOS joins, and the full gameplay matrix remain required.
+The current-boot native GPU guard remains in force.
+All eight original coverage groups remain active.

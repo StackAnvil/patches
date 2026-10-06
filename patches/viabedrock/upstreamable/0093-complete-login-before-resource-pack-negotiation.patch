@@ -1,0 +1,274 @@
+From deafeab4ad7f7d3701a3d8266d0d553d0ad93389 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 00:30:32 +0200
+Subject: [PATCH] fix(login): complete login before resource pack negotiation
+
+Bedrock can send resource pack information before the Java login acknowledgment arrives. ViaVersion leaves modern connections in LOGIN until that acknowledgment, so ViaBedrock previously treated the early pack packet as a skipped login and emitted a second login success. ViaProxy then delivered that packet to a client already decoding configuration disconnects.
+
+Advance only the server protocol state after the first success. Leave the Java client state pending its acknowledgment, preserve omitted-login synthesis, and retain PLAY transitions for older clients. A strict BDS 1.26.51/protocol 2193 capture records one Bedrock success and two translated successes; targeted sequence controls reproduce the stale state and cover early packs, duplicate status, omitted login, and legacy clients.
+---
+ .../protocol/packet/JoinPackets.java          |   5 +
+ .../protocol/packet/LoginTransitionTest.java  | 236 ++++++++++++++++++
+ 2 files changed, 241 insertions(+)
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/LoginTransitionTest.java
+
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+index cb9fbdafc..b593a23d8 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/JoinPackets.java
+@@ -136,6 +136,11 @@ public final class JoinPackets {
+                     wrapper.write(Types.UUID, UUID.randomUUID()); // session id
+ 
+                     ClientboundBaseProtocol1_7.onLoginSuccess(wrapper.user());
++                    if (protocolInfo.protocolVersion().newerThanOrEqualTo(ProtocolVersion.v1_20_2)) {
++                        // Bedrock may send packs before Java acknowledges login. Advance only
++                        // the server side so the preflight cannot synthesize another success.
++                        protocolInfo.setServerState(State.CONFIGURATION);
++                    }
+                     sendClientCacheStatus(wrapper.user());
+                 } else {
+                     wrapper.setPacketType(ClientboundLoginPackets.LOGIN_DISCONNECT);
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/LoginTransitionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/LoginTransitionTest.java
+new file mode 100644
+index 000000000..d6cf66182
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/LoginTransitionTest.java
+@@ -0,0 +1,236 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.Via;
++import com.viaversion.viaversion.api.ViaManager;
++import com.viaversion.viaversion.api.connection.ConnectionManager;
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.Protocol;
++import com.viaversion.viaversion.api.protocol.ProtocolManager;
++import com.viaversion.viaversion.api.protocol.ProtocolPipeline;
++import com.viaversion.viaversion.api.protocol.packet.Direction;
++import com.viaversion.viaversion.api.protocol.packet.PacketType;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.protocol.remapper.PacketHandler;
++import com.viaversion.viaversion.api.protocol.version.ProtocolVersion;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.exception.CancelException;
++import com.viaversion.viaversion.debug.DebugHandlerImpl;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.base.ClientboundLoginPackets;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.platform.ViaBedrockConfig;
++import net.raphimc.viabedrock.platform.ViaBedrockPlatform;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.ServerboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.PlayStatus;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Field;
++import java.lang.reflect.InvocationHandler;
++import java.lang.reflect.Proxy;
++import java.util.ArrayList;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.UUID;
++import java.util.logging.Logger;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class LoginTransitionTest {
++
++    private final Map<Field, Object> previous = new LinkedHashMap<>();
++    private final List<PacketType> sent = new ArrayList<>();
++    private TestProtocol protocol;
++
++    @BeforeEach
++    void installPacketTransport() throws Exception {
++        final ProtocolManager protocols = proxy(ProtocolManager.class, (instance, method, args) -> {
++            if (!method.getName().equals("createPacketWrapper")) {
++                throw new AssertionError(method.getName());
++            }
++            return new PacketWrapperImpl((PacketType) args[0], null, (UserConnection) args[2]) {
++                @Override
++                public void send(final Class<? extends Protocol> type, final boolean skipCurrentPipeline) {
++                    try {
++                        this.resetReader();
++                        LoginTransitionTest.this.protocol.translate(this);
++                        LoginTransitionTest.this.sent.add(this.getPacketType());
++                    } catch (final Exception error) {
++                        throw new AssertionError(error);
++                    }
++                }
++
++                @Override
++                public void sendToServer(final Class<? extends Protocol> type, final boolean skipCurrentPipeline) {
++                    LoginTransitionTest.this.sent.add(this.getPacketType());
++                }
++            };
++        });
++        final ConnectionManager connections = proxy(ConnectionManager.class, (instance, method, args) -> null);
++        this.replace(Via.class, "manager", proxy(ViaManager.class, (instance, method, args) -> switch (method.getName()) {
++            case "getProtocolManager" -> protocols;
++            case "getConnectionManager" -> connections;
++            case "isDebug" -> false;
++            case "debugHandler" -> new DebugHandlerImpl();
++            default -> throw new AssertionError(method.getName());
++        }));
++        this.replace(ViaBedrock.class, "config", proxy(ViaBedrockConfig.class, (instance, method, args) -> switch (method.getName()) {
++            case "getBlobCacheMode" -> ViaBedrockConfig.BlobCacheMode.DISABLED;
++            default -> throw new AssertionError(method.getName());
++        }));
++        this.replace(ViaBedrock.class, "platform", proxy(ViaBedrockPlatform.class, (instance, method, args) -> {
++            if (method.getName().equals("getLogger")) {
++                return Logger.getAnonymousLogger();
++            }
++            throw new AssertionError(method.getName());
++        }));
++        this.protocol = new TestProtocol();
++    }
++
++    @AfterEach
++    void restorePlatform() throws Exception {
++        for (final var entry : this.previous.entrySet()) {
++            entry.getKey().set(null, entry.getValue());
++        }
++    }
++
++    @Test
++    void resourcePacksBeforeAcknowledgementDoNotSendAnotherLoginSuccess() throws Exception {
++        for (final ProtocolVersion version : List.of(ProtocolVersion.v1_20_2, ProtocolVersion.v26_3)) {
++            this.sent.clear();
++            this.protocol.resourcePacks = 0;
++            final Connection connection = new Connection(version);
++            final PacketType first = this.receive(connection, ClientboundBedrockPackets.PLAY_STATUS, PlayStatus.LoginSuccess.getValue());
++            assertSame(ClientboundLoginPackets.LOGIN_FINISHED, first);
++            assertSame(State.CONFIGURATION, connection.serverState);
++            assertSame(State.LOGIN, connection.clientState);
++            this.receive(connection, ClientboundBedrockPackets.RESOURCE_PACKS_INFO, null);
++            this.receive(connection, ClientboundBedrockPackets.PLAY_STATUS, PlayStatus.LoginSuccess.getValue());
++            assertEquals(List.of(ServerboundBedrockPackets.CLIENT_CACHE_STATUS, ServerboundBedrockPackets.CLIENT_CACHE_STATUS), this.sent);
++            assertEquals(1, this.protocol.resourcePacks);
++            connection.clientState = State.CONFIGURATION;
++            this.receive(connection, ClientboundBedrockPackets.RESOURCE_PACKS_INFO, null);
++            assertEquals(2, this.protocol.resourcePacks);
++        }
++    }
++
++    @Test
++    void omittedLoginSuccessStillSynthesizesExactlyOneBeforeResourcePacks() throws Exception {
++        final Connection connection = new Connection(ProtocolVersion.v26_3);
++        this.receive(connection, ClientboundBedrockPackets.RESOURCE_PACKS_INFO, null);
++        assertSame(State.CONFIGURATION, connection.serverState);
++        assertSame(State.LOGIN, connection.clientState);
++        assertEquals(List.of(ServerboundBedrockPackets.CLIENT_CACHE_STATUS, ClientboundLoginPackets.LOGIN_FINISHED), this.sent);
++        this.receive(connection, ClientboundBedrockPackets.RESOURCE_PACKS_INFO, null);
++        assertEquals(2, this.protocol.resourcePacks);
++        assertEquals(2, this.sent.size());
++    }
++
++    @Test
++    void clientsWithoutConfigurationStillEnterPlay() throws Exception {
++        final Connection connection = new Connection(ProtocolVersion.v1_20);
++        assertSame(ClientboundLoginPackets.LOGIN_FINISHED,
++                this.receive(connection, ClientboundBedrockPackets.PLAY_STATUS, PlayStatus.LoginSuccess.getValue()));
++        assertSame(State.PLAY, connection.serverState);
++        assertSame(State.PLAY, connection.clientState);
++    }
++
++    private PacketType receive(final Connection connection, final ClientboundBedrockPackets type, final Integer status) throws Exception {
++        final var input = Unpooled.buffer();
++        try {
++            if (status != null) {
++                Types.INT.write(input, status);
++            }
++            final PacketWrapper packet = new PacketWrapperImpl(type, input, connection.user);
++            try {
++                this.protocol.translate(packet);
++            } catch (final CancelException ignored) {
++                assertTrue(packet.isCancelled());
++            }
++            assertEquals(0, input.readableBytes());
++            return packet.getPacketType();
++        } finally {
++            input.release();
++        }
++    }
++
++    private void replace(final Class<?> owner, final String name, final Object value) throws Exception {
++        final Field field = owner.getDeclaredField(name);
++        field.setAccessible(true);
++        this.previous.put(field, field.get(null));
++        field.set(null, value);
++    }
++
++    private static <T> T proxy(final Class<T> type, final InvocationHandler handler) {
++        return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, handler));
++    }
++
++    private static final class Connection {
++        private State serverState = State.LOGIN;
++        private State clientState = State.LOGIN;
++        private final UserConnection user;
++
++        private Connection(final ProtocolVersion version) {
++            final ProtocolPipeline pipeline = proxy(ProtocolPipeline.class, (instance, method, args) -> {
++                if (method.getName().equals("hasNonBaseProtocols")) {
++                    return true;
++                }
++                throw new AssertionError(method.getName());
++            });
++            final ProtocolInfo info = proxy(ProtocolInfo.class, (instance, method, args) -> switch (method.getName()) {
++                case "protocolVersion" -> version;
++                case "getServerState" -> this.serverState;
++                case "getClientState" -> this.clientState;
++                case "setServerState" -> {
++                    this.serverState = (State) args[0];
++                    yield null;
++                }
++                case "setState" -> {
++                    this.serverState = this.clientState = (State) args[0];
++                    yield null;
++                }
++                case "getUuid" -> new UUID(0, 1);
++                case "getUsername" -> "Probe";
++                case "getPipeline" -> pipeline;
++                default -> throw new AssertionError(method.getName());
++            });
++            this.user = proxy(UserConnection.class, (instance, method, args) -> switch (method.getName()) {
++                case "getProtocolInfo" -> info;
++                case "get" -> null;
++                default -> throw new AssertionError(method.getName());
++            });
++        }
++    }
++
++    private static final class TestProtocol extends BedrockProtocol {
++        private int resourcePacks;
++
++        private TestProtocol() {
++            JoinPackets.register(this);
++            this.registerClientboundTransition(ClientboundBedrockPackets.RESOURCE_PACKS_INFO, State.CONFIGURATION,
++                    (PacketHandler) packet -> {
++                        // Isolate the transition from resource downloads while using the production preflight.
++                        this.resourcePacks++;
++                        packet.cancel();
++                    });
++        }
++
++        private void translate(final PacketWrapper packet) throws Exception {
++            this.transform(Direction.CLIENTBOUND, packet.user().getProtocolInfo().getServerState(), packet);
++        }
++
++    }
++
++}
+-- 
+2.55.0
