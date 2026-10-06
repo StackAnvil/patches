@@ -4065,3 +4065,42 @@ Tests reject unsupported wire revisions and mismatched Bedrock protocols, and di
 Ordinary Java clients still approximate jump events.
 Swimming with jump or flying input, other fluid conditions, blocked-surface transitions, and history resimulation remain requirements.
 The real-server and Windows/macOS game-join requirements remain open.
+
+### Jumping while the swimming blend changes, October 6, 2026
+
+**Reference:** Matching Windows 1.26.51.1 executable inspection identifies `CurrentSwimAmountSystem` and `MobJumpSystem`.
+The native swimming blend changes by 0.1 toward zero or one, using single-precision arithmetic.
+The [component declaration](https://github.com/LiteLDev/LeviLamina/blob/main/src/mc/entity/components/SwimAmountComponent.h) corroborates its current and previous fields.
+The matching executable establishes the numeric step for this build; Java 26.3 uses 0.09.
+The native jump system suppresses water rises while the blend lies strictly between zero and one.
+Its fluid gate uses `WasInWaterFlagComponent`; jumping is already a required component of the system view.
+
+**Implemented:** Replace the separate ten-tick counter with the existing swimming blend.
+Preserve its decay after swimming stops, and use the native step on Bedrock connections.
+Retain the water and jumping gates.
+The former counter resets on release and incorrectly permits immediate rising during the exit transition.
+The observer records the blend before input and after physics, without changing movement.
+The change is folded into the existing add-on prediction patch; core continues to own validation and auth-input construction.
+
+**Verified:** The original strict-BDS release-and-jump case receives five nonzero corrections during rising and settling.
+The revised direct and ViaProxy recordings receive no nonzero corrections.
+They suppress rising until the exit blend reaches zero.
+Entering swimming with jump held also suppresses motion during the fractional blend and resumes at one, without nonzero corrections.
+Both routes complete join and spawn, with 1,718 direct and 2,116 proxy auth-input frames.
+Each recording has three zero-velocity fixture corrections.
+
+Separate 35-degree surface comparisons cover 63 frames directly and 64 through ViaProxy.
+Swimming and sprint events match the saved native reference, without corrections during those cases.
+Maximum position differences remain below 0.000031 blocks vertically and 0.000008 blocks horizontally.
+Motion differences remain below 0.000000045 blocks per tick.
+
+**Automated verification:** Dependency builds pass with 16 converter, 636 core, and 608 add-on tests.
+There are no failures or errors; 135 environment-dependent tests skip.
+`bun run check` passes.
+CI for the preceding main commit passes builds, tooling, permissions on Linux, Windows, and macOS, and all four native helper targets.
+Runner checks do not establish game-join parity on those platforms.
+
+**Incomplete:** No fresh native combined swimming-and-jump capture establishes the complete input sequence yet.
+The head-in-water branch, exact native phases, dry jumps with residual blend, flying, other fluid conditions, and crawling need separate comparisons.
+Initial blocked-surface corrections and prediction history replay remain unresolved.
+Real-server behavior and Windows/macOS game joins remain requirements.

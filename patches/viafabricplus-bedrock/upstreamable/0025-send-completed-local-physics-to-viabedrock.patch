@@ -1,4 +1,4 @@
-From 72e47cfeb491a6a0df058f9b702397d2a12f5959 Mon Sep 17 00:00:00 2001
+From d42747b850b02da0388f225587aba984eb34a74f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:53 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -76,15 +76,30 @@ held water rises while preserving Jumping, JumpDown and WantUp. Ground
 jumps include StartJumping. Observe the physical action so blocked jumps,
 automatic jumps and stationary frames do not depend on a fitted velocity
 threshold or a held-key heuristic.
+
+Native 1.26.51.1 CurrentSwimAmountSystem updates the single-precision
+swimming blend by 0.1 toward zero or one. MobJumpSystem suppresses water
+rises while this blend lies strictly between those bounds, including
+after swimming stops. Its callback adapter supplies WasInWater, not
+MobIsJumping, for the fluid gate; jumping is already required by the view.
+
+The old ten-tick counter resets on swimming release and permits immediate
+water rises during the exit transition. Strict BDS corrects that path back
+to the pool floor. Use the completed blend, preserve its decay after
+release, and retain the water and jumping gates. Adjust Java's 0.09 blend
+step to the native 0.1 on Bedrock connections. Leave non-water jumps
+outside this suppression. Broader native phase and fluid cases remain
+separate verification requirements.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
  .../mixin/features/movement/MixinEntity.java  |  25 +----
+ .../features/movement/MixinLivingEntity.java  |   7 ++
  .../features/movement/MixinLocalPlayer.java   | 103 +++++++++++++++++-
- .../mixin/features/movement/MixinPlayer.java  |   9 +-
+ .../mixin/features/movement/MixinPlayer.java  |  31 ++----
  .../input/PlayerPredictionPayload.java        |  24 ++++
  .../bedrock/movement/BedrockFluidPhysics.java |  62 +++++++++++
  .../movement/BedrockFluidPhysicsTest.java     |  95 ++++++++++++++++
- 7 files changed, 293 insertions(+), 27 deletions(-)
+ 8 files changed, 305 insertions(+), 44 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
@@ -172,6 +187,32 @@ index 236c05d..dda48a4 100644
          } else {
              return box;
          }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
+index 1c9125e..a06c283 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
+@@ -32,7 +32,9 @@ import org.jetbrains.annotations.Nullable;
+ import org.spongepowered.asm.mixin.Mixin;
+ import org.spongepowered.asm.mixin.Shadow;
+ import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Constant;
+ import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.ModifyConstant;
+ import org.spongepowered.asm.mixin.injection.Redirect;
+ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+ 
+@@ -42,6 +44,11 @@ public abstract class MixinLivingEntity {
+     @Shadow
+     public abstract @Nullable MobEffectInstance getEffect(final Holder<MobEffect> effect);
+ 
++    @ModifyConstant(method = "updateSwimAmount", constant = @Constant(floatValue = 0.09F), require = 2)
++    private float useNativeSwimmingBlendStep(final float step) {
++        return BedrockInputPermissions.isBedrockConnection() ? 0.1F : step;
++    }
++
+     @Redirect(method = "getFluidFallingAdjustedMovement", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;isSprinting()Z"))
+     private boolean changeFluidGravityCondition(final LivingEntity instance) {
+         return BedrockInputPermissions.isBedrockConnection() ? instance.isSwimming() : instance.isSprinting();
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
 index e5a8167..e0594dd 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
@@ -301,18 +342,63 @@ index e5a8167..e0594dd 100644
  
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
-index 49a37ac..37ba54f 100644
+index 49a37ac..20aac0d 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
-@@ -25,6 +25,7 @@ import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
+@@ -25,9 +25,9 @@ import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
  import com.llamalad7.mixinextras.sugar.Local;
  import com.viaversion.viafabricplus.ViaFabricPlus;
  import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
 +import com.viaversion.viafabricplus.bedrock.movement.BedrockFluidPhysics;
  import net.minecraft.core.BlockPos;
  import net.minecraft.world.entity.Avatar;
- import net.minecraft.world.entity.Entity;
-@@ -88,9 +89,11 @@ public abstract class MixinPlayer extends Avatar {
+-import net.minecraft.world.entity.Entity;
+ import net.minecraft.world.entity.EntityType;
+ import net.minecraft.world.entity.LivingEntity;
+ import net.minecraft.world.entity.player.Player;
+@@ -35,8 +35,6 @@ import net.minecraft.world.level.Level;
+ import net.minecraft.world.phys.Vec3;
+ import net.raphimc.viabedrock.api.BedrockProtocolVersion;
+ import org.spongepowered.asm.mixin.Mixin;
+-import org.spongepowered.asm.mixin.Shadow;
+-import org.spongepowered.asm.mixin.Unique;
+ import org.spongepowered.asm.mixin.injection.At;
+ import org.spongepowered.asm.mixin.injection.Inject;
+ import org.spongepowered.asm.mixin.injection.Redirect;
+@@ -45,9 +43,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+ @Mixin(Player.class)
+ public abstract class MixinPlayer extends Avatar {
+ 
+-    @Unique
+-    private int viaFabricPlusBedrock$ticksSinceSwimming;
+-
+     protected MixinPlayer(final EntityType<? extends LivingEntity> type, final Level level) {
+         super(type, level);
+     }
+@@ -67,17 +62,11 @@ public abstract class MixinPlayer extends Avatar {
+     }
+ 
+     @Inject(method = "travel", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getAbilities()Lnet/minecraft/world/entity/player/Abilities;"))
+-    private void preventJumpingWhenStartedSwimming(final Vec3 input, final CallbackInfo ci) {
+-        if (!BedrockInputPermissions.isBedrockConnection()) {
+-            return;
+-        }
+-
+-        if (this.isSwimming()) {
+-            this.viaFabricPlusBedrock$ticksSinceSwimming++;
+-        } else {
+-            this.viaFabricPlusBedrock$ticksSinceSwimming = 0;
+-        }
+-        if (this.viaFabricPlusBedrock$ticksSinceSwimming > 0 && this.viaFabricPlusBedrock$ticksSinceSwimming < 10 && this.isJumping()) {
++    private void suppressLiquidJumpDuringSwimmingTransition(final Vec3 input, final CallbackInfo ci) {
++        final float swimAmount = this.getSwimAmount(1F);
++        // Native retains the fractional transition after swimming stops, but caps only water movement.
++        if (BedrockInputPermissions.isBedrockConnection() && this.isInWater() && this.isJumping()
++                && swimAmount > 0F && swimAmount < 1F) {
+             this.setDeltaMovement(this.getDeltaMovement().x(), 0, this.getDeltaMovement().z());
+         }
+     }
+@@ -88,9 +77,11 @@ public abstract class MixinPlayer extends Avatar {
              return instance.isSwimming();
          }
  

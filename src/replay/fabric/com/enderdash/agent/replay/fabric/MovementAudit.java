@@ -34,6 +34,7 @@ public final class MovementAudit {
             row.put("position", Map.of("x", call(player, "getX"), "y", call(player, "getY"), "z", call(player, "getZ")));
             row.put("motion", vector(call(player, "getDeltaMovement")));
             row.put("swimming", call(player, "isSwimming"));
+            row.put("swimAmount", player.getClass().getMethod("getSwimAmount", float.class).invoke(player, 1F));
             row.put("sprinting", call(player, "isSprinting"));
             row.put("inWater", call(player, "isInWater"));
             row.put("underWater", call(player, "isUnderWater"));

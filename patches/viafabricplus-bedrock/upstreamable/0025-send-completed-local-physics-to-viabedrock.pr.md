@@ -187,3 +187,36 @@ The core codec covers all sixteen independent pose, collision, and jump combinat
 
 **Incomplete:** Automatic jumps, obstructed jumps, swimming with jump or flying input, other fluid conditions, and correction history need separate verification.
 The initial blocked-surface corrections remain unresolved.
+
+## Jumping during swimming transitions
+
+The matching 1.26.51.1 executable identifies `CurrentSwimAmountSystem` and `MobJumpSystem`.
+The first system changes the swimming blend by 0.1 toward zero or one, with single-precision arithmetic.
+The [component declaration](https://github.com/LiteLDev/LeviLamina/blob/main/src/mc/entity/components/SwimAmountComponent.h) corroborates the current and previous fields.
+The matching executable establishes the step for this build; Java 26.3 uses 0.09.
+
+The jump system suppresses water rises while the blend is strictly between zero and one.
+Its callback receives `WasInWaterFlagComponent` for this gate; jumping is already a required view component.
+The gate remains active after swimming stops, while the blend decays.
+The former ten-tick counter resets on release and permits an immediate rise during that transition.
+
+Use the existing blend instead of a separate counter, and apply the native step on Bedrock connections.
+Retain the water and jumping gates so this suppression does not affect dry jumps.
+The private movement observer now records the blend in each phase.
+Core still validates completed frames and constructs auth input on both routes.
+
+The original strict-BDS release-and-jump recording receives five nonzero corrections during the rise and subsequent settling.
+The revised direct and ViaProxy recordings receive none.
+They also cover entering swimming with jump held: motion is suppressed during the fractional blend, then resumes at one.
+Both recordings complete join and spawn, with 1,718 direct and 2,116 proxy auth-input frames.
+Each has three zero-velocity fixture corrections.
+
+Separate 35-degree surface comparisons retain native events without corrections: 63 frames directly and 64 through ViaProxy.
+Maximum position differences remain below 0.000031 blocks vertically and 0.000008 blocks horizontally.
+Motion differences remain below 0.000000045 blocks per tick.
+The dependency build passes 16 converter, 636 core, and 608 add-on tests, with no failures or errors and 135 environment-dependent skips.
+`bun run check` also passes.
+
+**Incomplete:** A fresh native capture with swimming and jump held together is still required.
+The native head-in-water branch, exact system phases, residual blend during dry jumps, flying, and other fluid conditions need separate verification.
+The initial blocked-surface corrections and prediction history remain unresolved.
