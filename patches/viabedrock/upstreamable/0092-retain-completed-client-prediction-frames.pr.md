@@ -296,3 +296,27 @@ The visible hotbar is empty after consumption.
 Fresh native captures remain required; the current-boot native GPU guard prevents another native launch.
 Custom modifier integration, ordinary Java clients, Boar comparisons, correction history, broader movement, and actual Windows/macOS joins remain requirements.
 These results establish the named calculations and comparisons, not complete native movement parity.
+
+## Native glide calculation
+
+Core now supplies `GlideMovement` for unboosted travel.
+The matching 1.26.51.1 `GlideMoveSystem` callback at `146667b10` uses float arithmetic and the native sine lookup.
+View reconstruction follows the shortest wrapped angle delta from the previous rotation.
+Slow Falling selects gravity during ascent as well as descent.
+Descent exchange multiplies vertical speed before lift; reassociation changes rounded velocity.
+
+All 4,366 bounded native execution cases match Java velocity bits exactly.
+The fixtures supply CRT remainder, a regenerated sine table, status slots, and an absent rocket boost.
+Native instructions perform angle reconstruction, status-slot admission, lift, steering, damping, and fall-distance stores.
+Compact Java cases cover vertical views, wrapped turns, ascent, descent, Slow Falling, and multiplication-order regressions.
+
+The add-on invokes the shared kernel for local Bedrock flight on direct and ViaProxy connections.
+Its hook preserves the native fall-distance reset to one when entering velocity Y exceeds `-0.5`.
+Runtime scheduling, collision resolution, input phases, rocket boosts, history replay, and live route comparisons remain unverified.
+The strict BDS synthetic probe did not enter gliding and does not establish flight parity.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-glide-travel-october-6-2026) retains packet and verification gaps.
+
+The complete core and add-on stacks replay and build successfully against the pinned ViaFabricPlus artifact.
+Core checks pass with 684 tests passing and 19 optional skips.
+Add-on checks pass with 478 tests passing and 114 optional skips.
+These checks verify compilation and the named tests; live flight remains unverified.

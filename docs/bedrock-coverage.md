@@ -5832,3 +5832,35 @@ Full direct and ViaProxy gameplay comparisons remain open.
 
 The complete 95-patch core stack replays and builds successfully.
 Checkstyle passes, with 683 tests passing, 19 optional skips, and no failures.
+
+## Native glide travel (October 6, 2026)
+
+**Implemented:** Core supplies `GlideMovement` for unboosted local glide travel.
+The add-on invokes it during Bedrock flight on direct and ViaProxy sessions.
+It replaces Java's double calculation with the target's float operation order and angle lookup.
+Slow Falling selects native gravity during ascent as well as descent.
+The local hook preserves the native fall-distance reset before travel.
+
+**Verified within scope:** Matching build 1.26.51.1, protocol 2193 registers `GlideMoveSystem` in `14681da00`.
+Its callback `146667b10` supplies the velocity calculation and fall-distance condition.
+The Java calculator matches all 4,366 bounded native execution cases exactly.
+They cover vertical views, angle seams, ascent, descent, Slow Falling, and randomized motion and rotations.
+The probes supply CRT remainder, a regenerated sine table, status slots, and an absent rocket boost.
+Native instructions perform angle reconstruction, arithmetic, status-slot admission, drag, and fall-distance stores.
+Compact Java tests retain numeric velocity regressions, including the required multiplication order.
+
+**Incomplete:** `MOVEMENT_EFFECT` still reaches automatic cancellation.
+The [nearby protocol preview](https://mojang.github.io/bedrock-protocol-docs/1.26.50-preview.26/packets/movement-effect-packet/) identifies this packet as the source of confirmed boost duration.
+That preview uses protocol 2192; target packet semantics still need verification.
+Native `MovementEffectsTick` callback `1490daf80` decrements finite durations and clears expired entries.
+Its full packet application, prediction history, rocket timing, and correction replay remain open.
+
+**Unverified:** The local mixin's runtime scheduling, collisions, input phases, trajectories, rocket boosts, and both live connection routes need native comparisons.
+The isolated strict-BDS synthetic probe did not enter gliding and does not verify flight.
+The current-boot GPU guard and occupied private display remain in place.
+All original coverage groups, the complete gameplay matrix, CubeCraft interoperability, and actual platform joins remain required.
+
+The complete core and add-on stacks replay and build successfully against the pinned ViaFabricPlus artifact.
+Core checks pass with 684 tests passing and 19 optional skips.
+Add-on checks pass with 478 tests passing and 114 optional skips.
+These checks verify compilation and the named tests; live flight remains unverified.

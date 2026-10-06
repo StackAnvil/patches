@@ -1,4 +1,4 @@
-From 6d4fab899b683adf49f1a80a8fd896ea75ae4ef0 Mon Sep 17 00:00:00 2001
+From 119f8102c37c37ff3b57e3360a24e4834d00662f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:28 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -124,7 +124,24 @@ different scale from the new inventory state. Standard Java clients use
 server USINGITEM state as a fallback. Keep native scalar calculations and
 packet construction in core; the add-on only samples the translated item
 component and applies it after posture input.
+
+Port unboosted glide travel into the shared core GlideMovement calculator.
+Matching 1.26.51.1 GlideMoveSystem callback 0x146667b10 reconstructs view
+angles with the float lookup, applies lift and pitch exchange with separate
+float operations, and damps motion before collision resolution. Slow
+Falling selects gravity for this kernel even during ascent. Preserve the
+native multiplication order; reassociation changes rounded velocity.
+
+Exact native instructions and the Java calculator agree in all 4,366
+controlled cases, including angle seams, vertical views, ascending and
+falling motion, Slow Falling, and randomized rotations. Fixtures supply
+CRT remainder, the regenerated sine table, status slots and an absent
+rocket boost. Retain compact numeric regression cases in Java tests.
+The add-on invokes this calculation for local Bedrock glide travel on
+direct and ViaProxy sessions. Collision solving, rocket effects, full
+history replay, and live flight comparisons remain separate requirements.
 ---
+ .../viabedrock/api/model/GlideMovement.java   |  58 +++++++
  .../viabedrock/api/model/PlayerPosture.java   |  63 ++++++++
  .../api/model/PlayerPrediction.java           |  83 ++++++++++
  .../api/model/SneakingInputState.java         |  21 +++
@@ -141,6 +158,7 @@ component and applies it after posture input.
  .../protocol/rewriter/ItemRewriter.java       |  19 +++
  .../protocol/storage/PlayerInputStorage.java  |   3 +-
  .../storage/PlayerPredictionStorage.java      |  54 +++++++
+ .../api/model/GlideMovementTest.java          |  68 ++++++++
  .../api/model/PlayerPostureTest.java          | 152 ++++++++++++++++++
  .../api/model/PlayerPredictionTest.java       | 121 ++++++++++++++
  .../api/model/SneakingInputStateTest.java     |  32 ++++
@@ -150,13 +168,15 @@ component and applies it after posture input.
  .../protocol/model/ItemUseModifiersTest.java  |  55 +++++++
  .../packet/ClientPlayerPacketsTest.java       |  32 +++-
  .../packet/PlayerCorrectionPacketTest.java    | 105 ++++++++++++
- 25 files changed, 1064 insertions(+), 38 deletions(-)
+ 27 files changed, 1190 insertions(+), 38 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/GlideMovement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerPosture.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/PlayerPrediction.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SneakingInputState.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/SwiftSneakState.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiers.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/GlideMovementTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/PlayerPostureTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/SneakingInputStateTest.java
@@ -166,6 +186,70 @@ component and applies it after posture input.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiersTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/GlideMovement.java b/src/main/java/net/raphimc/viabedrock/api/model/GlideMovement.java
+new file mode 100644
+index 000000000..1465fbf17
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/GlideMovement.java
+@@ -0,0 +1,58 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.api.util.BedrockTrigonometry;
++import net.raphimc.viabedrock.api.util.MoLangMath;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++
++/** Native glide travel before collision resolution, without a rocket boost. */
++public final class GlideMovement {
++
++    private static final float RADIANS = (float) Math.PI / 180F;
++
++    private GlideMovement() {
++    }
++
++    public static Position3f calculate(final Position3f motion, final float pitch, final float yaw,
++                                      final float previousPitch, final float previousYaw, final boolean slowFalling) {
++        final float viewYaw = (MoLangMath.minAngle(yaw - previousYaw) + previousYaw) * -RADIANS - (float) Math.PI;
++        final float viewPitch = (MoLangMath.minAngle(pitch - previousPitch) + previousPitch) * -RADIANS;
++        final float pitchCosine = -BedrockTrigonometry.cosine(viewPitch);
++        final float lookX = BedrockTrigonometry.sine(viewYaw) * pitchCosine;
++        final float lookY = BedrockTrigonometry.sine(viewPitch);
++        final float lookZ = BedrockTrigonometry.cosine(viewYaw) * pitchCosine;
++        final float horizontalLookSquared = lookX * lookX + lookZ * lookZ;
++        final float horizontalLook = (float) Math.sqrt(horizontalLookSquared);
++        final float horizontalSpeed = (float) Math.sqrt(motion.x() * motion.x() + motion.z() * motion.z());
++        final float radians = pitch * RADIANS;
++        final float cosine = BedrockTrigonometry.cosine(radians);
++        final float lift = Math.min(1F, (float) Math.sqrt(lookY * lookY + lookX * lookX + lookZ * lookZ) / 0.4F) * cosine * cosine;
++        float x = motion.x();
++        float y = motion.y() - (0.75F * lift - 1F) * (slowFalling ? -0.01F : -0.08F);
++        float z = motion.z();
++        if (horizontalLookSquared > 0F && y < 0F) {
++            // Native multiplies the vertical speed before lift; reversing these
++            // float operations changes the result even without a rocket boost.
++            final float descent = lift * (-0.1F * y);
++            x += lookX * descent / horizontalLook;
++            y += descent;
++            z += lookZ * descent / horizontalLook;
++        }
++        if (radians < 0F) {
++            final float ascent = BedrockTrigonometry.sine(radians) * horizontalSpeed * -0.04F;
++            x -= ascent * lookX / horizontalLook;
++            y += 3.2F * ascent;
++            z -= ascent * lookZ / horizontalLook;
++        }
++        if (horizontalLookSquared > 0F) {
++            x += (lookX / horizontalLook * horizontalSpeed - x) * 0.1F;
++            z += (lookZ / horizontalLook * horizontalSpeed - z) * 0.1F;
++        }
++        return new Position3f(x * 0.99F, y * 0.98F, z * 0.99F);
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/PlayerPosture.java b/src/main/java/net/raphimc/viabedrock/api/model/PlayerPosture.java
 new file mode 100644
 index 000000000..c66d743c2
@@ -960,6 +1044,80 @@ index 000000000..97c2043e4
 +        }
 +        this.posture = posture;
 +        return transitions;
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/GlideMovementTest.java b/src/test/java/net/raphimc/viabedrock/api/model/GlideMovementTest.java
+new file mode 100644
+index 000000000..9f904db6c
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/GlideMovementTest.java
+@@ -0,0 +1,68 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class GlideMovementTest {
++
++    @Test
++    void matchesNativeFloatVelocityAcrossTurnsAndSlowFalling() {
++        // Numeric results from the pinned 1.26.51.1 glide kernel, without a boost.
++        // These include angle seams, ascent, descent, and multiplication-order regressions.
++        final Case[] cases = {
++            new Case(0.125F, -0.5F, -1.25F, -180F, 0F, -180F, 0F, false,
++                    0x3DE41891, 0xBEEAD2DD, 0xBFA468D5),
++            new Case(2F, 0.1F, 0.5F, -180F, 0F, -180F, 0F, false,
++                    0x3FE41893, 0x3DA09031, 0x3E773335),
++            new Case(0.125F, -0.5F, -1.25F, -180F, 0F, -180F, 0F, true,
++                    0x3DE41891, 0xBEE2EBC4, 0xBFA435BD),
++            new Case(2F, 0.1F, 0.5F, -180F, 0F, -180F, 0F, true,
++                    0x3FE41893, 0x3DC3AFBC, 0x3E773335),
++            new Case(0.125F, -0.5F, -1.25F, -90F, 0F, -90F, 0F, false,
++                    0x3DE41892, 0xBED256BB, 0xBF98BF88),
++            new Case(0.125F, -0.5F, -1.25F, -89.999F, 0F, -89.999F, 0F, false,
++                    0x3DE41894, 0xBED256BB, 0xBF845F31),
++            new Case(0.125F, -0.5F, -1.25F, -45F, 0F, -45F, 0F, false,
++                    0x3DE41895, 0xBECD1E6D, 0xBF7F1D2E),
++            new Case(0.125F, -0.5F, -1.25F, -45F, 0F, -45F, 0F, true,
++                    0x3DE41895, 0xBEB843B2, 0xBF7F9CEA),
++            new Case(0.125F, -0.5F, -1.25F, 0F, 0F, 0F, 0F, false,
++                    0x3DE41895, 0xBEEAD2DD, 0xBF716BC6),
++            new Case(0.125F, -0.5F, -1.25F, 45F, 0F, 45F, 0F, false,
++                    0x3DE41895, 0xBF0315B6, 0xBF770265),
++            new Case(0.125F, -0.5F, -1.25F, 45F, 0F, 45F, 0F, true,
++                    0x3DE41895, 0xBEF150B2, 0xBF778221),
++            new Case(0.125F, -0.5F, -1.25F, 89.999F, 0F, 89.999F, 0F, false,
++                    0x3DFD70A4, 0xBF1182A9, 0xBF9E6666),
++            new Case(0.125F, -0.5F, -1.25F, 90F, 0F, 90F, 0F, false,
++                    0x3DFD70A4, 0xBF1182A9, 0xBF9E6666),
++            new Case(0.125F, -0.5F, -1.25F, 180F, 0F, 180F, 0F, false,
++                    0x3DE41891, 0xBEEAD2DD, 0xBFA468D5),
++            new Case(2F, 0.1F, 0.5F, 180F, 720F, 180F, 0F, true,
++                    0x3FE41893, 0x3DC3AFB9, 0x3E773335),
++            new Case(1.6333389F, -3.0968435F, -0.2979446F, 14.151753F, 2026.8854F, -48.434772F, -5738.8184F, false,
++                    0x3FE210F8, 0xC0314FC9, 0xBF0E7392),
++            new Case(0.82603735F, -2.439322F, 1.9346125F, 31.666914F, 7057.995F, 54.236145F, 5645.232F, true,
++                    0x3F761708, 0xC00E2D12, 0x3FB7B771)
++        };
++        for (final Case value : cases) {
++            final Position3f motion = GlideMovement.calculate(new Position3f(value.x(), value.y(), value.z()),
++                    value.pitch(), value.yaw(), value.previousPitch(), value.previousYaw(), value.slowFalling());
++            assertEquals(value.expectedX(), Float.floatToRawIntBits(motion.x()));
++            assertEquals(value.expectedY(), Float.floatToRawIntBits(motion.y()));
++            assertEquals(value.expectedZ(), Float.floatToRawIntBits(motion.z()));
++        }
++    }
++
++    private record Case(float x, float y, float z, float pitch, float yaw, float previousPitch, float previousYaw,
++                        boolean slowFalling, int expectedX, int expectedY, int expectedZ) {
 +    }
 +
 +}

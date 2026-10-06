@@ -1,4 +1,4 @@
-From f6f91b8fedbbab976162dfb5cd0d4198c09f8ade Mon Sep 17 00:00:00 2001
+From 6b96d4db81f4f5a950d3baab05c119ccab29bf73 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:53 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -209,12 +209,25 @@ local cycle from metadata, which lets delayed updates interrupt repeated use.
 Guard those two metadata transitions for local Bedrock players. Preserve
 metadata itself, remote players, ordinary Java sessions, selected-item
 identity checks, explicit release, and inventory/completion handling.
+
+Use core GlideMovement for completed local glide travel on direct and
+ViaProxy Bedrock sessions. Native callback 0x146667b10 in build 1.26.51.1
+uses float arithmetic, reconstructed view angles, native trigonometry,
+and Slow Falling gravity even during ascent. Preserve its fall-distance
+reset to one when entering velocity Y exceeds -0.5. Keep Java movement,
+collision dispatch and completed-frame transport around the shared kernel.
+
+The core calculation matches 4,366 exact native execution cases with
+supplied CRT remainder, sine table, status slots and no rocket boost.
+Java-only sessions and remote entities retain their existing travel.
+Rocket duration, native input phases, collision solving, correction replay
+and live direct/ViaProxy flight comparisons remain open requirements.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
  .../access/IBedrockPlayerPosture.java         |  14 ++
  .../mixin/features/movement/MixinAvatar.java  |  27 +++
  .../mixin/features/movement/MixinEntity.java  |  25 +--
- .../features/movement/MixinLivingEntity.java  |  18 ++
+ .../features/movement/MixinLivingEntity.java  |  33 +++
  .../features/movement/MixinLocalPlayer.java   | 193 +++++++++++++++++-
  .../mixin/features/movement/MixinPlayer.java  |  55 +++--
  .../input/PlayerPredictionPayload.java        |  24 +++
@@ -223,7 +236,7 @@ identity checks, explicit release, and inventory/completion handling.
  .../viafabricplus-bedrock.mixins.json         |   1 +
  .../movement/BedrockFluidPhysicsTest.java     | 121 +++++++++++
  .../movement/BedrockPlayerPostureTest.java    |  45 ++++
- 13 files changed, 633 insertions(+), 41 deletions(-)
+ 13 files changed, 648 insertions(+), 41 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/PlayerPredictionPayload.java
@@ -369,10 +382,10 @@ index 236c05d..dda48a4 100644
              return box;
          }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-index 1c9125e..c52e065 100644
+index 1c9125e..1abd8fd 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-@@ -21,7 +21,10 @@
+@@ -21,18 +21,26 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -383,9 +396,11 @@ index 1c9125e..c52e065 100644
  import net.minecraft.core.Holder;
  import net.minecraft.world.effect.MobEffect;
  import net.minecraft.world.effect.MobEffectInstance;
-@@ -29,10 +32,13 @@ import net.minecraft.world.effect.MobEffects;
+ import net.minecraft.world.effect.MobEffects;
  import net.minecraft.world.entity.LivingEntity;
  import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.model.GlideMovement;
++import net.raphimc.viabedrock.protocol.model.Position3f;
  import org.jetbrains.annotations.Nullable;
 +import org.objectweb.asm.Opcodes;
  import org.spongepowered.asm.mixin.Mixin;
@@ -397,10 +412,23 @@ index 1c9125e..c52e065 100644
  import org.spongepowered.asm.mixin.injection.Redirect;
  import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  
-@@ -42,6 +48,18 @@ public abstract class MixinLivingEntity {
+@@ -42,6 +50,31 @@ public abstract class MixinLivingEntity {
      @Shadow
      public abstract @Nullable MobEffectInstance getEffect(final Holder<MobEffect> effect);
  
++    @Inject(method = "updateFallFlyingMovement", at = @At("HEAD"), cancellable = true)
++    private void applyNativeGlideTravel(final Vec3 movement, final CallbackInfoReturnable<Vec3> cir) {
++        if (!BedrockInputPermissions.isBedrockConnection() || !((Object) this instanceof LocalPlayer player)) {
++            return;
++        }
++        if (movement.y > -0.5F) {
++            player.fallDistance = 1F;
++        }
++        final Position3f nativeMotion = GlideMovement.calculate(new Position3f((float) movement.x, (float) movement.y, (float) movement.z),
++                player.getXRot(), player.getYRot(), player.xRotO, player.yRotO, this.getEffect(MobEffects.SLOW_FALLING) != null);
++        cir.setReturnValue(new Vec3(nativeMotion.x(), nativeMotion.y(), nativeMotion.z()));
++    }
++
 +    @WrapOperation(method = "updateUsingItem", at = @At(value = "FIELD", target = "Lnet/minecraft/world/entity/LivingEntity;useItemRemaining:I", opcode = Opcodes.PUTFIELD))
 +    private void boundNativeItemUseDuration(final LivingEntity entity, final int remaining, final Operation<Void> original) {
 +        // Native decrements positive duration only; delayed completion never makes it negative.
