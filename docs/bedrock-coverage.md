@@ -236,7 +236,7 @@ Core still needs to derive equipment attributes from target item definitions, in
 | R2 | Server particle dispatch | Incomplete | Core transports complete requests, typed variables, actor identity, and Java fallback bodies to native clients. Direct and ViaProxy authored fixtures verify dispatch, typed size/tint records, and fallback decoding. Complete actor queries, remote actor transport, interpolation, lifecycle comparisons, and visible native parity remain open. |
 | R3 | Particle runtime | Incomplete | Complete components, actor contexts, child effects, concurrency, and visible lifecycle comparisons. |
 | R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core transports signed loops, optional playback fields, handle controls, and ordered sound resources through direct connections and ViaProxy. Add-on playback controls pass captured-session OpenAL checks on both routes. Native request admission now matches the tested float range gate on both add-on routes. Server captions now have core state, transported translations, client controls, and a HUD on both add-on routes. Complete actor/local captions, localization/layout comparisons, stream policies, range behavior for other sources, audible comparisons, and broader lifecycle verification. |
-| R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties through ViaProxy. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, directional light occlusion, and native random offsets. Offset and collision kernels have matching-build instruction comparisons below, but production ignores `minecraft:random_offset`. |
+| R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties through ViaProxy. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Core carries native random offsets in converted metadata. The add-on verifies continuous terrain, outline, and camera offsets separately from floored movement collision on both routes, including edge and corner queries. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, directional light occlusion, vanilla per-type collision shapes, and native collision solving. |
 | R6 | Equipped attachables | Incomplete | Accepted actor graphs now travel through ViaProxy. Both routes render the supported costume and owner-bound chest wings. Complete proxy properties, variants, explicit bone bindings, per-bone materials, material families, and broader native comparisons. |
 
 The attachable matrix tests establish supported same-name affine bindings.
@@ -5259,9 +5259,74 @@ Fixtures supply component lookup, the default local-shape virtual method, CRT fl
 Cases cover disabled and empty components, intersections, existing vector entries, and offset presence.
 Actual per-type overrides and visible native behavior remain unverified.
 
-**Incomplete:** Production ignores `minecraft:random_offset` and still uses Java collision solving.
+**Status at this research stage:** Production had not integrated `minecraft:random_offset` and still used Java collision solving.
+The production integration and its later route evidence appear below.
 These comparisons establish subroutine behavior, not a complete native physics implementation.
 Integration needs wire definitions, effective range validation, per-type shapes, state producers, retained world state, frame identity, and ordered correction replay.
 Direct and ViaProxy behavior, Windows and macOS game joins, and all eight coverage groups remain required.
 The previous public revision passed build, tooling, and Ubuntu, Windows, and macOS permission jobs.
 No native game launch occurred during this investigation; the current-boot GPU guard remains in force.
+
+
+## Production custom block offsets (October 6, 2026)
+
+**Implemented:** Core retains `minecraft:random_offset` in the compiled visual and protocol-bound metadata format 2.
+The sampler follows Bedrock 1.26.51.1, build 51061372, protocol 2193.
+Carrier sharing and converted-pack cache identity include all ranges and unsigned step counts.
+Authored ranges arrive in pixel units and receive the native float32 division by 16.
+Each axis consumes its assigned random draw, including constant ranges.
+
+World component collision floors each offset before integer position translation.
+Selection and camera collision use continuous offsets and native float32 addition order.
+The camera consumer uses the collision component's continuous envelope.
+Baked geometry and authored culling descriptors retain their independent local coordinates.
+The add-on applies the continuous terrain offset through Java's model renderer.
+Both direct connections and accepted ViaProxy packs supply the same core definitions.
+
+**Native arithmetic verified:** The production sampler matches 8,192 outputs from the unchanged native sampling kernel, with zero float-bit mismatches.
+Another 16,384 comparisons change only Y and retain the same outputs.
+Inputs include signed coordinate extremes, constant ranges, and unsigned step counts through `0xffffffff`.
+These checks extend the earlier executable comparisons into production code.
+They establish this kernel's behavior, not complete native movement parity.
+
+**Matching-server wire verified:** A private procedural fixture uses the same BDS build with strict movement enabled.
+StartGame preserves continuous ranges, discrete ranges, midpoint steps, and constant three-axis offsets in pixel units.
+The server rejects ranges beyond its accepted limits and ranges that extend the authored collision box outside its permitted bounds.
+The rejected block does not enter the runtime palette.
+Core retains valid server values without inventing a client clamp.
+No production path requires a local game installation.
+
+**Direct and ViaProxy consumers verified:** Three fixture blocks exercise continuous, stepped, and constant three-axis offsets.
+Live inspection checks the actual injected terrain offset, outline, collision, and camera methods.
+A two-axis negative collision offset produces stable standing height Y=100.5 on both routes.
+A three-axis negative offset produces stable standing height Y=99.75 on both routes.
+Resource reload retains the same offsets and shape bounds.
+An actual collision iterator also visits the source block when the query lies across all three cell boundaries.
+
+The first landing attempt exposed Java's edge and corner pruning and produced standing height Y=100.0 with repeated BDS corrections.
+The add-on now retains boundary cells whose custom collision can extend into the query.
+Other block states keep Java's original boundary classification.
+Session snapshots cache whether any custom shape needs this path.
+These consumers require the add-on; ordinary Java clients cannot reproduce arbitrary native offsets and physics through carrier states alone.
+
+**Disconnect lifecycle verified:** Local leave bypasses the packet-listener disconnect callback.
+The add-on clears metadata after Minecraft's central disconnect finishes and preserves intentionally retained server packs.
+It does not clear the accepted definitions during server reconfiguration's `clearClientLevel` call.
+Direct and ViaProxy probes verify empty metadata and no extended collision immediately after local disconnect and two seconds later.
+Unit coverage also rejects a prepared reload that finishes after session cleanup.
+The lifecycle recordings deliberately end the connection; they do not claim the recorder's uninterrupted-session success gate.
+Earlier completed route recordings establish the tested landings and reload behavior.
+
+**Validation:** The dependency build passes 677 core tests, 585 add-on tests, and 16 converter tests, with zero failures or errors.
+Core has 19 optional skips, and the add-on has 114 optional skips.
+Both ordered stacks replay successfully, core Checkstyle passes, and the tooling type check passes.
+
+**Native game comparison blocked:** The fresh generic graphics preflight reported no problem.
+The actual isolated-profile launch then refused to start Wine, Vulkan, or Minecraft because its previous GPU session ended uncleanly during this boot.
+No graphics override or acknowledgment occurred.
+A matched visible native comparison remains required after the host graphics session is repaired.
+The executable and BDS checks do not substitute for that comparison.
+
+**Remaining:** Production still uses Java collision solving and lacks complete native vanilla per-type shape providers.
+Full movement needs coherent frame identity, retained world state, state producers, and ordered correction replay.
+Terrain lighting, material behavior, geometry limits, all eight coverage groups, actual operating-system joins, and broader native comparisons remain incomplete.

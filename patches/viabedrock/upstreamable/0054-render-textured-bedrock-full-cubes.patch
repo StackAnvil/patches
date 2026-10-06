@@ -1,4 +1,4 @@
-From 368d87adeb08a4f9538c4358ff8fddbab47698fc Mon Sep 17 00:00:00 2001
+From 31b269adb29caac67a1793e4cc1b9262e97f8d46 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:38:26 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -145,24 +145,40 @@ cache fingerprint. Nonfinite and inverted metadata bounds remain errors.
 Regression tests cover all three empty axes, rotated models, metadata
 round trips and cache identity. The reported server values still need
 a capture before attributing its exact failure to this case.
+
+Retain position-seeded random offsets in visual deduplication, accepted
+server-pack metadata and cache identity. Match the 1.26.51.1 build 51061372
+sampling instructions, including uint32 steps, fixed axis draws and float
+operation order. The production sampler matches 8,192 native outputs and
+16,384 height-invariance comparisons without differences.
+
+Matching-build BDS sends valid ranges in pixel units and rejects fixture
+ranges that move collision outside its accepted bounds. Divide endpoints
+by 16 at component loading without inventing a client clamp. Keep floored
+world component collision separate from continuous selection and camera
+translation; native wrappers use different paths. Metadata format 2 makes
+those definitions available through ViaProxy as well as direct sessions.
+This supplies custom component shapes, not a complete native movement
+solver or vanilla per-type collision provider.
 ---
  .../api/model/CustomBlockCulling.java         | 206 +++++++
- .../api/model/CustomBlockProperties.java      | 110 ++++
- .../api/model/CustomBlockVisual.java          |  26 +
+ .../api/model/CustomBlockOffset.java          |  97 +++
+ .../api/model/CustomBlockProperties.java      | 150 +++++
+ .../api/model/CustomBlockVisual.java          |  27 +
  .../definition/BlockCullingDefinitions.java   |  86 +++
  .../definition/BlockDefinitions.java          |  17 +-
  .../definition/CustomBlockDefinition.java     |  73 +++
  .../definition/ModelDefinitions.java          |   7 +
  .../definition/TextureDefinitions.java        |  54 ++
- .../http/ConvertedResourcePackCache.java      |  12 +-
+ .../http/ConvertedResourcePackCache.java      |  14 +-
  .../viabedrock/protocol/BedrockProtocol.java  |  27 +-
  .../protocol/packet/JoinPackets.java          |  30 +-
  .../protocol/packet/ResourcePackPackets.java  |  44 +-
  .../protocol/packet/VoxelShapePackets.java    |  35 ++
- .../protocol/rewriter/BlockStateRewriter.java |  71 ++-
+ .../protocol/rewriter/BlockStateRewriter.java |  72 ++-
  .../rewriter/ResourcePackRewriter.java        |   2 +
  .../CustomBlockCullingCompiler.java           | 162 ++++++
- .../resourcepack/CustomBlockModel.java        | 549 ++++++++++++++++++
+ .../resourcepack/CustomBlockModel.java        | 550 ++++++++++++++++++
  .../CustomBlockResourceRewriter.java          | 233 ++++++++
  .../CustomBlockStateDefinitions.java          | 153 +++++
  .../protocol/storage/ChunkTracker.java        |  33 +-
@@ -170,19 +186,21 @@ a capture before attributing its exact failure to this case.
  .../protocol/storage/ResourcePackStorage.java |  44 +-
  .../protocol/storage/VoxelShapeRegistry.java  | 125 ++++
  .../api/model/CustomBlockCullingTest.java     |  54 ++
- .../api/model/CustomBlockPropertiesTest.java  |  66 +++
- .../http/ConvertedResourcePackCacheTest.java  |  28 +
+ .../api/model/CustomBlockOffsetTest.java      |  80 +++
+ .../api/model/CustomBlockPropertiesTest.java  |  69 +++
+ .../http/ConvertedResourcePackCacheTest.java  |  29 +
  .../rewriter/CustomBlockBoneGeometryTest.java | 177 ++++++
- .../CustomBlockModelSelectionTest.java        | 400 +++++++++++++
+ .../CustomBlockModelSelectionTest.java        | 424 ++++++++++++++
  .../CustomBlockPlaneGeometryTest.java         | 170 ++++++
  .../CustomBlockCullingCompilerTest.java       | 140 +++++
  .../CustomBlockMaterialVisibilityTest.java    | 106 ++++
  .../CustomBlockStateDefinitionsTest.java      | 218 +++++++
- .../protocol/storage/ChunkTrackerTest.java    |  23 +
+ .../protocol/storage/ChunkTrackerTest.java    |  24 +
  .../storage/CustomBlockPackStorageTest.java   | 169 ++++++
  .../storage/VoxelShapeRegistryTest.java       | 130 +++++
- 35 files changed, 3843 insertions(+), 22 deletions(-)
+ 37 files changed, 4093 insertions(+), 23 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockCulling.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockOffset.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockVisual.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/definition/BlockCullingDefinitions.java
@@ -195,6 +213,7 @@ a capture before attributing its exact failure to this case.
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistry.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CustomBlockCullingTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CustomBlockOffsetTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CustomBlockPropertiesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockBoneGeometryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
@@ -417,12 +436,115 @@ index 000000000..f01a834b7
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockOffset.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockOffset.java
+new file mode 100644
+index 000000000..e3b4c9196
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockOffset.java
+@@ -0,0 +1,97 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.NumberTag;
++
++/** Native position-seeded block offsets. Ranges are stored in block units. */
++public record CustomBlockOffset(Axis x, Axis y, Axis z) {
++
++    public static final Axis ZERO = new Axis(0, 0, 0);
++    public static final CustomBlockOffset NONE = new CustomBlockOffset(ZERO, ZERO, ZERO);
++
++    public CustomBlockOffset {
++        if (x == null || y == null || z == null) {
++            throw new IllegalArgumentException("Missing custom block offset axis");
++        }
++    }
++
++    public static CustomBlockOffset fromComponent(final CompoundTag component) {
++        return component == null ? NONE : new CustomBlockOffset(axis(component, "x"), axis(component, "y"), axis(component, "z"));
++    }
++
++    private static Axis axis(final CompoundTag component, final String name) {
++        final CompoundTag axis = component.getCompoundTag(name);
++        if (axis == null) {
++            return ZERO;
++        }
++        final CompoundTag range = axis.getCompoundTag("range");
++        final float min = range != null && range.get("min") instanceof NumberTag value ? value.asFloat() * 0.0625F : 0;
++        final float max = range != null && range.get("max") instanceof NumberTag value ? value.asFloat() * 0.0625F : 0;
++        long steps = axis.get("steps") instanceof NumberTag value ? value.asLong() : 0;
++        if (steps < 0 && steps >= Integer.MIN_VALUE) {
++            steps = Integer.toUnsignedLong((int) steps);
++        }
++        return new Axis(min, max, steps);
++    }
++
++    /** The native seed uses signed X/Z coordinates; height does not enter it. */
++    public Offset at(final int blockX, final int blockY, final int blockZ) {
++        final long raw = (long) blockZ * 0x6EBFFF5L ^ (long) blockX * 0x2FC20FL;
++        final long seed = (long) (int) (raw * (raw * 0x285B825L + 11) >>> 16) ^ 0x6A09E667F3BCC909L;
++        long a = mix(seed);
++        long b = mix(seed + 0x9E3779B97F4A7C15L);
++        if ((a | b) == 0) {
++            a = 0x9E3779B97F4A7C15L;
++            b = 0x6A09E667F3BCC909L;
++        }
++        final float offsetX = this.x.sample(unit(a, b));
++        long difference = b ^ a;
++        a = Long.rotateLeft(a, 49) ^ difference ^ difference << 21;
++        b = Long.rotateLeft(difference, 28);
++        final float offsetY = this.y.sample(unit(a, b));
++        difference = b ^ a;
++        a = Long.rotateLeft(a, 49) ^ difference ^ difference << 21;
++        b = Long.rotateLeft(difference, 28);
++        return new Offset(offsetX, offsetY, this.z.sample(unit(a, b)));
++    }
++
++    private static long mix(long value) {
++        value = (value ^ value >>> 30) * 0xBF58476D1CE4E5B9L;
++        value = (value ^ value >>> 27) * 0x94D049BB133111EBL;
++        return value ^ value >>> 31;
++    }
++
++    private static float unit(final long a, final long b) {
++        return (Long.rotateLeft(a + b, 17) + a >>> 40) * 0x1.0P-24F;
++    }
++
++    public record Axis(float min, float max, long steps) {
++        public Axis {
++            if (!Float.isFinite(min) || !Float.isFinite(max) || steps < 0 || steps > 0xFFFFFFFFL) {
++                throw new IllegalArgumentException("Invalid custom block offset range");
++            }
++        }
++
++        private float sample(final float unit) {
++            if (this.min >= this.max) {
++                return this.min;
++            }
++            if (this.steps == 1) {
++                return (this.min + this.max) * 0.5F;
++            }
++            if (this.steps == 0) {
++                return this.min + (this.max - this.min) * unit;
++            }
++            return this.min + (float) Math.floor(unit * (float) this.steps) * ((this.max - this.min) / (float) (this.steps - 1));
++        }
++    }
++
++    public record Offset(float x, float y, float z) {
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java
 new file mode 100644
-index 000000000..7e0b275c3
+index 000000000..8abffa1ff
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,150 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -444,7 +566,7 @@ index 000000000..7e0b275c3
 +
 +/** Physical properties transported with the converted server pack, independently of its connection route. */
 +public record CustomBlockProperties(String bedrockState, int javaState, List<CustomBlockVisual.Box> collisionBoxes,
-+                                    List<CustomBlockVisual.Box> selectionBoxes, boolean occluding, int lightEmission, int lightDampening) {
++                                    List<CustomBlockVisual.Box> selectionBoxes, boolean occluding, int lightEmission, int lightDampening, CustomBlockOffset randomOffset) {
 +
 +    public static final String RESOURCE_PATH = "assets/viabedrock/custom_blocks.json";
 +    public static final int MAX_BYTES = 8 * 1024 * 1024;
@@ -457,13 +579,49 @@ index 000000000..7e0b275c3
 +                || lightEmission < 0 || lightEmission > 15 || lightDampening < 0 || lightDampening > 15) {
 +            throw new IllegalArgumentException("Invalid custom block properties");
 +        }
++        java.util.Objects.requireNonNull(randomOffset, "randomOffset");
 +        collisionBoxes = validatedBoxes(collisionBoxes);
 +        selectionBoxes = validatedBoxes(selectionBoxes);
 +    }
 +
 +    public static CustomBlockProperties of(final CustomBlockVisual visual) {
 +        return new CustomBlockProperties(visual.bedrockState(), visual.javaState(), visual.collisionBoxes(), visual.selectionBoxes(),
-+                visual.occluding(), visual.lightEmission(), visual.lightDampening());
++                visual.occluding(), visual.lightEmission(), visual.lightDampening(), visual.randomOffset());
++    }
++
++    /** World collision append uses integer offsets, unlike rendering and outline translation. */
++    public List<CustomBlockVisual.Box> collisionBoxesAt(final int x, final int y, final int z) {
++        return this.translated(this.collisionBoxes, x, y, z, true);
++    }
++
++    public List<CustomBlockVisual.Box> selectionBoxesAt(final int x, final int y, final int z) {
++        return this.translated(this.selectionBoxes, x, y, z, false);
++    }
++
++    /** Camera collision uses the continuous envelope of the component boxes. */
++    public List<CustomBlockVisual.Box> cameraBoxesAt(final int x, final int y, final int z) {
++        return this.translated(this.collisionBoxes, x, y, z, false);
++    }
++
++    private List<CustomBlockVisual.Box> translated(final List<CustomBlockVisual.Box> boxes, final int x, final int y, final int z,
++                                                  final boolean collision) {
++        final CustomBlockOffset.Offset offset = this.randomOffset.at(x, y, z);
++        final float dx = collision ? (float) (x + (int) Math.floor(offset.x())) : x + offset.x();
++        final float dy = collision ? (float) (y + (int) Math.floor(offset.y())) : y + offset.y();
++        final float dz = collision ? (float) (z + (int) Math.floor(offset.z())) : z + offset.z();
++        final List<CustomBlockVisual.Box> result = new ArrayList<>(boxes.size());
++        for (CustomBlockVisual.Box box : boxes) {
++            final float minX = (float) box.minX() + dx;
++            final float minY = (float) box.minY() + dy;
++            final float minZ = (float) box.minZ() + dz;
++            final float maxX = (float) box.maxX() + dx;
++            final float maxY = (float) box.maxY() + dy;
++            final float maxZ = (float) box.maxZ() + dz;
++            if (minX < maxX && minY < maxY && minZ < maxZ) {
++                result.add(new CustomBlockVisual.Box(minX, minY, minZ, maxX, maxY, maxZ));
++            }
++        }
++        return List.copyOf(result);
 +    }
 +
 +    public static JsonObject encode(final Collection<CustomBlockVisual> visuals) {
@@ -471,7 +629,7 @@ index 000000000..7e0b275c3
 +            throw new IllegalArgumentException("Too many custom block states");
 +        }
 +        final JsonObject result = new JsonObject();
-+        result.addProperty("format", 1);
++        result.addProperty("format", 2);
 +        result.addProperty("bedrock_protocol", ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
 +        result.addProperty("java_protocol", ProtocolConstants.JAVA_VERSION.getVersion());
 +        result.add("states", GSON.toJsonTree(visuals.stream().sorted(Comparator.comparingInt(CustomBlockVisual::javaState))
@@ -481,7 +639,7 @@ index 000000000..7e0b275c3
 +
 +    public static Map<Integer, CustomBlockProperties> decode(final JsonElement metadata) {
 +        final JsonObject root = metadata.getAsJsonObject();
-+        if (integer(root.get("format")) != 1
++        if (integer(root.get("format")) != 2
 +                || integer(root.get("bedrock_protocol")) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION
 +                || integer(root.get("java_protocol")) != ProtocolConstants.JAVA_VERSION.getVersion()) {
 +            throw new IllegalArgumentException("Unsupported custom block metadata version");
@@ -498,6 +656,10 @@ index 000000000..7e0b275c3
 +            integer(object.get("lightDampening"));
 +            if (!object.get("occluding").isJsonPrimitive() || !object.get("occluding").getAsJsonPrimitive().isBoolean()) {
 +                throw new IllegalArgumentException("Invalid custom block occlusion flag");
++            }
++            final JsonObject offset = object.getAsJsonObject("randomOffset");
++            for (String axis : List.of("x", "y", "z")) {
++                offset.getAsJsonObject(axis).get("steps").getAsBigDecimal().longValueExact();
 +            }
 +            final CustomBlockProperties properties = GSON.fromJson(state, CustomBlockProperties.class);
 +            if (result.putIfAbsent(properties.javaState(), properties) != null) {
@@ -535,10 +697,10 @@ index 000000000..7e0b275c3
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockVisual.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockVisual.java
 new file mode 100644
-index 000000000..e311ad4d5
+index 000000000..594989663
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockVisual.java
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,27 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -551,9 +713,10 @@ index 000000000..e311ad4d5
 +
 +/** Immutable render and shape information for one reserved Java block state. */
 +public record CustomBlockVisual(String bedrockState, int javaState, String terrainTexture, String modelJson, String renderMethod,
-+                                List<Box> collisionBoxes, List<Box> selectionBoxes, boolean occluding, int lightEmission, int lightDampening, Map<String, String> textures, Map<String, String> textureRenderMethods) {
++                                List<Box> collisionBoxes, List<Box> selectionBoxes, boolean occluding, int lightEmission, int lightDampening, Map<String, String> textures, Map<String, String> textureRenderMethods, CustomBlockOffset randomOffset) {
 +
 +    public CustomBlockVisual {
++        java.util.Objects.requireNonNull(randomOffset, "randomOffset");
 +        collisionBoxes = List.copyOf(collisionBoxes);
 +        selectionBoxes = List.copyOf(selectionBoxes);
 +        textures = Map.copyOf(textures);
@@ -891,9 +1054,18 @@ index ba8c2db57..56c12e584 100644
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
-index 79e2c428d..c179b8134 100644
+index 79e2c428d..bd85f7829 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCache.java
+@@ -53,7 +53,7 @@ import java.util.logging.Level;
+ 
+ public class ConvertedResourcePackCache {
+ 
+-    private static final String CONVERSION_VERSION = "resolved-model-textures-and-appearance-6";
++    private static final String CONVERSION_VERSION = "resolved-model-textures-and-appearance-7";
+     // Advance when the set or format of emitted resources changes independently of converter profiles.
+     private static final int RESOURCE_FORMAT_VERSION = 5;
+ 
 @@ -90,7 +90,7 @@ public class ConvertedResourcePackCache {
          if (this.mode == ViaBedrockConfig.PackCacheMode.DISABLED) {
              return CompletableFuture.supplyAsync(() -> this.convert(storage), this.executor);
@@ -1164,10 +1336,18 @@ index 000000000..9c9d66373
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
-index 2cb4a79b6..599957ffd 100644
+index 2cb4a79b6..3e5fca3d5 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/BlockStateRewriter.java
-@@ -29,11 +29,16 @@ import net.raphimc.viabedrock.ViaBedrock;
+@@ -17,6 +17,7 @@
+  */
+ package net.raphimc.viabedrock.protocol.rewriter;
+ 
++import net.raphimc.viabedrock.api.model.CustomBlockOffset;
+ import com.google.common.collect.BiMap;
+ import com.google.common.collect.HashBiMap;
+ import com.viaversion.nbt.tag.*;
+@@ -29,11 +30,16 @@ import net.raphimc.viabedrock.ViaBedrock;
  import net.raphimc.viabedrock.api.chunk.blockstate.BlockStateSanitizer;
  import net.raphimc.viabedrock.api.model.BedrockBlockState;
  import net.raphimc.viabedrock.api.model.BlockState;
@@ -1184,7 +1364,7 @@ index 2cb4a79b6..599957ffd 100644
  
  import java.util.*;
  import java.util.logging.Level;
-@@ -48,7 +53,7 @@ public class BlockStateRewriter implements StorableObject {
+@@ -48,7 +54,7 @@ public class BlockStateRewriter implements StorableObject {
      private final Int2ObjectMap<String> blockStateTags = new Int2ObjectOpenHashMap<>(); // Bedrock
      private final BlockStateSanitizer blockStateSanitizer;
  
@@ -1193,7 +1373,7 @@ index 2cb4a79b6..599957ffd 100644
          this.blockStateIdMappings.defaultReturnValue(-1);
          this.legacyBlockStateIdMappings.defaultReturnValue(-1);
  
-@@ -58,6 +63,7 @@ public class BlockStateRewriter implements StorableObject {
+@@ -58,6 +64,7 @@ public class BlockStateRewriter implements StorableObject {
          final Map<String, String> blockTags = BedrockProtocol.MAPPINGS.getBedrockCustomBlockTags();
          final Set<String> bedrockBlockIdentifiers = bedrockBlockStates.stream().map(BedrockBlockState::namespacedIdentifier).collect(Collectors.toSet());
          final List<BedrockBlockState> customBlockStates = new ArrayList<>();
@@ -1201,7 +1381,7 @@ index 2cb4a79b6..599957ffd 100644
  
          final Map<String, CompoundTag> effectiveBlockProperties = new HashMap<>();
          for (BlockProperties blockProperty : blockProperties) {
-@@ -153,6 +159,54 @@ public class BlockStateRewriter implements StorableObject {
+@@ -153,6 +160,54 @@ public class BlockStateRewriter implements StorableObject {
          }
  
          bedrockBlockStates.addAll(customBlockStates);
@@ -1234,7 +1414,7 @@ index 2cb4a79b6..599957ffd 100644
 +                    if (visual != null) {
 +                        final VisualKey key = new VisualKey(visual.textures(),
 +                                visual.modelJson().replace("viabedrock:block/custom/slot_" + carrier, "viabedrock:block/custom/slot"),
-+                                visual.renderMethod(), visual.collisionBoxes(), visual.selectionBoxes(), visual.occluding(), visual.lightEmission(), visual.lightDampening());
++                                visual.renderMethod(), visual.collisionBoxes(), visual.selectionBoxes(), visual.occluding(), visual.lightEmission(), visual.lightDampening(), visual.randomOffset());
 +                        final Integer sharedCarrier = sharedVisuals.get(key);
 +                        if (sharedCarrier != null) {
 +                            customJavaStates.put(customState, sharedCarrier);
@@ -1256,7 +1436,7 @@ index 2cb4a79b6..599957ffd 100644
          bedrockBlockStates.sort((a, b) -> HashedPaletteComparator.INSTANCE.compare(a.namespacedIdentifier(), b.namespacedIdentifier()));
  
          for (int i = 0; i < bedrockBlockStates.size(); i++) {
-@@ -172,6 +226,8 @@ public class BlockStateRewriter implements StorableObject {
+@@ -172,6 +227,8 @@ public class BlockStateRewriter implements StorableObject {
              if (bedrockToJavaBlockStates.containsKey(bedrockBlockState)) {
                  final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(bedrockBlockState));
                  this.blockStateIdMappings.put(bedrockId, javaId);
@@ -1265,7 +1445,7 @@ index 2cb4a79b6..599957ffd 100644
              } else {
                  ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Missing bedrock -> java block state mapping: " + bedrockBlockState.toBlockStateString());
                  final int javaId = javaBlockStates.get(bedrockToJavaBlockStates.get(BedrockBlockState.INFO_UPDATE));
-@@ -221,6 +277,15 @@ public class BlockStateRewriter implements StorableObject {
+@@ -221,6 +278,15 @@ public class BlockStateRewriter implements StorableObject {
          return this.blockStateIdMappings.get(bedrockBlockStateId);
      }
  
@@ -1281,12 +1461,12 @@ index 2cb4a79b6..599957ffd 100644
      public int waterlog(final int javaBlockStateId) {
          if (BedrockProtocol.MAPPINGS.getJavaPreWaterloggedBlockStates().contains(javaBlockStateId)) {
              return javaBlockStateId;
-@@ -238,4 +303,8 @@ public class BlockStateRewriter implements StorableObject {
+@@ -238,4 +304,8 @@ public class BlockStateRewriter implements StorableObject {
          return this.blockStateTags.get(bedrockBlockStateId);
      }
  
 +    private record VisualKey(Map<String, String> textures, String model, String renderMethod, List<CustomBlockVisual.Box> collision,
-+                             List<CustomBlockVisual.Box> selection, boolean occluding, int emission, int dampening) {
++                             List<CustomBlockVisual.Box> selection, boolean occluding, int emission, int dampening, CustomBlockOffset randomOffset) {
 +    }
 +
  }
@@ -1480,10 +1660,10 @@ index 000000000..5a7981fc9
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
 new file mode 100644
-index 000000000..6575859d8
+index 000000000..5cf78b912
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
-@@ -0,0 +1,549 @@
+@@ -0,0 +1,550 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1491,6 +1671,7 @@ index 000000000..6575859d8
 + */
 +package net.raphimc.viabedrock.protocol.rewriter.resourcepack;
 +
++import net.raphimc.viabedrock.api.model.CustomBlockOffset;
 +import com.viaversion.nbt.tag.*;
 +import com.viaversion.viaversion.libs.gson.*;
 +import net.raphimc.viabedrock.api.model.CustomBlockVisual;
@@ -1623,7 +1804,7 @@ index 000000000..6575859d8
 +                boxes(components.getCompoundTag("minecraft:selection_box"), true, transformation), occluding,
 +                light(components, "minecraft:light_emission", "emission", 0),
 +                light(components, "minecraft:block_light_filter", "lightLevel",
-+                        light(components, "minecraft:light_dampening", "lightLevel", 15)), textureBindings, textureMethods);
++                        light(components, "minecraft:light_dampening", "lightLevel", 15)), textureBindings, textureMethods, CustomBlockOffset.fromComponent(components.getCompoundTag("minecraft:random_offset")));
 +    }
 +
 +    private static void omitInvisibleFaces(final JsonObject model, final Map<String, Boolean> visibleSprites) {
@@ -2852,7 +3033,7 @@ index 000000000..d8425be58
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockCullingTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockCullingTest.java
 new file mode 100644
-index 000000000..553d464b9
+index 000000000..d9e0da375
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockCullingTest.java
 @@ -0,0 +1,54 @@
@@ -2899,7 +3080,7 @@ index 000000000..553d464b9
 +            Map.of(Direction.NORTH, List.of(new Rectangle(0, 0, 1, 0.5))), Set.of(Direction.NORTH));
 +        final JsonObject model = new JsonObject();
 +        model.add(KEY, json(definition));
-+        final var visual = new CustomBlockVisual("test:block", 42, "texture", model.toString(), "opaque", List.of(), List.of(), false, 0, 0, Map.of(), Map.of());
++        final var visual = new CustomBlockVisual("test:block", 42, "texture", model.toString(), "opaque", List.of(), List.of(), false, 0, 0, Map.of(), Map.of(), CustomBlockOffset.NONE);
 +        final JsonObject metadata = encode(Map.of(42, visual));
 +        assertEquals(Map.of(42, definition), decode(metadata));
 +        assertThrows(UnsupportedOperationException.class, () -> decode(metadata).get(42).slice(Direction.NORTH).clear());
@@ -2910,12 +3091,98 @@ index 000000000..553d464b9
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockOffsetTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockOffsetTest.java
+new file mode 100644
+index 000000000..2615420e9
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockOffsetTest.java
+@@ -0,0 +1,80 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.nbt.tag.FloatTag;
++import com.viaversion.nbt.tag.IntTag;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class CustomBlockOffsetTest {
++
++    @Test
++    void matchesNativeFloatBitsAcrossSignedCoordinatesAndUnsignedStepCounts() {
++        // Target 1.26.51.1 build 51061372; native position-seeded sampler.
++        check(new CustomBlockOffset(new CustomBlockOffset.Axis(0x1.E6BE7A0000000P+2F, 0x1.E6BE7A0000000P+2F, 4L), new CustomBlockOffset.Axis(0x1.9F27700000000P+2F, 0x1.9F27700000000P+2F, 1L), new CustomBlockOffset.Axis(0x1.820E860000000P+2F, 0x1.820E860000000P+2F, 1L)), new int[]{1720645806, 17253356, 711327778}, new float[]{0x1.E6BE7A0000000P+2F, 0x1.9F27700000000P+2F, 0x1.820E860000000P+2F});
++        check(new CustomBlockOffset(new CustomBlockOffset.Axis(-0x1.4121800000000P+2F, 0x1.6BF8B80000000P+2F, 17L), new CustomBlockOffset.Axis(0x1.7272CE0000000P+2F, 0x1.53F4F20000000P+0F, 4294967295L), new CustomBlockOffset.Axis(-0x1.6C2E780000000P+2F, 0x1.E174A80000000P-1F, 0L)), new int[]{337674012, -1232401811, -1155698664}, new float[]{-0x1.164FDC0000000P+2F, 0x1.7272CE0000000P+2F, 0x1.EF36000000000P-6F});
++        check(new CustomBlockOffset(new CustomBlockOffset.Axis(0x1.06D0740000000P+0F, 0x1.01AF100000000P+1F, 65535L), new CustomBlockOffset.Axis(-0x1.E18BC80000000P+1F, -0x1.6CF2840000000P+2F, 4294967295L), new CustomBlockOffset.Axis(0x1.9BBEA60000000P+1F, -0x1.7C63E20000000P+2F, 4294967295L)), new int[]{363697201, 1817816250, -1931390587}, new float[]{0x1.EB5FC20000000P+0F, -0x1.E18BC80000000P+1F, 0x1.9BBEA60000000P+1F});
++        check(new CustomBlockOffset(new CustomBlockOffset.Axis(-0x1.2330620000000P-2F, 0x1.9E3A580000000P+0F, 0L), new CustomBlockOffset.Axis(-0x1.454D160000000P+2F, -0x1.B0DFB40000000P+1F, 3L), new CustomBlockOffset.Axis(0x1.2240360000000P+2F, -0x1.163E7E0000000P-1F, 4294967295L)), new int[]{585290726, 1031176958, 1176554839}, new float[]{-0x1.A1AD6C0000000P-3F, -0x1.B0DFB40000000P+1F, 0x1.2240360000000P+2F});
++        check(new CustomBlockOffset(new CustomBlockOffset.Axis(-0x1.C8BBDC0000000P+2F, -0x1.45E7440000000P+2F, 17L), new CustomBlockOffset.Axis(-0x1.514FA80000000P+2F, 0x1.71D4580000000P+2F, 17L), new CustomBlockOffset.Axis(0x1.66CF200000000P+1F, -0x1.45A7B00000000P+0F, 65535L)), new int[]{-471842934, -1009800494, 699382583}, new float[]{-0x1.97AC240000000P+2F, 0x1.45A2180000000P+2F, 0x1.66CF200000000P+1F});
++        check(new CustomBlockOffset(new CustomBlockOffset.Axis(0x1.D24E080000000P+2F, 0x1.D7872A0000000P+2F, 1L), new CustomBlockOffset.Axis(0x1.D3478C0000000P+0F, -0x1.B134BA0000000P+1F, 4L), new CustomBlockOffset.Axis(-0x1.FB4F1E0000000P+2F, 0x1.57CD160000000P+2F, 255L)), new int[]{2024645356, -846298614, -183376699}, new float[]{0x1.D4EA980000000P+2F, 0x1.D3478C0000000P+0F, 0x1.978F600000000P-2F});
++        check(new CustomBlockOffset(new CustomBlockOffset.Axis(-0x1.5001EA0000000P+0F, -0x1.301D480000000P+2F, 17L), new CustomBlockOffset.Axis(-0x1.3385BE0000000P+0F, 0x1.4B6C0E0000000P+2F, 17L), new CustomBlockOffset.Axis(-0x1.D1D27E0000000P-4F, 0x1.4AC44E0000000P+2F, 3L)), new int[]{756989849, -2082438609, -1987942187}, new float[]{-0x1.5001EA0000000P+0F, -0x1.9D7BFC0000000P-2F, 0x1.437D040000000P+1F});
++        check(new CustomBlockOffset(new CustomBlockOffset.Axis(0x1.95BEE00000000P+0F, 0x1.A354F80000000P+2F, 4L), new CustomBlockOffset.Axis(-0x1.0AE5560000000P+2F, 0x1.7E67C20000000P+2F, 0L), new CustomBlockOffset.Axis(-0x1.DE3DD40000000P+2F, 0x1.119C5E0000000P+1F, 17L)), new int[]{1274668428, 829203851, 120172440}, new float[]{0x1.395DE40000000P+2F, 0x1.8463480000000P+1F, -0x1.A251240000000P+1F});
++    }
++
++    @Test
++    void decodesPixelRangesAndUnsignedWireStepsBeforeSampling() {
++        final CompoundTag component = new CompoundTag();
++        final CompoundTag x = new CompoundTag();
++        final CompoundTag range = new CompoundTag();
++        range.put("min", new FloatTag(-3));
++        range.put("max", new FloatTag(3));
++        x.put("range", range);
++        x.put("steps", new IntTag(-1));
++        component.put("x", x);
++        final var decoded = CustomBlockOffset.fromComponent(component);
++        assertEquals(new CustomBlockOffset.Axis(-0.1875F, 0.1875F, 0xFFFFFFFFL), decoded.x());
++        assertEquals(CustomBlockOffset.ZERO, decoded.y());
++        assertEquals(CustomBlockOffset.ZERO, decoded.z());
++        assertEquals(CustomBlockOffset.NONE, CustomBlockOffset.fromComponent(null));
++        assertThrows(IllegalArgumentException.class, () -> new CustomBlockOffset.Axis(Float.NaN, 1, 0));
++        assertThrows(IllegalArgumentException.class, () -> new CustomBlockOffset.Axis(0, 1, 0x100000000L));
++    }
++
++    @Test
++    void keepsDrawOrderWhenEarlierAxesAreConstant() {
++        final var varying = new CustomBlockOffset.Axis(-0.25F, 0.25F, 0);
++        final var all = new CustomBlockOffset(varying, varying, varying).at(-17, 64, 93);
++        final var last = new CustomBlockOffset(CustomBlockOffset.ZERO, CustomBlockOffset.ZERO, varying).at(-17, 64, 93);
++        assertEquals(all.z(), last.z());
++        assertEquals(0, last.x());
++        assertEquals(0, last.y());
++    }
++
++    @Test
++    void separatesContinuousOutlinesFromFlooredCollisionAndPreservesWorldFloatOrder() {
++        final var offset = new CustomBlockOffset(new CustomBlockOffset.Axis(-0.125F, -0.125F, 0),
++                new CustomBlockOffset.Axis(0.125F, 0.125F, 0), new CustomBlockOffset.Axis(0.25F, 0.25F, 0));
++        final var box = new CustomBlockVisual.Box(0.25, 0, 0.25, 0.75, 0.5, 0.75);
++        final var properties = new CustomBlockProperties("test:block", 1, java.util.List.of(box), java.util.List.of(box), false, 0, 15, offset);
++        assertEquals(new CustomBlockVisual.Box(-0.75, 64, 0.25, -0.25, 64.5, 0.75), properties.collisionBoxesAt(0, 64, 0).getFirst());
++        assertEquals(new CustomBlockVisual.Box(0.125, 64.125, 0.5, 0.625, 64.625, 1), properties.selectionBoxesAt(0, 64, 0).getFirst());
++        assertEquals(properties.selectionBoxesAt(0, 64, 0), properties.cameraBoxesAt(0, 64, 0));
++        // At this coordinate native float addition collapses the half-block box.
++        assertTrue(properties.selectionBoxesAt(16777216, 64, 16777216).isEmpty());
++    }
++
++    private static void check(final CustomBlockOffset definition, final int[] position, final float[] expected) {
++        final var actual = definition.at(position[0], position[1], position[2]);
++        assertArrayEquals(new int[]{Float.floatToRawIntBits(expected[0]), Float.floatToRawIntBits(expected[1]), Float.floatToRawIntBits(expected[2])},
++                new int[]{Float.floatToRawIntBits(actual.x()), Float.floatToRawIntBits(actual.y()), Float.floatToRawIntBits(actual.z())});
++        assertEquals(actual, definition.at(position[0], Integer.MIN_VALUE, position[2]));
++        assertEquals(actual, definition.at(position[0], Integer.MAX_VALUE, position[2]));
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockPropertiesTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockPropertiesTest.java
 new file mode 100644
-index 000000000..7f23a438b
+index 000000000..0e855c20b
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockPropertiesTest.java
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,69 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2937,7 +3204,7 @@ index 000000000..7f23a438b
 +    void roundTripsIndependentPhysicalPropertiesWithoutRenderingGraphs() {
 +        final CustomBlockVisual visual = new CustomBlockVisual("test:block", 42, "texture", "{}", "alpha_test",
 +                List.of(new CustomBlockVisual.Box(-0.25, 0, 0, 0.75, 0.5, 1)),
-+                List.of(new CustomBlockVisual.Box(0, 0, 0, 1, 1.5, 1)), false, 12, 3, Map.of(), Map.of());
++                List.of(new CustomBlockVisual.Box(0, 0, 0, 1, 1.5, 1)), false, 12, 3, Map.of(), Map.of(), new CustomBlockOffset(new CustomBlockOffset.Axis(-0.25F, 0.25F, 5), CustomBlockOffset.ZERO, CustomBlockOffset.ZERO));
 +        final var metadata = CustomBlockProperties.encode(List.of(visual));
 +        final var decoded = CustomBlockProperties.decode(JsonParser.parseString(metadata.toString()));
 +        assertEquals(Map.of(42, CustomBlockProperties.of(visual)), decoded);
@@ -2954,7 +3221,7 @@ index 000000000..7f23a438b
 +                new CustomBlockVisual.Box(0, 0, 0, 1, 0, 1),
 +                new CustomBlockVisual.Box(0, 0, 0, 1, 1, 0));
 +        final var visual = new CustomBlockVisual("test:block", 42, "texture", "{}", "opaque",
-+                boxes, boxes.subList(1, 4), false, 0, 15, Map.of(), Map.of());
++                boxes, boxes.subList(1, 4), false, 0, 15, Map.of(), Map.of(), CustomBlockOffset.NONE);
 +        final var properties = CustomBlockProperties.of(visual);
 +        assertEquals(List.of(volume), properties.collisionBoxes());
 +        assertTrue(properties.selectionBoxes().isEmpty());
@@ -2965,7 +3232,7 @@ index 000000000..7f23a438b
 +    @Test
 +    void rejectsAmbiguousVersionsDuplicateStatesAndInvalidBounds() {
 +        final CustomBlockVisual visual = new CustomBlockVisual("test:block", 42, "texture", "{}", "opaque",
-+                List.of(), List.of(), true, 0, 15, Map.of(), Map.of());
++                List.of(), List.of(), true, 0, 15, Map.of(), Map.of(), CustomBlockOffset.NONE);
 +        final var metadata = CustomBlockProperties.encode(List.of(visual));
 +        final var wrongProtocol = metadata.deepCopy();
 +        wrongProtocol.addProperty("java_protocol", -1);
@@ -2973,28 +3240,33 @@ index 000000000..7f23a438b
 +        final var fractional = metadata.deepCopy();
 +        fractional.getAsJsonArray("states").get(0).getAsJsonObject().addProperty("javaState", 42.5);
 +        assertThrows(ArithmeticException.class, () -> CustomBlockProperties.decode(fractional));
++        final var fractionalSteps = metadata.deepCopy();
++        fractionalSteps.getAsJsonArray("states").get(0).getAsJsonObject().getAsJsonObject("randomOffset").getAsJsonObject("x").addProperty("steps", 0.5);
++        assertThrows(ArithmeticException.class, () -> CustomBlockProperties.decode(fractionalSteps));
 +        metadata.getAsJsonArray("states").add(metadata.getAsJsonArray("states").get(0).deepCopy());
 +        assertThrows(IllegalArgumentException.class, () -> CustomBlockProperties.decode(metadata));
 +        assertThrows(IllegalArgumentException.class, () -> new CustomBlockProperties("test:block", 42,
-+                List.of(new CustomBlockVisual.Box(0, 0, 0, Double.POSITIVE_INFINITY, 1, 1)), List.of(), true, 0, 15));
++                List.of(new CustomBlockVisual.Box(0, 0, 0, Double.POSITIVE_INFINITY, 1, 1)), List.of(), true, 0, 15, CustomBlockOffset.NONE));
 +        assertThrows(IllegalArgumentException.class, () -> new CustomBlockProperties("test:block", 42,
-+                List.of(new CustomBlockVisual.Box(1, 0, 0, 0, 1, 1)), List.of(), true, 0, 15));
++                List.of(new CustomBlockVisual.Box(1, 0, 0, 0, 1, 1)), List.of(), true, 0, 15, CustomBlockOffset.NONE));
 +    }
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
-index 4ea0f89f7..a70ba1387 100644
+index 4ea0f89f7..3daadbd87 100644
 --- a/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/http/ConvertedResourcePackCacheTest.java
-@@ -18,6 +18,7 @@
+@@ -17,7 +17,9 @@
+  */
  package net.raphimc.viabedrock.api.resourcepack.http;
  
++import net.raphimc.viabedrock.api.model.CustomBlockOffset;
  import net.raphimc.viabedrock.api.resourcepack.ResourcePack;
 +import net.raphimc.viabedrock.api.model.CustomBlockVisual;
  import net.raphimc.viabedrock.api.resourcepack.content.InMemoryContent;
  import net.raphimc.viabedrock.api.resourcepack.content.Content;
  import net.raphimc.viabedrock.api.resourcepack.content.ZipContent;
-@@ -145,6 +146,33 @@ class ConvertedResourcePackCacheTest {
+@@ -145,6 +147,33 @@ class ConvertedResourcePackCacheTest {
          }
      }
  
@@ -3002,11 +3274,11 @@ index 4ea0f89f7..a70ba1387 100644
 +    void emptyBoxesUseTheSameCacheIdentityAsDisabledShapes() {
 +        final ResourcePackStorage storage = new ResourcePackStorage(List.of());
 +        final var empty = new CustomBlockVisual("test:block", 42, "texture", "{}", "opaque",
-+                List.of(new CustomBlockVisual.Box(0, 0, 0, 0, 1, 1)), List.of(), false, 0, 15, Map.of(), Map.of());
++                List.of(new CustomBlockVisual.Box(0, 0, 0, 0, 1, 1)), List.of(), false, 0, 15, Map.of(), Map.of(), CustomBlockOffset.NONE);
 +        storage.setCustomBlockVisuals(Map.of(42, empty));
 +        final String fingerprint = ConvertedResourcePackCache.fingerprint(storage);
 +        storage.setCustomBlockVisuals(Map.of(42, new CustomBlockVisual("test:block", 42, "texture", "{}", "opaque",
-+                List.of(), List.of(), false, 0, 15, Map.of(), Map.of())));
++                List.of(), List.of(), false, 0, 15, Map.of(), Map.of(), CustomBlockOffset.NONE)));
 +        assertEquals(fingerprint, ConvertedResourcePackCache.fingerprint(storage));
 +    }
 +
@@ -3014,9 +3286,9 @@ index 4ea0f89f7..a70ba1387 100644
 +    void physicalPropertiesInvalidateAnOtherwiseIdenticalCustomModel() {
 +        final ResourcePackStorage storage = new ResourcePackStorage(List.of());
 +        final var full = new CustomBlockVisual("test:block", 42, "texture", "{}", "opaque",
-+                List.of(new CustomBlockVisual.Box(0, 0, 0, 1, 1, 1)), List.of(), true, 0, 15, Map.of(), Map.of());
++                List.of(new CustomBlockVisual.Box(0, 0, 0, 1, 1, 1)), List.of(), true, 0, 15, Map.of(), Map.of(), CustomBlockOffset.NONE);
 +        final var half = new CustomBlockVisual("test:block", 42, "texture", "{}", "opaque",
-+                List.of(new CustomBlockVisual.Box(0, 0, 0, 1, 0.5, 1)), List.of(), true, 0, 15, Map.of(), Map.of());
++                List.of(new CustomBlockVisual.Box(0, 0, 0, 1, 0.5, 1)), List.of(), true, 0, 15, Map.of(), Map.of(), CustomBlockOffset.NONE);
 +        storage.setCustomBlockVisuals(Map.of(42, full));
 +        final String original = ConvertedResourcePackCache.fingerprint(storage);
 +        storage.setCustomBlockVisuals(Map.of(42, half));
@@ -3213,10 +3485,10 @@ index 000000000..a347e5aa6
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
 new file mode 100644
-index 000000000..f1900e15d
+index 000000000..32e6c03d7
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
-@@ -0,0 +1,400 @@
+@@ -0,0 +1,424 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3247,6 +3519,30 @@ index 000000000..f1900e15d
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class CustomBlockModelSelectionTest {
++
++    @Test
++    void carriesServerPixelOffsetRangesWithoutApplyingThemToCullingOrModelVertices() {
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB))));
++        final CompoundTag components = components("geometry.test", "ruby", "opaque");
++        final var baseline = CustomBlockModel.compile(storage, "test:block", 1, components);
++        final CompoundTag offset = new CompoundTag();
++        final CompoundTag axis = new CompoundTag();
++        final CompoundTag range = new CompoundTag();
++        range.putFloat("min", -3);
++        range.putFloat("max", 3);
++        axis.put("range", range);
++        axis.putInt("steps", 5);
++        offset.put("x", axis);
++        components.put("minecraft:random_offset", offset);
++        final var shifted = CustomBlockModel.compile(storage, "test:block", 1, components);
++        assertEquals(new net.raphimc.viabedrock.api.model.CustomBlockOffset.Axis(-0.1875F, 0.1875F, 5), shifted.randomOffset().x());
++        assertEquals(baseline.modelJson(), shifted.modelJson());
++        assertEquals(baseline.collisionBoxes(), shifted.collisionBoxes());
++        assertEquals(baseline.occluding(), shifted.occluding());
++        final var metadata = net.raphimc.viabedrock.api.model.CustomBlockProperties.decode(
++                net.raphimc.viabedrock.api.model.CustomBlockProperties.encode(List.of(shifted)));
++        assertEquals(shifted.randomOffset(), metadata.get(1).randomOffset());
++    }
 +
 +    @Test
 +    void emptyBoxesRemainEmptyBeforeAndAfterTransformation() {
@@ -4276,10 +4572,16 @@ index 000000000..54c570e4c
 +
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
-index 7c82ff031..f1b3d8e19 100644
+index 7c82ff031..4577cd115 100644
 --- a/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/ChunkTrackerTest.java
-@@ -14,8 +14,12 @@ import com.viaversion.viaversion.libs.fastutil.longs.LongLinkedOpenHashSet;
+@@ -9,13 +9,18 @@
+  */
+ package net.raphimc.viabedrock.protocol.storage;
+ 
++import net.raphimc.viabedrock.api.model.CustomBlockOffset;
+ import com.viaversion.viaversion.api.minecraft.chunks.PaletteType;
+ import com.viaversion.viaversion.libs.fastutil.longs.LongLinkedOpenHashSet;
  import net.raphimc.viabedrock.api.chunk.datapalette.BedrockDataPalette;
  import net.raphimc.viabedrock.api.chunk.section.BedrockChunkSectionImpl;
  import net.raphimc.viabedrock.api.model.BlockState;
@@ -4292,7 +4594,7 @@ index 7c82ff031..f1b3d8e19 100644
  import static org.junit.jupiter.api.Assertions.assertEquals;
  import static org.junit.jupiter.api.Assertions.assertFalse;
  import static org.junit.jupiter.api.Assertions.assertTrue;
-@@ -87,6 +91,25 @@ class ChunkTrackerTest {
+@@ -87,6 +92,25 @@ class ChunkTrackerTest {
          assertEquals(upper, ChunkTracker.connectUpperDoor(upper, BlockState.fromString("minecraft:iron_door[half=lower,open=true]")));
      }
  
@@ -4300,9 +4602,9 @@ index 7c82ff031..f1b3d8e19 100644
 +    void customCarrierLightingIsIsolatedFromVanillaAndOtherSessions() {
 +        final byte[] vanillaEmission = {0, 0, 0, 0};
 +        final byte[] vanillaOpacity = {0, 15, 15, 15};
-+        final CustomBlockVisual lamp = new CustomBlockVisual("test:lamp", 1, "test_texture", "{}", "alpha_test", List.of(), List.of(), false, 12, 0, java.util.Map.of(), java.util.Map.of());
-+        final CustomBlockVisual clipped = new CustomBlockVisual("test:invalid", 2, "test_texture", "{}", "opaque", List.of(), List.of(), true, 30, -1, java.util.Map.of(), java.util.Map.of());
-+        final CustomBlockVisual outside = new CustomBlockVisual("test:outside", 99, "test_texture", "{}", "opaque", List.of(), List.of(), true, 15, 15, java.util.Map.of(), java.util.Map.of());
++        final CustomBlockVisual lamp = new CustomBlockVisual("test:lamp", 1, "test_texture", "{}", "alpha_test", List.of(), List.of(), false, 12, 0, java.util.Map.of(), java.util.Map.of(), CustomBlockOffset.NONE);
++        final CustomBlockVisual clipped = new CustomBlockVisual("test:invalid", 2, "test_texture", "{}", "opaque", List.of(), List.of(), true, 30, -1, java.util.Map.of(), java.util.Map.of(), CustomBlockOffset.NONE);
++        final CustomBlockVisual outside = new CustomBlockVisual("test:outside", 99, "test_texture", "{}", "opaque", List.of(), List.of(), true, 15, 15, java.util.Map.of(), java.util.Map.of(), CustomBlockOffset.NONE);
 +        final List<CustomBlockVisual> visuals = List.of(lamp, clipped, outside);
 +
 +        final byte[] emission = ChunkTracker.customLightValues(vanillaEmission, visuals, CustomBlockVisual::lightEmission);

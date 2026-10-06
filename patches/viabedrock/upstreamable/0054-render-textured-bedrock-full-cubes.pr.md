@@ -164,11 +164,28 @@ Core Checkstyle and the complete CubeConverter, ViaBedrock, and ViaProxy builds 
 Live fixture timing and platform verification are recorded in the coverage ledger.
 
 
-## Remaining position offsets
+## Position offsets
 
-Production currently omits `minecraft:random_offset` from converted custom-block properties.
-Matching-build instruction comparisons establish authored range scaling, position sampling, and the common component collision paths.
-The single collision envelope uses continuous offsets; component box collection floors each offset into integer `BlockPos`.
-Culling remains independent of these physical boxes.
-The [block offset reference](../../../docs/bedrock-coverage.md#native-block-offsets-and-component-collision-shapes-october-6-2026) records verification scope and remaining wire and lifecycle work.
-Complete integration must transport effective ranges through ViaProxy and apply the appropriate render, outline, and collision path.
+Core now retains `minecraft:random_offset` in each converted block definition.
+The position sampler reproduces the pinned Windows 1.26.51.1 executable, build 51061372, on protocol 2193.
+The production sampler matches 8,192 native outputs exactly, including unsigned step counts and signed coordinate extremes.
+Another 16,384 comparisons establish height independence.
+Ranges use block units after the native division by 16.
+Each axis consumes a draw, including constant axes.
+
+A matching-build BDS capture sends valid authored ranges and steps unchanged in pixel units.
+It rejects the fixture whose offsets extend its collision box beyond the permitted bounds.
+Core preserves the server definition rather than inventing a client clamp.
+The [Creator reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/blockreference/examples/blockcomponents/minecraftblock_random_offset?view=minecraft-bedrock-stable) describes the component.
+The matching-build capture determines the wire representation used here.
+
+Metadata format 2 carries the axis ranges and unsigned step counts through an accepted converted pack.
+Carrier sharing and cache identity include these properties.
+World collision boxes use floored offsets and native float addition order.
+Continuous selection and camera boxes retain separate translations.
+Culling descriptors and baked model vertices remain independent of the position offset.
+
+The [coverage ledger](../../../docs/bedrock-coverage.md#production-custom-block-offsets-october-6-2026) records client integration, route verification, and remaining limits.
+The actual isolated-profile launcher refused a visible native comparison because a previous GPU session ended uncleanly during this boot.
+The generic preflight had reported no problem; the launch supplied the authoritative blocker.
+These arithmetic and wire checks do not establish complete movement or rendering parity.

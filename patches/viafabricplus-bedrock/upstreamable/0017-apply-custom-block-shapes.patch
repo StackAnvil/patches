@@ -1,4 +1,4 @@
-From e169487c4e93cc999e510465d359df779e46acc2 Mon Sep 17 00:00:00 2001
+From 22e9d3336e8773c4e3ae8b365f7574cf50face95 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:39:38 +0200
 Subject: [PATCH] feat(blocks): apply native custom block shapes and lighting
@@ -48,27 +48,43 @@ interning cannot merge different native rules. Numerical tests cover
 condition independence, opaque-neighbor opt-out, opposite participation
 and holes in coverage. Vanilla partial-block mapping and native rendering
 comparisons remain required.
+
+Apply core position offsets to terrain, outlines and the continuous camera
+envelope while keeping native floored movement collision separate. Java's
+edge and corner pruning previously skipped shifted shapes and caused
+repeated strict-BDS corrections. Retain boundary cells for custom shapes
+that can extend into them, without changing ordinary block classification.
+Direct and ViaProxy fixtures verify two-axis and three-axis landings and
+actual injected shape methods before and after resource reload.
+
+Clear session metadata after Minecraft's central disconnect finishes.
+Local leave bypasses the packet-listener disconnect callback, whereas
+clearClientLevel belongs to server reconfiguration and must retain the
+accepted metadata. Preserve intentionally retained server packs during
+transfers and invalidate stale prepared reload results on ordinary leave.
 ---
  .../bedrock/block/BedrockCullingRules.java    |  17 ++
- .../block/BedrockCustomBlockResources.java    |  81 ++++++++++
- .../bedrock/block/BedrockCustomBlocks.java    |  92 +++++++++++
+ .../block/BedrockCustomBlockResources.java    |  81 +++++++++
+ .../bedrock/block/BedrockCustomBlocks.java    | 137 +++++++++++++++
  .../bedrock/block/BedrockCustomCulling.java   |  50 ++++++
  .../features/block/MixinBlockColors.java      |  34 ++++
  .../block/MixinCullingFaceBakery.java         |  39 +++++
  .../block/MixinCullingFaceDeserializer.java   |  30 ++++
  .../features/block/MixinCullingRules.java     |  30 ++++
+ .../block/MixinCustomBlockCollisions.java     |  39 +++++
  .../block/MixinCustomBlockConnection.java     |  24 +++
  .../block/MixinCustomBlockCulling.java        |  34 ++++
  .../block/MixinCustomBlockLighting.java       |  29 ++++
  .../block/MixinCustomBlockResources.java      |  24 +++
- .../features/block/MixinCustomBlockState.java | 149 ++++++++++++++++++
+ .../block/MixinCustomBlockSession.java        |  24 +++
+ .../features/block/MixinCustomBlockState.java | 162 ++++++++++++++++++
  .../block/MixinRedstoneWireBlock.java         |  29 ++++
- .../viafabricplus-bedrock.mixins.json         |  10 ++
- .../block/BedrockCustomBlockLightingTest.java |  54 +++++++
- .../BedrockCustomBlockResourcesTest.java      |  90 +++++++++++
- .../block/BedrockCustomBlocksTest.java        |  63 ++++++++
+ .../viafabricplus-bedrock.mixins.json         |  12 ++
+ .../block/BedrockCustomBlockLightingTest.java |  54 ++++++
+ .../BedrockCustomBlockResourcesTest.java      |  91 ++++++++++
+ .../block/BedrockCustomBlocksTest.java        |  89 ++++++++++
  .../block/BedrockCustomCullingTest.java       |  51 ++++++
- 19 files changed, 930 insertions(+)
+ 21 files changed, 1080 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCullingRules.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResources.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java
@@ -77,10 +93,12 @@ comparisons remain required.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCullingFaceBakery.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCullingFaceDeserializer.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCullingRules.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockCollisions.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockConnection.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockCulling.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockLighting.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockResources.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockSession.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockState.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinRedstoneWireBlock.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockLightingTest.java
@@ -200,10 +218,10 @@ index 0000000..0681cfb
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java
 new file mode 100644
-index 0000000..f91dda7
+index 0000000..d14c83e
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,137 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -214,10 +232,13 @@ index 0000000..f91dda7
 +import com.viaversion.viafabricplus.ViaFabricPlus;
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import net.minecraft.client.Minecraft;
++import net.minecraft.core.BlockPos;
 +import net.minecraft.world.level.block.Block;
 +import net.minecraft.world.level.block.state.BlockState;
 +import net.minecraft.world.phys.shapes.Shapes;
 +import net.minecraft.world.phys.shapes.VoxelShape;
++import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.model.CustomBlockOffset;
 +import net.raphimc.viabedrock.api.model.CustomBlockVisual;
 +import net.raphimc.viabedrock.api.model.CustomBlockProperties;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
@@ -230,16 +251,26 @@ index 0000000..f91dda7
 +/** Session-specific shapes for block states reserved by the resource-pack converter. */
 +public final class BedrockCustomBlocks {
 +
-+    private static volatile Snapshot snapshot = new Snapshot(null, Map.of(), Map.of(), Map.of());
++    private static volatile Snapshot snapshot = new Snapshot(null, Map.of(), Map.of(), Map.of(), false);
 +
 +    private BedrockCustomBlocks() {
 +    }
 +
 +    public static void clear() {
-+        snapshot = new Snapshot(null, Map.of(), Map.of(), Map.of());
++        snapshot = new Snapshot(null, Map.of(), Map.of(), Map.of(), false);
 +    }
 +
 +    public static @Nullable Visual current(final BlockState state) {
++        final Snapshot current = currentSnapshot();
++        return current == null ? null : current.visuals().get(Block.getId(state));
++    }
++
++    public static boolean hasExtendedCollision() {
++        final Snapshot current = currentSnapshot();
++        return current != null && current.extendedCollision();
++    }
++
++    private static @Nullable Snapshot currentSnapshot() {
 +        if (Minecraft.getInstance() == null || Minecraft.getInstance().getConnection() == null) {
 +            return null;
 +        }
@@ -252,7 +283,7 @@ index 0000000..f91dda7
 +        if (current.connection() != owner || current.direct() != direct || current.remote() != remote) {
 +            current = createSnapshot(owner, direct, remote);
 +        }
-+        return current.visuals().isEmpty() ? null : current.visuals().get(Block.getId(state));
++        return current;
 +    }
 +
 +    private static synchronized Snapshot createSnapshot(final Object connection, final Map<Integer, CustomBlockVisual> direct,
@@ -267,7 +298,7 @@ index 0000000..f91dda7
 +        } else {
 +            remote.forEach((state, definition) -> visuals.put(state, visual(definition)));
 +        }
-+        final Snapshot updated = new Snapshot(connection, direct, remote, Map.copyOf(visuals));
++        final Snapshot updated = new Snapshot(connection, direct, remote, Map.copyOf(visuals), visuals.values().stream().anyMatch(Visual::largeCollision));
 +        snapshot = updated;
 +        return updated;
 +    }
@@ -276,8 +307,11 @@ index 0000000..f91dda7
 +        final VoxelShape collision = shape(definition.collisionBoxes());
 +        final VoxelShape selection = shape(definition.selectionBoxes());
 +        final boolean fullCollision = Shapes.equal(collision, Shapes.block());
-+        final boolean largeCollision = !collision.isEmpty() && (collision.bounds().minX < 0 || collision.bounds().minY < 0
-+            || collision.bounds().minZ < 0 || collision.bounds().maxX > 1 || collision.bounds().maxY > 1 || collision.bounds().maxZ > 1);
++        final var offset = definition.randomOffset();
++        final boolean largeCollision = !collision.isEmpty() && (collision.bounds().minX + Math.floor(offset.x().min()) < 0
++            || collision.bounds().minY + Math.floor(offset.y().min()) < 0 || collision.bounds().minZ + Math.floor(offset.z().min()) < 0
++            || collision.bounds().maxX + Math.floor(offset.x().max()) > 1 || collision.bounds().maxY + Math.floor(offset.y().max()) > 1
++            || collision.bounds().maxZ + Math.floor(offset.z().max()) > 1);
 +        return new Visual(definition, collision, selection, definition.occluding() ? Shapes.block() : Shapes.empty(), fullCollision, largeCollision);
 +    }
 +
@@ -291,9 +325,38 @@ index 0000000..f91dda7
 +
 +    public record Visual(CustomBlockProperties definition, VoxelShape collision, VoxelShape selection, VoxelShape occlusion,
 +                         boolean fullCollision, boolean largeCollision) {
++
++        public Vec3 offset(final BlockPos pos) {
++            final var offset = this.definition.randomOffset().at(pos.getX(), pos.getY(), pos.getZ());
++            return new Vec3(offset.x(), offset.y(), offset.z());
++        }
++
++        public VoxelShape collision(final BlockPos pos) {
++            if (this.definition.randomOffset().equals(CustomBlockOffset.NONE)) return this.collision;
++            return localShape(this.definition.collisionBoxesAt(pos.getX(), pos.getY(), pos.getZ()), pos);
++        }
++
++        public VoxelShape selection(final BlockPos pos) {
++            if (this.definition.randomOffset().equals(CustomBlockOffset.NONE)) return this.selection;
++            return localShape(this.definition.selectionBoxesAt(pos.getX(), pos.getY(), pos.getZ()), pos);
++        }
++
++        public VoxelShape camera(final BlockPos pos) {
++            final var shape = localShape(this.definition.cameraBoxesAt(pos.getX(), pos.getY(), pos.getZ()), pos);
++            return shape.isEmpty() ? shape : Shapes.create(shape.bounds());
++        }
++
++        private static VoxelShape localShape(final List<CustomBlockVisual.Box> boxes, final BlockPos pos) {
++            VoxelShape shape = Shapes.empty();
++            for (final var box : boxes) {
++                shape = Shapes.or(shape, Shapes.box(box.minX() - pos.getX(), box.minY() - pos.getY(), box.minZ() - pos.getZ(),
++                    box.maxX() - pos.getX(), box.maxY() - pos.getY(), box.maxZ() - pos.getZ()));
++            }
++            return shape.optimize();
++        }
 +    }
 +
-+    private record Snapshot(Object connection, Map<Integer, CustomBlockVisual> direct, Map<Integer, CustomBlockProperties> remote, Map<Integer, Visual> visuals) {
++    private record Snapshot(Object connection, Map<Integer, CustomBlockVisual> direct, Map<Integer, CustomBlockProperties> remote, Map<Integer, Visual> visuals, boolean extendedCollision) {
 +    }
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomCulling.java b/src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomCulling.java
@@ -509,6 +572,51 @@ index 0000000..89ae46a
 +        this.viaFabricPlusBedrock$cullingRules = List.copyOf(rules);
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockCollisions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockCollisions.java
+new file mode 100644
+index 0000000..11c2108
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockCollisions.java
+@@ -0,0 +1,39 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
++
++import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
++import com.viaversion.viafabricplus.bedrock.block.BedrockCustomBlocks;
++import net.minecraft.core.BlockPos;
++import net.minecraft.core.Cursor3D;
++import net.minecraft.world.level.BlockCollisions;
++import net.minecraft.world.level.BlockGetter;
++import org.spongepowered.asm.mixin.Final;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.Shadow;
++import org.spongepowered.asm.mixin.injection.At;
++
++@Mixin(BlockCollisions.class)
++public abstract class MixinCustomBlockCollisions {
++    @Shadow @Final private Cursor3D cursor;
++    @Shadow @Final private BlockPos.MutableBlockPos pos;
++
++    @Shadow private BlockGetter getChunk(final int x, final int z) {
++        throw new AssertionError();
++    }
++
++    @ModifyExpressionValue(method = "computeNext", at = @At(value = "INVOKE", target = "Lnet/minecraft/core/Cursor3D;getNextType()I"))
++    private int customCollisionBoundary(final int original) {
++        if (original == 0 || !BedrockCustomBlocks.hasExtendedCollision()) return original;
++        final BlockGetter chunk = this.getChunk(this.cursor.nextX(), this.cursor.nextZ());
++        if (chunk == null) return original;
++        this.pos.set(this.cursor.nextX(), this.cursor.nextY(), this.cursor.nextZ());
++        final var visual = BedrockCustomBlocks.current(chunk.getBlockState(this.pos));
++        // Java excludes edge/corner cells except moving pistons. Native custom
++        // components can extend into these cells on several axes simultaneously.
++        return visual != null && visual.largeCollision() ? 0 : original;
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockConnection.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockConnection.java
 new file mode 100644
 index 0000000..e101d6c
@@ -644,12 +752,42 @@ index 0000000..7ccca9d
 +        }
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockSession.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockSession.java
+new file mode 100644
+index 0000000..8b7cd8b
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockSession.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
++
++import com.viaversion.viafabricplus.bedrock.block.BedrockCustomBlockResources;
++import com.viaversion.viafabricplus.bedrock.block.BedrockCustomBlocks;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.screens.Screen;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(Minecraft.class)
++public abstract class MixinCustomBlockSession {
++    @Inject(method = "disconnect(Lnet/minecraft/client/gui/screens/Screen;ZZ)V", at = @At("RETURN"))
++    private void clearCustomBlockSession(final Screen screen, final boolean keepServerPacks, final boolean resetRenderer, final CallbackInfo ci) {
++        if (!keepServerPacks) BedrockCustomBlockResources.clear();
++        BedrockCustomBlocks.clear();
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockState.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockState.java
 new file mode 100644
-index 0000000..b369959
+index 0000000..35eec68
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockState.java
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,162 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -664,8 +802,10 @@ index 0000000..b369959
 +import net.minecraft.world.level.block.SupportType;
 +import net.minecraft.world.level.block.state.BlockBehaviour;
 +import net.minecraft.world.level.block.state.BlockState;
++import net.minecraft.world.phys.Vec3;
 +import net.minecraft.world.phys.shapes.CollisionContext;
 +import net.minecraft.world.phys.shapes.VoxelShape;
++import net.minecraft.world.phys.shapes.Shapes;
 +import org.spongepowered.asm.mixin.Mixin;
 +import org.spongepowered.asm.mixin.injection.At;
 +import org.spongepowered.asm.mixin.injection.Inject;
@@ -674,21 +814,32 @@ index 0000000..b369959
 +@Mixin(BlockBehaviour.BlockStateBase.class)
 +public abstract class MixinCustomBlockState {
 +
++    @Inject(method = "getOffset", at = @At("HEAD"), cancellable = true)
++    private void customOffset(final BlockPos pos, final CallbackInfoReturnable<Vec3> cir) {
++        final var visual = BedrockCustomBlocks.current((BlockState) (Object) this);
++        if (visual != null) cir.setReturnValue(visual.offset(pos));
++    }
++
++    @Inject(method = "getVisualShape", at = @At("HEAD"), cancellable = true)
++    private void customCamera(final BlockGetter level, final BlockPos pos, final CollisionContext context, final CallbackInfoReturnable<VoxelShape> cir) {
++        final var visual = BedrockCustomBlocks.current((BlockState) (Object) this);
++        if (visual != null) cir.setReturnValue(visual.camera(pos));
++    }
++
 +    @Inject(method = {"getShape(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/phys/shapes/VoxelShape;",
 +        "getInteractionShape"}, at = @At("HEAD"), cancellable = true)
 +    private void customSelection(final BlockGetter level, final BlockPos pos, final CallbackInfoReturnable<VoxelShape> cir) {
 +        final var visual = BedrockCustomBlocks.current((BlockState) (Object) this);
 +        if (visual != null) {
-+            cir.setReturnValue(visual.selection());
++            cir.setReturnValue(visual.selection(pos));
 +        }
 +    }
 +
-+    @Inject(method = {"getShape(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/phys/shapes/CollisionContext;)Lnet/minecraft/world/phys/shapes/VoxelShape;",
-+        "getVisualShape"}, at = @At("HEAD"), cancellable = true)
++    @Inject(method = "getShape(Lnet/minecraft/world/level/BlockGetter;Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/phys/shapes/CollisionContext;)Lnet/minecraft/world/phys/shapes/VoxelShape;", at = @At("HEAD"), cancellable = true)
 +    private void customSelectionWithContext(final BlockGetter level, final BlockPos pos, final CollisionContext context, final CallbackInfoReturnable<VoxelShape> cir) {
 +        final var visual = BedrockCustomBlocks.current((BlockState) (Object) this);
 +        if (visual != null) {
-+            cir.setReturnValue(visual.selection());
++            cir.setReturnValue(visual.selection(pos));
 +        }
 +    }
 +
@@ -697,7 +848,7 @@ index 0000000..b369959
 +    private void customCollision(final BlockGetter level, final BlockPos pos, final CallbackInfoReturnable<VoxelShape> cir) {
 +        final var visual = BedrockCustomBlocks.current((BlockState) (Object) this);
 +        if (visual != null) {
-+            cir.setReturnValue(visual.collision());
++            cir.setReturnValue(visual.collision(pos));
 +        }
 +    }
 +
@@ -706,7 +857,7 @@ index 0000000..b369959
 +    private void customCollisionWithContext(final BlockGetter level, final BlockPos pos, final CollisionContext context, final CallbackInfoReturnable<VoxelShape> cir) {
 +        final var visual = BedrockCustomBlocks.current((BlockState) (Object) this);
 +        if (visual != null) {
-+            cir.setReturnValue(visual.collision());
++            cir.setReturnValue(visual.collision(pos));
 +        }
 +    }
 +
@@ -738,7 +889,7 @@ index 0000000..b369959
 +    private void customFullCollision(final BlockGetter level, final BlockPos pos, final CallbackInfoReturnable<Boolean> cir) {
 +        final var visual = BedrockCustomBlocks.current((BlockState) (Object) this);
 +        if (visual != null) {
-+            cir.setReturnValue(visual.fullCollision());
++            cir.setReturnValue(Shapes.equal(visual.collision(pos), Shapes.block()));
 +        }
 +    }
 +
@@ -763,7 +914,7 @@ index 0000000..b369959
 +    private void customSuffocation(final BlockGetter level, final BlockPos pos, final CallbackInfoReturnable<Boolean> cir) {
 +        final var visual = BedrockCustomBlocks.current((BlockState) (Object) this);
 +        if (visual != null) {
-+            cir.setReturnValue(visual.definition().occluding() && visual.fullCollision());
++            cir.setReturnValue(visual.definition().occluding() && Shapes.equal(visual.collision(pos), Shapes.block()));
 +        }
 +    }
 +
@@ -835,10 +986,10 @@ index 0000000..c05289d
 +
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index f3d4f96..9ab9d02 100644
+index f3d4f96..6610b1e 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -30,10 +30,19 @@
+@@ -30,10 +30,21 @@
      "features.block.MixinBambooStalkBlock",
      "features.block.MixinBedBlock",
      "features.block.MixinBlockBehaviour_Properties",
@@ -848,17 +999,19 @@ index f3d4f96..9ab9d02 100644
      "features.block.MixinChestBlock",
      "features.block.MixinConduitBlock",
 +    "features.block.MixinCustomBlockState",
++    "features.block.MixinCustomBlockCollisions",
 +    "features.block.MixinCustomBlockResources",
 +    "features.block.MixinCullingRules",
 +    "features.block.MixinCullingFaceDeserializer",
 +    "features.block.MixinCullingFaceBakery",
 +    "features.block.MixinCustomBlockCulling",
 +    "features.block.MixinCustomBlockConnection",
++    "features.block.MixinCustomBlockSession",
 +    "features.block.MixinCustomBlockLighting",
      "features.block.MixinDoorBlock",
      "features.block.MixinDragonEggBlock",
      "features.block.MixinEndPortalFrameBlock",
-@@ -41,6 +50,7 @@
+@@ -41,6 +52,7 @@
      "features.block.MixinLadderBlock",
      "features.block.MixinLanternBlock",
      "features.block.MixinLecternBlock",
@@ -928,12 +1081,13 @@ index 0000000..49dcd6e
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResourcesTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResourcesTest.java
 new file mode 100644
-index 0000000..30ff65c
+index 0000000..acea52c
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResourcesTest.java
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,91 @@
 +package com.viaversion.viafabricplus.bedrock.block;
 +
++import net.raphimc.viabedrock.api.model.CustomBlockOffset;
 +import net.minecraft.network.chat.Component;
 +import net.minecraft.server.packs.PackLocationInfo;
 +import net.minecraft.server.packs.PackResources;
@@ -1006,7 +1160,7 @@ index 0000000..30ff65c
 +
 +    private static CustomBlockVisual definition(final double height, final int dampening) {
 +        return new CustomBlockVisual("test:block", 42, "texture", "{}", "opaque",
-+                List.of(new CustomBlockVisual.Box(0, 0, 0, 1, height, 1)), List.of(), false, 0, dampening, Map.of(), Map.of());
++                List.of(new CustomBlockVisual.Box(0, 0, 0, 1, height, 1)), List.of(), false, 0, dampening, Map.of(), Map.of(), CustomBlockOffset.NONE);
 +    }
 +
 +    private static Resource resource(final PackSource source, final CustomBlockVisual visual) {
@@ -1024,13 +1178,16 @@ index 0000000..30ff65c
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocksTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocksTest.java
 new file mode 100644
-index 0000000..1f059a1
+index 0000000..7657afc
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocksTest.java
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,89 @@
 +package com.viaversion.viafabricplus.bedrock.block;
 +
++import net.raphimc.viabedrock.api.model.CustomBlockOffset;
 +import net.minecraft.core.Direction;
++import net.minecraft.core.BlockPos;
++import net.raphimc.viabedrock.api.model.CustomBlockOffset;
 +import net.minecraft.world.phys.shapes.BooleanOp;
 +import net.minecraft.world.phys.shapes.Shapes;
 +import net.raphimc.viabedrock.api.model.CustomBlockVisual;
@@ -1083,8 +1240,31 @@ index 0000000..1f059a1
 +        assertTrue(Shapes.equal(Shapes.block(), visual.collision()));
 +    }
 +
++    @Test
++    void offsetsTerrainAndOutlinesContinuouslyButFloorsWorldCollision() {
++        final var offset = new CustomBlockOffset(new CustomBlockOffset.Axis(-0.125F, -0.125F, 0),
++            new CustomBlockOffset.Axis(0.125F, 0.125F, 0), new CustomBlockOffset.Axis(0.25F, 0.25F, 0));
++        final var bounds = box(0.25, 0, 0.25, 0.75, 0.5, 0.75);
++        final var definition = new CustomBlockProperties("test:block", 1, List.of(bounds), List.of(bounds), false, 0, 0, offset);
++        final var visual = BedrockCustomBlocks.visual(definition);
++        final BlockPos pos = new BlockPos(-17, 64, 93);
++        assertEquals(-0.125, visual.offset(pos).x);
++        assertEquals(0.125, visual.selection(pos).min(Direction.Axis.X));
++        assertEquals(0.125, visual.selection(pos).min(Direction.Axis.Y));
++        assertEquals(-0.75, visual.collision(pos).min(Direction.Axis.X));
++        assertEquals(0, visual.collision(pos).min(Direction.Axis.Y));
++        assertTrue(visual.largeCollision());
++        assertFalse(visual.fullCollision());
++        assertTrue(Shapes.equal(visual.selection(pos), visual.camera(pos)));
++        assertTrue(visual.occlusion().isEmpty());
++        final var remote = CustomBlockProperties.decode(CustomBlockProperties.encode(List.of(new CustomBlockVisual("test:block", 1,
++            "texture", "{}", "opaque", List.of(bounds), List.of(bounds), false, 0, 0, java.util.Map.of(), java.util.Map.of(), offset)))).get(1);
++        assertTrue(Shapes.equal(visual.collision(pos), BedrockCustomBlocks.visual(remote).collision(pos)));
++        assertEquals(visual.offset(pos), BedrockCustomBlocks.visual(remote).offset(pos));
++    }
++
 +    private static CustomBlockProperties definition(final List<CustomBlockVisual.Box> collision, final List<CustomBlockVisual.Box> selection, final boolean occluding) {
-+        return new CustomBlockProperties("test:block", 1, collision, selection, occluding, 0, 0);
++        return new CustomBlockProperties("test:block", 1, collision, selection, occluding, 0, 0, CustomBlockOffset.NONE);
 +    }
 +
 +    private static CustomBlockVisual.Box box(final double minX, final double minY, final double minZ, final double maxX, final double maxY, final double maxZ) {

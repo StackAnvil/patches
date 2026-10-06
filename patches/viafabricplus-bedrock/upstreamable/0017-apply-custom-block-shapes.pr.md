@@ -59,3 +59,30 @@ Core now omits faces whose cutout or blended material has no visible pixels.
 Direct and ViaProxy comparisons remove the earlier transparent-neighbor artifacts while preserving voxel participation.
 Native vanilla partial-block slices and alternative terrain renderers remain incomplete.
 These results do not establish full voxel-culling parity.
+
+## Position offsets and collision query boundaries
+
+Reserved carriers now expose the core sampler through Java's terrain offset method.
+Outlines use continuous offsets, and camera collision uses the continuous component envelope.
+World movement collision uses the native floored offsets.
+Culling retains the authored position-independent descriptors.
+Both direct core state and accepted ViaProxy metadata use these consumers.
+
+The first live landing fixture exposed Java's edge and corner pruning.
+Java skips these boundary cells except for its special moving-piston path.
+A negative native offset can move custom collision boxes into those cells on several axes simultaneously.
+The add-on now visits extended custom shapes at these boundaries.
+Other states retain their original boundary classification.
+Session snapshots cache whether any custom definition has extended collision.
+Reload and disconnect replace that snapshot with the existing resource lifecycle.
+
+Core and add-on tests cover the native sampler, unsigned steps, metadata round trips, world float order, and distinct continuous and floored shapes.
+The [coverage ledger](../../../docs/bedrock-coverage.md#production-custom-block-offsets-october-6-2026) records live route results and remaining native comparisons.
+
+Local leave now clears metadata after Minecraft's central disconnect finishes.
+It preserves intentionally retained server packs and avoids the `clearClientLevel` hook used by server reconfiguration.
+Direct and ViaProxy probes verify empty metadata and no extended collision immediately and two seconds after disconnect.
+Prepared reload results cannot restore a cleared session.
+The lifecycle recordings deliberately disconnect; earlier uninterrupted recordings establish the tested landing and reload behavior.
+The final dependency build passes 677 core, 585 add-on, and 16 converter tests with zero failures or errors.
+There are 19 optional core skips and 114 optional add-on skips.
