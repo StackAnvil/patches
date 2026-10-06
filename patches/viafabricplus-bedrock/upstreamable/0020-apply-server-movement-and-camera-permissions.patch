@@ -1,4 +1,4 @@
-From 78df4d8467d157bba79b674df95d666361f199b9 Mon Sep 17 00:00:00 2001
+From db79a8725fad6573956ff9e5d02e72b82868f714 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 3 Oct 2026 19:36:19 +0200
 Subject: [PATCH] feat(input): apply server movement and camera permissions
@@ -12,21 +12,29 @@ Clear permissions and sample history on remote disconnect and local world exit. 
 Resolve the current permitted keyboard sneak button during Java crouch selection. Java 26.3 checks crouching before refreshing KeyboardInput, so the first predicted step retained walking speed. Strict BDS 1.26.51.1 (protocol 2193) corrected this transition three times in each recorded repeat: Java predicted 0.098 blocks while BDS expected 0.0294. Keep Java pose eligibility and speed attributes, and activate the change through the connection-scoped core channel so direct and ViaProxy routes share it. Preserve other input implementations and ordinary Java connections.
 
 Retain the previous pressed sample for the release frame. A continuous-walk capture shows BDS expects a final slow step on StopSneaking; applying full walking speed immediately caused two additional corrections. The hook preserves Java pose eligibility and other input implementations rather than replacing movement simulation.
+
+Enable the existing Bedrock fluid interaction and player water hooks from the connection-scoped core snapshot as well as the direct protocol selection. ViaProxy negotiates Java 26.3 with the client, so a protocol-only guard left it using Java fluid collision bounds and water prediction. Strict BDS 1.26.51.1 recorded ten moving prediction corrections during a held-rise case through ViaProxy, while the same direct case had none. Keep the existing fluid formulas and early direct activation; remote disconnect and local world exit clear the snapshot. Direct-only auth-input tracking still requires a local core connection.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |  7 ++
- .../features/input/MixinClientInput.java      | 24 +++++++
+ .../features/input/MixinClientInput.java      | 24 ++++++
  .../input/MixinInputPermissionConnection.java | 22 ++++++
  .../features/input/MixinKeyboardInput.java    | 26 +++++++
  .../features/input/MixinLocalPlayerInput.java | 30 ++++++++
  .../input/MixinMinecraftInputPermissions.java | 22 ++++++
  .../features/input/MixinMouseHandler.java     | 31 ++++++++
- .../input/BedrockInputPermissions.java        | 70 +++++++++++++++++++
- .../input/InputPermissionsPayload.java        | 24 +++++++
- .../bedrock/input/RawInputPayload.java        | 24 +++++++
- .../bedrock/input/RawInputTracker.java        | 25 +++++++
+ .../mixin/features/movement/MixinEntity.java  |  5 +-
+ .../movement/MixinEntityFluidInteraction.java |  9 +--
+ ...tyFluidInteraction_CurrentAccumulator.java |  7 +-
+ .../features/movement/MixinLivingEntity.java  |  7 +-
+ .../features/movement/MixinLocalPlayer.java   |  5 +-
+ .../mixin/features/movement/MixinPlayer.java  |  9 ++-
+ .../input/BedrockInputPermissions.java        | 77 +++++++++++++++++++
+ .../input/InputPermissionsPayload.java        | 24 ++++++
+ .../bedrock/input/RawInputPayload.java        | 24 ++++++
+ .../bedrock/input/RawInputTracker.java        | 25 ++++++
  .../viafabricplus-bedrock.mixins.json         |  6 ++
- .../input/BedrockInputPermissionsTest.java    | 60 ++++++++++++++++
- 13 files changed, 371 insertions(+)
+ .../input/BedrockInputPermissionsTest.java    | 60 +++++++++++++++
+ 19 files changed, 398 insertions(+), 22 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinClientInput.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinInputPermissionConnection.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/input/MixinKeyboardInput.java
@@ -255,12 +263,221 @@ index 0000000..93fce20
 +        }
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java
+index e29965b..236c05d 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntity.java
+@@ -24,6 +24,7 @@ package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
+ import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
+ import com.llamalad7.mixinextras.injector.ModifyReturnValue;
+ import com.viaversion.viafabricplus.ViaFabricPlus;
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
+ import com.viaversion.viaversion.api.connection.UserConnection;
+ import net.minecraft.world.entity.Entity;
+ import net.minecraft.world.phys.AABB;
+@@ -73,13 +74,13 @@ public abstract class MixinEntity {
+     // Bedrock ignores the box a vehicle would apply to its passengers
+     @ModifyExpressionValue(method = "getFluidInteractionBox", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/Entity;getVehicle()Lnet/minecraft/world/entity/Entity;"))
+     private Entity skipPassengerChanges(final Entity vehicle) {
+-        return ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST) ? null : vehicle;
++        return BedrockInputPermissions.isBedrockConnection() ? null : vehicle;
+     }
+ 
+     // Bedrock inflates the box before deflating it, which is the same as inflating the deflated box
+     @ModifyReturnValue(method = "getFluidInteractionBox", at = @At("RETURN"))
+     private @Nullable AABB inflateFluidInteractionBox(final @Nullable AABB box) {
+-        if (box != null && ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST)) {
++        if (box != null && BedrockInputPermissions.isBedrockConnection()) {
+             return box.inflate(0, -0.4, 0);
+         } else {
+             return box;
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityFluidInteraction.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityFluidInteraction.java
+index cbeccd6..9eb826a 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityFluidInteraction.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityFluidInteraction.java
+@@ -25,10 +25,9 @@ import com.llamalad7.mixinextras.expression.Definition;
+ import com.llamalad7.mixinextras.expression.Expression;
+ import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
+ import com.llamalad7.mixinextras.sugar.Local;
+-import com.viaversion.viafabricplus.ViaFabricPlus;
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
+ import net.minecraft.world.entity.EntityFluidInteraction;
+ import net.minecraft.world.phys.AABB;
+-import net.raphimc.viabedrock.api.BedrockProtocolVersion;
+ import org.spongepowered.asm.mixin.Mixin;
+ import org.spongepowered.asm.mixin.injection.At;
+ import org.spongepowered.asm.mixin.injection.Constant;
+@@ -48,7 +47,7 @@ public abstract class MixinEntityFluidInteraction {
+     @Expression("fluidTop < box.minY")
+     @ModifyExpressionValue(method = "update", at = @At("MIXINEXTRAS:EXPRESSION"))
+     private boolean removeConditional(final boolean original) {
+-        if (ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST)) {
++        if (BedrockInputPermissions.isBedrockConnection()) {
+             return false; // Equates to true due to the negation in the original code
+         } else {
+             return original;
+@@ -58,7 +57,7 @@ public abstract class MixinEntityFluidInteraction {
+     // The fluid height is measured 0.4 below the entity, which is the same as adding 0.4 to the measured height
+     @ModifyVariable(method = "update", at = @At("STORE"), name = "entityY")
+     private double adjustHeightCalculation(final double entityY) {
+-        if (ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST)) {
++        if (BedrockInputPermissions.isBedrockConnection()) {
+             return entityY - 0.4;
+         } else {
+             return entityY;
+@@ -68,7 +67,7 @@ public abstract class MixinEntityFluidInteraction {
+     // Dropping the threshold skips the scaling of the current in shallow fluids
+     @ModifyConstant(method = "update", constant = @Constant(doubleValue = 0.4))
+     private double dontScaleCurrent(final double constant) {
+-        if (ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST)) {
++        if (BedrockInputPermissions.isBedrockConnection()) {
+             return -1;
+         } else {
+             return constant;
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityFluidInteraction_CurrentAccumulator.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityFluidInteraction_CurrentAccumulator.java
+index b135083..122cd78 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityFluidInteraction_CurrentAccumulator.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinEntityFluidInteraction_CurrentAccumulator.java
+@@ -25,11 +25,10 @@ import com.llamalad7.mixinextras.expression.Definition;
+ import com.llamalad7.mixinextras.expression.Expression;
+ import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
+ import com.llamalad7.mixinextras.sugar.Local;
+-import com.viaversion.viafabricplus.ViaFabricPlus;
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
+ import net.minecraft.world.entity.Entity;
+ import net.minecraft.world.entity.EntityFluidInteraction;
+ import net.minecraft.world.entity.player.Player;
+-import net.raphimc.viabedrock.api.BedrockProtocolVersion;
+ import org.spongepowered.asm.mixin.Mixin;
+ import org.spongepowered.asm.mixin.injection.At;
+ import org.spongepowered.asm.mixin.injection.Constant;
+@@ -44,13 +43,13 @@ public abstract class MixinEntityFluidInteraction_CurrentAccumulator {
+     @Expression("entity instanceof Player")
+     @ModifyExpressionValue(method = "applyTo", at = @At("MIXINEXTRAS:EXPRESSION"))
+     private boolean normalizeInsteadScale(final boolean original) {
+-        return !ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST) && original;
++        return !BedrockInputPermissions.isBedrockConnection() && original;
+     }
+ 
+     // Dropping the threshold skips the boost small currents would get
+     @ModifyConstant(method = "applyTo", constant = @Constant(doubleValue = 0.0045000000000000005, ordinal = 0))
+     private double dontScaleSmallValues(final double constant) {
+-        if (ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST)) {
++        if (BedrockInputPermissions.isBedrockConnection()) {
+             return -1;
+         } else {
+             return constant;
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
+index 90050a0..1c9125e 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
+@@ -21,14 +21,13 @@
+ 
+ package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
+ 
+-import com.viaversion.viafabricplus.ViaFabricPlus;
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
+ import net.minecraft.core.Holder;
+ import net.minecraft.world.effect.MobEffect;
+ import net.minecraft.world.effect.MobEffectInstance;
+ import net.minecraft.world.effect.MobEffects;
+ import net.minecraft.world.entity.LivingEntity;
+ import net.minecraft.world.phys.Vec3;
+-import net.raphimc.viabedrock.api.BedrockProtocolVersion;
+ import org.jetbrains.annotations.Nullable;
+ import org.spongepowered.asm.mixin.Mixin;
+ import org.spongepowered.asm.mixin.Shadow;
+@@ -45,13 +44,13 @@ public abstract class MixinLivingEntity {
+ 
+     @Redirect(method = "getFluidFallingAdjustedMovement", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;isSprinting()Z"))
+     private boolean changeFluidGravityCondition(final LivingEntity instance) {
+-        return ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST) ? instance.isSwimming() : instance.isSprinting();
++        return BedrockInputPermissions.isBedrockConnection() ? instance.isSwimming() : instance.isSprinting();
+     }
+ 
+     @Inject(method = "getFluidFallingAdjustedMovement", at = @At("HEAD"), cancellable = true)
+     private void applyLevitationVelocity(final double baseGravity, final boolean isFalling, final Vec3 movement, final CallbackInfoReturnable<Vec3> cir) {
+         final MobEffectInstance effect = this.getEffect(MobEffects.LEVITATION);
+-        if (ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST) && effect != null) {
++        if (BedrockInputPermissions.isBedrockConnection() && effect != null) {
+             cir.setReturnValue(new Vec3(movement.x, movement.y + (((effect.getAmplifier() + 1) * 0.05) - movement.y) * 0.2, movement.z));
+         }
+     }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
+index 614dc41..e5a8167 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLocalPlayer.java
+@@ -21,9 +21,8 @@
+ 
+ package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
+ 
+-import com.viaversion.viafabricplus.ViaFabricPlus;
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
+ import net.minecraft.client.player.LocalPlayer;
+-import net.raphimc.viabedrock.api.BedrockProtocolVersion;
+ import org.spongepowered.asm.mixin.Mixin;
+ import org.spongepowered.asm.mixin.Shadow;
+ import org.spongepowered.asm.mixin.injection.At;
+@@ -37,7 +36,7 @@ public abstract class MixinLocalPlayer {
+ 
+     @Redirect(method = {"shouldStopRunSprinting", "canStartSprinting"}, at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;isSprintingPossible(Z)Z"))
+     private boolean allowNonSwimWaterSprinting(final LocalPlayer instance, final boolean allowedInShallowWater) {
+-        return this.isSprintingPossible(allowedInShallowWater || ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST) && (instance.isSwimming() || instance.onGround()));
++        return this.isSprintingPossible(allowedInShallowWater || BedrockInputPermissions.isBedrockConnection() && (instance.isSwimming() || instance.onGround()));
+     }
+ 
+ }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
+index 47c2725..49a37ac 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
+@@ -24,6 +24,7 @@ package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
+ import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
+ import com.llamalad7.mixinextras.sugar.Local;
+ import com.viaversion.viafabricplus.ViaFabricPlus;
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
+ import net.minecraft.core.BlockPos;
+ import net.minecraft.world.entity.Avatar;
+ import net.minecraft.world.entity.Entity;
+@@ -53,7 +54,7 @@ public abstract class MixinPlayer extends Avatar {
+ 
+     @Redirect(method = "travel", at = @At(value = "INVOKE", target = "Lnet/minecraft/core/BlockPos;containing(DDD)Lnet/minecraft/core/BlockPos;"))
+     private BlockPos modifyWaterAbovePosition(final double x, final double y, final double z) {
+-        if (ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST)) {
++        if (BedrockInputPermissions.isBedrockConnection()) {
+             return BlockPos.containing(x, y - 0.9, z);
+         } else {
+             return BlockPos.containing(x, y, z);
+@@ -62,12 +63,12 @@ public abstract class MixinPlayer extends Avatar {
+ 
+     @WrapWithCondition(method = "travel", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;setDeltaMovement(Lnet/minecraft/world/phys/Vec3;)V", ordinal = 0))
+     private boolean preventSwimmingMotionWhenJumping(final Player instance, final Vec3 movement) {
+-        return !ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST) || !instance.isJumping();
++        return !BedrockInputPermissions.isBedrockConnection() || !instance.isJumping();
+     }
+ 
+     @Inject(method = "travel", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getAbilities()Lnet/minecraft/world/entity/player/Abilities;"))
+     private void preventJumpingWhenStartedSwimming(final Vec3 input, final CallbackInfo ci) {
+-        if (!ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST)) {
++        if (!BedrockInputPermissions.isBedrockConnection()) {
+             return;
+         }
+ 
+@@ -83,7 +84,7 @@ public abstract class MixinPlayer extends Avatar {
+ 
+     @Redirect(method = "travel", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;isSwimming()Z"))
+     private boolean preventSwimmingResurface(final Player instance) {
+-        if (!ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST) || !instance.isSwimming()) {
++        if (!BedrockInputPermissions.isBedrockConnection() || !instance.isSwimming()) {
+             return instance.isSwimming();
+         }
+ 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockInputPermissions.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockInputPermissions.java
 new file mode 100644
-index 0000000..c918397
+index 0000000..fcca6da
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockInputPermissions.java
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,77 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -268,10 +485,12 @@ index 0000000..c918397
 + */
 +package com.viaversion.viafabricplus.bedrock.input;
 +
++import com.viaversion.viafabricplus.ViaFabricPlus;
 +import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.world.entity.player.Input;
 +import net.minecraft.world.phys.Vec2;
++import net.raphimc.viabedrock.api.BedrockProtocolVersion;
 +import net.raphimc.viabedrock.api.model.PlayerInput;
 +import net.raphimc.viabedrock.api.model.PlayerInputPermissions;
 +
@@ -289,6 +508,11 @@ index 0000000..c918397
 +
 +    public static boolean active() {
 +        return active;
++    }
++
++    /** Direct sessions are known before the first snapshot; ViaProxy advertises them through the core channel. */
++    public static boolean isBedrockConnection() {
++        return active || BedrockProtocolVersion.BEDROCK_LATEST.equals(ViaFabricPlus.api().targetVersion());
 +    }
 +
 +    public static void accept(final PlayerInputPermissions value) {

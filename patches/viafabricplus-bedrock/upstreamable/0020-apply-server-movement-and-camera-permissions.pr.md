@@ -58,3 +58,24 @@ One stationary zero-velocity correction follows a fixture teleport, outside thos
 Core tests pass: 624 total, 19 skipped, no failures.
 Add-on tests pass: 600 total, 116 skipped, no failures.
 Native packet comparisons, other controls, and the complete movement matrix remain open.
+
+### Fluid prediction through ViaProxy
+
+The same permission snapshot now activates existing Bedrock fluid hooks through ViaProxy.
+Direct protocol selection still activates them before the first snapshot.
+The Java-facing proxy protocol previously left these hooks disabled.
+Strict BDS 1.26.51.1 records ten moving prediction corrections in the original held water-rise case, while direct has none.
+Two rebuilt proxy repeats record no water corrections.
+The first sampled peak and maximum rise velocity match the direct case exactly.
+The second sampled peak differs from the native baseline by less than 0.000008 blocks.
+These results verify this fixture, not the complete fluid movement matrix.
+
+A read-only BDS observer samples 120 server ticks per case without changing movement or checks.
+The native, direct, and proxy held-jump cases reach Y=102.252197265625 from Y=101.
+The fixed proxy retains native sampled jump and five-block fall endpoints.
+Two moving corrections around elevated teleports remain unresolved on direct and rebuilt proxy routes.
+Auth-input swimming transitions still require the local core and need remote transport in separate work.
+Currents, shallow water, lava, effects, vehicles, and broader native trajectories remain open.
+
+The full build contains 16 converter, 624 core, and 603 add-on tests with no failures or errors.
+Core and add-on suites skip 19 and 116 optional cases respectively.

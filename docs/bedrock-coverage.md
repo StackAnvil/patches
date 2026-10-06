@@ -3667,3 +3667,39 @@ Different input tick counts and small post-input drift prevent a claim of exact 
 Native packet timing, other collision shapes, and the remaining movement matrix still require comparison.
 The native session ends through Save & Quit before the owned capture processes stop.
 Raw assets, licenses, journals, account data, and screenshots remain private.
+
+## Strict BDS jump, fall, and water comparison, October 6, 2026
+
+**Verified sampled endpoints:** A read-only Script API observer records player position, velocity, and ground state on official BDS 1.26.51.1.
+It samples 120 server ticks per case with strict movement enabled.
+The pinned native client, direct add-on, and ViaProxy each complete single jumps, held jumps, elevated falls, water idling, and held water rises.
+The observer does not change movement or server checks.
+
+Held jumps reach Y=102.252197265625 from the Y=101 floor on all three routes.
+Five-block falls return to Y=101. The sampled minimum vertical velocity is approximately -0.781136 blocks per tick.
+Water-idle cases settle from Y=102 to Y=101.
+These server samples can repeat or skip client frames. They do not establish identical trajectories or input timing.
+
+**Found and fixed:** The original ViaProxy water-rise journal contains ten moving prediction corrections during and after the held input.
+The direct journal contains no water corrections for the same fixture.
+Sampled endpoints alone conceal this difference.
+The add-on's existing fluid hooks check the direct protocol selection, which remains Java 26.3 through ViaProxy.
+They now also recognize the connection-scoped permission snapshot from ViaBedrock core.
+This activates the existing fluid bounds, current handling, water gravity, and player swimming hooks for remote core sessions.
+The snapshot clears on disconnect and world exit. Direct activation remains available before the first snapshot.
+
+Two rebuilt ViaProxy water-rise repeats contain no prediction corrections during those cases.
+The first repeat matches the direct sampled peak and maximum rise velocity exactly.
+The second peak differs from the native sample by less than 0.000008 blocks.
+Held input duration and server sampling differ, so this does not prove complete fluid parity.
+The fixed single jump and elevated fall retain the sampled native endpoint and fall-speed agreement.
+
+**Still unresolved:** The direct baseline and fixed ViaProxy run each receive two moving corrections around the elevated teleport and fall.
+Native raw input and correction comparison is required before changing teleport or velocity handling.
+Swimming auth-input transitions through ViaProxy, currents, shallow water, lava, effects, vehicles, and the remaining movement matrix need separate verification.
+Experimental Boar results remain diagnostic; official BDS and the pinned native client remain the primary references.
+
+The rebuilt dependency suites contain 16 converter, 624 core, and 603 add-on tests with no failures or errors.
+Core and add-on suites skip 19 and 116 optional tests respectively.
+The previous asset-fix CI passes every configured Ubuntu, Windows, and macOS job.
+Licensed assets, raw journals, observer samples, account data, and screenshots remain private.
