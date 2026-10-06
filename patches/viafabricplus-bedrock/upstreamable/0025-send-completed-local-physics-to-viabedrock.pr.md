@@ -634,3 +634,26 @@ The [stepping and finalization reference](../../../docs/bedrock-coverage.md#nati
 Fixtures substitute ECS or allocator boundaries and exclude complete scheduling, real component lifetime, and visible native behavior.
 Production still uses Java collision solving.
 Native shape collection, remaining overlap producers, retained-world replay, frame identity, and ordered corrections remain incomplete.
+
+
+## Native collision queries and cache extension
+
+Matching-build instruction comparisons establish the movement cap, step and inset search bounds, and inclusive cache-hit behavior.
+The gatherer caps requested movement length at 16 blocks before searching.
+Exact query and gather instructions pass 4,096 cases, including static result ordering and unloaded flags.
+The world adapter supplies fixture records; native block traversal and optional actor shapes remain unverified.
+
+Partially overlapping caches use ordered partition cells, float32 plane advances, coordinate deduplication, and volume-based merging.
+Exact cache-extension instructions pass another 2,048 cases against an independent model.
+They check 11,072 ordered fetches, 3,264 merges, stored bounds, and 8,544 matching allocations and releases.
+World results are empty in these fixtures; real shape production, allocation lifetime, and replay remain unverified.
+
+Exact world traversal and record construction pass another 512 cases with fixture world and block-type boundaries.
+Loaded blocks use X/Z/Y loop order; unloaded-chunk barriers precede them with X advancing before Z.
+The comparison checks 21,106 block visits and 16,506 records, including height limits and four unloaded-chunk states.
+Real shape generation, border blocks, the below-world barrier, capacity growth, and full simulation remain unverified.
+
+Exact overlap-component initialization passes 1,024 cases with insertion supplied by a fixture boundary.
+The [collision-query reference](../../../docs/bedrock-coverage.md#native-collision-query-bounds-and-cache-extension-october-6-2026) records addresses, constants, and verification limits.
+Production still uses Java collision solving.
+Native obstacle ordering, remaining state producers, coherent frame identity, retained world state, and ordered corrections remain incomplete.

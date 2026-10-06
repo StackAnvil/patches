@@ -5076,3 +5076,77 @@ The previous public revision passed build, tooling, and Ubuntu, Windows, and mac
 Actual platform game joins, direct and ViaProxy native comparisons, broader movement, and all eight coverage groups remain requirements.
 No native game launch occurred during this investigation.
 The current-boot GPU guard remains in force.
+
+
+### Native collision query bounds and cache extension, October 6, 2026
+
+**Reference:** These comparisons use Bedrock 1.26.51.1, build 51061372, protocol 2193.
+Kernel `0x1431c2f50` gathers collision data before the solver runs.
+It caps requested movement length at 16 blocks using float32 arithmetic.
+The squared-length sum evaluates X, then Y, then Z.
+The decompiler prints a different sum order, so the independent model follows the executable instructions.
+
+The search combines the ordinary swept box, step bounds, and an inset box below the actor.
+Step bounds use kernel `0x149026eb0`.
+They include ordinary movement, vertical step movement, and combined horizontal movement with requested Y plus step height.
+Kernel `0x14b177650` insets X and Z by float32 `0.025`.
+An inverted inset collapses that axis to its midpoint.
+The lower box moves down by step height multiplied by float32 `1.01`, then sweeps horizontally.
+
+The combined search includes the original box.
+Its lower Y bound includes original minimum Y minus absolute requested Y minus float32 `0.2`.
+Its upper Y bound includes original maximum Y plus float32 `0.08`.
+Inclusive containment within the previous fetch box skips world fetching.
+This cache hit preserves existing shapes, block references, and the nearby-unloaded flag.
+
+**Verified within scope:** Exact query and gather instructions pass 4,096 cases with no mismatches.
+There are 2,048 query cases, 1,024 cache hits, and 1,024 full fetches.
+Cases cover movement-cap boundaries, randomized boxes, empty results, populated results, and unloaded flags.
+The full-fetch fixtures supply static collision records through the world adapter boundary.
+The kernel appends their boxes in returned order and adds parallel empty block references.
+It clears each reference's first 20 bytes while preserving the final four padding bytes.
+World traversal, live shape production, optional actor shapes, and request-buffer capacity growth remain unverified.
+
+**Cache extension:** A partially overlapping cache uses a queue of cells split at the cached bounds.
+New cell origins advance beyond a split plane by float32 `0.00001`.
+Coordinate deduplication uses `2⁻²³`; a separate float32 volume comparison uses `0.001` for merging.
+These rules do not produce seamless geometric subtraction of the cached box.
+Float32 operations, cell order, and merging affect the resulting fetches.
+
+Exact cache-extension instructions pass 2,048 cases against an independent model with no mismatches.
+The comparison checks all 11,072 fetch boxes in order and stored final bounds.
+Fixtures include translated queries near zero to exercise 3,264 cell merges.
+They also check 8,544 temporary allocations and matching releases.
+World fetching returns no shapes in these fixtures; allocator and CRT boundaries use fixture implementations.
+Nonempty world results, real allocation lifetime, actor references, complete scheduling, and replay remain unverified.
+
+**World traversal:** The concrete world adapter routes collision fetching through kernel `0x142d883c0`.
+Loaded blocks use X as the outer loop, Z as the middle loop, and Y as the inner loop.
+Each block's emitted shapes retain their order.
+Bounds use float32 padding before floor conversion and clamp Y to the world's height limits.
+Records retain the source block, its position, and the nearby-unloaded flag.
+
+The unloaded-chunk scan precedes loaded-block traversal and uses a different order: X advances before Z.
+It expands horizontal search bounds by eight blocks before converting to chunk coordinates.
+Missing chunks and three invalid chunk states emit full-column boxes with Y bounds of `-100000` and `100000`.
+These records have no source block and set the nearby-unloaded flag.
+They remain separate from ordinary loaded block records.
+
+Exact world traversal and record construction pass 512 cases with no mismatches.
+The comparison checks 21,106 block visits and 16,506 output records against an independent model.
+Fixtures cover negative coordinates, height limits, missing columns, empty and multiple emitted shapes, and unloaded-chunk states.
+World, chunk, subchunk, and block-type boundaries supply fixture data; CRT floor uses a fixture implementation.
+Real shape generation, border blocks, the below-world barrier, buffer growth, actual lifetime, and complete simulation remain unverified.
+
+**Overlap initialization:** Kernel `0x141aadbe0` zero-initializes all 56 bytes of `DepenetrationComponent` after insertion.
+Exact initialization and dense-payload selection pass 1,024 cases and preserve adjacent bytes.
+ECS insertion uses a fixture boundary with an existing dense page.
+Actor-specific persistent overlap limits and actual allocation remain unverified.
+The [versioned component declaration](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/entity/components/DepenetrationComponent.h) supplies field names, not behavioral proof.
+
+**Incomplete:** Production still uses Java collision solving.
+These 7,680 new comparisons establish subroutine behavior and do not establish complete movement parity.
+Integration needs native obstacle ordering, remaining overlap producers, coherent frame identity, retained world state, and ordered corrections.
+Actual direct and ViaProxy comparisons, Windows and macOS game joins, and all eight coverage groups remain required.
+The previous public revision passed build, tooling, and Ubuntu, Windows, and macOS permission jobs.
+No native game launch occurred during this investigation; the current-boot GPU guard remains in force.
