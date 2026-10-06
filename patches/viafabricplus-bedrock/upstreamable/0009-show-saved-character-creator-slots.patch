@@ -1,4 +1,4 @@
-From 4b9bcd6f4cbcb77338711440b25d7e0e7cc307db Mon Sep 17 00:00:00 2001
+From 4eb94466ba6d8cb086be81bb32042345f4753af3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 14:18:25 +0200
 Subject: [PATCH] feat(bedrock): manage Character Creator characters
@@ -1664,9 +1664,21 @@ supplied. These tests do not establish complete frame or image parity.
 Old scheduling and dispatch fixtures now declare their supplied zero
 counters and missing-source fallback explicitly after the missing-value
 semantics fix; their native callback probes did not execute Molang.
+
+Accept byte-identical overlaps between loose and archived assets before
+charging logical file and byte limits. An independent licensed download
+of Bedrock 1.26.51.1/build 51061372 repeats texts/languages.json in
+vanilla and vanilla_base. Both copies are identical; rejecting them
+prevented atomic cache publication and repeated acquisition on later
+joins. Preserve rejection of different content and existing raw limits.
+
+Give optional licensed acquisition tests a 2 GiB heap when their private
+fixtures are enabled. Cache reuse retains two complete libraries and
+exceeds Gradle's default 512 MiB test heap. Ordinary tests keep the
+default; this setting does not change client runtime memory limits.
 ---
  .gitignore                                    |    4 +-
- build.gradle.kts                              |   57 +
+ build.gradle.kts                              |   62 +
  native/persona-assets/Cargo.lock              | 5105 +++++++++++++++++
  native/persona-assets/Cargo.toml              |   27 +
  native/persona-assets/LICENSE                 |  674 +++
@@ -1686,7 +1698,7 @@ semantics fix; their native callback probes did not execute Molang.
  .../appearance/BedrockAppearanceStore.java    |  186 +-
  .../appearance/BedrockBoneAnimation.java      |  535 ++
  .../bedrock/appearance/BedrockBrArchive.java  |   73 +
- .../appearance/BedrockBuiltinAssets.java      |  467 ++
+ .../appearance/BedrockBuiltinAssets.java      |  475 ++
  .../appearance/BedrockCharacterProfiles.java  | 1527 +++++
  .../appearance/BedrockClassicAssets.java      |   85 +
  .../appearance/BedrockClassicModel.java       |    1 +
@@ -1828,7 +1840,7 @@ semantics fix; their native callback probes did not execute Molang.
  .../appearance/BedrockAnimationSoundTest.java |  146 +
  .../BedrockAppearanceStoreTest.java           |   33 +
  .../appearance/BedrockBoneAnimationTest.java  |  450 ++
- .../appearance/BedrockBuiltinAssetsTest.java  |  537 ++
+ .../appearance/BedrockBuiltinAssetsTest.java  |  579 ++
  .../BedrockCharacterColorsTest.java           |  301 +
  .../BedrockCharacterProfilesTest.java         |  464 ++
  .../appearance/BedrockClassicAccountTest.java |  192 +
@@ -1902,7 +1914,7 @@ semantics fix; their native callback probes did not execute Molang.
  .../render/BedrockPlayerModelTest.java        |  100 +
  .../render/BedrockViewBobbingTest.java        |   93 +
  .../render/BedrockWalkingAnimationTest.java   |   65 +
- 237 files changed, 42765 insertions(+), 110 deletions(-)
+ 237 files changed, 42820 insertions(+), 110 deletions(-)
  create mode 100644 native/persona-assets/Cargo.lock
  create mode 100644 native/persona-assets/Cargo.toml
  create mode 100644 native/persona-assets/LICENSE
@@ -2138,7 +2150,7 @@ index d845caa..e1f9fb5 100644
 +# Bundled package helper build output
 +/native/persona-assets/target/
 diff --git a/build.gradle.kts b/build.gradle.kts
-index a7b7f6e..d16edd0 100644
+index a7b7f6e..14df901 100644
 --- a/build.gradle.kts
 +++ b/build.gradle.kts
 @@ -1,3 +1,6 @@
@@ -2159,10 +2171,16 @@ index a7b7f6e..d16edd0 100644
      jarInJar(viaBedrockDependency) {
          exclude(group = "com.mojang", module = "brigadier")
          exclude(group = "at.yawk.lz4", module = "lz4-java")
-@@ -55,3 +62,53 @@ dependencies {
+@@ -54,4 +61,59 @@ dependencies {
+ 
  tasks.test {
      useJUnitPlatform()
- }
++    // Licensed cache tests retain two complete libraries to verify readback and reuse.
++    if (listOf("STACKANVIL_OFFICIAL_PERSONA", "STACKANVIL_PACKAGE_REQUEST")
++            .any { providers.environmentVariable(it).isPresent }) {
++        maxHeapSize = "2G"
++    }
++}
 +
 +// Releases assemble the helpers built on each OS into one resource directory.
 +// Local builds embed the helper for the build host.
@@ -2210,7 +2228,7 @@ index a7b7f6e..d16edd0 100644
 +        nativeRoot.file("LICENSE").asFile.copyTo(notices.resolve("LICENSE"), overwrite = true)
 +        nativeRoot.file("NOTICE").asFile.copyTo(notices.resolve("NOTICE"), overwrite = true)
 +    }
-+}
+ }
 +sourceSets.main { resources.srcDir(embedPersonaHelper) }
 +tasks.processResources { dependsOn(embedPersonaHelper) }
 diff --git a/native/persona-assets/Cargo.lock b/native/persona-assets/Cargo.lock
@@ -11669,10 +11687,10 @@ index 0000000..61a8010
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssets.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssets.java
 new file mode 100644
-index 0000000..96da357
+index 0000000..55fe157
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssets.java
-@@ -0,0 +1,467 @@
+@@ -0,0 +1,475 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -11696,6 +11714,7 @@ index 0000000..96da357
 +import java.nio.file.Path;
 +import java.nio.file.StandardCopyOption;
 +import java.security.MessageDigest;
++import java.util.Arrays;
 +import java.util.Comparator;
 +import java.util.HexFormat;
 +import java.util.LinkedHashMap;
@@ -11841,12 +11860,19 @@ index 0000000..96da357
 +                                    name.length() - ".brarchive".length())
 +                            + "/";
 +            for (final var entry : BedrockBrArchive.read(archive.getValue()).entrySet()) {
++                final String path = prefix + entry.getKey();
++                final byte[] existing = files.get(path);
++                if (existing != null) {
++                    // The official package repeats some loose files in its archives.
++                    if (!Arrays.equals(existing, entry.getValue()))
++                        throw new IOException("Persona assets contain conflicting file contents");
++                    continue;
++                }
 +                if ((expandedBytes += entry.getValue().length) > maximumBytes
 +                        || files.size() >= MAX_LOGICAL_FILES)
 +                    throw new IOException("Unpacked persona assets exceed the size limit");
 +                // Empty archive stubs leave the separately supplied loose file intact.
-+                if (files.putIfAbsent(prefix + entry.getKey(), entry.getValue()) != null)
-+                    throw new IOException("Persona archive conflicts with a loose file");
++                files.put(path, entry.getValue());
 +            }
 +        }
 +        return Map.copyOf(files);
@@ -33823,10 +33849,10 @@ index 0000000..6585027
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssetsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssetsTest.java
 new file mode 100644
-index 0000000..69ee4be
+index 0000000..2c7223d
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockBuiltinAssetsTest.java
-@@ -0,0 +1,537 @@
+@@ -0,0 +1,579 @@
 +package com.viaversion.viafabricplus.bedrock.appearance;
 +
 +import static org.junit.jupiter.api.Assertions.*;
@@ -33893,6 +33919,46 @@ index 0000000..69ee4be
 +        assertEquals(2, BedrockBuiltinAssets.unpack(directory, 2048).size());
 +    }
 +
++    @ParameterizedTest
++    @ValueSource(booleans = {false, true})
++    void mergesIdenticalOverlapsAndRejectsConflictingContents(final boolean nestedArchive)
++            throws Exception {
++        Files.createDirectories(directory.resolve("__brarchive/pieces"));
++        Files.write(directory.resolve("__brarchive/pieces.brarchive"), archive());
++        final Path overlap;
++        final byte[] bytes;
++        if (nestedArchive) {
++            overlap = directory.resolve("__brarchive/pieces/nested.brarchive");
++            bytes = archive();
++            descriptor(ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN), 0, "one", 0, 3);
++        } else {
++            overlap = directory.resolve("pieces/nested/one");
++            Files.createDirectories(overlap.getParent());
++            bytes = new byte[] {1, 2, 3};
++        }
++        Files.write(overlap, bytes);
++        final var unpacked = BedrockBuiltinAssets.unpack(directory);
++        assertArrayEquals(new byte[] {1, 2, 3}, unpacked.get("pieces/nested/one"));
++        assertEquals(nestedArchive ? 3 : 2, unpacked.size());
++
++        bytes[bytes.length - 1] = 99;
++        Files.write(overlap, bytes);
++        assertThrows(IOException.class, () -> BedrockBuiltinAssets.unpack(directory));
++    }
++
++    @Test
++    void countsOverlappingFilesOnceWithoutRelaxingByteLimits() throws Exception {
++        Files.createDirectories(directory.resolve("__brarchive"));
++        Files.createDirectories(directory.resolve("pieces"));
++        Files.write(directory.resolve("__brarchive/pieces.brarchive"), sharedArchive(12, 4096));
++        final byte[] loose = new byte[4096];
++        java.util.Arrays.fill(loose, (byte) 42);
++        Files.write(directory.resolve("pieces/file0"), loose);
++        final long expandedBytes = 12L * loose.length;
++        assertEquals(12, BedrockBuiltinAssets.unpack(directory, expandedBytes).size());
++        assertThrows(IOException.class, () -> BedrockBuiltinAssets.unpack(directory, expandedBytes - 1));
++    }
++
 +    @Test
 +    void cachesExpandedLibrariesAboveTheRawFileLimitAndBoundsTheirLogicalCount() throws Exception {
 +        final Path cache = directory.resolve("cache/images.zip");
@@ -33914,6 +33980,8 @@ index 0000000..69ee4be
 +        final byte[] archive = sharedArchive(4096, 1);
 +        for (int index = 0; index < 8; index++)
 +            Files.write(raw.resolve("__brarchive/layer" + index + ".brarchive"), archive);
++        Files.createDirectories(raw.resolve("layer0"));
++        Files.write(raw.resolve("layer0/file0"), new byte[] {42});
 +        assertEquals(32768, BedrockBuiltinAssets.unpack(raw).size());
 +        Files.write(raw.resolve("extra.png"), new byte[] {1});
 +        assertThrows(IOException.class, () -> BedrockBuiltinAssets.unpack(raw));
@@ -34226,7 +34294,7 @@ index 0000000..69ee4be
 +        assertEquals(first.pieces().keySet(), second.pieces().keySet());
 +        assertEquals(57, second.library().packNames().size());
 +        assertEquals(
-+                68,
++                72,
 +                second.library()
 +                        .entity("minecraft:player")
 +                        .getAsJsonObject("description")

@@ -18,6 +18,25 @@ Linux Flatpak tests acquired 6,117 official files with valid Store credentials, 
 
 Sources: [Pinned Xodus extraction](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/commands/streaming.rs), [license acquisition](https://github.com/xodus-gaming/xodus/blob/a3afa0569332e32ce2677c0edc643ef85477ee3e/crates/xodus-cli/src/license.rs), and [BR archive format](https://github.com/bedrock-crustaceans/brarchive/blob/main/FORMAT.md).
 
+### Identical archive overlaps
+
+A fresh licensed download of Bedrock 1.26.51.1/build 51061372 contains two identical loose/archive overlaps.
+Both `vanilla` and `vanilla_base` repeat `texts/languages.json` inside their text archives.
+The previous unpacker rejects the first overlap, preventing cache publication and repeating acquisition on later joins.
+
+Merge byte-identical copies before counting logical files and bytes. Reject different contents explicitly.
+Preserve raw input limits, archive validation, empty stubs, and atomic cache publication.
+The independently downloaded package contains 6,184 raw files and expands to 22,251 distinct files within the existing limits.
+
+Regressions cover loose/archive and archive/archive overlaps, conflicts, exact logical byte limits, and the maximum logical file count.
+Optional licensed tests use a 2 GiB heap to retain both complete libraries for cache reuse.
+Ordinary tests retain Gradle's default heap. Client runtime memory limits remain separate.
+All 24 asset tests pass with private licensed acquisition and raw-package fixtures enabled, with no skips.
+Cache readback preserves the 57 layers and 72 resolved player aliases, matching the existing native inheritance evidence.
+Two normal production joins pass on strict BDS through the direct add-on route in a private Flatpak Prism instance with 2 GiB.
+The cold join publishes format 10; the second join reuses it unchanged. Both reach visible gameplay without client errors.
+The [coverage ledger](../../../docs/bedrock-coverage.md#licensed-archive-overlaps-and-native-collision-baseline-october-6-2026) records production verification and remaining gaps.
+
 ## Classic model library
 
 Expand both base vanilla model archives under their original model paths. Index individual legacy and modern definitions and merge equal duplicates. Cache format 3 refreshes older persona-only and model-only caches before use. Actor compilation requires the player definition, animations, and controllers. Failed acquisition keeps the existing cache.

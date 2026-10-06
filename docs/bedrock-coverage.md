@@ -3621,3 +3621,49 @@ Eighteen focused recorder tests pass after fixing two compile commands that omit
 The updated readiness recorder also compiles against the built protocol API.
 The previous sneak-fix CI completes successfully across the configured Ubuntu, Windows, and macOS jobs.
 Official BDS remains the primary movement reference; experimental Boar flags require separate investigation.
+
+## Licensed archive overlaps and native collision baseline, October 6, 2026
+
+**Implemented:** Built-in asset extraction merges byte-identical files before applying logical byte and file limits.
+Different contents still fail explicitly. Raw input limits, archive validation, and atomic cache publication remain intact.
+
+An independent licensed acquisition reproduces the previous join fallback with Bedrock 1.26.51.1/build 51061372.
+The helper obtains the license and downloads 6,184 files without a local game installation.
+Two language lists occur both loose and archived in `vanilla` and `vanilla_base`.
+Both overlaps are byte-identical. The previous loader rejects the first overlap before publishing its cache.
+The package expands to 22,251 distinct files and 244,022,807 logical bytes, within the existing limits.
+
+Synthetic regressions cover identical loose/archive and archive/archive overlaps, conflicting contents, and exact logical byte and file limits.
+The fix stays in the owning Character Creator patch.
+Licensed fixture tests use a 2 GiB heap because cache reuse retains two complete asset libraries.
+The initial licensed run exhausts Gradle's default 512 MiB heap. Ordinary tests retain that default.
+This test setting does not change client memory limits.
+
+**Verified licensed pipeline:** All 24 asset tests pass with both private licensed fixtures enabled and no skips.
+The bundled helper downloads the package, publishes a checksummed cache, and reuses it without another acquisition.
+Readback retains all 57 resource layers, the resolved 72 player animation aliases, sound definitions, and sampled built-in emotes.
+The alias assertion now matches the earlier native layer-inheritance evidence instead of the latest file's 68 declarations.
+
+**Verified cold production join:** A private Flatpak Prism instance runs the rebuilt client with a 2 GiB heap.
+It replaces the obsolete format-7 cache with format 10 and 22,251 checksummed files, then reaches visible gameplay on strict BDS.
+The protocol-2193 recording completes normally with 554 chunks and 411 gameplay inputs.
+The full dependency build passes 16 converter tests, 624 core tests, and 603 add-on tests without failures or errors.
+Core and add-on suites skip 19 and 116 optional cases respectively. Licensed checks run separately as recorded above.
+
+The second production join reuses the cache without changing its size or modification time.
+Both recordings complete with visible gameplay and no client errors, exceptions, or disconnects.
+This pair reaches the gameplay marker about 179 seconds after cold startup and 22 seconds after warm startup.
+These timings include client startup and describe one local pair, not a conversion benchmark.
+Visible acquisition progress, cancellation, fresh platform sign-in, and the broader server-pack conversion checks remain separate requirements.
+
+**Verified native endpoints:** The pinned native client joins the owned strict BDS fixture through HTTP NetherNet.
+Four-second walking and sprinting inputs stop against the same wall at Z=9.7.
+Native walking differs from the prior direct endpoint by less than one millionth of a block.
+The sampled native sprint endpoint matches the prior direct Z coordinate.
+A two-second step sequence raises native eye height by 0.5 blocks, matching the translated step height.
+
+These samples establish endpoint and step-height agreement for this fixture.
+Different input tick counts and small post-input drift prevent a claim of exact trajectory equality.
+Native packet timing, other collision shapes, and the remaining movement matrix still require comparison.
+The native session ends through Save & Quit before the owned capture processes stop.
+Raw assets, licenses, journals, account data, and screenshots remain private.
