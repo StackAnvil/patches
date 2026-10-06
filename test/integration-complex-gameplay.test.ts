@@ -8,7 +8,7 @@ let sample: () => void;
 const signal = (name: string) => ({ subscribe(callback: (event: any) => void) { callbacks.set(name, callback); } });
 const player = { name: "ProbePlayer", id: "player", selectedSlotIndex: 0 } as Player;
 mock.module("@minecraft/server", () => ({
-  EquipmentSlot: {}, GameMode: {}, ItemStack: class {}, Potions: {},
+  EnchantmentType: class {}, EquipmentSlot: {}, GameMode: {}, ItemStack: class {}, Potions: {},
   system: { currentTick: 10, run(callback: () => void) { pending.push(callback); },
     runInterval(callback: () => void) { sample = callback; } },
   world: { getAllPlayers: () => [player], afterEvents: Object.fromEntries(

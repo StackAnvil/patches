@@ -116,7 +116,7 @@ Retain ordinary Java and ViaProxy coverage where standard translation suffices.
 
 ## Runnable suite
 
-Run the 29 BDS cases:
+Run the 35 BDS cases:
 
 ```bash
 bun run test:integration -- --route java-bedrock --gameplay-complex
@@ -417,3 +417,24 @@ The full combat, ranged-use, mount, inventory, and movement matrix above remains
 The rebuilt ViaProxy comparison also reaches strict-BDS spawn and sends 1,618 input frames with zero corrections.
 It includes the same rounded teleport, 22 backward-input frames, 22 forward-input frames, and later idle current contact.
 Both routes verify this regression; complete native collision and the full gameplay matrix remain required.
+
+### Ranged enchantment fixtures, October 6, 2026
+
+**Implemented:** Six cases extend the runnable suite to 35.
+They cover Infinity with and without ammunition, Multishot arrows, and all three Quick Charge levels.
+The assertions check consumption, distinct projectile identities, ownership, charging order, volley timing, and bounded completion intervals.
+Infinity still requires ammunition in the positive fixture.
+A shot with an ordinary reload duration cannot satisfy a Quick Charge case.
+
+**Verified within scope:** All six prepare and pass on strict BDS 1.26.51.1, protocol 2193, through an isolated synthetic protocol client.
+Infinity preserves four arrows after its shot and produces no shot without ammunition.
+Multishot produces three owned arrows during one server tick and consumes one arrow.
+Quick Charge reports remaining durations of 20, 15, and 10 ticks, with measured completion intervals of 19, 14, and 9 ticks.
+The TypeScript check, pack build, and all 138 tooling tests pass.
+
+**Incomplete or unverified:** Java input, visual charging, native client comparisons, and direct or ViaProxy gameplay remain required.
+The rocket probe produces one actor, or three with Multishot, and consumes one offhand rocket.
+The generic Script API observer cannot establish their ownership, and their initial upward motion does not establish correct crossbow flight.
+Rocket launch, ownership, damage, and client prediction remain open.
+The [coverage ledger](bedrock-coverage.md#ranged-enchantment-fixtures-october-6-2026) records the probe limits.
+All movement, combat, terrain, fluid, inventory, route, and platform requirements remain in scope.

@@ -1,6 +1,6 @@
-import { EquipmentSlot, GameMode, ItemStack, Potions, system, world,
+import { EnchantmentType, EquipmentSlot, GameMode, ItemStack, Potions, system, world,
   type Block, type Container, type Dimension, type Entity, type EntityEquippableComponent, type Player, type Vector3 } from "@minecraft/server";
-import { potionImpactPasses, rangedHitPasses, rangedObservationPasses, type RangedObservation } from "../../../src/integration/ranged-observation.ts";
+import { potionImpactPasses, rangedHitPasses, rangedObservationPasses, type RangedExpectation, type RangedObservation } from "../../../src/integration/ranged-observation.ts";
 import { incomingProjectilePasses, projectileThreatens, type IncomingProjectileObservation } from "../../../src/integration/projectile-observation.ts";
 
 interface MotionObservation {
@@ -159,7 +159,21 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
     ["splash-potion-throw", "splash_potion", "throw"], ["lingering-potion-throw", "lingering_potion", "throw"],
     ["bow-short-release", "bow", "release"], ["bow-water-release", "bow", "release"],
     ["crossbow-cancel", "crossbow", "cancel"], ["crossbow-no-ammo", "crossbow", "empty"],
-    ["bow-hit", "bow", "release"], ["crossbow-hit", "crossbow", "fire"]] as const) {
+    ["bow-hit", "bow", "release"], ["crossbow-hit", "crossbow", "fire"],
+    ["bow-infinity", "bow", "release"], ["bow-infinity-no-ammo", "bow", "empty"],
+    ["crossbow-multishot", "crossbow", "fire"],
+    ["crossbow-quick-charge-1", "crossbow", "fire"], ["crossbow-quick-charge-2", "crossbow", "fire"],
+    ["crossbow-quick-charge-3", "crossbow", "fire"]] as const) {
+    const infinity = id === "bow-infinity" || id === "bow-infinity-no-ammo";
+    const multishot = id === "crossbow-multishot";
+    const quickCharge = id.startsWith("crossbow-quick-charge-") ? Number(id.at(-1)) : 0;
+    const expectation: RangedExpectation = {
+      consumed: ["empty", "cancel"].includes(mode) || infinity ? 0 : 1,
+      projectileCount: multishot ? 3 : 1,
+      // Target BDS reports remaining durations 20/15/10 and completes one tick earlier.
+      minChargeTicks: quickCharge ? 24 - 5 * quickCharge : undefined,
+      maxChargeTicks: quickCharge ? 26 - 5 * quickCharge : undefined,
+    };
     define(id, "ranged", async (player) => {
       await prepareArena(player);
       if (id === "bow-water-release") {
@@ -169,7 +183,14 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
       }
       const container = inventory(player);
       const itemId = `minecraft:${item}`;
-      container.setItem(0, new ItemStack(itemId));
+      const weapon = new ItemStack(itemId);
+      if (infinity || multishot || quickCharge) {
+        const enchantable = weapon.getComponent("minecraft:enchantable");
+        if (!enchantable) throw new Error("The ranged weapon cannot receive its fixture enchantment.");
+        enchantable.addEnchantment({ type: new EnchantmentType(infinity ? "infinity" : multishot ? "multishot" : "quick_charge"),
+          level: quickCharge || 1 });
+      }
+      container.setItem(0, weapon);
       const ammunition = mode === "throw" ? itemId : "minecraft:arrow";
       if (mode !== "empty" && mode !== "throw") container.setItem(9, new ItemStack(ammunition, 4));
       const initialCount = countItem(container, ammunition);
@@ -192,14 +213,14 @@ export function registerComplexGameplay({ define, prepareArena, inventory, equip
       const release = fixture.ranged.events.find((event) => event.action === "release");
       const start = fixture.ranged.events.find((event) => event.action === "start");
       const charge = release && start ? release.tick - start.tick : undefined;
-      return { passed: rangedObservationPasses(mode, fixture.ranged)
+      return { passed: rangedObservationPasses(mode, fixture.ranged, expectation)
           && (id !== "bow-short-release" || (charge !== undefined && charge > 0 && charge <= 12))
           && (id !== "bow-water-release" || fixture.motion.waterSamples >= 10)
           && (id !== "bow-hit" || rangedHitPasses("release", fixture.ranged))
           && (id !== "crossbow-hit" || rangedHitPasses("fire", fixture.ranged)),
         observed: { ...fixture.ranged, charge, motion: fixture.motion },
-        expected: { mode, consumed: ["empty", "cancel"].includes(mode) ? 0 : 1,
-          projectiles: ["release", "fire", "retain", "throw"].includes(mode) ? 1 : 0 } };
+        expected: { mode, ...expectation,
+          projectileCount: ["release", "fire", "retain", "throw"].includes(mode) ? expectation.projectileCount : 0 } };
     });
   }
 

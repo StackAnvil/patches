@@ -45,6 +45,33 @@ test("crossbows distinguish loading from firing and require a witnessed loaded h
   expect(rangedObservationPasses("retain", { ...fired, slots: [{ slot: 1, tick: 20 }, { slot: 0, tick: 30 }] })).toBe(false);
 });
 
+test("Infinity requires an arrow but fires without consuming it", () => {
+  const shot = { ...chargedShot(), remainingCount: 4 };
+  expect(rangedObservationPasses("release", shot, { consumed: 0 })).toBe(true);
+  expect(rangedObservationPasses("release", chargedShot(), { consumed: 0 })).toBe(false);
+  expect(rangedObservationPasses("release", { ...shot, initialCount: 0, remainingCount: 0 }, { consumed: 0 })).toBe(false);
+});
+
+test("Multishot requires three distinct shots in one volley and consumes one ammunition item", () => {
+  const shot = { ...chargedShot(), item: "minecraft:crossbow",
+    events: [{ action: "start" as const, tick: 10 }, { action: "complete" as const, tick: 35 }],
+    projectiles: ["left", "middle", "right"].map((id) => ({ id, tick: 40, type: "minecraft:arrow", speed: 3 })) };
+  expect(rangedObservationPasses("fire", shot, { projectileCount: 3 })).toBe(true);
+  expect(rangedObservationPasses("fire", { ...shot, remainingCount: 1 }, { projectileCount: 3 })).toBe(false);
+  expect(rangedObservationPasses("fire", { ...shot, projectiles: shot.projectiles.slice(0, 2) }, { projectileCount: 3 })).toBe(false);
+  expect(rangedObservationPasses("fire", { ...shot, projectiles: [...shot.projectiles.slice(0, 2), { ...shot.projectiles[2]!, tick: 50 }] }, { projectileCount: 3 })).toBe(false);
+  expect(rangedObservationPasses("fire", { ...shot, projectiles: shot.projectiles.map((projectile) => ({ ...projectile, type: "minecraft:fireworks_rocket" })) }, { projectileCount: 3 })).toBe(false);
+});
+
+test("Quick Charge rejects a normal reload duration even if the later shot succeeds", () => {
+  const shot = { ...chargedShot(), item: "minecraft:crossbow",
+    events: [{ action: "start" as const, tick: 10 }, { action: "complete" as const, tick: 20 }] };
+  const expected = { minChargeTicks: 9, maxChargeTicks: 11 };
+  expect(rangedObservationPasses("fire", shot, expected)).toBe(true);
+  expect(rangedObservationPasses("fire", { ...shot, events: [{ action: "start", tick: 10 }, { action: "complete", tick: 35 }] }, expected)).toBe(false);
+  expect(rangedObservationPasses("fire", { ...shot, events: [{ action: "start", tick: 10 }, { action: "complete", tick: 11 }] }, expected)).toBe(false);
+});
+
 test("thrown potions require a use event and the matching projectile type", () => {
   const potion = { ...chargedShot(), item: "minecraft:splash_potion", ammunition: "minecraft:splash_potion",
     initialCount: 1, remainingCount: 0, events: [{ action: "use" as const, tick: 10 }],

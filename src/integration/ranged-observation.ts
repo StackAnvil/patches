@@ -7,9 +7,17 @@ export const complexGameplayCaseIds = [
   "fireball-hit", "fireball-dodge", "fireball-reflect", "small-fireball-hit", "small-fireball-dodge",
   "water-current", "lava-forward", "bubble-column-up", "bubble-column-down",
   "bow-hit", "crossbow-hit",
+  "bow-infinity", "bow-infinity-no-ammo", "crossbow-multishot",
+  "crossbow-quick-charge-1", "crossbow-quick-charge-2", "crossbow-quick-charge-3",
 ] as const;
 
 export type RangedAction = "start" | "release" | "complete" | "stop" | "use";
+export interface RangedExpectation {
+  consumed?: number;
+  projectileCount?: number;
+  minChargeTicks?: number;
+  maxChargeTicks?: number;
+}
 export interface RangedObservation {
   item: string;
   ammunition: string;
@@ -50,7 +58,7 @@ export function potionImpactPasses(observation: RangedObservation, effect: strin
 
 /** A server observation contract, without assuming Java's charge or damage formulas. */
 export function rangedObservationPasses(mode: "release" | "cancel" | "empty" | "load" | "fire" | "retain" | "throw",
-  observation: RangedObservation): boolean {
+  observation: RangedObservation, expectation: RangedExpectation = {}): boolean {
   const { initialCount, remainingCount, events, projectiles, error } = observation;
   if (error || !Number.isInteger(initialCount) || !Number.isInteger(remainingCount)
     || initialCount < 0 || remainingCount < 0 || remainingCount > initialCount
@@ -62,22 +70,32 @@ export function rangedObservationPasses(mode: "release" | "cancel" | "empty" | "
   const released = started && events.find((event) => event.action === "release" && event.tick > started.tick);
   const completed = started && events.find((event) => event.action === "complete" && event.tick > started.tick);
   const used = events.find((event) => event.action === "use");
+  const consumed = expectation.consumed ?? 1;
+  const projectileCount = expectation.projectileCount ?? 1;
+  if (!Number.isInteger(consumed) || consumed < 0 || !Number.isInteger(projectileCount) || projectileCount < 1
+    || [expectation.minChargeTicks, expectation.maxChargeTicks].some((ticks) => ticks !== undefined && (!Number.isInteger(ticks) || ticks < 1))
+    || (expectation.minChargeTicks !== undefined && expectation.maxChargeTicks !== undefined && expectation.minChargeTicks > expectation.maxChargeTicks)) return false;
   const expectedType = mode === "throw" ? observation.item : "minecraft:arrow";
-  const oneProjectileAfter = (tick: number) => projectiles.length === 1
-    && projectiles[0]!.type === expectedType && projectiles[0]!.tick >= tick;
+  const projectilesAfter = (tick: number) => projectiles.length === projectileCount
+    && projectiles.every((projectile) => projectile.type === expectedType && projectile.tick >= tick)
+    && Math.max(...projectiles.map((projectile) => projectile.tick)) - Math.min(...projectiles.map((projectile) => projectile.tick)) <= 1;
+  const chargePasses = (end: { tick: number } | undefined): end is { tick: number } => !!end && !!started
+    && (expectation.minChargeTicks === undefined || end.tick - started.tick >= expectation.minChargeTicks)
+    && (expectation.maxChargeTicks === undefined || end.tick - started.tick <= expectation.maxChargeTicks);
+  const ammunitionPasses = initialCount > 0 && initialCount - remainingCount === consumed;
   switch (mode) {
     case "empty": return initialCount === 0 && remainingCount === 0 && projectiles.length === 0;
     case "cancel": return !!started && !completed && remainingCount === initialCount && projectiles.length === 0
       && !!observation.slots?.some((entry) => entry.slot === 1 && entry.tick > started.tick);
-    case "load": return !!completed && initialCount - remainingCount === 1 && projectiles.length === 0;
-    case "fire": return !!completed && initialCount - remainingCount === 1 && oneProjectileAfter(completed.tick);
+    case "load": return chargePasses(completed) && ammunitionPasses && projectiles.length === 0;
+    case "fire": return chargePasses(completed) && ammunitionPasses && projectilesAfter(completed.tick);
     case "retain": {
-      if (!completed || initialCount - remainingCount !== 1 || !oneProjectileAfter(completed.tick)) return false;
+      if (!chargePasses(completed) || !ammunitionPasses || !projectilesAfter(completed.tick)) return false;
       const away = observation.slots?.find((entry) => entry.slot === 1 && entry.tick > completed.tick);
       const back = away && observation.slots?.find((entry) => entry.slot === 0 && entry.tick > away.tick);
-      return !!back && projectiles[0]!.tick >= back.tick;
+      return !!back && projectiles.every((projectile) => projectile.tick >= back.tick);
     }
-    case "release": return !!released && initialCount - remainingCount === 1 && oneProjectileAfter(released.tick);
-    case "throw": return !!used && initialCount - remainingCount === 1 && oneProjectileAfter(used.tick);
+    case "release": return chargePasses(released) && ammunitionPasses && projectilesAfter(released.tick);
+    case "throw": return !!used && ammunitionPasses && projectilesAfter(used.tick);
   }
 }

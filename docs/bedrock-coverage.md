@@ -6136,3 +6136,51 @@ The read-only probe confirms both stone wall shapes and their zero approaching d
 Controlled input, current-driven return to the wall, and later stationary frames remain accepted.
 These route checks verify this contact regression, not complete native movement parity.
 The owned temporary BDS and recorder processes stop normally; existing lab servers, display, and audio guard remain running.
+
+## Ranged enchantment fixtures, October 6, 2026
+
+The complex gameplay suite now contains 35 cases.
+Six new cases exercise Infinity with and without ammunition, Multishot arrows, and Quick Charge levels 1 through 3.
+Mojang's [enchantment reference](https://help.minecraft.net/hc/en-us/articles/360058730912) identifies Multishot's three arrows for one ammunition item.
+The matching BDS supplies the target timing and consumption evidence.
+
+### Target server observations
+
+An isolated network namespace runs strict BDS 1.26.51.1, protocol 2193, and the existing synthetic Gophertunnel client.
+The six final fixtures prepare and pass after the pack rebuild.
+The protocol probe sends ordinary item use and release transactions and resynchronizes the held item before crossbow firing.
+It does not exercise Java translation or native client physics.
+
+| Fixture | Measured result |
+| --- | --- |
+| Infinity with arrows | One owned arrow after the release event; four arrows remain from an initial four. |
+| Infinity without arrows | A use event, no arrow, and no ammunition. |
+| Multishot | Three distinct owned arrow IDs during one server tick; four arrows decrease to three. |
+| Quick Charge 1 | Remaining duration 20; completion after 19 ticks; one arrow consumed and fired. |
+| Quick Charge 2 | Remaining duration 15; completion after 14 ticks; one arrow consumed and fired. |
+| Quick Charge 3 | Remaining duration 10; completion after 9 ticks; one arrow consumed and fired. |
+
+The assertions reject duplicate IDs, missing shots, excess consumption, unrelated projectile types, and arrows spread across separate volleys.
+Quick Charge bounds include the observed interval through two ticks later.
+They reject immediate completion and the ordinary 24-tick interval.
+Three targeted tests cover these distinctions.
+All 138 tooling tests and the TypeScript check pass.
+The behavior pack builds successfully.
+
+### Crossbow rocket investigation
+
+The preliminary probe also loads rockets from the offhand while arrows remain in the inventory.
+It consumes one rocket and spawns one `minecraft:fireworks_rocket` actor, or three with Multishot.
+The generic Script API projectile observer does not identify their owner.
+The packet observation shows initial upward motion `(0, 0.02, 0)`, which does not establish the expected aimed crossbow trajectory.
+These cases therefore remain outside the passing suite.
+A native client comparison and an assertion for ownership and actual launch behavior remain required.
+Raw packet data and server logs remain private.
+
+### Remaining verification
+
+Actual Java input, local weapon timing, native client comparisons, and both connection routes remain unverified for the six new cases.
+Detailed damage, ammunition selection, enchantment interactions, rocket trajectories, and prediction replay remain required.
+Splash and lingering potions, fireball dodging and reflection, powder snow, water, lava, and bubble columns retain their existing fixtures and unresolved comparisons.
+The native GPU guard remains active for the current boot.
+The original eight coverage groups, full complex gameplay matrix, strict BDS, Boar, real servers, and actual platform joins remain required.

@@ -351,6 +351,8 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
     case "bow-no-ammo":
     case "bow-water-release":
     case "bow-hit":
+    case "bow-infinity":
+    case "bow-infinity-no-ammo":
       await uiMouse(ui, "right", 1300);
       await Bun.sleep(300);
       return;
@@ -371,6 +373,10 @@ export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Pr
     case "crossbow-retain":
     case "crossbow-fire":
     case "crossbow-hit":
+    case "crossbow-multishot":
+    case "crossbow-quick-charge-1":
+    case "crossbow-quick-charge-2":
+    case "crossbow-quick-charge-3":
       await uiMouse(ui, "right", 2000);
       await Bun.sleep(300);
       if (id === "crossbow-retain") {

@@ -50,7 +50,7 @@ After the gameplay cases, the runner restarts the Java client and checks that it
 
 ## Complex gameplay
 
-Run the 29-case BDS suite for ranged use, projectile combat, slowing terrain, fluids, and creative flight:
+Run the 35 BDS cases for ranged use, projectile combat, slowing terrain, fluids, and creative flight:
 
 ```bash
 bun run test:integration -- --route java-bedrock --gameplay-complex
@@ -77,6 +77,10 @@ The Java/Geyser probe does not implement these new fixtures; the runner rejects 
 | `bow-hit`, `crossbow-hit` | Fire at a stationary cow | The owned arrow hits the fixture target, causes damage, and lowers its health. |
 | `crossbow-cancel` | Change slot during loading | A witnessed slot change, no completed load, no projectile, and unchanged ammunition. |
 | `crossbow-no-ammo` | Attempt to load without arrows | No projectile or ammunition change. Compare with the positive loading case. |
+| `bow-infinity` | Draw and release an Infinity bow with arrows | One owned arrow, ordered charging events, and no ammunition consumption. |
+| `bow-infinity-no-ammo` | Attempt to draw an Infinity bow without arrows | No projectile or ammunition change. |
+| `crossbow-multishot` | Load and fire a Multishot crossbow | Three distinct owned arrows in one volley, after completion, with one arrow consumed. |
+| `crossbow-quick-charge-1`, `crossbow-quick-charge-2`, `crossbow-quick-charge-3` | Load and fire each Quick Charge level | One consumed arrow and one owned shot, with completion inside the target BDS timing window. |
 | `splash-potion-speed` | Throw a swiftness potion downward | One consumed potion, its owned impact, and a later speed effect with positive duration. |
 | `lingering-potion-slowness` | Throw a lingering slowness potion downward | The matching impact, a nearby cloud, and a later slowness effect. |
 | `fireball-hit`, `small-fireball-hit` | Remain in the firing lane | A natural ghast or blaze shot hits the player and causes health loss. |
@@ -100,11 +104,20 @@ These server observations support diagnosis and later native comparison.
 They do not prove local trajectory accuracy, complete charge or damage formulas, potion duration scaling, or correction replay.
 
 The target headless BDS accepts the fixture APIs and passes the large and small fireball hit controls.
-All 29 fixture preparations pass on that server.
+The initial 29 fixture preparations pass on that server.
+The six enchantment cases also prepare and pass through a synthetic protocol client on BDS 1.26.51.1, protocol 2193.
+Quick Charge levels 1, 2, and 3 report remaining durations of 20, 15, and 10 ticks.
+Their measured start-to-completion intervals are 19, 14, and 9 ticks.
+The assertions allow windows of 19–21, 14–16, and 9–11 ticks.
+They reject both an ordinary reload and an immediate completion.
 Native packet probes also pass the splash-speed and lingering-slowness effect checks.
 Bow and crossbow target damage and large-fireball reflection also pass these server controls.
 These probes use a synthetic protocol client, not the translated Java client.
 Java input, client rendering, native client comparisons, and direct or ViaProxy gameplay remain unverified for the new cases.
+Crossbow rockets still need an ownership and launch assertion that works with the target server APIs.
+The isolated probe spawns one rocket, or three with Multishot, and consumes one offhand rocket.
+Its generic projectile observer cannot establish ownership, and the initial actor motion does not establish a crossbow trajectory.
+These observations do not qualify as passing rocket fixtures.
 The [complex gameplay matrix](bedrock-complex-gameplay.md) retains the remaining combat, flight, mount, inventory, fluid, and network requirements.
 
 ## Resource pack conversion
