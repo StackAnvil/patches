@@ -258,3 +258,26 @@ There are no failures or errors; 135 environment-dependent tests skip.
 The implementation uses the existing unmounted breathing-point integration; player-specific offset overrides and mounted geometry need further comparison.
 Other water depths, falling water, currents, waterlogged blocks, exact system phases, and wall-climbing behavior need live native verification.
 The separate initial ceiling corrections and prediction history remain unresolved.
+
+### Preserve motion when the swimming body leaves water
+
+The matching native `SwimControlSystem` view requires `WasInWaterFlagComponent`.
+An airborne swimming pose therefore skips its vertical controller, including the head-out motion cap.
+The add-on now checks body water before applying either behavior.
+It retains motion for ordinary air gravity on the exit frame.
+
+In the previous strict-BDS 45-degree ceiling case, Java reports vertical motion of -0.0784000 while the server reports +0.0556102.
+The revised direct and ViaProxy cases retain +0.0556104, with no correction for that exit frame.
+Both routes still receive two corrections per tested angle during ceiling re-entry.
+Packet and local-frame evidence shows server actor metadata clearing swimming before that re-entry.
+The matching native handler queues metadata with its server tick; core currently discards that tick.
+The queue's application and local prediction rules remain under investigation.
+
+The direct open-water regressions match all 192 saved native frames across 30, 35, and 45 degrees.
+They retain swimming and sprint events and receive no corrections during those cases.
+ViaProxy matches another 64 saved native frames at 45 degrees without corrections.
+Its 48-frame held swimming-jump regression also receives no corrections.
+The dependency build reports 16 converter, 636 core, and 610 add-on test cases, with 135 skips and no failures or errors.
+
+These comparisons do not establish complete ceiling parity.
+Fresh native ceiling captures, prediction history, and actual Windows/macOS game joins remain required.

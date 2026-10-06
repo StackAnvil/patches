@@ -4152,3 +4152,35 @@ Player-specific breathing offsets, mounted geometry, exact system phases, and wa
 Flowing and falling water, currents, waterlogged blocks, flying, and residual-blend dry jumps need live verification.
 The separate initial ceiling corrections and prediction history remain unresolved.
 Real-server interoperability and actual Windows/macOS game joins remain requirements.
+
+### Preserve swimming momentum outside body water, October 6, 2026
+
+**Reference:** Matching Windows 1.26.51.1 executable inspection identifies `WasInWaterFlagComponent` as a required component of the `SwimControlSystem` view.
+An airborne swimming pose skips that controller, including its head-out vertical cap.
+
+**Implemented:** The add-on checks body water before running the swimming vertical controller.
+The exit frame retains its motion for ordinary air gravity.
+Core continues to validate completed samples and construct auth input for direct connections and ViaProxy.
+The change belongs to the existing add-on prediction patch.
+
+**Verified:** The previous 45-degree strict-BDS ceiling case discards upward momentum and reports -0.0784000 vertical motion.
+The server instead reports +0.0556102.
+Both revised routes retain +0.0556104 and receive no correction for that first body-water exit frame.
+Both routes still receive two corrections per angle during re-entry, at 35 and 45 degrees.
+
+Separate direct open-water cases match 192 saved native frames across 30, 35, and 45 degrees, including swimming and sprint events.
+They receive no corrections during those cases.
+Maximum differences remain below 0.000031 blocks vertically, 0.000008 blocks horizontally, and 0.000000060 blocks per tick in motion.
+ViaProxy matches 64 saved native frames at 45 degrees without corrections.
+Its 48-frame held swimming-jump regression also receives no corrections.
+Both recordings join and spawn with protocol 2193.
+
+The dependency build reports 16 converter, 636 core, and 610 add-on test cases.
+There are 135 skips and no failures or errors.
+The full add-on stack replays successfully.
+
+**Incomplete:** Packet and local-frame evidence shows server actor metadata clearing the local swimming state before ceiling re-entry.
+Matching executable inspection identifies a native metadata queue carrying the server tick; core currently discards that tick.
+The queue's application, predicted flags, correction history, and resimulation require further research and implementation.
+The first air-frame fix does not establish complete ceiling parity.
+Fresh native ceiling captures remain required, alongside the broader movement, real-server, and Windows/macOS game-join requirements.
