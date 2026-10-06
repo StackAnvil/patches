@@ -162,3 +162,13 @@ The targeted thirteen-test suite checks all sixty-four boolean face states with 
 It also checks returning to an earlier state and mutating a returned overlay without changing later resolutions.
 Core Checkstyle and the complete CubeConverter, ViaBedrock, and ViaProxy builds pass.
 Live fixture timing and platform verification are recorded in the coverage ledger.
+
+
+## Remaining position offsets
+
+Production currently omits `minecraft:random_offset` from converted custom-block properties.
+Matching-build instruction comparisons establish authored range scaling, position sampling, and the common component collision paths.
+The single collision envelope uses continuous offsets; component box collection floors each offset into integer `BlockPos`.
+Culling remains independent of these physical boxes.
+The [block offset reference](../../../docs/bedrock-coverage.md#native-block-offsets-and-component-collision-shapes-october-6-2026) records verification scope and remaining wire and lifecycle work.
+Complete integration must transport effective ranges through ViaProxy and apply the appropriate render, outline, and collision path.

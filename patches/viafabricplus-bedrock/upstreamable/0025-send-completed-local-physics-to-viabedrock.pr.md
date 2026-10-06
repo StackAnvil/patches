@@ -682,3 +682,21 @@ Actual nearby-solid production, buffer growth, and complete physics remain unver
 
 The [player overlap reference](../../../docs/bedrock-coverage.md#native-player-overlap-defaults-and-collision-state-october-6-2026) records addresses and fixture limits.
 Production still uses Java collision solving; these findings do not implement native movement or correction replay.
+
+
+## Native block collision providers
+
+Matching-build comparisons now establish position sampling, component lookup, range scaling, and the common block collision wrappers.
+The offset initializer converts authored endpoints by float32 `1/16` and retains unsigned step counts.
+Exact initialization and lookup pass 2,048 cases each.
+Position sampling passes 8,192 cases and 8,192 additional Y-invariance checks.
+
+Component boxes retain their list order, normalize endpoints, and use strict intersection.
+Exact comparisons pass 4,096 cases with sufficient existing vector capacity.
+The single collision envelope uses continuous offsets, while the component append path floors each offset into `BlockPos`.
+Exact wrappers pass another 4,096 cases for each path.
+The independent models follow executable float32 order, including differences obscured by decompilation.
+
+The [block offset reference](../../../docs/bedrock-coverage.md#native-block-offsets-and-component-collision-shapes-october-6-2026) records addresses and fixture boundaries.
+Wire definitions, range validation, per-type overrides, and production integration remain incomplete.
+Production still uses Java collision solving; the converted custom-block properties currently omit random offsets.

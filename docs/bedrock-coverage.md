@@ -236,7 +236,7 @@ Core still needs to derive equipment attributes from target item definitions, in
 | R2 | Server particle dispatch | Incomplete | Core transports complete requests, typed variables, actor identity, and Java fallback bodies to native clients. Direct and ViaProxy authored fixtures verify dispatch, typed size/tint records, and fallback decoding. Complete actor queries, remote actor transport, interpolation, lifecycle comparisons, and visible native parity remain open. |
 | R3 | Particle runtime | Incomplete | Complete components, actor contexts, child effects, concurrency, and visible lifecycle comparisons. |
 | R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core transports signed loops, optional playback fields, handle controls, and ordered sound resources through direct connections and ViaProxy. Add-on playback controls pass captured-session OpenAL checks on both routes. Native request admission now matches the tested float range gate on both add-on routes. Server captions now have core state, transported translations, client controls, and a HUD on both add-on routes. Complete actor/local captions, localization/layout comparisons, stream policies, range behavior for other sources, audible comparisons, and broader lifecycle verification. |
-| R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties through ViaProxy. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, and directional light occlusion. |
+| R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties through ViaProxy. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, directional light occlusion, and native random offsets. Offset and collision kernels have matching-build instruction comparisons below, but production ignores `minecraft:random_offset`. |
 | R6 | Equipped attachables | Incomplete | Accepted actor graphs now travel through ViaProxy. Both routes render the supported costume and owner-bound chest wings. Complete proxy properties, variants, explicit bone bindings, per-bone materials, material families, and broader native comparisons. |
 
 The attachable matrix tests establish supported same-name affine bindings.
@@ -5201,5 +5201,67 @@ Request buffers have sufficient capacity; growth and actual nearby-solid product
 These comparisons do not implement native physics or establish complete player movement parity.
 Integration still needs native block shapes, remaining state producers, coherent frame identity, retained world state, and ordered correction replay.
 Actual direct and ViaProxy comparisons, Windows and macOS game joins, and all eight coverage groups remain required.
+The previous public revision passed build, tooling, and Ubuntu, Windows, and macOS permission jobs.
+No native game launch occurred during this investigation; the current-boot GPU guard remains in force.
+
+
+### Native block offsets and component collision shapes, October 6, 2026
+
+**Reference:** These comparisons use Bedrock 1.26.51.1, build 51061372, protocol 2193.
+The concrete world adapter calls `BlockType::addCollisionShapes` through virtual slot `0x30`.
+The [versioned block type declaration](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/world/level/block/BlockType.h) identifies this slot.
+Per-type overrides remain separate requirements.
+The voxel registry defines culling and does not supply these collision boxes.
+
+**Component loading:** Initializer `0x148bb4d30` multiplies each authored range endpoint by float32 `1/16`.
+It preserves unsigned step counts and requires both storage flags before replacing an existing component.
+Lookup `0x142a6b060` prefers the block's component and otherwise reads the block type's component.
+Exact initialization and lookup pass 2,048 cases each, with adjacent bytes unchanged.
+Fixtures supply an initialized TLS index and existing component storage.
+Initial insertion, ownership, validation, and wire decoding remain unverified.
+The [versioned offset description](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/world/level/block/components/BlockRandomOffsetDescription.h) supplies the range and step fields.
+
+**Position sampling:** Kernel `0x149ac0100` seeds the offset from integer X and Z; Y does not enter the seed.
+It initializes Xoroshiro128++ with two mixed 64-bit values.
+Each axis uses its fixed position in the random sequence, including axes with constant ranges.
+Zero steps select a continuous float32 value; one step selects the range midpoint.
+Larger step counts select a discrete endpoint grid through floor conversion.
+A non-increasing range returns its minimum.
+
+Exact sampling passes 8,192 cases and another 8,192 checks that change only Y.
+Cases include negative positions, signed coordinate extremes, fixed ranges, and unsigned step counts through `0xffffffff`.
+The independent model follows the executable's integer overflow, rotation, and float32 operation order.
+CRT floor uses a fixture implementation; the sampling kernel's instructions remain unchanged.
+The [versioned offset component](https://github.com/LiteLDev/LeviLamina/blob/e0c75244af2f7576058976ab6d75a17e10de3f92/src/mc/world/level/block/components/BlockRandomOffsetComponent.h) identifies the sampled fields.
+
+**Component boxes:** Kernel `0x149638690` translates the transformed box list by integer position plus integer offset.
+It normalizes endpoints, removes degenerate boxes, and applies strict intersection when a query box exists.
+Surviving boxes append in original order.
+The return value retains the enabled byte, even when no box appends.
+Exact comparisons pass 4,096 cases and check 2,083 appended boxes.
+They also preserve existing entries and component bytes.
+The fixtures have sufficient vector capacity; growth remains unverified.
+
+**Two shape paths:** Kernel `0x143182a80` builds one collision envelope with a continuous position offset.
+Its float32 translation adds position and offset before adding local bounds.
+The decompiler obscures this operation order; the independent model follows disassembly.
+An enabled empty component produces an envelope normalized from the initial extreme bounds.
+It does not represent an empty collision list.
+
+Kernel `0x143182e50` takes a different path when a collision component exists.
+It floors the sampled offset on each axis, converts it to integer `BlockPos`, then appends component boxes.
+Without that component, it calls the virtual single-shape method and retains its continuous offset.
+These paths cannot share one translated envelope as a faithful replacement for all collision queries.
+
+Exact wrapper comparisons pass 4,096 envelope cases and 4,096 append cases, with 6,541 appended boxes.
+The comparison executes the native offset and component-box kernels inside the wrappers.
+Fixtures supply component lookup, the default local-shape virtual method, CRT floor, and the security-cookie boundary.
+Cases cover disabled and empty components, intersections, existing vector entries, and offset presence.
+Actual per-type overrides and visible native behavior remain unverified.
+
+**Incomplete:** Production ignores `minecraft:random_offset` and still uses Java collision solving.
+These comparisons establish subroutine behavior, not a complete native physics implementation.
+Integration needs wire definitions, effective range validation, per-type shapes, state producers, retained world state, frame identity, and ordered correction replay.
+Direct and ViaProxy behavior, Windows and macOS game joins, and all eight coverage groups remain required.
 The previous public revision passed build, tooling, and Ubuntu, Windows, and macOS permission jobs.
 No native game launch occurred during this investigation; the current-boot GPU guard remains in force.
