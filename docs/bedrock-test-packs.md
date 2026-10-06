@@ -48,6 +48,40 @@ The runner saves before and after screenshots, logs, and `gameplay-results.json`
 
 After the gameplay cases, the runner restarts the Java client and checks that it rejoins the same Bedrock world. It runs the modpack join even when a gameplay assertion fails, then exits with the recorded failures. The resource pack run also reconnects while it checks cache reuse.
 
+## Complex gameplay
+
+Run the BDS suite for ranged use, slowing terrain, water movement, and creative flight:
+
+```bash
+bun run test:integration -- --route java-bedrock --gameplay-complex
+```
+
+You can combine `--gameplay-complex` with `--gameplay-probe` or select individual IDs with `--gameplay-cases`.
+The Java/Geyser probe does not implement these new fixtures; the runner rejects that route before starting servers.
+
+| Case | Java action | Server assertion |
+| --- | --- | --- |
+| `bow-release` | Hold use, then release | Ordered start/release events, one moving owned arrow, and one consumed arrow. |
+| `bow-cancel` | Change hotbar slot while drawing | Charging started, no arrow spawned, and ammunition remained unchanged. |
+| `bow-no-ammo` | Attempt to draw without arrows | No projectile or ammunition change. Compare with `bow-release` to detect missing input handling. |
+| `crossbow-load` | Charge without firing | Start/completion events, one consumed arrow, and no projectile. |
+| `crossbow-fire` | Load, release, then use again | A completed load precedes one owned arrow, with one arrow consumed in total. |
+| `crossbow-retain` | Load, switch away and back, then fire | Server slot samples witness the round trip between completion and the shot. |
+| `splash-potion-throw`, `lingering-potion-throw` | Throw the default potion | A use event, one matching owned projectile, and one consumed potion. |
+| `powder-snow-sink` | Remain on powder snow without boots | At least ten samples and descent into the snow. |
+| `powder-snow-boots` | Remain on powder snow with leather boots | At least ten samples and no descent through the surface. |
+| `water-forward` | Hold forward while submerged | At least ten water samples and 0.6 blocks of forward travel. |
+| `creative-flight-ascend` | Toggle flight and hold jump | At least ten flight samples and ascent above one block. |
+
+Ranged observations include event ticks, remaining use duration, ammunition counts, projectile IDs, and sampled projectile speed.
+The Script API reports `useDuration` as remaining ticks, not elapsed charge time.
+The movement cases retain up to 200 position, velocity, water, flight, and grounded frames.
+These server observations support diagnosis and later native comparison.
+They do not prove local trajectory accuracy, charge formulas, damage, potion effects, or correction replay.
+
+All new live cases remain unverified until the lab can run them.
+The [complex gameplay matrix](bedrock-complex-gameplay.md) retains the remaining combat, flight, mount, inventory, fluid, and network requirements.
+
 ## Resource pack conversion
 
 The [resource probe](../test-packs/resource-probe/resource_pack/manifest.json) replaces the diamond texture and defines a textured custom block. Run the cache and rendering test with:

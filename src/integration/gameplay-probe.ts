@@ -3,6 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { root } from "../model.ts";
 import { geyserCaseIds, geyserNegativeControlIds } from "./geyser.ts";
+import { complexGameplayCaseIds } from "./ranged-observation.ts";
 
 const prefix = "[ViaBedrock Gameplay Probe] ";
 
@@ -16,7 +17,7 @@ export const gameplayCaseIds = [
   "crafting-manual-sticks", "crafting-book-sticks", "crafting-bulk-sticks",
 ] as const;
 
-export const allGameplayCaseIds = [...gameplayCaseIds, ...geyserCaseIds, "offhand-block-place"] as const;
+export const allGameplayCaseIds = [...gameplayCaseIds, ...complexGameplayCaseIds, ...geyserCaseIds, "offhand-block-place"] as const;
 export type GameplayCaseId = typeof allGameplayCaseIds[number];
 export type GameplayPhase = "prepare" | "start" | "verify" | "invalidate";
 
@@ -346,6 +347,52 @@ async function creativeSelect(ui: Ui, mainInventory = false, itemName = "nether 
 
 export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Promise<void>): Promise<void> {
   switch (id) {
+    case "bow-release":
+    case "bow-no-ammo":
+      await uiMouse(ui, "right", 1300);
+      await Bun.sleep(300);
+      return;
+    case "bow-cancel":
+      await Promise.all([
+        uiMouse(ui, "right", 1300),
+        (async () => { await Bun.sleep(500); await uiKey(ui, "2"); })(),
+      ]);
+      await Bun.sleep(300);
+      return;
+    case "crossbow-load":
+    case "crossbow-retain":
+    case "crossbow-fire":
+      await uiMouse(ui, "right", 2000);
+      await Bun.sleep(300);
+      if (id === "crossbow-retain") {
+        await uiKey(ui, "2");
+        await Bun.sleep(350);
+        await uiKey(ui, "1");
+        await Bun.sleep(350);
+      }
+      if (id !== "crossbow-load") {
+        await uiMouse(ui, "right");
+        await Bun.sleep(300);
+      }
+      return;
+    case "splash-potion-throw":
+    case "lingering-potion-throw":
+      await uiMouse(ui, "right");
+      await Bun.sleep(300);
+      return;
+    case "powder-snow-sink":
+    case "powder-snow-boots":
+      await Bun.sleep(1800);
+      return;
+    case "water-forward":
+      await ui(["ui", "key-hold", "w", "1800", "--client", "java"]);
+      return;
+    case "creative-flight-ascend":
+      await uiKey(ui, "space");
+      await Bun.sleep(100);
+      await ui(["ui", "key-hold", "space", "1200", "--client", "java"]);
+      await Bun.sleep(350);
+      return;
     case "movement-left":
     case "movement-right":
       await ui(["ui", "key-hold", id === "movement-left" ? "a" : "d", "500", "--client", "java"]);

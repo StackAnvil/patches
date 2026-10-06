@@ -66,6 +66,19 @@ The default gameplay run includes the creative case. The map case checks that an
 
 The offhand placement and rocket cases require native Bedrock 1.26.51.1 behavior. Dirt remains in the offhand without placement. All three offhand rockets remain during a valid glide. The mainhand cases still require placement or a rocket boost. Native client captures through the official Geyser fixture established these expectations on October 1, 2026.
 
+## Complex gameplay
+
+The opt-in complex suite adds bows, crossbows, thrown potions, powder snow, water movement, and creative flight:
+
+```bash
+bun run test:integration -- --route java-bedrock --gameplay-complex
+```
+
+The [probe guide](../../docs/bedrock-test-packs.md#complex-gameplay) lists its twelve cases and observation limits.
+The [coverage matrix](../../docs/bedrock-complex-gameplay.md) tracks the broader movement and combat requirements.
+These fixtures need live verification against the pinned target.
+The published Script API 2.9.0 types check the complex fixture code during `bun run check`.
+
 ## Update the catalog
 
 The generated catalog is in `src/catalog.ts`. The source is the `behavior_pack/entities` directory from [Mojang's Bedrock samples](https://github.com/Mojang/bedrock-samples/tree/v1.26.40.05/behavior_pack/entities).

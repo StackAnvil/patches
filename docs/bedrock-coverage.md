@@ -5692,3 +5692,32 @@ The current-boot GPU guard still prevents fresh native visual comparisons.
 
 **CI:** The published collector revision passes build, tooling, and Ubuntu/Windows/macOS permission jobs in [CI run 37489427416](https://github.com/StackAnvil/patches/actions/runs/37489427416).
 Those jobs do not establish successful platform game joins or full native movement parity.
+
+## Complex gameplay coverage expansion (October 6, 2026)
+
+The [complex gameplay matrix](bedrock-complex-gameplay.md) now retains the requested flight, mount, combat, ranged-use, terrain, fluid, inventory, and prediction cases.
+It includes bows, crossbows, splash and lingering potions, fireball deflection and dodging, powder snow, and mixed movement cases.
+Official release notes, fixed adjacent content definitions, and target Script API types provide research leads.
+Numeric behavior still needs confirmation against Bedrock 1.26.51.1.
+
+**Implemented:** Twelve BDS fixtures and Java input actions are available through `--gameplay-complex`.
+Ranged assertions require use events, ammunition conservation, moving owned projectiles, and event ordering where applicable.
+The retained-crossbow case also requires sampled hotbar transitions after loading and before firing.
+Movement fixtures capture bounded server frames for powder snow, submerged movement, and creative ascent.
+Deferred projectile callbacks cannot update another run or a verified fixture.
+
+**Verified:** Assertion and callback tests pass, TypeScript checks the complex fixtures against Script API 2.9.0, and the behavior pack bundles successfully.
+
+**Unverified:** The live BDS suite stopped at the occupied private-display check.
+No lab processes were stopped to run it.
+The current-boot GPU guard continues to prevent fresh native comparisons.
+The Java/Geyser probe does not yet implement the complex fixtures.
+These checks establish neither live gameplay parity nor anticheat compatibility.
+
+**Source gaps:** Horse screens reject mule entities and expose no chest storage.
+Predicted mounts are limited to Java boats and abstract horses.
+Spear animation context does not model attack reach or relative-speed conditions.
+The pending prediction sample does not supply coherent frame history and world-state replay.
+The matrix records these findings and the remaining fixture, production, and comparison work.
+
+All eight original coverage groups, direct and ViaProxy routes, strict BDS, diagnostic Boar checks, CubeCraft, and actual platform joins remain requirements.

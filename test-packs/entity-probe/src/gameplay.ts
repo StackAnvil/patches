@@ -1,4 +1,5 @@
 import { BlockPermutation, CommandPermissionLevel, EquipmentSlot, GameMode, ItemStack, system, world } from "@minecraft/server";
+import { registerComplexGameplay } from "./complex-gameplay.ts";
 
 const PREFIX = "[ViaBedrock Gameplay Probe]";
 const ENTITY_TAG = "viabedrock_gameplay_probe";
@@ -67,6 +68,7 @@ async function prepareArena(player, gameMode = GameMode.Survival) {
     }
   }
   player.runCommand("clear @s");
+  for (const effect of player.getEffects()) player.removeEffect(effect.typeId);
   const gear = equipment(player);
   for (const slot of [EquipmentSlot.Head, EquipmentSlot.Chest, EquipmentSlot.Legs, EquipmentSlot.Feet, EquipmentSlot.Offhand]) {
     gear.setEquipment(slot);
@@ -798,6 +800,8 @@ world.afterEvents.playerSpawn.subscribe((event) => {
   if (!event.initialSpawn) respawns++;
 });
 world.afterEvents.playerDimensionChange.subscribe(() => dimensionChanges++);
+
+registerComplexGameplay({ define, prepareArena, inventory, equipment, countItem, blockAt, position, getActive: () => active });
 
 export function gameplayIds() {
   return [...scenarios.keys()];

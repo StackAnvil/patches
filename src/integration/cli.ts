@@ -16,6 +16,7 @@ import { allGameplayCaseIds, gameplayCasesForBackend, installProbeGuiScale, runG
 import { convertedGeyserTexturesMatch, geyserBedrockVersion, geyserCaseIds, geyserEntityUpdatesMatch, installJavaProbe } from "./geyser.ts";
 import { convertedPackCount, convertedTextureMatches, installResourceProbe } from "./resource-probe.ts";
 import { connectionFailure, waitForJoin, type JoinRoute } from "./join.ts";
+import { complexGameplayCaseIds } from "./ranged-observation.ts";
 import { installModpack } from "./modpack.ts";
 import { configureShaders, graphicsFailures, installGraphicsProfile, readGraphicsLock, integrationPrismNames, type GraphicsProfile } from "./graphics.ts";
 
@@ -470,6 +471,7 @@ async function main(): Promise<void> {
   const resourceProbe = selected.includes("--resource-pack-probe");
   const resourceRun = Date.now().toString(36);
   const gameplayProbe = selected.includes("--gameplay-probe");
+  const complexGameplay = selected.includes("--gameplay-complex");
   const geyserProbe = selected.includes("--geyser-probe");
   const negativeControls = selected.includes("--negative-controls");
   const gameplayInput = selected.includes("--gameplay-cases") ? selected[selected.indexOf("--gameplay-cases") + 1] : undefined;
@@ -484,12 +486,16 @@ async function main(): Promise<void> {
   if (shaders && !routes.some((route) => route.startsWith("java-"))) throw new Error("--shaders requires a Java client route.");
   const geyserRoute = routes.includes("java-geyser");
   const gameplayCases: GameplayCaseId[] = [...new Set([
+    ...(complexGameplay ? complexGameplayCaseIds : []),
     ...(geyserProbe ? geyserCaseIds : []),
     ...(gameplayInput ? gameplayInput.split(",") as GameplayCaseId[]
       : gameplayProbe ? gameplayCasesForBackend(geyserRoute) : []),
     ...(negativeControls ? ["chest-transfer" as const] : []),
   ])];
   if (gameplayCases.some((id) => !allGameplayCaseIds.includes(id))) throw new Error(`Unknown gameplay case. Use: ${allGameplayCaseIds.join(", ")}.`);
+  if (geyserRoute && gameplayCases.some((id) => complexGameplayCaseIds.includes(id as typeof complexGameplayCaseIds[number]))) {
+    throw new Error("Complex gameplay fixtures require --route java-bedrock; the Java probe does not implement them yet.");
+  }
   if (gameplayCases.includes("offhand-block-place") && !geyserRoute) {
     throw new Error("Delivered offhand dirt requires the java-geyser backend; use offhand-ineligible-block on java-bedrock.");
   }
