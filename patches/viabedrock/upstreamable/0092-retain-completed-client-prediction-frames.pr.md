@@ -1,5 +1,18 @@
 # Completed player prediction frames
 
+## Advancing frame identities
+
+Completed client frame IDs increase throughout each connection, including stationary and mounted samples.
+Core retains the last accepted frame ID after consumption or position rejection.
+Duplicate and older payloads cannot replace newer pending physics or bind consumed physics to a later auth-input tick.
+Valid rider time bindings remain available.
+New connections create fresh storage and accept frame zero.
+
+Targeted regressions exercise storage and the actual custom-payload handler.
+The handler regression fails against the earlier implementation and passes with the retained frame ID.
+It checks historical time bindings, motion, posture, frame ordering, rejected positions, and connection reset.
+These tests do not establish native trajectory parity or fresh live route behavior.
+
 ## Purpose
 
 Use completed local physics for Bedrock auth-input motion when a client provides the negotiated prediction channel.

@@ -134,3 +134,22 @@ Both Java clients have the add-on installed, but this fix changes only core.
 Both recordings exit successfully, and the owned server stops.
 Fresh native comparisons remain blocked by the current-boot GPU guard.
 The [complex gameplay record](../../../docs/bedrock-complex-gameplay.md#server-hotbar-selection-during-charging-october-6-2026) retains the verification scope.
+
+## Bundle identity zero
+
+Dynamic storage ID zero is a valid unsigned identity.
+Core requires an exact `IntTag` for `bundle_id` and shares that lookup between rendered contents and holder tracking.
+Missing or malformed tags cannot alias storage zero.
+Present unsigned IDs retain every bit, including the signed Java representations above `2^31 - 1`.
+
+An isolated official BDS 1.26.51.1, build 51061372, protocol 2193 probe allocates bundle IDs zero and one.
+Insertion, extraction, and compaction succeed with zero.
+The server rejects a stale stack network ID and accepts a retry with the authoritative ID.
+It reports complete 64-slot contents in this probe.
+Partial dynamic snapshots retain their existing prefix update semantics.
+
+Three tests cover separate zero and one contents, malformed identities, and unsigned container-ID encoding.
+These tests fail when zero is rejected again.
+The probe uses a headless protocol client and does not establish native graphical or Java bundle UI parity.
+Java insertion, extraction, selection, nesting, weights, and complete rejection recovery remain separate live requirements.
+Raw captures stay private.

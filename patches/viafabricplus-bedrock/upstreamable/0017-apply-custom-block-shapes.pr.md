@@ -220,3 +220,42 @@ All 30 patches replay; the 605-test suite passes with 117 optional skips and no 
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-terrain-neighborhood-sampling-october-7-2026) records supplied flags and channel values.
 These checks do not establish native propagation, runtime block identity, or visible parity.
 Cached solidity, per-type ambient overrides, rotated geometry, alternative renderers, enhanced lighting, and nonzero-strength flat paths remain open.
+
+## Sodium and Iris terrain lighting
+
+Sodium bypasses vanilla `BlockModelLighter` on the tested Java 26.3 client.
+Optional typed bridges retain native lighting annotations through baked-quad import and copies.
+Raw loads and resets clear annotations before quad reuse.
+Both terrain renderers call the same adapter and the core native corner sampler.
+
+The Sodium bridge writes the four light and shade outputs for accepted custom faces.
+Its later emissive, tint, normal, geometry, and buffer processing stays active, including Iris encoder hooks.
+Unannotated faces and ordinary Java states delegate to Sodium's existing calculation.
+The add-on has no compile-time Sodium dependency.
+
+Two adapter tests cover 432 face, plane, and vertex-order combinations, plus inset emission and authored shade direction.
+Compatibility targets Sodium 0.9.2, Iris 1.11.7, and Complementary Reimagined r5.9.3 on Java 26.3.
+Native propagation, runtime block identities, nonzero-strength flat paths, enhanced-lighting equivalence, and visible native GPU comparisons remain separate requirements.
+
+The final built artifact passes actual Sodium `shadeQuad` dispatch checks with a copied client `LevelSlice`.
+Ordinary output matches the unwrapped pipeline; accepted native output matches the shared sampler.
+Baked import, base and mutable loads, reset, and copy preserve the expected annotation lifecycle.
+Normals and cull state remain unchanged, and later emissive processing still produces full brightness.
+These checks pass with Complementary active, after saved-config shader disable and enable, and after resource reload.
+The probe loads no replacement production classes or mixins.
+Software Mesa rendering establishes compatibility, not visible native GPU parity.
+
+The final plain-client replay also passes transport and rendering checks with neither Sodium nor Iris installed.
+Actual vanilla ambient and zero-strength flat callbacks match all four light and color outputs.
+An annotation on an ordinary Java state retains vanilla results.
+Both direct replays install all 216 recorded geometry skins with no rejected skins.
+These recordings verify the translated scene and integration; they are not new live CubeCraft joins.
+
+The final ViaProxy shader replay passes the same actual quad, lifecycle, shader-toggle, and resource-reload controls.
+It installs all 216 geometry skins without rejection and evaluates 41 drawable model keys.
+The replay observer sees all 31 expected controller identities in the proxy JVM.
+Two transient actors despawn before Java world readiness, so their original controller returns require server-side observation.
+Strict skin, drawing, unresolved-model, and combined client/proxy error checks remain active.
+The observer is test tooling and changes no production packet timing or actor selection.
+The original client-only audit failure remains preserved privately.
+These results establish recorded-scene compatibility on software Mesa; live joins and native visible lighting parity remain required.

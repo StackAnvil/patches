@@ -1,4 +1,4 @@
-From 067e5e43de11be1fc517292f8967ab5c81ffd573 Mon Sep 17 00:00:00 2001
+From 42010b58edb33338d638b0583ede087201d8cca2 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:28 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -312,6 +312,8 @@ Compare forced transitions and longer-effect preservation in the same
 phase. Retained snapshots keep their original clock and cannot renew time.
 Full packet-phase handling of zero-duration markers and complete world
 rewind remain separate verification requirements.
+
+Completed local frame IDs increase throughout a connection. Retain the last accepted identity after consumption or position rejection so duplicate and older payloads cannot bind stale motion and posture to a later auth-input tick. Keep rider time bindings unchanged. Targeted storage and real custom-payload handler regressions verify frame order, rejected positions, skipped frames and connection reset.
 ---
  .../api/model/CollisionContact.java           |  80 ++++++
  .../viabedrock/api/model/FluidCurrent.java    |  44 +++
@@ -344,7 +346,7 @@ rewind remain separate verification requirements.
  .../protocol/rewriter/ItemRewriter.java       |  19 ++
  .../protocol/storage/EntityTracker.java       |  18 ++
  .../protocol/storage/PlayerInputStorage.java  |   3 +-
- .../storage/PlayerPredictionStorage.java      |  93 +++++++
+ .../storage/PlayerPredictionStorage.java      | 101 +++++++
  .../api/model/CollisionContactTest.java       |  60 +++++
  .../api/model/FluidCurrentTest.java           |  56 ++++
  .../model/GeyserMovementReferenceTest.java    |  50 ++++
@@ -354,7 +356,7 @@ rewind remain separate verification requirements.
  .../api/model/MovementEffectTimelineTest.java | 253 ++++++++++++++++++
  .../api/model/PlayerCorrectionTest.java       |  67 +++++
  .../api/model/PlayerPostureTest.java          | 152 +++++++++++
- .../api/model/PlayerPredictionTest.java       | 145 ++++++++++
+ .../api/model/PlayerPredictionTest.java       | 179 +++++++++++++
  .../api/model/SneakingInputStateTest.java     |  32 +++
  .../api/model/SwiftSneakStateTest.java        |  32 +++
  .../UnderwaterMovementAttributeTest.java      |  35 +++
@@ -367,7 +369,8 @@ rewind remain separate verification requirements.
  .../packet/ClientPlayerPacketsTest.java       |  32 ++-
  .../packet/MovementEffectPacketsTest.java     | 116 ++++++++
  .../packet/PlayerCorrectionPacketTest.java    | 184 +++++++++++++
- 54 files changed, 3208 insertions(+), 43 deletions(-)
+ .../packet/PlayerPredictionPacketTest.java    |  87 ++++++
+ 55 files changed, 3337 insertions(+), 43 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FluidCurrent.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/GeyserMovement.java
@@ -405,6 +408,7 @@ rewind remain separate verification requirements.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/model/ItemUseModifiersTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPacketsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerCorrectionPacketTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerPredictionPacketTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java b/src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
 new file mode 100644
@@ -2183,10 +2187,10 @@ index 47c6a05d1..b7ebcb4a8 100644
          packet.write(Types.STRING, PlayerInputPermissions.CHANNEL);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
 new file mode 100644
-index 000000000..409496663
+index 000000000..6901f6a3d
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
-@@ -0,0 +1,93 @@
+@@ -0,0 +1,101 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -2213,6 +2217,7 @@ index 000000000..409496663
 +    private int historyIndex;
 +    private int historyCount;
 +    private PlayerPrediction pending;
++    private long lastFrame = -1;
 +    private long inputTick;
 +    private long inputFrame = -1;
 +    private PlayerPosture posture = PlayerPosture.STANDING;
@@ -2223,6 +2228,13 @@ index 000000000..409496663
 +    }
 +
 +    public void record(final PlayerPrediction prediction) {
++        // Frame identities advance for the connection lifetime, including stationary ticks.
++        // Keep the watermark after consumption or a position mismatch so a replay cannot
++        // bind old physics to a later auth-input tick.
++        if (prediction.frameId() <= this.lastFrame) {
++            return;
++        }
++        this.lastFrame = prediction.frameId();
 +        this.pending = prediction;
 +    }
 +
@@ -3325,10 +3337,10 @@ index 000000000..8d870a5fb
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java b/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
 new file mode 100644
-index 000000000..74ce904b7
+index 000000000..4a37d9558
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/PlayerPredictionTest.java
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,179 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3422,13 +3434,47 @@ index 000000000..74ce904b7
 +        storage.record(frame);
 +        assertEquals(frame, storage.take(frame.position().add(0F, 0.00001F, 0F)));
 +        assertNull(storage.take(frame.position()));
-+        storage.record(frame);
-+        assertNull(storage.take(frame.position().add(0F, 5F, 0F)));
++        final var misplaced = new PlayerPrediction(43, frame.position(), frame.motion(), frame.posture(), false, false, true, false, 1F);
++        storage.record(misplaced);
++        assertNull(storage.take(misplaced.position().add(0F, 5F, 0F)));
 +        assertNull(storage.take(frame.position()));
-+        final var replacement = frame(frame.position(), false);
-+        storage.record(frame);
++        final var next = new PlayerPrediction(44, frame.position(), frame.motion(), frame.posture(), false, false, false, false, 1F);
++        final var replacement = new PlayerPrediction(45, frame.position(), Position3f.ZERO, frame.posture(), false, false, false, false, 1F);
++        storage.record(next);
 +        storage.record(replacement);
 +        assertEquals(replacement, storage.take(frame.position()));
++    }
++
++    @Test
++    void rejectsOldFramesWithoutReplacingNewerPendingPhysics() {
++        final var storage = new PlayerPredictionStorage();
++        final var older = frame(Position3f.ZERO, false);
++        final var newer = new PlayerPrediction(43, Position3f.ZERO, Position3f.ZERO,
++                PlayerPosture.STANDING, false, false, false, false, 1F);
++        storage.record(older);
++        storage.record(newer);
++        storage.record(older);
++        assertEquals(newer, storage.take(Position3f.ZERO));
++        storage.record(newer);
++        assertNull(storage.take(Position3f.ZERO));
++    }
++
++    @Test
++    void retainsFrameIdentityAfterPositionRejectionAndResetsOnNewConnection() {
++        final var storage = new PlayerPredictionStorage();
++        final var frame = new PlayerPrediction(Long.MAX_VALUE, Position3f.ZERO, Position3f.ZERO,
++                PlayerPosture.STANDING, false, false, false, false, 1F);
++        storage.record(frame);
++        assertNull(storage.take(new Position3f(1F, 0F, 0F)));
++        storage.record(frame);
++        storage.record(new PlayerPrediction(0, Position3f.ZERO, Position3f.ZERO,
++                PlayerPosture.STANDING, false, false, false, false, 1F));
++        assertNull(storage.take(Position3f.ZERO));
++        final var reconnected = new PlayerPredictionStorage();
++        final var first = new PlayerPrediction(0, Position3f.ZERO, Position3f.ZERO,
++                PlayerPosture.STANDING, false, false, false, false, 1F);
++        reconnected.record(first);
++        assertEquals(first, reconnected.take(Position3f.ZERO));
 +    }
 +
 +    @Test
@@ -4407,6 +4453,99 @@ index 000000000..79e1d1557
 +            mapping.handler().handle(packet);
 +        }
 +
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerPredictionPacketTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerPredictionPacketTest.java
+new file mode 100644
+index 000000000..0c1d02d0b
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/PlayerPredictionPacketTest.java
+@@ -0,0 +1,87 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.connection.ProtocolInfo;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ServerboundPackets26_3;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.PlayerInputPermissions;
++import net.raphimc.viabedrock.api.model.PlayerPosture;
++import net.raphimc.viabedrock.api.model.PlayerPrediction;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
++import net.raphimc.viabedrock.protocol.storage.PlayerPredictionStorage;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Proxy;
++import java.util.List;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class PlayerPredictionPacketTest {
++
++    @Test
++    void replayedPayloadCannotRebindConsumedPhysicsToAnotherInputTick() throws Exception {
++        final PlayerPredictionStorage predictions = new PlayerPredictionStorage();
++        final ChannelStorage channels = new ChannelStorage();
++        channels.addChannels(List.of(PlayerInputPermissions.CHANNEL));
++        final ProtocolInfo info = (ProtocolInfo) Proxy.newProxyInstance(ProtocolInfo.class.getClassLoader(),
++                new Class<?>[]{ProtocolInfo.class}, (proxy, method, args) ->
++                        method.getName().equals("getClientState") ? State.PLAY : null);
++        final UserConnection user = (UserConnection) Proxy.newProxyInstance(UserConnection.class.getClassLoader(),
++                new Class<?>[]{UserConnection.class}, (proxy, method, args) -> switch (method.getName()) {
++                    case "getProtocolInfo" -> info;
++                    case "get" -> args[0] == ChannelStorage.class ? channels
++                            : args[0] == PlayerPredictionStorage.class ? predictions : null;
++                    default -> null;
++                });
++        final PlayerPrediction previous = new PlayerPrediction(42, Position3f.ZERO, new Position3f(0F, -0.022315647F, 0F),
++                new PlayerPosture(true, false, false), false, false, false, true, 1F);
++        accept(user, previous);
++        final PlayerPrediction consumed = predictions.take(Position3f.ZERO);
++        assertEquals(previous, consumed);
++        predictions.remember(91, consumed);
++        assertEquals(42, predictions.clientFrame(91));
++
++        accept(user, previous);
++        final PlayerPrediction replay = predictions.take(Position3f.ZERO);
++        assertNull(replay);
++        predictions.remember(92, replay);
++        assertEquals(-1, predictions.clientFrame(92));
++        assertEquals(92, predictions.inputTick());
++        assertEquals(-1, predictions.inputFrame());
++        assertEquals(42, predictions.clientFrame(91));
++
++        final PlayerPrediction current = new PlayerPrediction(43, Position3f.ZERO, Position3f.ZERO,
++                PlayerPosture.STANDING, true, true, true, false, 1F);
++        accept(user, current);
++        accept(user, previous);
++        final PlayerPrediction next = predictions.take(Position3f.ZERO);
++        assertEquals(current, next);
++        predictions.remember(93, next);
++        assertEquals(43, predictions.clientFrame(93));
++        assertEquals(43, predictions.inputFrame());
++    }
++
++    private static void accept(final UserConnection user, final PlayerPrediction prediction) throws Exception {
++        final var input = Unpooled.buffer();
++        try {
++            Types.STRING.write(input, PlayerPrediction.CHANNEL);
++            PlayerPrediction.TYPE.write(input, prediction);
++            final var packet = new PacketWrapperImpl(ServerboundPackets26_3.CUSTOM_PAYLOAD, input, user);
++            MultiStatePackets.CUSTOM_PAYLOAD_HANDLER.handle(packet);
++            assertTrue(packet.isCancelled());
++            assertFalse(input.isReadable());
++        } finally {
++            input.release();
++        }
 +    }
 +
 +}

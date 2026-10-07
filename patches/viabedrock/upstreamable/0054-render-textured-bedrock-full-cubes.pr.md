@@ -1,5 +1,24 @@
 Resolve Bedrock custom block states after StartGame, including ordered permutations, per-face materials, geometry, collision, selection and light values. Java loads a supplemental pack before entering the world so runtime state definitions and converted models agree.
 
+## Native cached lighting properties
+
+A private executable fixture traces the separate cached-property initializer in Bedrock 1.26.51.1 build 51061372.
+It executes original own and inherited component searches, tag searches, material iteration, and solidity classification.
+All 16,224 geometry, tag, and material cases pass independent expectations.
+Another 768 cases verify absent-component behavior and legacy solidity flags.
+
+The cached initializer passes 18,432 emissive and occlusion cases, including null block entries and occlusion precedence.
+Another 8,192 controls execute the original constant-zero and constant-fifteen emissive getters through that initializer.
+The fixture supplies initialized Windows TLS, component registry IDs, storage, geometry flags, and the indirect-call dispatcher.
+The broad emissive-byte sweep is a storage control, not a set of real block types.
+
+Cached solidity differs from the opaque-full-block flag used for corner light selection.
+The default shade getter also considers a legacy leaf flag.
+The current custom metadata does not preserve all these distinctions.
+Native tag identity, geometry initialization, runtime block identities, and additional virtual overrides still need verification.
+No new block classification follows from these fixtures alone.
+Native world propagation and visible comparisons remain incomplete.
+
 Read lighting from the serialized runtime components: `minecraft:block_light_filter.lightLevel` and `minecraft:light_emission.emission`. The official Bedrock 1.26.51.1 Hive recording, protocol 2193, supplies filter 0 for 401 definitions and filter 8 for 11 definitions. The previous creator component lookup treated these as filter 15. The saved chunk columns contain 12,098 placements of these definitions, including ground details and foliage. Tests round-trip network NBT and verify transparent, partial and opaque filtering, emission, omitted defaults and permutation overlays. These counts establish the affected input; they do not prove complete lighting parity. The light engine still uses scalar opacity without directional face occlusion.
 
 A private comparison uses the saved spawn chunk and all eight loaded neighbors. Changing only the custom filter inputs corrects 159 skylight cells and 75 block-light cells in the center chunk. Some ground decorations change from skylight 0 to 15. The player cell stays at skylight 15 and block light 4, matching the local replay observations. This isolates local dark patches from global sunset shading. The replay also passes its complete-scene transport and skin/model rendering checks.

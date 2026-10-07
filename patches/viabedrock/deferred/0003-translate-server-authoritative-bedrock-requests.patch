@@ -1,4 +1,4 @@
-From d88dc56743f3dbbe4e828279a5daa38d14bae3db Mon Sep 17 00:00:00 2001
+From d9ad414ceca08fdb8c99d84c1a810f2cff053c37 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 12:56:10 +0200
 Subject: [PATCH] feat(inventory): translate server-authoritative Bedrock
@@ -158,6 +158,18 @@ Validate the full Java slot value before narrowing it, so malformed
 short values cannot alias a valid hotbar slot. Packet tests cover
 repeated selections, unchanged inventory, ignored notifications,
 unsigned wire bounds, and Java byte aliases.
+
+Accept zero as a valid unsigned bundle storage identity. Require an exact
+IntTag instead of aliasing absent or malformed bundle metadata to zero,
+and share that identity lookup between item rendering and holder tracking.
+
+An isolated official BDS 1.26.51.1 build 51061372, protocol 2193 probe
+allocates dynamic bundle IDs zero and one. It accepts insertion, extraction
+and compaction with ID zero, rejects a stale stack network ID, and accepts
+a retry with the authoritative ID. Three tests cover isolated contents,
+malformed identities and the complete unsigned ID representation. Keep
+partial dynamic snapshots intact; full Java bundle UI parity remains
+unverified. Raw server probes stay private.
 ---
  build.gradle                                  |    3 +-
  .../api/model/container/ChestContainer.java   |   52 +-
@@ -178,7 +190,7 @@ unsigned wire bounds, and Java byte aliases.
  .../container/block/SmithingContainer.java    |  196 ++
  .../container/block/SmokerContainer.java      |   45 +
  .../container/block/StonecutterContainer.java |  237 +++
- .../container/dynamic/BundleContainer.java    |   19 +-
+ .../container/dynamic/BundleContainer.java    |   36 +-
  .../container/player/ArmorContainer.java      |   12 +
  .../model/container/player/HudContainer.java  |   31 +-
  .../container/player/InventoryContainer.java  |   87 +-
@@ -195,6 +207,7 @@ unsigned wire bounds, and Java byte aliases.
  .../protocol/packet/WorldPackets.java         |   12 +
  .../protocol/rewriter/ItemRewriter.java       |  246 ++-
  .../protocol/rewriter/ItemStackSizes.java     |   59 +
+ .../rewriter/item/BundleItemRewriter.java     |   11 +-
  .../storage/CraftedItemSynchronization.java   |  113 ++
  .../protocol/storage/CraftingDataTracker.java |  206 ++
  .../storage/InventoryRequestRecovery.java     |   80 +
@@ -216,13 +229,14 @@ unsigned wire bounds, and Java byte aliases.
  .../protocol/packet/InventoryPacketsTest.java |  247 +++
  .../packet/MountInventoryPacketTest.java      |  152 ++
  .../ItemRewriterBlockEntityItemTest.java      |   68 +
+ .../rewriter/item/BundleItemRewriterTest.java |  175 ++
  .../CraftedItemSynchronizationTest.java       |  225 +++
  .../storage/InventoryRequestRecoveryTest.java |   68 +
  .../InventoryRequestTrackerQueueTest.java     |  136 ++
  .../storage/InventoryRequestTrackerTest.java  |  330 ++++
  .../storage/InventoryTrackerTest.java         |  124 ++
  .../storage/StonecutterRecipePacketTest.java  |   53 +
- 63 files changed, 9695 insertions(+), 838 deletions(-)
+ 65 files changed, 9883 insertions(+), 853 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/HorseContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/AnvilContainer.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/container/block/BeaconContainer.java
@@ -257,6 +271,7 @@ unsigned wire bounds, and Java byte aliases.
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/InventoryPacketsTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/MountInventoryPacketTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/ItemRewriterBlockEntityItemTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/item/BundleItemRewriterTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/CraftedItemSynchronizationTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestRecoveryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/InventoryRequestTrackerQueueTest.java
@@ -3770,10 +3785,10 @@ index 000000000..4938719ec
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/dynamic/BundleContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/dynamic/BundleContainer.java
-index fc949814b..c9ae10af0 100644
+index fc949814b..f3cbaead7 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/dynamic/BundleContainer.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/container/dynamic/BundleContainer.java
-@@ -21,6 +21,7 @@ import com.viaversion.nbt.tag.IntTag;
+@@ -21,9 +21,11 @@ import com.viaversion.nbt.tag.IntTag;
  import com.viaversion.viaversion.api.connection.UserConnection;
  import com.viaversion.viaversion.api.minecraft.item.Item;
  import com.viaversion.viaversion.util.Pair;
@@ -3781,7 +3796,11 @@ index fc949814b..c9ae10af0 100644
  import net.raphimc.viabedrock.api.model.container.Container;
  import net.raphimc.viabedrock.protocol.BedrockProtocol;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerID;
-@@ -36,10 +37,21 @@ public class BundleContainer extends Container {
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
+ import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerType;
+ import net.raphimc.viabedrock.protocol.data.generated.bedrock.CustomItemTags;
+ import net.raphimc.viabedrock.protocol.model.BedrockItem;
+@@ -36,10 +38,21 @@ public class BundleContainer extends Container {
      private final FullContainerName containerName;
  
      public BundleContainer(final UserConnection user, final FullContainerName containerName) {
@@ -3804,7 +3823,23 @@ index fc949814b..c9ae10af0 100644
      @Override
      public Item getJavaItem(final int slot) {
          final Pair<Container, Integer> holdingContainer = this.findHoldingContainer();
-@@ -144,7 +156,10 @@ public class BundleContainer extends Container {
+@@ -99,6 +112,15 @@ public class BundleContainer extends Container {
+         return super.getJavaItems();
+     }
+ 
++    public static FullContainerName storageContainerName(final BedrockItem item) {
++        if (item.tag() == null) {
++            return null;
++        }
++        return item.tag().get("bundle_id") instanceof IntTag bundleIdTag
++                ? new FullContainerName(ContainerEnumName.DynamicContainer, bundleIdTag.asInt())
++                : null;
++    }
++
+     private Pair<Container, Integer> findHoldingContainer() {
+         final InventoryTracker inventoryTracker = this.user.get(InventoryTracker.class);
+ 
+@@ -144,17 +166,15 @@ public class BundleContainer extends Container {
                  continue;
              }
  
@@ -3816,6 +3851,17 @@ index fc949814b..c9ae10af0 100644
              if (!CustomItemTags.BUNDLE.equals(itemTag)) {
                  continue;
              }
+ 
+-            final IntTag bundleIdTag = item.tag().getIntTag("bundle_id");
+-            if (bundleIdTag == null || bundleIdTag.asInt() == 0) {
+-                continue;
+-            }
+-
+-            if (bundleIdTag.asInt() == this.containerName.dynamicId()) {
++            if (this.containerName.equals(storageContainerName(item))) {
+                 return i;
+             }
+         }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/container/player/ArmorContainer.java b/src/main/java/net/raphimc/viabedrock/api/model/container/player/ArmorContainer.java
 index ad7d87c92..153fbad62 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/container/player/ArmorContainer.java
@@ -8776,6 +8822,42 @@ index 000000000..e4ef0e45a
 +    private ItemStackSizes() { }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/item/BundleItemRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/item/BundleItemRewriter.java
+index 2b7212e91..eb0bfe042 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/item/BundleItemRewriter.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/item/BundleItemRewriter.java
+@@ -17,12 +17,10 @@
+  */
+ package net.raphimc.viabedrock.protocol.rewriter.item;
+ 
+-import com.viaversion.nbt.tag.IntTag;
+ import com.viaversion.viaversion.api.connection.UserConnection;
+ import com.viaversion.viaversion.api.minecraft.item.Item;
+ import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
+ import net.raphimc.viabedrock.api.model.container.dynamic.BundleContainer;
+-import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
+ import net.raphimc.viabedrock.protocol.model.BedrockItem;
+ import net.raphimc.viabedrock.protocol.model.FullContainerName;
+ import net.raphimc.viabedrock.protocol.rewriter.ItemRewriter;
+@@ -34,16 +32,11 @@ public class BundleItemRewriter implements ItemRewriter.NbtRewriter {
+ 
+     @Override
+     public void toJava(final UserConnection user, final BedrockItem bedrockItem, final Item javaItem) {
+-        if (bedrockItem.tag() == null) {
++        final FullContainerName containerName = BundleContainer.storageContainerName(bedrockItem);
++        if (containerName == null) {
+             return;
+         }
+ 
+-        final IntTag bundleIdTag = bedrockItem.tag().getIntTag("bundle_id");
+-        if (bundleIdTag == null || bundleIdTag.asInt() == 0) {
+-            return;
+-        }
+-
+-        final FullContainerName containerName = new FullContainerName(ContainerEnumName.DynamicContainer, bundleIdTag.asInt());
+         final BundleContainer bundleContainer = user.get(InventoryTracker.class).getDynamicContainer(containerName);
+         if (bundleContainer == null) {
+             return;
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftedItemSynchronization.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/CraftedItemSynchronization.java
 new file mode 100644
 index 000000000..db6adae81
@@ -11951,6 +12033,187 @@ index 000000000..3f70e7269
 +        assertEquals(1, item.amount());
 +        assertSame(bookData, item.tag());
 +        assertEquals(2, ((ListTag<?>) item.tag().get("pages")).size());
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/item/BundleItemRewriterTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/item/BundleItemRewriterTest.java
+new file mode 100644
+index 000000000..744caba7f
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/item/BundleItemRewriterTest.java
+@@ -0,0 +1,175 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ */
++package net.raphimc.viabedrock.protocol.rewriter.item;
++
++import com.viaversion.nbt.tag.CompoundTag;
++import com.viaversion.viaversion.api.connection.UserConnection;
++import com.viaversion.viaversion.api.data.FullMappings;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataContainer;
++import com.viaversion.viaversion.api.minecraft.data.StructuredDataKey;
++import com.viaversion.viaversion.api.minecraft.item.Item;
++import com.viaversion.viaversion.api.minecraft.item.StructuredItem;
++import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
++import io.netty.buffer.ByteBuf;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.api.model.container.dynamic.BundleContainer;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.ContainerEnumName;
++import net.raphimc.viabedrock.protocol.model.BedrockItem;
++import net.raphimc.viabedrock.protocol.model.FullContainerName;
++import net.raphimc.viabedrock.protocol.storage.InventoryTracker;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Field;
++import java.lang.reflect.Proxy;
++import java.util.Arrays;
++import java.util.HashMap;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNotEquals;
++import static org.junit.jupiter.api.Assertions.assertNull;
++
++class BundleItemRewriterTest {
++
++    @BeforeAll
++    static void initializeStructuredDataKeys() throws ClassNotFoundException {
++        Class.forName(StructuredDataKey.class.getName());
++    }
++
++    @Test
++    void zeroIdentityTranslatesContentsAndUpdatesWithoutChangingAnotherBundle() throws ReflectiveOperationException {
++        final Fixture fixture = new Fixture();
++        final BundleContainer zero = fixture.register(0);
++        final BundleContainer one = fixture.register(1);
++        final BedrockItem[] contents = BedrockItem.emptyArray(64);
++        contents[0] = item(306, 4, 4);
++        contents[1] = item(523, 3, 5);
++        zero.setItems(contents);
++        final BedrockItem[] otherContents = BedrockItem.emptyArray(64);
++        otherContents[0] = item(331, 2, 6);
++        one.setItems(otherContents);
++
++        final Item[] translated = fixture.translate(bundle(0));
++        assertEquals(2, translated.length);
++        assertEquals(523, translated[0].identifier());
++        assertEquals(3, translated[0].amount());
++        assertEquals(306, translated[1].identifier());
++        assertEquals(4, translated[1].amount());
++        assertEquals(0, zero.requestSlotInfo(1, 5).container().dynamicId());
++
++        zero.setItem(0, item(523, 3, 5));
++        zero.setItem(1, BedrockItem.empty());
++        assertEquals(1, fixture.translate(bundle(0)).length);
++        assertEquals(523, fixture.translate(bundle(0))[0].identifier());
++        assertEquals(331, fixture.translate(bundle(1))[0].identifier());
++        assertEquals(6, one.getItem(0).netId());
++    }
++
++    @Test
++    void missingOrMistypedIdentityDoesNotAliasTheZeroBundle() throws ReflectiveOperationException {
++        final Fixture fixture = new Fixture();
++        fixture.register(0);
++        final BedrockItem item = new BedrockItem(864);
++        assertNull(fixture.translate(item));
++        item.setTag(new CompoundTag());
++        assertNull(fixture.translate(item));
++        item.tag().putByte("bundle_id", (byte) 0);
++        assertNull(fixture.translate(item));
++        item.tag().putLong("bundle_id", 0L);
++        assertNull(fixture.translate(item));
++        item.tag().putString("bundle_id", "0");
++        assertNull(fixture.translate(item));
++        assertNull(fixture.translate(bundle(2)));
++        assertEquals(0, fixture.translate(bundle(0)).length);
++    }
++
++    @Test
++    void dynamicWireIdentityDistinguishesZeroFromAbsenceAndKeepsAllUnsignedBits() {
++        final FullContainerName absent = new FullContainerName(ContainerEnumName.DynamicContainer, null);
++        assertNotEquals(absent, BundleContainer.storageContainerName(bundle(0)));
++        for (final int id : new int[] {0, 1, Integer.MAX_VALUE, Integer.MIN_VALUE, -1}) {
++            final FullContainerName name = BundleContainer.storageContainerName(bundle(id));
++            assertEquals(ContainerEnumName.DynamicContainer, name.name());
++            assertEquals(id, name.dynamicId());
++            final ByteBuf buffer = Unpooled.buffer();
++            try {
++                BedrockTypes.FULL_CONTAINER_NAME.write(buffer, name);
++                assertEquals(name, BedrockTypes.FULL_CONTAINER_NAME.read(buffer));
++                assertEquals(0, buffer.readableBytes());
++            } finally {
++                buffer.release();
++            }
++        }
++    }
++
++    private static BedrockItem bundle(final int id) {
++        final BedrockItem bundle = new BedrockItem(864);
++        final CompoundTag tag = new CompoundTag();
++        tag.putInt("bundle_id", id);
++        bundle.setTag(tag);
++        return bundle;
++    }
++
++    private static BedrockItem item(final int identifier, final int amount, final int networkId) {
++        final BedrockItem item = new BedrockItem(identifier);
++        item.setAmount(amount);
++        item.setNetId(networkId);
++        return item;
++    }
++
++    private static final class Fixture {
++        private final Map<FullContainerName, BundleContainer> registry = new HashMap<>();
++        private final UserConnection user;
++        private final Map<Class<?>, Object> storage = new HashMap<>();
++
++        private Fixture() {
++            this.user = (UserConnection) Proxy.newProxyInstance(
++                    UserConnection.class.getClassLoader(), new Class<?>[]{UserConnection.class},
++                    (proxy, method, args) -> method.getName().equals("get") ? this.storage.get(args[0]) : null);
++            this.storage.put(InventoryTracker.class, new InventoryTracker(this.user) {
++                @Override
++                public BundleContainer getDynamicContainer(final FullContainerName containerName) {
++                    return Fixture.this.registry.get(containerName);
++                }
++            });
++        }
++
++        private BundleContainer register(final int id) {
++            final FullContainerName name = new FullContainerName(ContainerEnumName.DynamicContainer, id);
++            final BundleContainer container = new BundleContainer(this.user, name) {
++                @Override
++                public Item[] getJavaBundleItems() {
++                    return Arrays.stream(this.getItems()).map(item -> item.isEmpty()
++                            ? StructuredItem.empty()
++                            : new StructuredItem(item.identifier(), item.amount(), new StructuredDataContainer()))
++                            .toArray(Item[]::new);
++                }
++            };
++            this.registry.put(name, container);
++            return container;
++        }
++
++        private Item[] translate(final BedrockItem source) throws ReflectiveOperationException {
++            final StructuredDataContainer data = new StructuredDataContainer();
++            final FullMappings mappings = (FullMappings) Proxy.newProxyInstance(FullMappings.class.getClassLoader(),
++                    new Class<?>[]{FullMappings.class}, (proxy, method, args) -> 0);
++            final Field lookup = StructuredDataContainer.class.getDeclaredField("lookup");
++            lookup.setAccessible(true);
++            lookup.set(data, mappings);
++            final Item result = new StructuredItem(1, 1, data);
++            new BundleItemRewriter().toJava(this.user, source, result);
++            return result.dataContainer().get(VersionedTypes.V26_3.structuredDataKeys().bundleContents);
++        }
++
 +    }
 +
 +}

@@ -59,6 +59,7 @@ public final class ReplaySelfTest {
                 try { ReplayPackets.resourceInfo(ReplayPackets.bytes(info), directory, 54321); throw new AssertionError("Accepted missing pack"); }
                 catch (java.io.IOException expected) { }
             } finally { info.release(); if (local != null) local.release(); }
+            ControllerAuditAgentSelfTest.main(new String[0]);
             registryFeatures();
             playerAppearanceFeatures();
             packNegotiationPacing();

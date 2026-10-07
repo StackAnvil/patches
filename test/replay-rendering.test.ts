@@ -71,3 +71,26 @@ test("requires remote native submissions when the recording omits local-player g
   expect(verifyRendering(expected, remoteDraw, "", true)).toHaveLength(1);
   expect(verifyRendering(expected, { ...actual, nativeOtherPlayerRenderFrames: 0 }, "", true)).toHaveLength(1);
 });
+
+test("uses required proxy controller observations independently of client drawable models", () => {
+  const audit = { schema: 1, transformed: true, identifiers: { [expected.customActorIdentifiers[0]!]: 2 }, failures: [] };
+  const drawableOnly = { ...actual, actorIdentifiers: [] };
+  expect(verifyRendering(expected, drawableOnly, "", true, { required: true, audit })).toEqual([]);
+  expect(verifyRendering(expected, actual, "", true, { required: true })).not.toHaveLength(0);
+  for (const invalid of [
+    { ...audit, transformed: false },
+    { ...audit, failures: [new Error("observer failure").toString()] },
+    { ...audit, identifiers: {} },
+    { ...audit, identifiers: { [expected.customActorIdentifiers[0]!]: 0 } },
+  ]) expect(verifyRendering(expected, actual, "", true, { required: true, audit: invalid })).not.toHaveLength(0);
+  expect(verifyRendering(expected, { ...drawableOnly, nativeCustomActorRenderFrames: 0 }, "", true, { required: true, audit })).not.toHaveLength(0);
+  expect(verifyRendering(expected, actual, "Failed to evaluate render controller", true, { required: true, audit })).not.toHaveLength(0);
+});
+
+test("accepts an idle proxy observer when the recording has no custom controllers", () => {
+  const vanilla = { ...expected, customActorIdentifiers: [] };
+  const audit = { schema: 1, transformed: false, identifiers: {}, failures: [] };
+  expect(verifyRendering(vanilla, actual, "", true, { required: true, audit })).toEqual([]);
+  expect(verifyRendering(vanilla, actual, "", true, { required: true })).not.toHaveLength(0);
+  expect(verifyRendering(expected, actual, "", true, { required: true, audit })).not.toHaveLength(0);
+});

@@ -16,7 +16,7 @@ import { inspectJournal } from "./journal.ts";
 import { requireNativeOfflineReplay, requireNativeReplayProcessNamespaces, type NativeOfflineProof } from "./native-offline.ts";
 import { prepareNativeReplayPrefix } from "./native-prefix.ts";
 import { prepareNativeProfile } from "./native-profile.ts";
-import { hasGameplayAcknowledgments, verifyRendering, type SceneFeatures, type RenderAudit } from "./verification.ts";
+import { hasGameplayAcknowledgments, verifyRendering, type SceneFeatures, type RenderAudit, type ControllerAudit } from "./verification.ts";
 
 const execute = promisify(execFile);
 const privateRoot = join(root, ".stackanvil", "replay");
@@ -63,7 +63,7 @@ async function ready(child: ChildProcess, file: string, pattern: RegExp): Promis
   }
   throw new Error(`Service startup timed out. Read ${file}.`);
 }
-async function buildPlugin(jar: string): Promise<{ classes: string; plugin: string; build: string }> {
+async function buildPlugin(jar: string): Promise<{ classes: string; plugin: string; build: string; observer: string }> {
   await mkdir(privateRoot, { recursive: true, mode: 0o700 });
   await chmod(privateRoot, 0o700);
   const build = await mkdtemp(join(privateRoot, "build-"));
@@ -76,7 +76,14 @@ async function buildPlugin(jar: string): Promise<{ classes: string; plugin: stri
   const plugin = join(build, "recorder.jar");
   await execute("jar", ["--create", "--file", plugin, "-C", classes, "."]);
   await writeFile(join(build, "log4j2.xml"), '<Configuration status="ERROR"><Appenders><Console name="console"><PatternLayout pattern="%level %logger: %msg%n"/></Console></Appenders><Loggers><Root level="warn"><AppenderRef ref="console"/></Root></Loggers></Configuration>\n', { mode: 0o600 });
-  return { classes, plugin, build };
+  const manifest = join(build, "controller-observer.mf");
+  await writeFile(manifest, "Premain-Class: com.enderdash.agent.replay.ControllerAuditAgent\n", { mode: 0o600 });
+  const observer = join(build, "controller-observer.jar");
+  const observerClasses = (await readdir(join(classes, "com/enderdash/agent/replay"))).filter((name) =>
+    name === "ControllerAuditAgent.class" || name.startsWith("ControllerAuditAgent$") || name.startsWith("PrivateFiles"));
+  await execute("jar", ["--create", "--file", observer, "--manifest", manifest,
+    ...observerClasses.flatMap((name) => ["-C", classes, `com/enderdash/agent/replay/${name}`])]);
+  return { classes, plugin, build, observer };
 }
 async function ui(args: string[], directory: string, client = "java"): Promise<void> {
   await execute("bun", [join(root, "src/capture/cli.ts"), "ui", ...args, "--client", client, "--output-dir", directory], { cwd: root });
@@ -306,7 +313,7 @@ async function main(): Promise<void> {
   const jar = await artifact("viaproxy");
   await mkdir(privateRoot, { recursive: true, mode: 0o700 });
   await chmod(privateRoot, 0o700);
-  const { classes, plugin, build } = await buildPlugin(jar);
+  const { classes, plugin, build, observer } = await buildPlugin(jar);
   const recorder = client !== "native" ? await buildFabricRecorder(jar, build) : "";
   const directory = join(privateRoot, `${new Date().toISOString().replaceAll(":", "-")}-${mode}-${mode === "record" ? input : "scene"}`);
   await mkdir(directory, { mode: 0o700 });
@@ -349,7 +356,7 @@ async function main(): Promise<void> {
     const proxyLog = join(directory, "proxy.log");
     let child: ChildProcess | undefined;
     if (client === "proxy") {
-      child = service("java", ["-DskipUpdateCheck", `-Dstackanvil.recording=${directory}`, "-jar", jar, "cli", "--bind-address", `127.0.0.1:${bind}`,
+      child = service("java", [...(mode === "replay" ? [`-javaagent:${observer}=${join(directory, "controller-audit.json")}`] : []), "-DskipUpdateCheck", `-Dstackanvil.recording=${directory}`, "-jar", jar, "cli", "--bind-address", `127.0.0.1:${bind}`,
         "--target-address", target!, "--target-version", "Bedrock 1.26.51", "--auth-method", mode === "record" && (input !== "local" || option("--account")) ? "ACCOUNT" : "NONE", "--minecraft-account-index", "0", "--log-ips", "false"], proxyHome, proxyLog);
       await ready(child, proxyLog, /ViaProxy started successfully/);
     } else if (client === "native") {
@@ -436,9 +443,13 @@ async function main(): Promise<void> {
     const expected = JSON.parse(stdout) as SceneFeatures;
     const auditFile = join(directory, "render-audit.json");
     const audit = existsSync(auditFile) ? JSON.parse(await readFile(auditFile, "utf8")) as RenderAudit : undefined;
-    const failures = [...verifyRendering(expected, audit, clientLog, !!original.ids[12]),
+    const controllerFile = join(directory, "controller-audit.json");
+    const controllerAudit = client === "proxy" && existsSync(controllerFile)
+      ? JSON.parse(await readFile(controllerFile, "utf8")) as ControllerAudit : undefined;
+    const evaluationLog = client === "proxy" ? `${clientLog}\n${await logText(join(directory, "proxy.log"))}` : clientLog;
+    const failures = [...verifyRendering(expected, audit, evaluationLog, !!original.ids[12], { required: client === "proxy", audit: controllerAudit }),
       ...graphicsFailures(clientLog, graphics === "shaders" ? (await readGraphicsLock()).shader.filename : undefined)];
-    await writeFile(join(directory, "verification.json"), JSON.stringify({ transport: "pass", rendering: failures.length ? "fail" : "pass", failures, unregisteredActors: expected.unregisteredActorIdentifiers ?? [], expected }, null, 2), { mode: 0o600 });
+    await writeFile(join(directory, "verification.json"), JSON.stringify({ transport: "pass", rendering: failures.length ? "fail" : "pass", failures, unregisteredActors: expected.unregisteredActorIdentifiers ?? [], expected, controllerAudit }, null, 2), { mode: 0o600 });
     console.log("PASS offline scene transport: playable spawn, complete payloads, and Java resource pack load.");
     if (failures.length) {
       console.log(`Rendering checks: ${failures.join(" ")}`);

@@ -1,4 +1,4 @@
-From 37181c8fc6c3a845aefe6c6734c75deb14b07dc4 Mon Sep 17 00:00:00 2001
+From 9203172f60eeec901ce77b4cbca250761693b98f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:07 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -339,6 +339,16 @@ native culling, depth, blending and vertex formats outside shader draws.
 Semantic tests cover every actor material family and unrelated pipelines.
 Iris source: https://github.com/IrisShaders/Iris/blob/26.3/common/src/main/java/net/irisshaders/iris/pipeline/IrisPipelines.java
 Report: https://mclo.gs/er8RPm6
+
+Use the native ten-pixel name row advance instead of Java font lineHeight.
+Preserve the final row anchor and the component styles, blank rows and
+Unicode codepoints. This applies only to accepted Bedrock name contexts.
+
+Executing the original 1.26.51.1 build 51061372 name record routine confirms
+ten pixels plus authored extra spacing. The ordinary and sneaking name
+producer passes zero extra spacing and unit scale. Layout and anchor tests
+cover twelve cases. Absolute glyph origin and native GPU comparisons remain
+unverified; keep proprietary executable fixtures private.
 ---
  build.gradle.kts                              |   6 +
  .../bedrock/ViaFabricPlusBedrock.java         |  17 ++
@@ -349,7 +359,7 @@ Report: https://mclo.gs/er8RPm6
  .../render/MixinBedrockActorRenderType.java   |  47 ++++
  .../render/MixinBedrockNameTagMetadata.java   |  33 +++
  .../render/MixinBedrockNameTagRenderer.java   |  56 ++++
- .../features/render/MixinBedrockNameTags.java |  61 ++++
+ .../features/render/MixinBedrockNameTags.java |  60 ++++
  .../render/MixinBedrockRidingMetadata.java    |  38 +++
  .../render/MixinBedrockRidingPosition.java    |  27 ++
  .../render/MixinEntityRenderDispatcher.java   |  93 ++++++
@@ -364,7 +374,7 @@ Report: https://mclo.gs/er8RPm6
  .../bedrock/render/BedrockEntityRenderer.java | 185 ++++++++++++
  .../bedrock/render/BedrockGeometry.java       | 215 ++++++++++++++
  .../bedrock/render/BedrockNameTagAnchors.java |  75 +++++
- .../bedrock/render/BedrockNameTags.java       |  56 ++++
+ .../bedrock/render/BedrockNameTags.java       |  59 ++++
  .../bedrock/render/BedrockPlayerRenderer.java |  53 ++++
  .../bedrock/render/BedrockPlayerSkins.java    | 264 ++++++++++++++++++
  .../bedrock/render/BedrockRidingAnchors.java  |  71 +++++
@@ -389,7 +399,7 @@ Report: https://mclo.gs/er8RPm6
  .../render/BedrockRidingAnchorsTest.java      | 130 +++++++++
  .../render/BedrockShaderPipelinesTest.java    |  40 +++
  .../render/CustomEntityRenderStoreTest.java   |  62 ++++
- 49 files changed, 3172 insertions(+), 1 deletion(-)
+ 49 files changed, 3174 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisPipelines.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractClientPlayer.java
@@ -771,10 +781,10 @@ index 0000000..4b616d4
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java
 new file mode 100644
-index 0000000..8ed6255
+index 0000000..1fb05cd
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java
-@@ -0,0 +1,61 @@
+@@ -0,0 +1,60 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -790,7 +800,6 @@ index 0000000..8ed6255
 +import com.viaversion.viafabricplus.ViaFabricPlus;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockNameTagAnchors;
 +import com.viaversion.viafabricplus.bedrock.render.BedrockNameTags;
-+import net.minecraft.client.Minecraft;
 +import net.minecraft.client.gui.Font;
 +import net.minecraft.client.renderer.SubmitNodeCollection;
 +import net.minecraft.client.renderer.feature.TextFeatureRenderer;
@@ -829,7 +838,7 @@ index 0000000..8ed6255
 +            original.call(poses, attachment, offset, name, seeThrough, light, camera);
 +            return;
 +        }
-+        for (final var line : BedrockNameTags.layout(name, Minecraft.getInstance().font.lineHeight, offset)) {
++        for (final var line : BedrockNameTags.layout(name, offset)) {
 +            if (!line.text().getString().isEmpty()) {
 +                original.call(poses, attachment, line.baseline(), line.text(), seeThrough, light, camera);
 +            }
@@ -2010,10 +2019,10 @@ index 0000000..02572ba
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTags.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTags.java
 new file mode 100644
-index 0000000..477d0fe
+index 0000000..a1b01c9
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTags.java
-@@ -0,0 +1,56 @@
+@@ -0,0 +1,59 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2031,6 +2040,9 @@ index 0000000..477d0fe
 +
 +/** Keeps server name components styled while laying out explicit line breaks. */
 +public final class BedrockNameTags {
++    // Native 1.26.51.1 name records use ten pixels even when the Java font advances nine.
++    private static final int LINE_ADVANCE = 10;
++
 +    private BedrockNameTags() {
 +    }
 +
@@ -2041,7 +2053,7 @@ index 0000000..477d0fe
 +        return mode == Font.DisplayMode.SEE_THROUGH ? color | 0xFF000000 : color;
 +    }
 +
-+    public static List<Line> layout(final Component name, final int lineHeight, final int baseline) {
++    public static List<Line> layout(final Component name, final int baseline) {
 +        if (!name.getString().contains("\n")) return List.of(new Line(name, baseline));
 +        final List<MutableComponent> rows = new ArrayList<>();
 +        rows.add(Component.empty());
@@ -2058,7 +2070,7 @@ index 0000000..477d0fe
 +        }, Style.EMPTY);
 +        final List<Line> lines = new ArrayList<>(rows.size());
 +        for (int index = 0; index < rows.size(); index++) {
-+            lines.add(new Line(rows.get(index), baseline - (rows.size() - index - 1) * lineHeight));
++            lines.add(new Line(rows.get(index), baseline - (rows.size() - index - 1) * LINE_ADVANCE));
 +        }
 +        return List.copyOf(lines);
 +    }
@@ -3540,7 +3552,7 @@ index 0000000..012ca09
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java
 new file mode 100644
-index 0000000..c71c4d2
+index 0000000..f211bba
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java
 @@ -0,0 +1,100 @@
@@ -3591,7 +3603,7 @@ index 0000000..c71c4d2
 +    @Test
 +    void leavesSingleLineComponentsAndOffsetsIntact() {
 +        final var name = Component.literal("ordinary").withStyle(ChatFormatting.GOLD);
-+        final var lines = BedrockNameTags.layout(name, 9, 7);
++        final var lines = BedrockNameTags.layout(name, 7);
 +        assertEquals(1, lines.size());
 +        assertSame(name, lines.getFirst().text());
 +        assertEquals(7, lines.getFirst().baseline());
@@ -3603,8 +3615,8 @@ index 0000000..c71c4d2
 +        final var blue = Style.EMPTY.withColor(ChatFormatting.BLUE).withBold(true);
 +        final var name = Component.literal("a\nb").setStyle(red)
 +            .append(Component.literal("c\nd").setStyle(blue));
-+        final var lines = BedrockNameTags.layout(name, 9, 4);
-+        assertEquals(List.of(-14, -5, 4), lines.stream().map(BedrockNameTags.Line::baseline).toList());
++        final var lines = BedrockNameTags.layout(name, 4);
++        assertEquals(List.of(-16, -6, 4), lines.stream().map(BedrockNameTags.Line::baseline).toList());
 +        assertEquals(List.of(red), styles(lines.getFirst().text()));
 +        assertEquals(List.of(red, blue), styles(lines.get(1).text()));
 +        assertEquals(List.of(blue), styles(lines.getLast().text()));
@@ -3614,7 +3626,7 @@ index 0000000..c71c4d2
 +    @Test
 +    void retainsBlankRowsAndWholeUnicodeCodepoints() {
 +        final var name = Component.literal("\n\n\uD83D\uDE00\n");
-+        final var lines = BedrockNameTags.layout(name, 10, 2);
++        final var lines = BedrockNameTags.layout(name, 2);
 +        assertEquals(List.of(-28, -18, -8, 2), lines.stream().map(BedrockNameTags.Line::baseline).toList());
 +        assertTrue(lines.getFirst().text().getString().isEmpty());
 +        assertTrue(lines.get(1).text().getString().isEmpty());
@@ -3627,11 +3639,11 @@ index 0000000..c71c4d2
 +        final var first = Component.literal("a").withStyle(ChatFormatting.GREEN);
 +        final var second = Component.literal("b").withStyle(ChatFormatting.AQUA);
 +        final var translated = Component.translatableWithFallback("stackanvil.test.name.lines", "%s\n%s", first, second);
-+        final var lines = BedrockNameTags.layout(translated, 9, 0);
++        final var lines = BedrockNameTags.layout(translated, 0);
 +        assertEquals(2, lines.size());
 +        assertEquals(styles(first), styles(lines.getFirst().text()));
 +        assertEquals(styles(second), styles(lines.getLast().text()));
-+        assertEquals(-9, lines.getFirst().baseline());
++        assertEquals(-10, lines.getFirst().baseline());
 +        assertEquals(0, lines.getLast().baseline());
 +    }
 +

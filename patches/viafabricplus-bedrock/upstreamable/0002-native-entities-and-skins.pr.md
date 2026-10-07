@@ -215,3 +215,16 @@ The reproduction tooling also passes its 19 focused tests and TypeScript checkin
 The matching replay without Iris installed also passes transport and rendering verification.
 It preserves all 216 recorded geometry skins, local and remote native submissions, and all 31 custom actor types.
 Its screenshot retains the ordinary first-person arm and drawable actor geometry.
+
+## Native name row advance
+
+Multiline names now advance ten pixels per row, independently of Java's nine-pixel font line height.
+The final row anchor, component styles, blank rows, and Unicode codepoints stay intact.
+Single-line labels keep their original component and offset.
+
+The original name-record routine in Bedrock 1.26.51.1, build 51061372, stores ten pixels plus authored extra spacing.
+Executable controls cover extra spacing of zero, minus two, one half, and three pixels.
+The ordinary and sneaking name producer supplies zero extra spacing and unit scale.
+Twelve name-layout and anchor tests pass.
+Absolute foreground glyph origin and direct native visible comparisons remain unverified.
+The bridge still requires an accepted Bedrock context; ordinary Java labels retain their existing path.

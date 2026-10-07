@@ -7805,3 +7805,97 @@ Geometry-full and cached-solidity initialization, per-type ambient overrides, ca
 Alternative terrain renderers, rotated geometry, enhanced lighting, and controlled visible native comparisons remain open.
 Dimensions, time, weather, brightness, status effects, fluid filtering, chunk boundaries, and relighting retain their verification requirements.
 All movement, combat, protocol, account, asset, and platform requirements retain their scope.
+
+## Parallel movement, inventory, names, and Iris integration, October 7, 2026
+
+**Goal classification: progress. Full Bedrock coverage remains incomplete.**
+Movement, inventory, billboard, and renderer agents work in separate private source copies.
+Main folds their verified changes into the owning patches and replays both complete stacks.
+Iris compatibility remains a required regression control for rendering changes.
+
+**Prediction frames:** Core rejects duplicate and older local prediction frames before replacing pending physics.
+The connection retains its frame watermark after consumption or a position mismatch.
+An older sample therefore cannot attach to a later authoritative input tick.
+Mounted rider frames retain their existing clock mapping.
+A real custom-payload handler regression and storage tests cover this ordering.
+Native complex movement, live latency, strict BDS, Boar, and direct and ViaProxy action comparisons remain required.
+
+**Bundle identity:** Zero is a valid dynamic bundle ID.
+Core shares an exact typed identity lookup between rendered contents and holder tracking.
+Missing or malformed tags cannot alias zero, and unsigned ID bits survive encoding.
+Three tests cover separate bundles, malformed identities, and the unsigned range.
+Restoring zero rejection makes all three tests fail.
+
+An isolated official BDS 1.26.51.1, build 51061372, protocol 2193 probe allocates zero and one.
+It accepts insertion, extraction, and compaction with zero, rejects a stale stack network ID, and accepts the authoritative retry.
+The server emits complete 64-slot snapshots in this probe.
+Partial dynamic updates retain their existing prefix semantics.
+The driver is a headless protocol client, not the native graphical client or translated Java UI.
+Full Java bundle selection, weights, nesting, action generation, and rollback remain open.
+
+**Name rows:** Accepted Bedrock multiline names use ten pixels per row, preserving the final anchor.
+The original target name-record routine writes ten pixels plus authored extra spacing.
+Four executable spacing controls and the ordinary and sneaking producer calls establish the default zero extra spacing and unit scale.
+Twelve name-layout and anchor tests preserve styles, blank rows, Unicode, and single-line behavior.
+Absolute foreground glyph origin and visible native comparisons remain open.
+
+**Terrain renderer integration:** Sodium bypasses vanilla `BlockModelLighter`.
+The add-on now retains native material annotations through baked import and geometry copies.
+Raw quad loads and resets clear them.
+Vanilla and Sodium use the same client world adapter and core native corner sampler.
+Two tests cover 432 face, plane, and vertex-order combinations, plus inset emission and authored shade direction.
+
+Only accepted annotated custom faces replace Sodium's four light and shade outputs.
+Ordinary faces delegate to the existing calculation.
+Later tint, emissive, geometry, normal, and buffer processing remains active, including Iris hooks.
+The optional bridges introduce no compile-time Sodium dependency.
+The tested versions are Sodium 0.9.2, Iris 1.11.7, Complementary Reimagined r5.9.3, and Java 26.3.
+
+**Native cached block properties:** Original target instructions pass 43,616 supplied-record checks.
+These include 16,224 component solidity cases, 768 component-absent controls, 18,432 cached-property cases, and 8,192 original emissive-getter controls.
+Cached solidity remains distinct from opaque-full-block.
+Component solidity checks geometry's full-block and ignore-geometry flags, opaque material layers, and an unresolved native tag identity.
+Ordinary, seasonal, and shifted opaque layers qualify; alpha-test layers do not.
+The cached initializer writes separate emissive, solidity, and occlusion fields.
+Supplied property bits, material kinds, and one unresolved special identity select the cached occlusion enum outputs.
+These outputs carry slab, leaf, connection, fluid, portal, ice, cactus, shrieker, and default labels.
+These fixtures execute original functions with synthetic component records.
+They do not establish actual runtime class or tag identities, complete geometry initialization, or native propagation.
+No production classification change is inferred from those unresolved identities.
+
+**Build verification:** All 97 core and 30 add-on patches replay successfully, and both PR-only stacks apply.
+Core has 818 test cases and 26 optional skips; the add-on has 607 cases and 117 optional skips.
+Both suites have zero failures and errors. Core Checkstyle and the ViaProxy build pass.
+Fresh verification confirms the pinned Jenkins build, commit, and all four artifact checksums.
+The add-on embeds all 1,257 identical core entries; ViaProxy embeds 1,256 entries, excluding the standalone manifest.
+
+**Client verification:** Final direct shader, direct plain, and ViaProxy shader replays pass transport and rendering checks.
+Each installs all 216 recorded geometry skins without rejection.
+The actual Sodium quad dispatch matches the shared sampler for accepted native faces and the original pipeline for ordinary faces.
+Annotation import, load, reset, and copy controls pass; normals, cull state, and later emissive processing retain their expected values.
+These controls pass with Complementary active, after shader disable and enable, and after resource reload.
+Without Sodium or Iris installed, actual vanilla ambient and zero-strength flat callbacks pass the same four-corner checks.
+An ordinary Java state retains vanilla lighting.
+The probes load no replacement production classes or mixins.
+These checks use software Mesa and recorded CubeCraft scenes, not native GPU comparisons or new live joins.
+
+**Proxy audit correction:** The first proxy audit retained a strict failure because two transient actors despawned before the Java world became ready.
+Their controller evaluation occurs in the proxy process, while the client audit only sees transmitted model state.
+A replay-only JDK 25 observer now counts original controller returns inside that process.
+The final run observes all 31 expected controller identities and retains the client checks for 216 skins and 41 drawable model keys.
+It also retains native drawing, third-person, unresolved-model, and combined client/proxy error checks.
+Missing, malformed, or failed observer evidence fails verification.
+An empty scene can use a valid idle observer.
+The original failed audit remains private; no production packet timing or actor exemptions were added.
+Executable bytecode tests preserve both return values, side effects, and original exceptions.
+Twelve replay-verifier tests pass with 47 assertions; the existing Java replay, native relay, and private-file selftests pass.
+
+**Publication scope:** Four production changes are folded into their owning patches; downstream patch contexts are refreshed.
+Nine exact build artifact files replace their reviewed predecessors; 26 unrelated artifact files remain unchanged.
+Rollback copies and complete before/after inventories remain private under `.stackanvil/research/lighting-properties/artifacts/`.
+No test server is restarted or replaced.
+The source publication preserves the user's `AGENTS.md` edit unstaged and includes the replay observer and evidence updates.
+
+**Remaining:** Native propagation, runtime block identities, per-type ambient and emissive overrides, world providers, enhanced lighting, and nonzero-strength flat paths remain open.
+Controlled visible native comparisons across dimensions, time, weather, brightness, effects, fluids, chunk boundaries, and relighting remain required.
+All packet, gameplay, combat, account, asset, Dressing Room, and platform requirements retain their scope.
