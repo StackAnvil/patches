@@ -1,4 +1,4 @@
-From b6a3fb1a4f2dd1aa74bd64c1377b7b0586962e4f Mon Sep 17 00:00:00 2001
+From fa07346b06166a62a0426b6a843aa4833e74587f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 18:45:47 +0200
 Subject: [PATCH] feat(ui): render authored Bedrock server forms
@@ -6,7 +6,7 @@ Subject: [PATCH] feat(ui): render authored Bedrock server forms
 Render the core-resolved resource-pack form scene through a negotiated
 client payload, preserving the original form ID and button indices. Use
 accepted pack textures and bundled licensed UI definitions without
-starting another asset download when a form opens.
+starting account sign-in or another package acquisition when a form opens.
 
 Keep authored control hierarchy, anchors, content dimensions, visibility,
 image borders and alpha tracks. Use Java focus, narration and pointer
@@ -18,26 +18,37 @@ The layout solver and polynomial animation easing remain authored-data
 implementations pending full native consumer verification. Keep native
 font metrics, asymmetric nine-slice side order, size/UV/color animations
 and named next-animation chains as explicit parity boundaries.
+
+Load public HTTPS form images asynchronously, with bounded downloads and
+decoding, versioned URL caches and texture cleanup. Keep original buttons
+usable while images load or fail; never put remote image bytes in the
+scene payload or block its network/render thread on HTTP.
+
+Resolve the native hover-text renderer through Java formatted tooltips
+without changing response indices or arbitrary custom renderer semantics.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   2 +
  .../appearance/BedrockResourceLibrary.java    |  11 +-
  ...FabricPlusBuiltinResourcePackProvider.java |   2 +-
  .../form/BedrockFallbackFormScreen.java       | 119 +++++
  .../screen/form/BedrockFormAnimations.java    |  88 ++++
- .../screen/form/BedrockFormImages.java        |  97 ++++
- .../screen/form/BedrockFormLayout.java        | 412 +++++++++++++++++
+ .../screen/form/BedrockFormImageCache.java    | 229 +++++++++
+ .../screen/form/BedrockFormImages.java        | 199 ++++++++
+ .../screen/form/BedrockFormLayout.java        | 412 +++++++++++++++
  .../screen/form/BedrockFormPresentation.java  |  55 +++
  .../bedrock/screen/form/BedrockFormScene.java |  97 ++++
  .../screen/form/BedrockFormScroll.java        |  69 +++
  .../bedrock/screen/form/BedrockFormText.java  |  20 +
- .../screen/form/BedrockNativeFormScreen.java  | 437 ++++++++++++++++++
+ .../screen/form/BedrockNativeFormScreen.java  | 467 ++++++++++++++++++
  .../screen/form/BedrockNativeForms.java       |  59 +++
  .../screen/form/NativeFormPayload.java        |  24 +
  ...icPlusBuiltinResourcePackProviderTest.java |   4 +
- .../screen/form/BedrockFormLayoutTest.java    | 429 +++++++++++++++++
- 16 files changed, 1920 insertions(+), 5 deletions(-)
+ .../form/BedrockFormImageCacheTest.java       | 141 ++++++
+ .../screen/form/BedrockFormLayoutTest.java    | 456 +++++++++++++++++
+ 18 files changed, 2449 insertions(+), 5 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFallbackFormScreen.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormAnimations.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormImageCache.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormImages.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormLayout.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormPresentation.java
@@ -47,6 +58,7 @@ and named next-animation chains as explicit parity boundaries.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeFormScreen.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeForms.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/NativeFormPayload.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormImageCacheTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormLayoutTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
@@ -334,12 +346,247 @@ index 0000000..c13e1a7
 +        return result;
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormImageCache.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormImageCache.java
+new file mode 100644
+index 0000000..6cebf19
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormImageCache.java
+@@ -0,0 +1,229 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.form;
++
++import java.awt.image.BufferedImage;
++import java.io.ByteArrayInputStream;
++import java.io.ByteArrayOutputStream;
++import java.io.IOException;
++import java.net.URI;
++import java.net.http.HttpClient;
++import java.net.http.HttpRequest;
++import java.net.http.HttpResponse;
++import java.nio.ByteBuffer;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.nio.file.StandardCopyOption;
++import java.security.MessageDigest;
++import java.time.Duration;
++import java.util.HexFormat;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.CompletionStage;
++import java.util.concurrent.Executor;
++import java.util.concurrent.Flow;
++import java.util.concurrent.TimeUnit;
++import java.util.function.Predicate;
++import javax.imageio.ImageIO;
++
++/** Bounded asynchronous public images, cached by target version and complete URL without account credentials. */
++final class BedrockFormImageCache {
++    static final int MAX_BYTES = 4 * 1024 * 1024;
++    static final int MAX_PIXELS = 4 * 1024 * 1024;
++    private static final int MAX_ENTRIES = 128;
++    private static final long MAX_CACHE_BYTES = 64L * 1024 * 1024;
++    private static final Duration AGE = Duration.ofDays(7);
++    private final Path directory;
++    private final HttpClient http;
++    private final Executor executor;
++    private final Predicate<URI> allowed;
++    private final Map<URI, CompletableFuture<Data>> pending = new LinkedHashMap<>(16, .75F, true);
++
++    BedrockFormImageCache(final Path directory, final String version, final HttpClient http, final Executor executor) {
++        this(directory, version, http, executor, BedrockFormImageCache::https);
++    }
++
++    // Tests use a separately owned loopback server; production always uses the HTTPS policy above.
++    BedrockFormImageCache(final Path directory, final String version, final HttpClient http,
++                         final Executor executor, final Predicate<URI> allowed) {
++        if (!version.matches("[A-Za-z0-9._-]{1,64}")) throw new IllegalArgumentException("Invalid image cache version");
++        this.directory = directory.resolve(version);
++        this.http = http;
++        this.executor = executor;
++        this.allowed = allowed;
++    }
++
++    synchronized CompletableFuture<Data> load(final String url) {
++        final URI uri;
++        try {
++            uri = URI.create(url);
++            if (url.length() > 4096 || !this.allowed.test(uri)) throw new IllegalArgumentException("Unsupported image URL");
++        } catch (final RuntimeException error) {
++            return CompletableFuture.failedFuture(error);
++        }
++        final var existing = this.pending.get(uri);
++        if (existing != null && !existing.isCompletedExceptionally()) return existing;
++        if (existing != null) this.pending.remove(uri, existing);
++        this.pruneMemory();
++        if (this.pending.size() >= MAX_ENTRIES) return CompletableFuture.failedFuture(new IOException("Too many menu images"));
++        final CompletableFuture<Data> result;
++        try {
++            result = CompletableFuture.supplyAsync(() -> {
++                try {
++                    final Path file = this.directory.resolve(hash(uri.toString()) + ".png");
++                    if (Files.isRegularFile(file)) {
++                        try {
++                            if (Files.size(file) <= MAX_BYTES && Files.getLastModifiedTime(file).toInstant().plus(AGE).isAfter(java.time.Instant.now()))
++                                try (final var input = Files.newInputStream(file)) { return decode(input.readNBytes(MAX_BYTES + 1)); }
++                        } catch (final IOException | RuntimeException invalid) {
++                            // Replace an incomplete or corrupt entry with a fresh bounded download.
++                        }
++                    }
++                    final Data data = decode(this.download(uri, 0, System.nanoTime() + TimeUnit.SECONDS.toNanos(20)));
++                    this.store(file, data.bytes);
++                    return data;
++                } catch (final Exception error) {
++                    throw new java.util.concurrent.CompletionException(error);
++                }
++            }, this.executor);
++        } catch (final java.util.concurrent.RejectedExecutionException busy) {
++            return CompletableFuture.failedFuture(new IOException("Menu image queue is full", busy));
++        }
++        this.pending.put(uri, result);
++        result.whenComplete((data, failure) -> {
++            synchronized (this) {
++                if (failure != null) this.pending.remove(uri, result);
++                this.pruneMemory();
++            }
++        });
++        return result;
++    }
++
++    private byte[] download(final URI uri, final int redirects, final long deadline) throws Exception {
++        if (!this.allowed.test(uri)) throw new IOException("Unsupported image redirect");
++        final long remaining = deadline - System.nanoTime();
++        if (remaining <= 0) throw new java.util.concurrent.TimeoutException("Menu image request timed out");
++        final var request = HttpRequest.newBuilder(uri).timeout(Duration.ofNanos(Math.min(remaining, TimeUnit.SECONDS.toNanos(15))))
++            .header("Accept", "image/png,image/jpeg").GET().build();
++        final var responseFuture = this.http.sendAsync(request, info -> new LimitedBody());
++        final HttpResponse<byte[]> response;
++        try { response = responseFuture.get(remaining, TimeUnit.NANOSECONDS); }
++        finally { if (!responseFuture.isDone()) responseFuture.cancel(true); }
++        if (response.statusCode() >= 300 && response.statusCode() <= 399) {
++            if (redirects >= 3) throw new IOException("Too many image redirects");
++            final String location = response.headers().firstValue("Location").orElseThrow(() -> new IOException("Missing image redirect"));
++            return this.download(uri.resolve(location), redirects + 1, deadline);
++        }
++        if (response.statusCode() != 200) throw new IOException("Menu image request failed");
++        return response.body();
++    }
++
++    static boolean https(final URI uri) {
++        return "https".equalsIgnoreCase(uri.getScheme()) && uri.getHost() != null
++            && uri.getUserInfo() == null && uri.getFragment() == null;
++    }
++
++    static Data decode(final byte[] bytes) throws IOException {
++        if (bytes.length == 0 || bytes.length > MAX_BYTES) throw new IOException("Menu image exceeds byte limits");
++        try (final var input = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
++            final var readers = ImageIO.getImageReaders(input);
++            if (!readers.hasNext()) throw new IOException("Unsupported menu image format");
++            final var reader = readers.next();
++            try {
++                if (!reader.getFormatName().equalsIgnoreCase("png") && !reader.getFormatName().equalsIgnoreCase("jpeg"))
++                    throw new IOException("Unsupported menu image format");
++                reader.setInput(input, true, true);
++                final int width = reader.getWidth(0), height = reader.getHeight(0);
++                if (width <= 0 || height <= 0 || width > 2048 || height > 2048 || (long) width * height > MAX_PIXELS)
++                    throw new IOException("Menu image exceeds pixel limits");
++                final BufferedImage pixels = reader.read(0);
++                final var output = new ByteArrayOutputStream();
++                if (!ImageIO.write(pixels, "png", output) || output.size() > MAX_BYTES)
++                    throw new IOException("Decoded menu image exceeds byte limits");
++                return new Data(output.toByteArray(), width, height);
++            } finally { reader.dispose(); }
++        }
++    }
++
++    private void store(final Path file, final byte[] bytes) {
++        Path temporary = null;
++        try {
++            Files.createDirectories(this.directory);
++            temporary = Files.createTempFile(this.directory, "image-", ".tmp");
++            Files.write(temporary, bytes);
++            Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
++            try (final var paths = Files.list(this.directory)) {
++                final var entries = paths.filter(path -> path.getFileName().toString().matches("[0-9a-f]{64}\\.png"))
++                    .sorted(java.util.Comparator.comparingLong(BedrockFormImageCache::modified).reversed()).toList();
++                long total = 0;
++                for (int i = 0; i < entries.size(); i++) {
++                    total += Files.size(entries.get(i));
++                    if (i >= MAX_ENTRIES || total > MAX_CACHE_BYTES) Files.deleteIfExists(entries.get(i));
++                }
++            }
++        } catch (final IOException ignored) {
++            // Read-only or unavailable cache storage must not stop the current menu.
++        } finally {
++            if (temporary != null) try { Files.deleteIfExists(temporary); } catch (final IOException ignored) {}
++        }
++    }
++
++    private synchronized void pruneMemory() {
++        long total = 0;
++        for (final var future : this.pending.values()) if (future.isDone() && !future.isCompletedExceptionally()) {
++            final Data data = future.getNow(null);
++            if (data != null) total += data.bytes.length;
++        }
++        final var values = this.pending.entrySet().iterator();
++        while (values.hasNext() && (total > MAX_CACHE_BYTES || this.pending.size() >= MAX_ENTRIES)) {
++            final var future = values.next().getValue();
++            if (!future.isDone()) continue;
++            final Data data = future.isCompletedExceptionally() ? null : future.getNow(null);
++            if (data != null) total -= data.bytes.length;
++            values.remove();
++        }
++    }
++
++    private static long modified(final Path path) {
++        try { return Files.getLastModifiedTime(path).toMillis(); } catch (final IOException missing) { return 0; }
++    }
++
++    private static String hash(final String value) {
++        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8))); }
++        catch (final java.security.NoSuchAlgorithmException impossible) { throw new AssertionError(impossible); }
++    }
++
++    record Data(byte[] bytes, int width, int height) {}
++
++    private static final class LimitedBody implements HttpResponse.BodySubscriber<byte[]> {
++        private final CompletableFuture<byte[]> result = new CompletableFuture<>();
++        private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
++        private Flow.Subscription subscription;
++
++        @Override public CompletionStage<byte[]> getBody() { return this.result; }
++        @Override public void onSubscribe(final Flow.Subscription subscription) {
++            this.subscription = subscription;
++            subscription.request(1);
++        }
++        @Override public void onNext(final List<ByteBuffer> buffers) {
++            for (final var buffer : buffers) {
++                if ((long) this.bytes.size() + buffer.remaining() > MAX_BYTES) {
++                    this.subscription.cancel();
++                    this.result.completeExceptionally(new IOException("Menu image exceeds byte limits"));
++                    return;
++                }
++                final byte[] chunk = new byte[buffer.remaining()];
++                buffer.get(chunk);
++                this.bytes.writeBytes(chunk);
++            }
++            this.subscription.request(1);
++        }
++        @Override public void onError(final Throwable error) { this.result.completeExceptionally(error); }
++        @Override public void onComplete() { this.result.complete(this.bytes.toByteArray()); }
++    }
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormImages.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormImages.java
 new file mode 100644
-index 0000000..6cf1689
+index 0000000..44ff5e6
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormImages.java
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,199 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -349,16 +596,111 @@ index 0000000..6cf1689
 +
 +import com.mojang.blaze3d.platform.NativeImage;
 +import java.io.IOException;
++import java.net.http.HttpClient;
++import java.time.Duration;
 +import java.util.HashMap;
 +import java.util.Map;
++import java.util.UUID;
++import java.util.concurrent.ArrayBlockingQueue;
++import java.util.concurrent.CompletionException;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.ThreadPoolExecutor;
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.atomic.AtomicLong;
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.client.gui.GuiGraphicsExtractor;
 +import net.minecraft.client.renderer.RenderPipelines;
++import net.minecraft.client.renderer.texture.DynamicTexture;
 +import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
 +
-+/** Uses accepted resource-pack textures; opening a form never starts another asset download. */
-+final class BedrockFormImages {
++/** Draws accepted pack textures and bounded public HTTPS images. */
++final class BedrockFormImages implements AutoCloseable {
++    private static final ExecutorService DOWNLOADS = new ThreadPoolExecutor(4, 4, 0, TimeUnit.MILLISECONDS,
++        new ArrayBlockingQueue<>(256), Thread.ofPlatform().daemon().name("Bedrock form images-", 0).factory(),
++        new ThreadPoolExecutor.AbortPolicy());
++    private static final HttpClient HTTP = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10))
++        .followRedirects(HttpClient.Redirect.NEVER).build();
++    private static BedrockFormImageCache remoteCache;
++    private final Map<String, Remote> remote = new HashMap<>();
 +    private final Map<Identifier, Image> images = new HashMap<>();
++    private volatile boolean closed;
++    private final AtomicLong remotePixels = new AtomicLong();
++    private boolean failed;
++    private long revision;
++
++    private static synchronized BedrockFormImageCache remoteCache() {
++        if (remoteCache == null) remoteCache = new BedrockFormImageCache(
++            Minecraft.getInstance().gameDirectory.toPath().resolve(".cache/viabedrock/form-images"),
++            ProtocolConstants.BEDROCK_VERSION_NAME, HTTP, DOWNLOADS);
++        return remoteCache;
++    }
++
++    Image image(final BedrockFormScene.Node node) {
++        return node.string("texture_file_system", "path").equals("url")
++            ? this.remote(node.string("texture", "")) : this.image(node.string("texture", ""));
++    }
++
++    private Image remote(final String url) {
++        final Remote existing = this.remote.get(url);
++        if (existing != null) return existing.image;
++        if (this.closed || this.remote.size() >= 128) { this.failed = true; return null; }
++        final Remote entry = new Remote();
++        this.remote.put(url, entry);
++        final var future = remoteCache().load(url).thenApplyAsync(data -> {
++            if (this.closed) return null;
++            final long count = (long) data.width() * data.height();
++            long previous;
++            do {
++                previous = this.remotePixels.get();
++                if (previous + count > 16L * 1024 * 1024)
++                    throw new CompletionException(new IOException("Menu images exceed pixel limits"));
++            } while (!this.remotePixels.compareAndSet(previous, previous + count));
++            try { return NativeImage.read(data.bytes()); }
++            catch (final IOException | RuntimeException error) {
++                this.remotePixels.addAndGet(-count);
++                throw new CompletionException(error);
++            }
++        }, DOWNLOADS);
++        future.whenComplete((pixels, error) -> Minecraft.getInstance().execute(() -> {
++            if (this.closed) {
++                if (pixels != null) { this.remotePixels.addAndGet(-(long) pixels.getWidth() * pixels.getHeight()); pixels.close(); }
++                return;
++            }
++            if (error != null) { entry.failed = true; this.failed = true; this.revision++; return; }
++            final Identifier id = Identifier.fromNamespaceAndPath("viafabricplus-bedrock", "form/" + UUID.randomUUID());
++            try {
++                Minecraft.getInstance().getTextureManager().register(id, new DynamicTexture(id::toString, pixels));
++                entry.image = new Image(id, pixels.getWidth(), pixels.getHeight(), null);
++            } catch (final RuntimeException failure) {
++                this.remotePixels.addAndGet(-(long) pixels.getWidth() * pixels.getHeight());
++                pixels.close();
++                entry.failed = true;
++                this.failed = true;
++            }
++            this.revision++;
++        }));
++        return null;
++    }
++
++    long revision() { return this.revision; }
++    boolean failed() { return this.failed; }
++
++    @Override
++    public void close() {
++        this.closed = true;
++        for (final Remote entry : this.remote.values()) if (entry.image != null) {
++            Minecraft.getInstance().getTextureManager().release(entry.image.id);
++            this.remotePixels.addAndGet(-(long) entry.image.width * entry.image.height);
++        }
++        this.remote.clear();
++        this.images.clear();
++    }
++
++    private static final class Remote {
++        Image image;
++        boolean failed;
++    }
 +
 +    Image image(final String texture) {
 +        final Identifier id = Identifier.tryParse(texture);
@@ -382,7 +724,14 @@ index 0000000..6cf1689
 +
 +    void draw(final GuiGraphicsExtractor graphics, final BedrockFormLayout.Box box, final int color) {
 +        final BedrockFormScene.Node node = box.node();
-+        final Image image = this.image(node.string("texture", ""));
++        final Image image = this.image(node);
++        if (image == null) {
++            final Remote entry = this.remote.get(node.string("texture", ""));
++            if (entry != null && !entry.failed && !this.closed) graphics.fill(Math.round(box.bounds().x()), Math.round(box.bounds().y()),
++                Math.round(box.bounds().x() + box.bounds().width()), Math.round(box.bounds().y() + box.bounds().height()),
++                color & 0xFF000000 | 0x303030);
++            return;
++        }
 +        float width = box.bounds().width(), height = box.bounds().height();
 +        final float u = BedrockFormLayout.vector(node, "uv", 0, 0), v = BedrockFormLayout.vector(node, "uv", 1, 0);
 +        final float sourceWidth = BedrockFormLayout.vector(node, "uv_size", 0, image.width);
@@ -918,7 +1267,7 @@ index 0000000..735c6bc
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormScene.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormScene.java
 new file mode 100644
-index 0000000..b29349f
+index 0000000..980ca93
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormScene.java
 @@ -0,0 +1,97 @@
@@ -939,7 +1288,7 @@ index 0000000..b29349f
 +/** A bounded, core-resolved scene. Layout never interprets server response indices. */
 +public record BedrockFormScene(Node root, Fallback fallback) {
 +    private static final Set<String> TYPES = Set.of("screen", "panel", "label", "image", "button", "toggle",
-+        "stack_panel", "grid", "scroll_view", "scrollbar_box", "scroll_track", "collection_panel", "factory");
++        "stack_panel", "grid", "scroll_view", "scrollbar_box", "scroll_track", "collection_panel", "factory", "custom");
 +
 +    public static BedrockFormScene parse(final String json) {
 +        final JsonObject scene = JsonParser.parseString(json).getAsJsonObject();
@@ -971,7 +1320,7 @@ index 0000000..b29349f
 +        final JsonElement visibility = value.get("visible");
 +        final boolean visible = inheritedVisible && !(visibility != null && visibility.isJsonPrimitive()
 +            && visibility.getAsJsonPrimitive().isBoolean() && !visibility.getAsBoolean());
-+        if (visible && !TYPES.contains(type)) throw new IllegalArgumentException("Unsupported native form control: " + type);
++        if (visible && (!TYPES.contains(type) || type.equals("custom") && !string(value, "renderer", "").equals("hover_text_renderer"))) throw new IllegalArgumentException("Unsupported native form control: " + type);
 +        final int action = value.has("action") ? value.get("action").getAsBigDecimal().intValueExact() : Integer.MIN_VALUE;
 +        if (value.has("action") && (action < -1 || action >= buttonCount))
 +            throw new IllegalArgumentException("Invalid native form response index");
@@ -1122,10 +1471,10 @@ index 0000000..4d68ebd
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeFormScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeFormScreen.java
 new file mode 100644
-index 0000000..c5009be
+index 0000000..623bd15
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockNativeFormScreen.java
-@@ -0,0 +1,437 @@
+@@ -0,0 +1,467 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1170,6 +1519,7 @@ index 0000000..c5009be
 +    private BedrockFormLayout.Box root;
 +    private boolean responded;
 +    private Drag drag;
++    private long imageRevision;
 +
 +    BedrockNativeFormScreen(final Connection owner, final int formId, final BedrockFormScene scene) {
 +        super(BedrockFormText.component(scene.fallback().title()));
@@ -1208,8 +1558,8 @@ index 0000000..c5009be
 +                (node.string("text", "").split("\\n", -1).length * this.font.lineHeight) * scale(node));
 +            case "image" -> {
 +                if (node.string("texture", "").isEmpty()) yield new BedrockFormLayout.Size(0, 0);
-+                final var image = this.images.image(node.string("texture", ""));
-+                yield new BedrockFormLayout.Size(image.width(), image.height());
++                final var image = this.images.image(node);
++                yield image == null ? new BedrockFormLayout.Size(16, 16) : new BedrockFormLayout.Size(image.width(), image.height());
 +            }
 +            case "button", "toggle" -> new BedrockFormLayout.Size(200, 20);
 +            default -> new BedrockFormLayout.Size(0, 0);
@@ -1229,9 +1579,13 @@ index 0000000..c5009be
 +            final List<BedrockFormPresentation.Draw> draws = this.draws(mouseX, mouseY);
 +            this.synchronize(draws);
 +            draws.sort(Comparator.comparingDouble(draw -> draw.box().layer()));
++            BedrockFormScene.Node tooltip = null;
 +            for (final BedrockFormPresentation.Draw draw : draws) {
 +                final var box = draw.box();
 +                final var clip = box.clip();
++                if (draw.enabled() && draw.alpha() > 0 && box.node().type().equals("custom")
++                    && box.node().string("renderer", "").equals("hover_text_renderer")
++                    && !box.node().string("hover_text", "").isEmpty()) tooltip = box.node();
 +                if (draw.alpha() <= 0 || box.visibleBounds().width() <= 0 || box.visibleBounds().height() <= 0) continue;
 +                graphics.enableScissor(Math.round(clip.x()), Math.round(clip.y()),
 +                    Math.round(clip.x() + clip.width()), Math.round(clip.y() + clip.height()));
@@ -1246,6 +1600,18 @@ index 0000000..c5009be
 +                    graphics.disableScissor();
 +                }
 +            }
++            if (tooltip != null) {
++                final Component text = tooltip.properties().has("hover_text_component")
++                    ? ComponentSerialization.CODEC.parse(JsonOps.INSTANCE, tooltip.properties().get("hover_text_component")).getOrThrow()
++                    : BedrockFormText.component(tooltip.string("hover_text", ""));
++                final int maximum = Math.round(tooltip.number("hover_text_max_width", 0));
++                if (maximum > 0) graphics.setTooltipForNextFrame(this.font,
++                    this.font.split(text, Math.max(1, Math.min(maximum, this.width - 16))), mouseX, mouseY);
++                else graphics.setTooltipForNextFrame(this.font, text, mouseX, mouseY);
++            }
++            if (this.images.failed()) graphics.text(this.font,
++                Component.literal("Some menu images could not load."), 8, this.height - this.font.lineHeight - 8,
++                0xFFFFCCCC, true);
 +        } catch (final RuntimeException error) {
 +            ViaFabricPlusBedrock.impl().logger().warn("Could not draw native form; opening its ordinary controls", error);
 +            this.minecraft.setScreenAndShow(new BedrockFallbackFormScreen(this.owner, this.formId, this.scene.fallback()));
@@ -1495,6 +1861,19 @@ index 0000000..c5009be
 +    @Override
 +    public void tick() {
 +        if (!BedrockNativeForms.current(this.owner)) this.minecraft.setScreenAndShow(null);
++        else if (this.imageRevision != this.images.revision()) {
++            this.imageRevision = this.images.revision();
++            try { this.layout(); }
++            catch (final RuntimeException error) {
++                ViaFabricPlusBedrock.impl().logger().warn("Could not update native form images; opening its ordinary controls", error);
++                this.minecraft.setScreenAndShow(new BedrockFallbackFormScreen(this.owner, this.formId, this.scene.fallback()));
++            }
++        }
++    }
++
++    @Override
++    public void removed() {
++        this.images.close();
 +    }
 +
 +    private static void flatten(final BedrockFormLayout.Box box, final List<BedrockFormLayout.Box> result) {
@@ -1679,12 +2058,159 @@ index 075e9d6..736d794 100644
          assertArrayEquals(new byte[] {2}, packs.get(1).content().get("textures/items/CaseSensitive.jpg"));
          assertNull(packs.get(1).content().get("textures/items/casesensitive.jpg"));
          assertArrayEquals(new byte[] {9}, packs.get(2).content().get("textures/items/shared.png"));
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormImageCacheTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormImageCacheTest.java
+new file mode 100644
+index 0000000..f88897d
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormImageCacheTest.java
+@@ -0,0 +1,141 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.form;
++
++import com.sun.net.httpserver.HttpServer;
++import java.awt.image.BufferedImage;
++import java.io.ByteArrayOutputStream;
++import java.net.InetSocketAddress;
++import java.net.URI;
++import java.net.http.HttpClient;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.time.Duration;
++import java.util.concurrent.CountDownLatch;
++import java.util.concurrent.Executors;
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.atomic.AtomicInteger;
++import javax.imageio.ImageIO;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.io.TempDir;
++import static org.junit.jupiter.api.Assertions.*;
++
++final class BedrockFormImageCacheTest {
++    @TempDir Path cache;
++
++    @Test
++    void downloadDeduplicatesWithoutBlockingAndLoadsDiskCacheOffline() throws Exception {
++        final byte[] png = png(12, 7);
++        final AtomicInteger requests = new AtomicInteger();
++        final CountDownLatch received = new CountDownLatch(1), release = new CountDownLatch(1);
++        final HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
++        server.createContext("/image", exchange -> {
++            requests.incrementAndGet();
++            received.countDown();
++            try { release.await(5, TimeUnit.SECONDS); } catch (final InterruptedException error) { Thread.currentThread().interrupt(); }
++            exchange.sendResponseHeaders(200, png.length);
++            try (final var output = exchange.getResponseBody()) { output.write(png); }
++        });
++        server.start();
++        try (final var executor = Executors.newFixedThreadPool(2)) {
++            final String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/image";
++            final var images = fixture(executor);
++            final var first = images.load(url);
++            assertSame(first, images.load(url));
++            assertTrue(received.await(5, TimeUnit.SECONDS));
++            assertFalse(first.isDone());
++            release.countDown();
++            final var data = first.get(5, TimeUnit.SECONDS);
++            assertEquals(12, data.width()); assertEquals(7, data.height());
++            assertEquals(1, requests.get());
++            server.stop(0);
++            final var cached = fixture(executor).load(url).get(5, TimeUnit.SECONDS);
++            assertArrayEquals(data.bytes(), cached.bytes());
++            assertEquals(1, requests.get());
++            // A different target version cannot silently reuse the old version's entry.
++            final var other = new BedrockFormImageCache(this.cache, "other", http(), executor, uri -> uri.getHost().equals("127.0.0.1"));
++            assertThrows(Exception.class, () -> other.load(url).get(5, TimeUnit.SECONDS));
++        } finally { release.countDown(); server.stop(0); }
++    }
++
++    @Test
++    void enforcesDownloadBoundsRedirectPolicyAndRecoversCorruptCache() throws Exception {
++        final byte[] png = png(3, 2);
++        final AtomicInteger requests = new AtomicInteger();
++        final AtomicInteger retries = new AtomicInteger();
++        final HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
++        server.createContext("/good", exchange -> {
++            requests.incrementAndGet(); exchange.sendResponseHeaders(200, png.length);
++            try (final var output = exchange.getResponseBody()) { output.write(png); }
++        });
++        server.createContext("/retry", exchange -> {
++            if (retries.incrementAndGet() == 1) { exchange.sendResponseHeaders(503, -1); exchange.close(); }
++            else {
++                exchange.sendResponseHeaders(200, png.length);
++                try (final var output = exchange.getResponseBody()) { output.write(png); }
++            }
++        });
++        server.createContext("/redirect", exchange -> {
++            exchange.getResponseHeaders().add("Location", "/good"); exchange.sendResponseHeaders(302, -1); exchange.close();
++        });
++        server.createContext("/badredirect", exchange -> {
++            exchange.getResponseHeaders().add("Location", "file:///unavailable"); exchange.sendResponseHeaders(302, -1); exchange.close();
++        });
++        server.createContext("/large", exchange -> {
++            exchange.sendResponseHeaders(200, BedrockFormImageCache.MAX_BYTES + 1L);
++            try (final var output = exchange.getResponseBody()) { output.write(new byte[BedrockFormImageCache.MAX_BYTES + 1]); }
++            catch (final java.io.IOException cancelled) { /* The bounded subscriber cancels the oversized stream. */ }
++        });
++        server.start();
++        try (final var executor = Executors.newFixedThreadPool(2)) {
++            final String url = "http://127.0.0.1:" + server.getAddress().getPort();
++            assertEquals(3, fixture(executor).load(url + "/redirect").get(5, TimeUnit.SECONDS).width());
++            assertThrows(Exception.class, () -> fixture(executor).load(url + "/badredirect").get(5, TimeUnit.SECONDS));
++            assertThrows(Exception.class, () -> fixture(executor).load(url + "/large").get(5, TimeUnit.SECONDS));
++            fixture(executor).load(url + "/good").get(5, TimeUnit.SECONDS);
++            try (final var files = Files.list(this.cache.resolve("test"))) {
++                for (final Path file : files.toList()) Files.write(file, new byte[] {0});
++            }
++            assertEquals(2, fixture(executor).load(url + "/good").get(5, TimeUnit.SECONDS).height());
++            assertEquals(3, requests.get());
++            final var retrying = fixture(executor);
++            assertThrows(Exception.class, () -> retrying.load(url + "/retry").get(5, TimeUnit.SECONDS));
++            assertEquals(3, retrying.load(url + "/retry").get(5, TimeUnit.SECONDS).width());
++            assertEquals(2, retries.get());
++        } finally { server.stop(0); }
++    }
++
++    @Test
++    void rejectsUnsafeProductionUrlsAndOversizedDecodedImages() throws Exception {
++        assertTrue(BedrockFormImageCache.https(URI.create("https://example.invalid/picture?q=1")));
++        for (final String url : new String[] {"http://example.invalid/picture", "file:///picture", "https://user:pass@example.invalid/picture", "https://example.invalid/picture#fragment", "https:/picture"})
++            assertFalse(BedrockFormImageCache.https(URI.create(url)));
++        final var busy = new BedrockFormImageCache(this.cache, "test", http(),
++            task -> { throw new java.util.concurrent.RejectedExecutionException(); });
++        assertTrue(busy.load("https://example.invalid/image").isCompletedExceptionally());
++        assertThrows(java.io.IOException.class, () -> BedrockFormImageCache.decode(new byte[] {0}));
++        assertThrows(java.io.IOException.class, () -> BedrockFormImageCache.decode(png(2049, 1)));
++        try (final var executor = Executors.newSingleThreadExecutor()) {
++            final var production = new BedrockFormImageCache(this.cache, "test", http(), executor);
++            assertTrue(production.load("http://127.0.0.1/image").isCompletedExceptionally());
++        }
++    }
++
++    private BedrockFormImageCache fixture(final java.util.concurrent.Executor executor) {
++        return new BedrockFormImageCache(this.cache, "test", http(), executor,
++            uri -> "http".equals(uri.getScheme()) && "127.0.0.1".equals(uri.getHost()) && uri.getUserInfo() == null);
++    }
++
++    private static HttpClient http() {
++        return HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(1)).followRedirects(HttpClient.Redirect.NEVER).build();
++    }
++
++    private static byte[] png(final int width, final int height) throws Exception {
++        final var bytes = new ByteArrayOutputStream();
++        ImageIO.write(new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB), "png", bytes);
++        return bytes.toByteArray();
++    }
++}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormLayoutTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormLayoutTest.java
 new file mode 100644
-index 0000000..1e73a8e
+index 0000000..829f25e
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/screen/form/BedrockFormLayoutTest.java
-@@ -0,0 +1,429 @@
+@@ -0,0 +1,456 @@
 +package com.viaversion.viafabricplus.bedrock.screen.form;
 +
 +import com.google.gson.JsonArray;
@@ -2065,6 +2591,33 @@ index 0000000..1e73a8e
 +        final var restarted = BedrockFormPresentation.draws(box, _ -> true, node -> timeline.opacity(node, 2_000_000_000L));
 +        assertEquals(0, restarted.getLast().alpha());
 +        assertEquals(1, restarted.getLast().potential());
++    }
++
++    @Test
++    void selectsNativeHoverTooltipWithoutChangingResponseOrLayout() {
++        final JsonObject root = node("button", 80, 25);
++        root.addProperty("action", 7);
++        root.addProperty("default_control", "normal");
++        root.addProperty("hover_control", "hover");
++        final JsonObject normal = node("panel", "100%", "100%");
++        normal.addProperty("name", "normal");
++        final JsonObject hover = node("panel", "100%", "100%");
++        hover.addProperty("name", "hover");
++        final JsonObject tooltip = node("custom", 0, 0);
++        tooltip.addProperty("renderer", "hover_text_renderer");
++        tooltip.addProperty("hover_text", "Additional detail");
++        children(hover, tooltip);
++        children(root, normal, hover);
++        final var box = layout(scene(root), 320, 200);
++        assertEquals(80, box.bounds().width());
++        assertEquals(25, box.bounds().height());
++        assertEquals(7, box.node().action());
++        assertTrue(BedrockFormPresentation.draws(box, _ -> false).stream().noneMatch(draw -> draw.box().node().type().equals("custom")));
++        final var hovered = BedrockFormPresentation.draws(box, _ -> true);
++        assertEquals(1, hovered.stream().filter(draw -> draw.box().node().type().equals("custom")).count());
++        assertEquals(7, hovered.getFirst().box().node().action());
++        tooltip.addProperty("renderer", "unsupported_renderer");
++        assertThrows(IllegalArgumentException.class, () -> scene(root));
 +    }
 +
 +    private static BedrockFormLayout.Box layout(final BedrockFormScene scene, final int width, final int height) {

@@ -8423,7 +8423,9 @@ A subsequent desktop capture records four actual action forms and one custom set
 All four action forms resolve against the accepted pack and licensed baseline, including their public HTTPS image bindings.
 The custom settings form retains its existing controls.
 The Wardrobe scene retains all sixteen bound hover-text nodes and their formatted components.
-The updated renderer still requires actual desktop verification.
+Private renderer checks accept all four captured action scenes, including the Wardrobe tooltip controls.
+Each enabled action has positive bounds and nonzero alpha.
+These checks use inferred font and image metrics, so actual desktop rendering and interaction still require verification.
 The full replay passes 869 core tests, with 30 skipped.
 
 Legacy `buttons` remains supported through the existing form codec.
