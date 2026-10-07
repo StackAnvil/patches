@@ -1,4 +1,4 @@
-From ea4f0beedef0d2870a8064075e122b3cd9a761a7 Mon Sep 17 00:00:00 2001
+From 95ca0a694f88d4b271ce2529e960d3ddedfd7c0e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 18:42:36 +0200
 Subject: [PATCH] feat(ui): resolve authored Bedrock server UI scenes
@@ -103,13 +103,18 @@ This layering behavior is inferred from those target inputs; original
 native definition-store merge execution remains separate verification.
 Four regression cases and actual three/six-row scene probes retain the
 63/90 native count labels, title labels and real collection addresses.
+
+Keep known inactive action/custom controller collections empty when both
+controllers occur in the authored screen. Empty counterpart length bindings
+prevent factories from manufacturing rows of the wrong form type. Preserve
+unknown-collection rejection, real input state and original response indices.
 ---
  build.gradle                                  |  11 +
  .../api/model/NativeContainerMessage.java     |  84 ++
  .../api/model/NativeFormMessage.java          |  56 ++
  .../http/ConvertedResourcePackCache.java      |   4 +-
  .../api/resourcepack/ui/ContainerUi.java      | 277 ++++++
- .../api/resourcepack/ui/FormBindings.java     | 280 ++++++
+ .../api/resourcepack/ui/FormBindings.java     | 285 ++++++
  .../api/resourcepack/ui/JsonUiProgram.java    | 911 ++++++++++++++++++
  .../api/resourcepack/ui/ServerFormUi.java     | 253 +++++
  .../api/resourcepack/ui/UiBindings.java       |  40 +
@@ -125,6 +130,7 @@ Four regression cases and actual three/six-row scene probes retain the
  .../api/model/NativeContainerMessageTest.java |  73 ++
  .../api/model/NativeFormMessageTest.java      |  51 +
  .../api/resourcepack/ui/ContainerUiTest.java  | 201 ++++
+ .../ui/FormCollectionActivationTest.java      |  97 ++
  .../resourcepack/ui/JsonUiProgramTest.java    | 230 +++++
  .../ui/ServerCustomFormUiTest.java            | 146 +++
  .../ui/ServerFormUiSliderStateTest.java       | 126 +++
@@ -132,7 +138,7 @@ Four regression cases and actual three/six-row scene probes retain the
  .../api/resourcepack/ui/UiExpressionTest.java |  56 ++
  .../api/resourcepack/ui/UiTexturesTest.java   | 111 +++
  .../NativeContainerOpeningPacketTest.java     | 173 ++++
- 28 files changed, 4243 insertions(+), 132 deletions(-)
+ 29 files changed, 4345 insertions(+), 132 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFormMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ContainerUi.java
@@ -147,6 +153,7 @@ Four regression cases and actual three/six-row scene probes retain the
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeContainerMessageTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeFormMessageTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ContainerUiTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/FormCollectionActivationTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerCustomFormUiTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiSliderStateTest.java
@@ -640,10 +647,10 @@ index 000000000..cf1b31b4e
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/FormBindings.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/FormBindings.java
 new file mode 100644
-index 000000000..fa089a61d
+index 000000000..8d89c2ec5
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/FormBindings.java
-@@ -0,0 +1,280 @@
+@@ -0,0 +1,285 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -692,13 +699,13 @@ index 000000000..fa089a61d
 +            types.add(type);
 +            this.buttonIndices[index] = type.equals("button") ? buttonIndex++ : -1;
 +        }
-+        this.initial.put("#form_button_contents", types);
++        this.initial.put("#form_button_contents", this.custom ? new JsonArray() : types);
 +        this.initial.put("#title_text", form.has("title") ? form.get("title") : new JsonPrimitive(""));
 +        this.initial.put("#form_text", form.has("content") ? form.get("content") : new JsonPrimitive(""));
 +        this.initial.put("#form_content_text", this.initial.get("#form_text"));
-+        this.initial.put("#form_button_length", new JsonPrimitive(elements.size()));
++        this.initial.put("#form_button_length", new JsonPrimitive(this.custom ? 0 : elements.size()));
++        this.initial.put("#custom_form_length", this.custom ? types : new JsonArray());
 +        if (this.custom) {
-+            this.initial.put("#custom_form_length", types);
 +            this.initial.put("#submit_text", new JsonPrimitive(this.translator.apply("gui.submit")));
 +            this.initial.put("#submit_button_visible", new JsonPrimitive(true));
 +        }
@@ -741,6 +748,11 @@ index 000000000..fa089a61d
 +
 +    @Override
 +    public Collection collection(final String name, final Scope parent) {
++        // Both native form controllers are declared in the shared screen definition.
++        // Only the current controller supplies rows; its counterpart remains empty.
++        if (name.equals(this.custom ? "form_buttons" : "custom_form")) {
++            return new Collection(List.of(), Map.of());
++        }
 +        if (Set.of("custom_dropdown", "custom_multiselect").contains(name)) {
 +            final int index = this.elementIndex(parent);
 +            if (!this.custom || index < 0) {
@@ -3655,6 +3667,109 @@ index 000000000..145cb6539
 +        assertThrows(IllegalArgumentException.class, () -> new ContainerUi.MenuView(7, complete.kind(), complete.title(), slots, Map.of()));
 +        slots.set(0, new ContainerUi.Slot(80, Map.of()));
 +        assertThrows(IllegalArgumentException.class, () -> new ContainerUi.MenuView(7, complete.kind(), complete.title(), slots, Map.of()));
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/FormCollectionActivationTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/FormCollectionActivationTest.java
+new file mode 100644
+index 000000000..58a1f1216
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/FormCollectionActivationTest.java
+@@ -0,0 +1,97 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.ui;
++
++import com.viaversion.viaversion.libs.gson.JsonArray;
++import com.viaversion.viaversion.libs.gson.JsonObject;
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++class FormCollectionActivationTest {
++
++    private static final String DEFINITIONS = """
++            {"namespace":"server_form","main_screen_content":{"type":"panel","controls":[
++              {"action":{"type":"stack_panel","collection_name":"form_buttons",
++                "factory":{"control_ids":{"button":"server_form.button"}},
++                "bindings":[{"binding_name":"#form_button_contents","binding_name_override":"#collection_length"}]}},
++              {"custom":{"type":"stack_panel","collection_name":"custom_form",
++                "factory":{"control_ids":{"toggle":"server_form.toggle","label":"server_form.label"}},
++                "bindings":[{"binding_name":"#custom_form_length","binding_name_override":"#collection_length"}]}},
++              {"inactive_binding":{"type":"panel","visible":false,"bindings":[
++                {"binding_type":"collection_details","binding_collection_name":"$opposite","binding_name":"#title_text"}]}}
++            ]},"button":{"type":"button","$pressed_button_name":"button.form_button_click","text":"#form_button_text"},
++            "toggle":{"type":"toggle","bindings":[{"binding_name":"#custom_toggle_state","binding_name_override":"#toggle_state"}]},
++            "label":{"type":"label","text":"#custom_text"}}
++            """;
++
++    private static ServerFormUi ui(final String opposite) {
++        final String source = DEFINITIONS.replace("$opposite", opposite);
++        return new ServerFormUi(List.of(Map.of("ui/server_form.json", source.getBytes(StandardCharsets.UTF_8))), key -> key);
++    }
++
++    private static List<JsonObject> nodes(final JsonObject root) {
++        final List<JsonObject> result = new ArrayList<>();
++        result.add(root);
++        root.getAsJsonArray("children").forEach(child -> result.addAll(nodes(child.getAsJsonObject())));
++        return result;
++    }
++
++    @Test
++    void actionFormLeavesCustomFactoryAndItsBindingsEmptyWithoutLosingButtonOrdinals() {
++        final JsonObject form = JsonParser.parseString("""
++                {"type":"form","title":"Wardrobe","content":"Choose","elements":[
++                 {"type":"label","text":"Heading"},{"type":"button","text":"First"},{"type":"button","text":"Second"}]}
++                """).getAsJsonObject();
++        final JsonObject scene = ui("custom_form").resolve(form);
++        assertNotNull(scene);
++        final List<JsonObject> nodes = nodes(scene.getAsJsonObject("root"));
++        assertEquals(List.of(0, 1), nodes.stream().filter(node -> node.has("action"))
++                .map(node -> node.get("action").getAsInt()).toList());
++        assertTrue(nodes.stream().filter(node -> node.get("name").getAsString().equals("custom"))
++                .allMatch(node -> node.getAsJsonArray("children").isEmpty() && node.get("collection_length").getAsInt() == 0));
++        assertFalse(nodes.stream().anyMatch(node -> node.has("input")));
++    }
++
++    @Test
++    void customFormLeavesActionFactoryEmptyAcrossStateChangesAndProgramRoundTrip() {
++        final JsonObject form = JsonParser.parseString("""
++                {"type":"custom_form","title":"Settings","content":[
++                  {"type":"label","text":"Heading"},{"type":"toggle","text":"Enabled","default":false}]}
++                """).getAsJsonObject();
++        final JsonObject first = ui("form_buttons").resolve(form);
++        assertNotNull(first);
++        final JsonArray changed = first.getAsJsonArray("values").deepCopy();
++        changed.set(1, JsonParser.parseString("true"));
++        final JsonObject program = first.getAsJsonObject("program");
++        final JsonObject second = ServerFormUi.fromProgram(program).resolve(program.getAsJsonObject("form"), changed, Set.of());
++        assertNotNull(second);
++        final List<JsonObject> nodes = nodes(second.getAsJsonObject("root"));
++        assertTrue(nodes.stream().filter(node -> node.get("name").getAsString().equals("action"))
++                .allMatch(node -> node.getAsJsonArray("children").isEmpty() && node.get("collection_length").getAsInt() == 0));
++        final List<JsonObject> inputs = nodes.stream().filter(node -> node.has("input")).toList();
++        assertEquals(1, inputs.size());
++        assertEquals(1, inputs.getFirst().getAsJsonObject("input").get("index").getAsInt());
++        assertTrue(inputs.getFirst().get("toggle_state").getAsBoolean());
++        assertTrue(second.getAsJsonArray("values").get(0).isJsonNull());
++        assertFalse(nodes.stream().anyMatch(node -> node.has("action")));
++    }
++
++    @Test
++    void unknownCollectionsAndActiveOptionsWithoutParentScopeStillFail() {
++        final JsonObject form = JsonParser.parseString("""
++                {"type":"custom_form","title":"Settings","content":[{"type":"toggle","text":"Enabled"}]}
++                """).getAsJsonObject();
++        assertNull(ui("unknown_controller").resolve(form));
++        assertNull(ui("custom_dropdown").resolve(form));
 +    }
 +
 +}

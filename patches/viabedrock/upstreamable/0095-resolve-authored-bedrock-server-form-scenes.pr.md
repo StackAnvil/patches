@@ -157,3 +157,18 @@ Retain lower authored members and overlay upper members at the same namespace an
 Four added regression cases failed before the change. The focused resolver and form suites pass 30 cases, with Checkstyle passing. Actual accepted-pack probes restore 63 and 90 count labels with their slot provenance, plus one title label for each chest family. The title remains the tracked `container.null` text. Native title acquisition and live pixel verification remain open.
 
 The fresh paired core candidate passes the full clean build: 919 tests passed, 30 optional skips, and no failures or errors. Main, test, and tool Checkstyle pass; all 98 patches replay cleanly. The installed artifact inventory and previous frozen candidate remain unchanged.
+
+### Inactive form controller regression
+
+The target native definitions declare both `form_buttons` and `custom_form`.
+The current form supplies rows only for its controller. The other known
+collection and its length bindings remain empty. Unknown collections and
+active option collections without a parent input still fail safely.
+
+Both actual-shaped regression cases failed against the prior core. The three
+new cases and 34 existing form/shared/container cases pass after this fix.
+A private CPU probe using all five captured forms, the pinned native UI and
+accepted server definitions now resolves all five, including Settings and
+Wardrobe. The unchanged add-on accepts their visible controls and layouts.
+This verifies resolution and consumer geometry, not live payload delivery or
+GPU rendering. The same-name shallow definition overlay is retained.
