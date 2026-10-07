@@ -1164,3 +1164,14 @@ The final client inventory still contains 11 files. Both managed add-on copies m
 Only those copies, the launcher launch-time field, and the game log change. The seven other files remain unchanged.
 Rollback copies remain under `.stackanvil/research/movement-clock/artifacts/build-rollback/` and `.stackanvil/research/movement-clock/java-client-rollback-1/`.
 The private display and owned processes stop. Both existing user servers retain their original process identities.
+
+## Future movement effects, October 7, 2026
+
+The shared core timeline now applies future effects immediately at their paired input frame.
+Repeated snapshots retain their original expiration. This change needs no add-on source change.
+The add-on passes 605 tests. All 1,250 core files match its nested bundle and the proxy bundle, excluding the manifest.
+A fresh strict BDS join through ViaProxy records 36 exact float lift changes and 280 unchanged phases after source removal.
+The retained effect subsequently expires. The observer supplies no client physics, input, or effect values.
+
+Native queued replay can restore an expired effect through clamped history. Pending drain and full physics rewind remain incomplete.
+The [coverage ledger](../../../docs/bedrock-coverage.md#future-commands-and-native-queued-effect-replay-october-7-2026) records the combined native fixture and remaining requirements.

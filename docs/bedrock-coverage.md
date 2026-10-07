@@ -6997,3 +6997,47 @@ The final client inventory still contains 11 files. Both managed add-on copies m
 Only those copies, the launcher launch-time field, and the game log change. The seven other files remain unchanged.
 Rollback copies remain under `.stackanvil/research/movement-clock/artifacts/build-rollback/` and `.stackanvil/research/movement-clock/java-client-rollback-1/`.
 The private display and owned processes stop. Both existing user servers retain their original process identities.
+
+## Future commands and native queued effect replay, October 7, 2026
+
+**Implemented:** Future movement effects use the paired input clock immediately, even without an exact history frame.
+The native constructor keeps their full duration. Repeated snapshots retain the original anchor and do not renew expiration.
+A future command can replace local prediction when its paired frame is at or after that prediction.
+Unpaired clocks and older reference frames still require further synchronization work.
+The fix stays in the owning core patch. The add-on and ViaProxy use the shared codec and timeline.
+
+**Native evidence:** A combined fixture runs 420 cases against the pinned 1.26.51.1 executable.
+It executes original construction, dispatch, live application, history selection, and queued insertion.
+Across 300 replays, it executes 489 original queued callbacks and 1,131 original countdowns.
+The production audit initially finds 24 activity mismatches in 210 sampled live applications. The updated proxy bundle matches all 210.
+These samples verify component activity, not full gameplay parity.
+
+The fixture supplies ECS lookup, snapshot storage, input callbacks, and an explicit rewind request for cases without a native dirty frame.
+It executes the original effect countdown at the physics boundary. It does not execute complete native world movement.
+An expired tick-zero command can regain 95 frames after clamped history replay and a second effect that forces rewind.
+This remaining gap requires original-duration restoration during replay.
+Another 21 cases restore snapshots while commands remain pending. The fixture does not drain those commands into a subsequent frame.
+Their intermediate states do not establish final native game behavior.
+Private probes, results, and audit files remain under `.stackanvil/research/movement-command-replay/`.
+
+**Verification:** Core passes 796 tests, with 22 optional skips and no failures or errors.
+The native reference tests execute all 16,038 effect cases and 6,780 geyser vectors locally.
+The add-on passes 605 tests, with 117 optional skips and no failures or errors. ViaProxy builds successfully.
+The full core stack replays 97 patches. Both upstream PR checks pass.
+All 1,250 core files match the nested add-on bundle and proxy bundle, excluding the manifest.
+
+A fresh strict BDS join through ViaProxy stays connected for 20 seconds.
+The observer records 378 paired travel phases, 88 active geyser phases, and 36 bit-exact native float lift changes.
+All 280 phases after source removal leave vertical velocity unchanged. The retained effect subsequently expires.
+All 12 confirmations carry paired clocks. The raw input tick is 26 ahead of its client frame.
+This regression verifies shared transport and existing lift behavior. It does not verify future commands through complete native physics replay.
+
+Artifact dry runs review nine exact replacements. Each replacement preserves 32 unrelated inventory entries.
+The client dry run reviews 2,689 fixture/helper files and 11 existing client files.
+The final inventory retains all 11 files. Only both add-on copies, the launcher launch-time field, and the game log change.
+Rollback copies remain under `.stackanvil/research/movement-command-replay/artifacts/build-rollback/` and `.stackanvil/research/movement-command-replay/java-client-rollback-1/`.
+The private display and owned processes stop. Both existing user servers retain their original process identities.
+
+**Still required:** Pending-command drain, replay-controller scheduling, actor replay-component creation, native phase ordering, and full physics rewind.
+Delayed confirmations, invalidated clocks, tick stalls, direct routes, stock Java, vehicles, Boar, CubeCraft, and actual platform joins remain open.
+The complete gameplay matrix and all eight coverage groups remain required.

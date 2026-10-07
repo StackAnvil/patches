@@ -778,3 +778,25 @@ The final client inventory still contains 11 files. Both managed add-on copies m
 Only those copies, the launcher launch-time field, and the game log change. The seven other files remain unchanged.
 Rollback copies remain under `.stackanvil/research/movement-clock/artifacts/build-rollback/` and `.stackanvil/research/movement-clock/java-client-rollback-1/`.
 The private display and owned processes stop. Both existing user servers retain their original process identities.
+
+## Future commands and native queued effect replay, October 7, 2026
+
+Future effects use the paired input frame immediately and retain their full native duration.
+A future command can replace local prediction when its clock reference is at or after the predicted frame.
+Repeated snapshots keep their original expiration anchor. Unpaired and older clock references remain incomplete.
+This change removes all 24 activity mismatches in 210 sampled native live applications.
+
+The combined fixture executes 420 cases against the pinned 1.26.51.1 executable.
+Across 300 replays, it executes 489 original queued callbacks and 1,131 original countdowns.
+An expired command can regain duration through clamped history replay. Production still requires original-duration restoration and complete physics rewind.
+The 21 pending-command cases stop before a subsequent frame drains their commands. Their intermediate states do not establish final game behavior.
+Snapshot storage, input boundaries, and some rewind requests come from the fixture. Complete native world movement remains unverified.
+
+Core passes 796 tests, including the existing 16,038 native effect cases and 6,780 native geyser vectors.
+The add-on passes 605 tests. ViaProxy builds, 97 core patches replay, and both upstream PR checks pass.
+All 1,250 core files match both downstream bundles, excluding the manifest.
+The live strict BDS join through ViaProxy stays connected for 20 seconds.
+It records 36 exact float lift changes and 280 unchanged phases after source removal, followed by effect expiration.
+No add-on source change or later repair patch is necessary.
+
+The [coverage ledger](../../../docs/bedrock-coverage.md#future-commands-and-native-queued-effect-replay-october-7-2026) records rollout inventories and remaining parity requirements.

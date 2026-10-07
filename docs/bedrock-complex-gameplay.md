@@ -1517,3 +1517,18 @@ The final client inventory still contains 11 files. Both managed add-on copies m
 Only those copies, the launcher launch-time field, and the game log change. The seven other files remain unchanged.
 Rollback copies remain under `.stackanvil/research/movement-clock/artifacts/build-rollback/` and `.stackanvil/research/movement-clock/java-client-rollback-1/`.
 The private display and owned processes stop. Both existing user servers retain their original process identities.
+
+## Future movement effects and queued replay, October 7, 2026
+
+Future effects now apply their full duration at the paired input frame. Repeated snapshots do not renew expiration.
+The fix removes 24 activity mismatches in 210 sampled native live applications.
+Core passes 796 tests. The add-on passes 605 tests, and ViaProxy builds successfully.
+The strict BDS regression through ViaProxy records 36 exact float lift changes and 280 unchanged phases after source removal.
+
+The combined native fixture executes 420 cases, including 300 replays, 489 queued callbacks, and 1,131 countdowns.
+It exposes original-duration restoration after clamped history replay.
+It also retains 21 pending-command cases whose final native behavior requires a subsequent frame and command drain.
+The fixture supplies snapshot and input boundaries. It does not execute complete native world movement.
+
+Full rewind, pending drain, clock synchronization, mixed actions, both routes, and the complete gameplay matrix remain required.
+The [coverage ledger](bedrock-coverage.md#future-commands-and-native-queued-effect-replay-october-7-2026) records evidence, rollout checks, and remaining limits.
