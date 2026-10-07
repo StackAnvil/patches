@@ -6,7 +6,10 @@ import type { IncomingProjectileObservation } from "../src/integration/projectil
 const callbacks = new Map<string, (event: any) => void>();
 const pending: (() => void)[] = [];
 let sample: () => void;
-const signal = (name: string) => ({ subscribe(callback: (event: any) => void) { callbacks.set(name, callback); } });
+const signal = (name: string) => ({ subscribe(callback: (event: any) => void) {
+  const previous = callbacks.get(name);
+  callbacks.set(name, (event) => { previous?.(event); callback(event); });
+} });
 const player = { name: "ProbePlayer", id: "player", selectedSlotIndex: 0 } as Player;
 mock.module("@minecraft/server", () => ({
   BlockPermutation: {}, CommandPermissionLevel: {},
@@ -17,7 +20,7 @@ mock.module("@minecraft/server", () => ({
   world: { getAllPlayers: () => [player], beforeEvents: { playerInteractWithEntity: signal("beforeInteraction") },
     afterEvents: Object.fromEntries(
     ["itemStartUse", "itemReleaseUse", "itemCompleteUse", "itemStopUse", "itemUse", "entitySpawn",
-      "projectileHitBlock", "projectileHitEntity", "effectAdd", "entityHitEntity", "entityHurt",
+      "projectileHitBlock", "projectileHitEntity", "effectAdd", "entityHitEntity", "entityHurt", "entityRemove",
       "playerInteractWithEntity", "playerInteractWithBlock", "playerSpawn", "playerDimensionChange"]
       .map((name) => [name, signal(name)])) },
 }));
@@ -37,8 +40,13 @@ test("arena preparation cannot mutate a corpse or heal a player who dies during 
   const events: { status: string }[] = [];
   console.warn = (line: string) => { events.push(JSON.parse(line.slice(line.indexOf("{")))); };
   let mutations = 0;
+  let removedFixtures = 0;
+  const cleanupQueries: unknown[] = [];
   const health = { currentValue: 0, resetToMaxValue() { mutations++; } };
-  const source = { ...player, dimension: {}, location: { x: 0, y: 250, z: 0 },
+  const source = { ...player, dimension: { getEntities(query: unknown) {
+    cleanupQueries.push(query);
+    return [{ remove() { removedFixtures++; } }];
+  } }, location: { x: 0, y: 250, z: 0 },
     getComponent: () => health, teleport() { mutations++; } };
   try {
     for (const value of [0, -1, Number.NaN]) {
@@ -51,6 +59,8 @@ test("arena preparation cannot mutate a corpse or heal a player who dies during 
     health.currentValue = 20;
     const preparation = prepareGameplay("movement-left", "dies-during-prepare", source);
     expect(mutations).toBe(1);
+    expect(removedFixtures).toBe(1);
+    expect(cleanupQueries).toEqual([{ tags: ["viabedrock_gameplay_probe"] }]);
     expect(pending).toHaveLength(1);
     health.currentValue = 0;
     pending.shift()!();
@@ -110,6 +120,28 @@ test("use events require the active player and item and stop after verification"
   active!.fixture.closed = true;
   started({ source: player, itemStack: { typeId: ranged.item } });
   expect(ranged.events).toHaveLength(1);
+});
+
+test("fishing use and removal observations retain hook identity and stop with their fixture", () => {
+  const fishing = { uses: [] as number[], hooks: [] as { id: string; spawned: number; removed?: number }[],
+    remainingHooks: [], rodCount: 1, rodDamage: 0, rewards: 0 };
+  active = { playerName: player.name, fixture: { fishing } };
+  const use = callbacks.get("itemUse")!;
+  use({ source: { name: "OtherPlayer" }, itemStack: { typeId: "minecraft:fishing_rod" } });
+  use({ source: player, itemStack: { typeId: "minecraft:bow" } });
+  expect(fishing.uses).toHaveLength(0);
+  use({ source: player, itemStack: { typeId: "minecraft:fishing_rod" } });
+  callbacks.get("entitySpawn")!({ entity: { id: "hook", typeId: "minecraft:fishing_hook" } });
+  const remove = callbacks.get("entityRemove")!;
+  remove({ removedEntityId: "other" });
+  expect(fishing.hooks[0]?.removed).toBeUndefined();
+  remove({ removedEntityId: "hook" });
+  expect(fishing.hooks).toEqual([{ id: "hook", spawned: 10, removed: 10 }]);
+  active!.fixture.closed = true;
+  use({ source: player, itemStack: { typeId: "minecraft:fishing_rod" } });
+  callbacks.get("entitySpawn")!({ entity: { id: "late-hook", typeId: "minecraft:fishing_hook" } });
+  expect(fishing.uses).toEqual([10]);
+  expect(fishing.hooks).toHaveLength(1);
 });
 
 test("delayed knockback cannot act on a replaced, closed, or cancelled fixture", () => {

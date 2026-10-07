@@ -50,9 +50,9 @@ function nextTick() {
   return new Promise((resolve) => system.runTimeout(() => resolve(), 1));
 }
 
-function clearEntities() {
-  if (!arena) return;
-  for (const entity of arena.dimension.getEntities({ tags: [ENTITY_TAG] })) entity.remove();
+function clearEntities(dimension = arena?.dimension) {
+  if (!dimension) return;
+  for (const entity of dimension.getEntities({ tags: [ENTITY_TAG] })) entity.remove();
 }
 
 function livingPlayerHealth(player) {
@@ -66,7 +66,7 @@ function livingPlayerHealth(player) {
 async function prepareArena(player, gameMode = GameMode.Survival) {
   livingPlayerHealth(player);
   if (!origin) origin = { dimension: player.dimension, x: Math.floor(player.location.x), z: Math.floor(player.location.z) };
-  clearEntities();
+  clearEntities(origin.dimension);
   arena = { dimension: origin.dimension, x: origin.x + arenaSerial++ * 32, y: 250, z: origin.z };
   player.teleport(position(), { dimension: arena.dimension });
   await nextTick();

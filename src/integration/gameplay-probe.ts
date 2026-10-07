@@ -353,6 +353,13 @@ async function creativeSelect(ui: Ui, mainInventory = false, itemName = "nether 
 
 export async function driveGameplay(id: GameplayCaseId, ui: Ui, start?: () => Promise<void>): Promise<void> {
   switch (id) {
+    case "fishing-early-reel":
+    case "fishing-entity-reel":
+      await uiMouse(ui, "right", 120);
+      await Bun.sleep(id === "fishing-early-reel" ? 250 : 2500);
+      await uiMouse(ui, "right", 120);
+      await Bun.sleep(2500);
+      return;
     case "bow-release":
     case "bow-no-ammo":
     case "bow-water-release":

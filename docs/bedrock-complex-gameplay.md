@@ -934,3 +934,39 @@ Water casts and reeling do not establish those behaviors.
 The water baseline also contains actor events 12, 13, and 14 while Java's observed biting field remains false.
 Their target-build behavior needs native verification before translation.
 Ordinary Java live coverage, the complete projectile matrix, all eight coverage groups, native baselines, CubeCraft, and platform joins remain required.
+
+### Fishing retrieval controls, October 7, 2026
+
+**Verified server behavior:** Both routes complete three genuine rod sequences against the same strict BDS build.
+Early water retrieval gives no reward and consumes no durability.
+Retrieval immediately after native actor event 13 gives one cod and consumes one durability point.
+Retrieval of a live hooked cow pulls it toward the player and consumes three durability points.
+The server inventory, target motion, hook removal, and actual Java attachment establish these sampled outcomes.
+These checks do not establish the client's displayed reward inventory or complete fishing visuals.
+
+**Reusable controls:** `fishing-early-reel` and `fishing-entity-reel` use real mouse input in the complex gameplay suite.
+Their server observations require one cast, one reel, the same hook's removal, no surviving hook, and the expected durability.
+The entity control also requires an undamaged, live target with motion toward the player after retrieval.
+It rejects an already moving target, missing observations, stale frames, extra rewards, and incorrect durability.
+The fixture requires one player and an empty arena before creating its target.
+It collects target frames after casting, so waiting for the HUD cannot exhaust the observation window.
+
+The first reusable water control hooks a cow left by the earlier private fixture and fails with three durability points.
+Its native TARGET identifies that surviving cow.
+This is fixture contamination; the failed evidence remains private and the control retains its zero-durability requirement.
+The isolation check also detects retained test actors after restarting BDS.
+Arena preparation now removes tagged test actors from the fixture world before creating the first arena.
+It preserves untagged actors and rejects an occupied fishing arena.
+The regression check requires cleanup on that first preparation and preserves the existing refusal to mutate dead players.
+The rebuilt fixture passes both retrieval controls directly and through ViaProxy.
+Native packet observations identify the fixture's exact cow; Java observers verify its attachment and hook cleanup.
+All 23 focused tooling tests pass, and the complete tooling run reports 157 passing tests with no failures.
+
+**Client gap:** BDS sends approach, bite, and tease events 12, 13, and 14 for the water hook.
+Java's actual biting field remains false, including during the successful catch.
+Core still discards these events.
+Native effect timing, expiry, particles, sound, and visible comparisons remain necessary before implementing faithful feedback.
+The catch driver reacts to the recorded native bite event; it does not prove that a player can recognize the bite visually.
+
+**Remaining:** Native visible parity, displayed rewards, ordinary Java live coverage, enchantments, repeated casts, interruptions, and the complete fishing matrix remain required.
+All eight coverage groups, strict BDS, Boar diagnostics, both routes, CubeCraft, and actual Windows/macOS joins remain active.

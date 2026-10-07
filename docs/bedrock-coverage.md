@@ -6551,3 +6551,22 @@ The [complex gameplay record](bedrock-complex-gameplay.md#fishing-targets-and-ho
 
 Native fishing visuals, bite events, rewards, retrieval with a live target, interrupted use, ordinary Java live coverage, and complete projectile behavior remain required.
 All eight coverage groups, the full gameplay matrix, both routes, native baselines, Boar diagnostics, CubeCraft, and actual Windows/macOS joins remain required.
+
+## Fishing retrieval controls, October 7, 2026
+
+Strict BDS verifies early retrieval without rewards or durability loss on both routes.
+Retrieval after native bite event 13 gives one cod and uses one durability point.
+Retrieval with a live hooked cow pulls the target and uses three durability points.
+Actual Java observers retain the target attachment and verify hook cleanup.
+They also show that the water hook's biting field stays false.
+
+The complex gameplay suite now includes reusable early-reel and live-target controls.
+They require genuine input, hook identity, lifetime, server inventory, durability, and target motion after retrieval.
+An unexpected cow makes the first water control fail, so arena isolation is now an explicit precondition.
+Arena preparation also clears persisted, tagged test actors before its first arena after a restart.
+The final fixture passes both controls on both routes; all 157 tooling tests pass.
+The [fishing retrieval record](bedrock-complex-gameplay.md#fishing-retrieval-controls-october-7-2026) preserves the evidence and remaining boundaries.
+
+Native bite timing, expiry, particles, sound, displayed rewards, enchantments, interruptions, and ordinary Java live coverage remain required.
+No production bite translation is claimed from these server controls.
+All eight coverage groups, the full gameplay matrix, both routes, native baselines, Boar diagnostics, CubeCraft, and actual Windows/macOS joins remain required.

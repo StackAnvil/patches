@@ -12,6 +12,7 @@ export const complexGameplayCaseIds = [
   "crossbow-piercing-0", "crossbow-piercing-1", "crossbow-piercing-4",
   "bow-knockback-release", "bow-knockback-cancel", "crossbow-knockback-fire", "crossbow-knockback-cancel",
   "bow-server-slot-use", "crossbow-server-slot-use",
+  "fishing-early-reel", "fishing-entity-reel",
 ] as const;
 
 export type RangedAction = "start" | "release" | "complete" | "stop" | "use";

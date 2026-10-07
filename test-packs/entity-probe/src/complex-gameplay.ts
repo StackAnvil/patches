@@ -3,6 +3,8 @@ import { EnchantmentType, EquipmentSlot, GameMode, ItemStack, Potions, system, w
 import { potionImpactPasses, rangedHitPasses, rangedObservationPasses, rangedPiercingPasses, serverSlotUsePasses, type RangedExpectation, type RangedObservation, type RangedTarget, type ServerSlotUse } from "../../../src/integration/ranged-observation.ts";
 import { incomingProjectilePasses, projectileThreatens, type IncomingProjectileObservation } from "../../../src/integration/projectile-observation.ts";
 import { rangedKnockbackPasses, type KnockbackImpulse } from "../../../src/integration/knockback-observation.ts";
+import type { FishingObservation } from "../../../src/integration/fishing-observation.ts";
+import { registerFishingGameplay } from "./fishing.ts";
 
 interface MotionObservation {
   start: Vector3;
@@ -20,6 +22,8 @@ interface MotionObservation {
 }
 
 interface Fixture {
+  fishing?: FishingObservation;
+  fishingTarget?: Entity;
   ranged?: RangedObservation;
   motion?: MotionObservation;
   incoming?: IncomingProjectileObservation;
@@ -30,7 +34,7 @@ interface Fixture {
   closed?: boolean;
 }
 
-interface ProbeContext {
+export interface ProbeContext {
   define<T extends Fixture>(id: string, group: string, prepare: (player: Player) => Promise<T>,
     inspect: (player: Player, fixture: T) => { passed: boolean; observed: unknown; expected: unknown },
     start?: (player: Player, fixture: T) => Promise<void>): void;
@@ -44,7 +48,9 @@ interface ProbeContext {
   tagEntity(entity: Entity): void;
 }
 
-export function registerComplexGameplay({ define, prepareArena, inventory, equipment, countItem, blockAt, position, getActive, tagEntity }: ProbeContext) {
+export function registerComplexGameplay(context: ProbeContext) {
+  const { define, prepareArena, inventory, equipment, countItem, blockAt, position, getActive, tagEntity } = context;
+  registerFishingGameplay(context);
   function fixtureFor(player: Player) {
     const current = getActive();
     return current?.playerName === player?.name && !current.fixture.closed ? current.fixture : undefined;
