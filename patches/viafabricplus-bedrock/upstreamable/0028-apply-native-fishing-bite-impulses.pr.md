@@ -49,3 +49,43 @@ Audio resolution, particle playback, later hook physics, and complete visible na
 Ordinary Java feedback needs a faithful standard translation where one exists.
 The complete fishing matrix includes enchantments, repeated casts, interrupted use, and displayed rewards.
 The native GPU safety guard remains enabled until host graphics recovery is verified.
+
+## Native bite particles
+
+The same guarded callback now samples the current hook position, box minimum, and width for particle playback.
+Core supplies the surface-floor and direction calculations and the ordered effect list.
+The native handler emits one hook effect and two wake effects because legacy WaterWake forwards to the named wake graph.
+Each emitter has separate Molang state and a fixed world origin.
+Reeling or removing the hook does not move existing particles.
+
+The shared resource library supplies accepted server graphs and available licensed built-ins.
+Missing resources or failed wake playback fall back to Java fishing particles.
+A missing hook graph has no supported Java mapping.
+Async completion requires the same world before creating a fallback.
+Cold resource and Molang preparation runs off the render thread, with at most 32 pending requests.
+Completion checks both the world and resource generation.
+The earlier synchronous path delayed the observed render callback by about 850 ms and disrupted rod input.
+The message format, connection checks, actor type, and spawn UUID remain unchanged.
+
+Core reports 769 tests with zero failures and 19 optional skips.
+The add-on reports 594 tests with zero failures and 114 optional skips.
+ViaProxy builds against the same core; all 1,240 core entries match both bundles, excluding bundle metadata.
+All 97 core patches replay, and the unchanged reference patch applies alone to the pinned upstream base.
+Configured native distance gates and visible native comparisons remain open.
+
+The first private particle observer failed bytecode verification before rod input.
+A later observer recorded requests but could not read the package-private emitter origin.
+Corrected observers supply the fresh startup evidence; the failed probes provide no positive startup proof.
+
+## Live particle verification
+
+Fresh strict BDS runs on Linux verify direct/add-on, ViaProxy/add-on, and ViaProxy/ordinary Java.
+Both add-ons start one hook effect and two wake effects on the render thread.
+Each uses the sampled integral surface and direction `(6, 0, 0.25)`.
+The stock Java profile has no mods and receives two standard fishing wake packets.
+Each route verifies early reeling, a native bite reward in server inventory, cow retrieval, and durability changes 0, 1, and 3.
+All nine hooks disappear and clear the local fishing pointer; actual cow attachment metadata remains verified.
+The existing splash packet and resolved engine requests also pass.
+Direct and ViaProxy splash callbacks now reach the render thread in about 15 and 28 ms in these runs.
+Native visible particles, displayed rewards, configured distance settings, and complete fishing behavior remain required.
+The private fixture is restored, the owned BDS instances stop, and both user-owned servers remain unchanged.

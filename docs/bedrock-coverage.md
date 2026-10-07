@@ -6616,3 +6616,24 @@ Early-reel, bite-reel, cow retrieval, actual hook attachment, and local pointer 
 The recorders exit successfully, and the owned BDS stops.
 The [fishing sound record](bedrock-complex-gameplay.md#fishing-splash-and-actor-sound-arguments-october-7-2026) retains native boundaries and remaining requirements.
 Native sample selection, audible output, captions, particles, later hook physics, and the complete gameplay matrix remain required.
+
+## Fishing particle forwarding, October 7, 2026
+
+Core now retains the native hook effect and both distinct wake emissions for bite event 13.
+Legacy WaterWake forwards to the named wake graph with the same direction variable.
+Fifteen bounded native branch cases establish this forwarding; thirty production combinations verify surface flooring and float direction arithmetic.
+
+The add-on samples the current local hook box and starts independent emitters at a fixed world origin.
+Unavailable licensed wake graphs fall back to Java fishing particles.
+Ordinary Java clients receive both mapped wakes from core through standard packets.
+The [particle record](bedrock-complex-gameplay.md#fishing-particle-forwarding-october-7-2026) retains implementation, build results, and remaining requirements.
+
+Fresh strict BDS runs on Linux verify all three connection paths and their real rod controls.
+Direct and ViaProxy add-ons each start all three native emitters with the expected origin and direction.
+The ordinary Java profile has no mods and receives both standard wake packets.
+Server reward inventory, durability, cow attachment, splash requests, and all nine hook removals remain verified.
+Cold preparation now runs off the render thread with a bound of 32 pending requests.
+
+Configured native distance gates, actual simulation and visible comparisons remain required.
+Java fallback limits and the unmapped hook effect remain explicit gaps.
+Full fishing parity and the complete goal remain incomplete.

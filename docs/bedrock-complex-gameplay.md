@@ -1073,7 +1073,7 @@ The matching executable establishes the behavior for build 51061372 and protocol
 All proprietary instructions and captures remain private.
 
 **Build verification:** The full core build passes 768 tests, with zero failures and 19 optional skips.
-The add-on passes 594 tests, with zero failures and 114 optional skips.
+The add-on reports 594 tests, with zero failures and 114 optional skips.
 ViaProxy builds against the same core, and all 1,240 non-manifest core entries match in both clients.
 The 97-patch core stack replays successfully.
 The metadata patch changes only context, and the standalone entity reference patch remains byte-identical.
@@ -1107,3 +1107,42 @@ Fresh runs use a corrected observer after the original engine method returns, wi
 Native audio samples, captions, displayed rewards, enchantments, repeated casts, interruptions, and the full fishing matrix remain open.
 Ordinary Java splash and these hook controls are verified. Complete ordinary Java fishing feedback remains required.
 All eight coverage groups, the full gameplay matrix, Boar diagnostics, CubeCraft, and actual Windows/macOS joins remain required.
+
+## Fishing particle forwarding, October 7, 2026
+
+Native bite event 13 emits one hook effect and two wake effects.
+Legacy particle 27 forwards to `minecraft:water_wake_particle`; deduplicating it would remove one emission.
+The matching client tables and fifteen bounded native forwarding cases establish this route.
+The [actor-event patch notes](../patches/viabedrock/deferred/0001-translate-bedrock-actor-events-to-java-statuses.pr.md#fishing-particle-dispatch) retain the fixture boundaries.
+
+Core owns the effect list, native float calculations, and standard Java wake translation.
+The add-on samples the current hook box for the surface origin and unnormalized direction vector.
+Each native emitter receives separate Molang state and a fixed world origin.
+Missing licensed wake resources use Java fishing particles; unavailable hook resources have no Java mapping.
+World changes prevent delayed fallback creation.
+Cold resource and Molang preparation runs off the render thread, with at most 32 pending requests.
+Completion checks both the world and resource generation.
+The earlier synchronous path delayed the observed render callback by about 850 ms and disrupted rod input.
+
+Core reports 769 tests, with zero failures and 19 optional skips.
+The add-on reports 594 tests, with zero failures and 114 optional skips.
+ViaProxy builds against the same core; 1,240 core entries match both client bundles, excluding bundle metadata.
+All 97 core patches replay, and the reference patch still applies alone upstream.
+Thirty production surface/width combinations cover negative fractional heights and the native float vector.
+The fifteen native branch cases exclude whole emitter entry, TLS, resource lookup, simulation, and visible output.
+
+Another 240 native boundary cases establish the legacy distance calculation with supplied provider getters.
+Its native settings defaults and client mapping remain unverified.
+Fresh strict BDS runs on Linux verify direct/add-on, ViaProxy/add-on, and ViaProxy/ordinary Java controls.
+Each add-on starts one hook emitter and two independent wake emitters with direction `(6, 0, 0.25)`.
+Ordinary Java receives two standard fishing wake packets at the same integral surface.
+The stock profile has no Fabric, VFP, add-on, or recorder mod.
+Each route completes early reeling, a native bite with one server inventory reward, and cow retrieval.
+Rod durability changes are 0, 1, and 3 respectively; all nine hooks disappear and clear the local fishing pointer.
+Actual cow attachment metadata and the existing splash sound path remain verified.
+Packet-to-render splash delays are about 15 ms direct and 28 ms through ViaProxy in these fresh runs.
+Emitter startup does not establish visible native particle parity or displayed reward parity.
+
+Production distance gates, particle simulation, audio/particle timing, local-position comparisons, and complete visible parity remain required.
+Ordinary Java's null hook mapping and particle limits remain fallback limitations.
+The full fishing action matrix and all other gameplay requirements remain in scope.

@@ -1,4 +1,4 @@
-From 70943ad672a0823a6b21932c532190d7d2b7a14b Mon Sep 17 00:00:00 2001
+From a6a5003cf1211a6dc60ee672bf0152b7ae2c7f34 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 02:53:57 +0200
 Subject: [PATCH] feat(entities): apply native fishing bite impulses
@@ -12,13 +12,29 @@ to the core calculation verified against the pinned native executable.
 Bedrock event 13 adds -0.5 to existing vertical motion. Java has no standard
 additive-motion update for a tracked hook. A dedicated capability works for
 both direct translation and ViaProxy without guessing an authoritative
-velocity or enabling Java's unrelated biting timer. Particle effects,
-sound, later hook physics, and complete visible parity remain separate work.
+velocity or enabling Java's unrelated biting timer. Core also translates splash sound and the ordinary Java wake fallback.
+Later hook physics and complete visible parity remain separate work.
+
+Play the native hook effect and both distinct wake emissions using the
+current local position, collision-box minimum and width. Keep the surface
+floor and unnormalized direction calculation in core. Native legacy
+WaterWake forwards to the named water-wake graph; retain its second
+emission instead of deduplicating it. Each emitter has independent Molang
+state and a fixed world origin, so reeling does not move existing effects.
+Use Java fishing particles when a licensed wake graph is unavailable.
+The wire format and spawn/connection guards remain unchanged.
+
+Prepare resources and independent Molang environments off the render thread.
+The cold archive load otherwise delayed live rod input by about 850 ms.
+Bound pending preparation to 32 requests and reject stale resource generations
+and worlds before starting effects. Keep the bite impulse immediate.
 ---
- .../bedrock/ViaFabricPlusBedrock.java         |  6 ++++
- .../render/BedrockFishingFeedback.java        | 28 +++++++++++++++++++
- .../render/NativeFishingBitePayload.java      | 24 ++++++++++++++++
- 3 files changed, 58 insertions(+)
+ .../bedrock/ViaFabricPlusBedrock.java         |  6 ++
+ .../appearance/BedrockServerParticles.java    | 77 +++++++++++++++++++
+ .../appearance/BedrockServerResources.java    |  2 +
+ .../render/BedrockFishingFeedback.java        | 30 ++++++++
+ .../render/NativeFishingBitePayload.java      | 24 ++++++
+ 5 files changed, 139 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFishingFeedback.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeFishingBitePayload.java
 
@@ -46,12 +62,129 @@ index 20f0aea..88d2ed4 100644
          ClientPlayConnectionEvents.INIT.register((listener, client) ->
              ClientPlayNetworking.registerReceiver(NativeProjectileOwnerPayload.TYPE,
                  (payload, context) -> BedrockProjectileOwners.accept(listener.getConnection(), payload.message())));
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticles.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticles.java
+index ceb82a0..85dd9ed 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticles.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticles.java
+@@ -10,22 +10,99 @@ import io.netty.buffer.Unpooled;
+ import net.minecraft.client.Minecraft;
+ import net.minecraft.client.multiplayer.ClientLevel;
+ import net.minecraft.core.RegistryAccess;
++import net.minecraft.core.particles.ParticleTypes;
+ import net.minecraft.network.RegistryFriendlyByteBuf;
+ import net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket;
+ import net.minecraft.world.entity.Entity;
+ import net.minecraft.world.entity.LivingEntity;
++import net.minecraft.world.entity.projectile.FishingHook;
+ import net.minecraft.world.phys.Vec3;
++import net.minecraft.server.packs.resources.ResourceManager;
+ import net.raphimc.viabedrock.api.model.NativeParticlePlaybackMessage;
++import net.raphimc.viabedrock.api.model.NativeFishingBite;
++import net.raphimc.viabedrock.api.model.MolangVariables;
+ import net.raphimc.viabedrock.protocol.model.Position3f;
+ 
+ import java.io.IOException;
+ import java.util.Map;
++import java.util.List;
+ import java.util.function.Supplier;
++import java.util.concurrent.CompletableFuture;
+ 
+ /** Server effects use accepted native resources, with their complete Java translation as a fallback. */
+ public final class BedrockServerParticles {
++    private static final BedrockParticlePending FISHING_RESOURCES = new BedrockParticlePending(32);
++
+     private BedrockServerParticles() {}
+ 
++    /** Bite effects sample the current local hook and remain fixed in world space. */
++    public static void fishingBite(final FishingHook hook) {
++        final Minecraft minecraft = Minecraft.getInstance();
++        final ClientLevel level = minecraft.level;
++        if (level == null || hook.isRemoved() || level.getEntity(hook.getId()) != hook) return;
++        final Position3f origin = NativeFishingBite.particleOrigin(
++                new Position3f((float) hook.getX(), (float) hook.getY(), (float) hook.getZ()), (float) hook.getBoundingBox().minY);
++        final Position3f direction = NativeFishingBite.particleDirection(hook.getBbWidth());
++        final var variables = new MolangVariables(List.of(new MolangVariables.Member("variable.direction",
++                new MolangVariables.Members(List.of(new MolangVariables.Member("x", new MolangVariables.Scalar(direction.x())),
++                        new MolangVariables.Member("y", new MolangVariables.Scalar(direction.y())),
++                        new MolangVariables.Member("z", new MolangVariables.Scalar(direction.z())))))));
++        if (!FISHING_RESOURCES.acquire()) {
++            for (final String effect : NativeFishingBite.PARTICLE_EFFECTS) fishingFallback(effect, level, origin);
++            return;
++        }
++        final ResourceManager manager = minecraft.getResourceManager();
++        final long generation = BedrockServerResources.generation();
++        final var prepared = new CompletableFuture<FishingParticles>();
++        prepared.whenCompleteAsync((particles, error) -> {
++            FISHING_RESOURCES.release();
++            if (minecraft.level != level || minecraft.getResourceManager() != manager
++                    || BedrockServerResources.generation() != generation) return;
++            if (error != null) {
++                ViaFabricPlusBedrock.impl().logger().debug("Could not prepare fishing particle resources", error);
++                for (final String effect : NativeFishingBite.PARTICLE_EFFECTS) fishingFallback(effect, level, origin);
++                return;
++            }
++            for (int index = 0; index < NativeFishingBite.PARTICLE_EFFECTS.size(); index++) {
++                final String effect = NativeFishingBite.PARTICLE_EFFECTS.get(index);
++                try {
++                    BedrockParticlePlayback.play(particles.resources(), effect, particles.environments().get(index),
++                            null, position(origin), null).whenComplete((started, failure) -> minecraft.execute(() -> {
++                        if (failure != null || !Boolean.TRUE.equals(started)) fishingFallback(effect, level, origin);
++                    }));
++                } catch (RuntimeException unavailable) {
++                    ViaFabricPlusBedrock.impl().logger().debug("Could not start fishing particle {}", effect, unavailable);
++                    fishingFallback(effect, level, origin);
++                }
++            }
++        }, minecraft::execute);
++        try {
++            Thread.ofVirtual().name("Bedrock fishing resources").start(() -> {
++                try {
++                    final var resources = BedrockServerResources.library(manager, BedrockBuiltinAssets.load());
++                    final List<BedrockMolang> environments = NativeFishingBite.PARTICLE_EFFECTS.stream().map(_ -> {
++                        final var environment = new BedrockMolang();
++                        environment.variables(variables);
++                        return environment;
++                    }).toList();
++                    prepared.complete(new FishingParticles(resources, environments));
++                } catch (IOException | RuntimeException unavailable) {
++                    prepared.completeExceptionally(unavailable);
++                }
++            });
++        } catch (RuntimeException unavailable) {
++            prepared.completeExceptionally(unavailable);
++        }
++    }
++
++    private record FishingParticles(BedrockResourceLibrary resources, List<BedrockMolang> environments) {}
++
++    private static void fishingFallback(final String effect, final ClientLevel level, final Position3f origin) {
++        if (Minecraft.getInstance().level == level && effect.equals("minecraft:water_wake_particle")) {
++            level.addParticle(ParticleTypes.FISHING, origin.x(), origin.y(), origin.z(), 0D, 0D, 0D);
++        }
++    }
++
+     public static void accept(final NativeParticlePlaybackMessage message) {
+         final Minecraft minecraft = Minecraft.getInstance();
+         if (!minecraft.isSameThread()) { minecraft.execute(() -> accept(message)); return; }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResources.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResources.java
+index e274777..18ef61c 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResources.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerResources.java
+@@ -22,6 +22,8 @@ final class BedrockServerResources {
+ 
+     private BedrockServerResources() {}
+ 
++    static long generation() { return GENERATION.get(); }
++
+     static void clear() { GENERATION.incrementAndGet(); snapshot = null; BedrockAcceptedResources.clear(); }
+ 
+     static BedrockResourceLibrary library() throws IOException {
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFishingFeedback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFishingFeedback.java
 new file mode 100644
-index 0000000..18cae63
+index 0000000..85d4911
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFishingFeedback.java
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,30 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -59,6 +192,7 @@ index 0000000..18cae63
 + */
 +package com.viaversion.viafabricplus.bedrock.render;
 +
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockServerParticles;
 +import net.minecraft.client.Minecraft;
 +import net.minecraft.network.Connection;
 +import net.minecraft.world.entity.projectile.FishingHook;
@@ -77,6 +211,7 @@ index 0000000..18cae63
 +            if (!(entity instanceof FishingHook hook) || hook.isRemoved() || !message.uuid().equals(hook.getUUID())) return;
 +            final var motion = hook.getDeltaMovement();
 +            hook.setDeltaMovement(motion.x(), NativeFishingBite.verticalVelocity(motion.y()), motion.z());
++            BedrockServerParticles.fishingBite(hook);
 +        });
 +    }
 +}

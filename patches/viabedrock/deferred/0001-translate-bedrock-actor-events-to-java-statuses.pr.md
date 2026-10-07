@@ -81,3 +81,45 @@ Actual hook metadata attaches to the cow. All nine hooks disappear and clear the
 All recorders exit successfully, and the owned BDS stops.
 The first engine observer queried an unresolved sound instance and supplies no positive engine evidence.
 The corrected observer records after the original method returns, without changing gameplay arguments.
+
+## Fishing particle dispatch
+
+Core retains the native surface floor, width vector, and ordered effect list.
+Clients without the bite capability receive both existing Java wake mappings through standard particle packets.
+The null hook-particle mapping remains unsupported on ordinary Java clients.
+The add-on samples its current hook box because core cannot know intervening client motion.
+It uses the shared calculations and emits one hook effect and two separate wake effects.
+
+Native legacy particle 27 forwards to the named water-wake effect with `variable.direction`.
+The matching client-level and particle-provider tables establish this route.
+Fifteen bounded cases execute that forwarding branch and retain its position and vector arguments.
+Molang storage, vector construction, hashed-string construction, and dispatch are supplied recording boundaries.
+The whole emitter entry, TLS setup, asset lookup, and particle simulation are outside this fixture.
+Thirty production surface/width combinations cover negative fractional heights and the unnormalized float vector.
+The existing ninety native bite-handler cases establish the same arithmetic.
+
+The adjacent fixed [particle enum](https://github.com/LiteLDev/LeviLamina/blob/455c4181b5f83d04689957e8aad17790581c0fc0/src/mc/comprehensive/ParticleType.h) names value 27 WaterWake.
+The pinned executable establishes the actual numeric dispatch and forwarding behavior.
+A further 240 native boundary cases execute the legacy distance gate with supplied provider getters.
+They cover chunk counts, quality values, global range, and the adjacent float values at each squared-distance threshold.
+Native settings defaults and their client mapping remain unverified; production does not yet reproduce this configured gate.
+Later simulation, audio/particle timing, and full visible comparisons remain required.
+Core fallback positions use retained server coordinates and Java particle limits.
+They do not establish native local-position or appearance parity.
+
+The first private particle observer failed bytecode verification before rod input.
+A later observer recorded requests but could not read the package-private emitter origin.
+Corrected observers supply the fresh startup evidence; the failed probes provide no positive startup proof.
+
+## Live particle verification
+
+Fresh strict BDS runs on Linux verify direct/add-on, ViaProxy/add-on, and ViaProxy/ordinary Java.
+Both add-ons start one hook effect and two wake effects on the render thread.
+Each uses the sampled integral surface and direction `(6, 0, 0.25)`.
+The stock Java profile has no mods and receives two standard fishing wake packets.
+Each route verifies early reeling, a native bite reward in server inventory, cow retrieval, and durability changes 0, 1, and 3.
+All nine hooks disappear and clear the local fishing pointer; actual cow attachment metadata remains verified.
+The existing splash packet and resolved engine requests also pass.
+Direct and ViaProxy splash callbacks now reach the render thread in about 15 and 28 ms in these runs.
+Native visible particles, displayed rewards, configured distance settings, and complete fishing behavior remain required.
+The private fixture is restored, the owned BDS instances stop, and both user-owned servers remain unchanged.
