@@ -6511,3 +6511,25 @@ The add-on build reports 594 tests with zero failures and 114 skips; ViaProxy al
 The [complex gameplay record](bedrock-complex-gameplay.md#entity-reference-lifecycle-october-7-2026) records lifecycle coverage and the separate projectile ownership gap.
 Existing strict-BDS fireball traffic contains valid blaze owner IDs, while the Java spawn translation writes zero ownership data.
 Projectile ownership transport, native visible comparisons, real-server and platform joins, the complete gameplay matrix, and all eight coverage groups remain required.
+
+## Projectile owner transport, October 7, 2026
+
+ViaBedrock now supplies known projectile owners through standard Java spawn data.
+Core retains unresolved native references and publishes later changes on an independently advertised channel.
+It also provides the codec and frontend dependency index.
+The add-on applies Java owner changes, checks spawn identity, handles client tracking, and preserves pending Bedrock fishing bobbers.
+World replacement and disconnects invalidate queued updates.
+
+Seventeen targeted tests pass on the full stack and on clean pinned upstream.
+The full core build reports 763 tests with zero failures and 19 skips; the add-on reports 594 with zero failures and 114 skips.
+ViaProxy builds successfully, and bundled core files match both downstream artifacts.
+Direct and ViaProxy clients pass initialization, spawn, movement, small-fireball contact, and fireball reflection against strict BDS.
+Read-only client observations record the reflected fireball's owner changing to the actual local player on both routes.
+Both recorders exit successfully, and the owned server stops.
+These six controls verify the sampled owner update; known-owner spawn fields also have production packet coverage.
+The live clients use the add-on on both routes.
+The [complex gameplay record](bedrock-complex-gameplay.md#projectile-owner-transport-october-7-2026) records implementation and verification limits.
+
+Native visible ownership, fishing, pickup, return, and complete projectile action behavior remain required.
+The native GPU guard now refers to a previous boot and still blocks launches until graphics recovery is verified.
+All eight coverage groups, the full gameplay matrix, both routes, native baselines, Boar diagnostics, CubeCraft, and actual Windows/macOS joins remain required.

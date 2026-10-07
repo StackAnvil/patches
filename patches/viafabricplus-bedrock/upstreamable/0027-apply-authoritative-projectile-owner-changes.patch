@@ -1,0 +1,274 @@
+From 0a9bd8388a1c22170291d2fc431802b134c2a2c1 Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 01:55:18 +0200
+Subject: [PATCH] feat(entities): apply authoritative projectile owner changes
+
+Java 26.3 reconstructs an owner from spawn data but has no vanilla packet
+for subsequent owner changes. Consume core-resolved ownership only on the
+independently advertised projectile channel, preserving both direct and
+ViaProxy routes without coupling it to custom actor rendering.
+
+Use per-spawn Java UUIDs and actual local-player identity to reject stale
+IDs. Resolve either frontend arrival order, clear unloaded owners, and
+restore matching actors through client tracking callbacks. World changes
+and disconnects invalidate queued work and release reference state.
+
+Fishing bobbers otherwise discard themselves immediately when Java cannot
+resolve their player owner. On Bedrock connections, retain those pending
+bobbers for authoritative removal instead. Reassignment clears the prior
+player's fishing pointer before invoking Java's normal owner setter.
+
+Core wire and lifecycle tests cover this shared owner registry. Actual
+native visible fishing and complete projectile physics remain required
+comparisons; this change does not claim full projectile action parity.
+---
+ .../bedrock/ViaFabricPlusBedrock.java         |  7 ++
+ .../entities/MixinClientEntityTracking.java   | 26 +++++++
+ .../entities/MixinFishingHookOwner.java       | 22 ++++++
+ .../MixinMinecraftProjectileOwners.java       | 24 +++++++
+ .../render/BedrockProjectileOwners.java       | 67 +++++++++++++++++++
+ .../render/NativeProjectileOwnerPayload.java  | 24 +++++++
+ .../viafabricplus-bedrock.mixins.json         |  5 +-
+ 7 files changed, 174 insertions(+), 1 deletion(-)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/entities/MixinClientEntityTracking.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/entities/MixinFishingHookOwner.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/entities/MixinMinecraftProjectileOwners.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockProjectileOwners.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeProjectileOwnerPayload.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+index 64aaea6..20f0aea 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+@@ -25,6 +25,8 @@ import com.viaversion.viafabricplus.bedrock.render.BedrockPlayerSkins;
+ import com.viaversion.viafabricplus.bedrock.render.NativeSkinPayload;
+ import com.viaversion.viafabricplus.bedrock.render.NativeCustomEntityPayload;
+ import com.viaversion.viafabricplus.bedrock.render.NativeActorPayload;
++import com.viaversion.viafabricplus.bedrock.render.NativeProjectileOwnerPayload;
++import com.viaversion.viafabricplus.bedrock.render.BedrockProjectileOwners;
+ import com.viaversion.viafabricplus.bedrock.render.NativeAnimationPayload;
+ import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
+ import com.viaversion.viafabricplus.bedrock.render.CustomEntityRenderStore;
+@@ -99,6 +101,11 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+             ClientPlayNetworking.registerReceiver(NativeCustomEntityPayload.TYPE,
+                 (payload, context) -> CustomEntityRenderStore.accept(listener.getConnection(), payload.message())));
+         ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> CustomEntityRenderStore.clear());
++        PayloadTypeRegistry.clientboundPlay().register(NativeProjectileOwnerPayload.TYPE, NativeProjectileOwnerPayload.CODEC);
++        ClientPlayConnectionEvents.INIT.register((listener, client) ->
++            ClientPlayNetworking.registerReceiver(NativeProjectileOwnerPayload.TYPE,
++                (payload, context) -> BedrockProjectileOwners.accept(listener.getConnection(), payload.message())));
++        ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> BedrockProjectileOwners.clear());
+         PayloadTypeRegistry.clientboundPlay().register(NativeActorPayload.TYPE, NativeActorPayload.CODEC);
+         ClientPlayConnectionEvents.INIT.register((listener, client) ->
+             ClientPlayNetworking.registerReceiver(NativeActorPayload.TYPE,
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/entities/MixinClientEntityTracking.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/entities/MixinClientEntityTracking.java
+new file mode 100644
+index 0000000..d030c23
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/entities/MixinClientEntityTracking.java
+@@ -0,0 +1,26 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.entities;
++
++import com.viaversion.viafabricplus.bedrock.render.BedrockProjectileOwners;
++import net.minecraft.world.entity.Entity;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(targets = "net.minecraft.client.multiplayer.ClientLevel$EntityCallbacks")
++public abstract class MixinClientEntityTracking {
++    @Inject(method = "onTrackingStart(Lnet/minecraft/world/entity/Entity;)V", at = @At("TAIL"))
++    private void resolveBedrockOwners(final Entity entity, final CallbackInfo ci) {
++        BedrockProjectileOwners.actorSpawned(entity);
++    }
++
++    @Inject(method = "onTrackingEnd(Lnet/minecraft/world/entity/Entity;)V", at = @At("TAIL"))
++    private void clearBedrockOwners(final Entity entity, final CallbackInfo ci) {
++        BedrockProjectileOwners.actorRemoved(entity);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/entities/MixinFishingHookOwner.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/entities/MixinFishingHookOwner.java
+new file mode 100644
+index 0000000..ba6abd0
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/entities/MixinFishingHookOwner.java
+@@ -0,0 +1,22 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.entities;
++
++import com.llamalad7.mixinextras.injector.WrapWithCondition;
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import net.minecraft.world.entity.projectile.FishingHook;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++@Mixin(FishingHook.class)
++public abstract class MixinFishingHookOwner {
++    /** Bedrock supplies actor removal; an unavailable owner must not erase a pending bobber. */
++    @WrapWithCondition(method = {"recreateFromPacket", "tick"}, at = @At(value = "INVOKE",
++            target = "Lnet/minecraft/world/entity/projectile/FishingHook;discard()V", ordinal = 0))
++    private boolean retainBedrockBobberWithoutOwner(final FishingHook hook) {
++        return !BedrockInputPermissions.isBedrockConnection() || !hook.level().isClientSide() || hook.getPlayerOwner() != null;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/entities/MixinMinecraftProjectileOwners.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/entities/MixinMinecraftProjectileOwners.java
+new file mode 100644
+index 0000000..26bebfb
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/entities/MixinMinecraftProjectileOwners.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.entities;
++
++import com.viaversion.viafabricplus.bedrock.render.BedrockProjectileOwners;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.multiplayer.ClientLevel;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
++
++@Mixin(Minecraft.class)
++public abstract class MixinMinecraftProjectileOwners {
++    @Inject(method = "setLevel", at = @At("HEAD"))
++    private void discardPreviousWorldOwners(final ClientLevel level, final CallbackInfo ci) {
++        if (((Minecraft) (Object) this).level != level) {
++            BedrockProjectileOwners.clear();
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockProjectileOwners.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockProjectileOwners.java
+new file mode 100644
+index 0000000..dc31e40
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockProjectileOwners.java
+@@ -0,0 +1,67 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import net.minecraft.client.Minecraft;
++import net.minecraft.network.Connection;
++import net.minecraft.world.entity.Entity;
++import net.minecraft.world.entity.player.Player;
++import net.minecraft.world.entity.projectile.FishingHook;
++import net.minecraft.world.entity.projectile.Projectile;
++import net.raphimc.viabedrock.api.model.NativeProjectileOwnerMessage;
++import net.raphimc.viabedrock.api.model.NativeProjectileOwners;
++
++/** Connection-scoped owner changes for direct and remote ViaBedrock translations. */
++public final class BedrockProjectileOwners {
++    private static final NativeProjectileOwners<Entity> OWNERS = new NativeProjectileOwners<>(BedrockProjectileOwners::lookup,
++            BedrockProjectileOwners::assign);
++    private static volatile long generation;
++
++    private BedrockProjectileOwners() {}
++
++    public static void accept(final Connection connection, final NativeProjectileOwnerMessage message) {
++        final long receivedGeneration = generation;
++        Minecraft.getInstance().execute(() -> {
++            final var listener = Minecraft.getInstance().getConnection();
++            if (generation == receivedGeneration && connection.isConnected()
++                    && listener != null && listener.getConnection() == connection) {
++                OWNERS.apply(message);
++            }
++        });
++    }
++
++    public static void actorSpawned(final Entity entity) {
++        OWNERS.actorSpawned(entity.getId(), entity.getUUID());
++    }
++
++    public static void actorRemoved(final Entity entity) {
++        OWNERS.actorRemoved(entity.getId(), entity.getUUID(), entity);
++    }
++
++    public static void clear() {
++        generation++;
++        OWNERS.clear();
++    }
++
++    private static Entity lookup(final NativeProjectileOwnerMessage.Target reference) {
++        final Minecraft client = Minecraft.getInstance();
++        final Entity entity = client.level == null ? null : client.level.getEntity(reference.entityId());
++        if (entity == null || entity.isRemoved()) {
++            return null;
++        }
++        return reference.localPlayer() ? entity == client.player ? entity : null
++                : reference.uuid().equals(entity.getUUID()) ? entity : null;
++    }
++
++    private static void assign(final Entity source, final Entity owner) {
++        if (source instanceof Projectile projectile) {
++            if (projectile instanceof FishingHook hook && projectile.getOwner() instanceof Player previous && previous.fishing == hook) {
++                previous.fishing = null;
++            }
++            projectile.setOwner(owner);
++        }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeProjectileOwnerPayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeProjectileOwnerPayload.java
+new file mode 100644
+index 0000000..0a3e377
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeProjectileOwnerPayload.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.NativeProjectileOwnerMessage;
++
++public record NativeProjectileOwnerPayload(NativeProjectileOwnerMessage message) implements CustomPacketPayload {
++    public static final Type<NativeProjectileOwnerPayload> TYPE = new Type<>(Identifier.parse(NativeProjectileOwnerMessage.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, NativeProjectileOwnerPayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> NativeProjectileOwnerMessage.TYPE.write(buffer, payload.message),
++            buffer -> new NativeProjectileOwnerPayload(NativeProjectileOwnerMessage.TYPE.read(buffer)));
++
++    @Override
++    public Type<NativeProjectileOwnerPayload> type() {
++        return TYPE;
++    }
++}
+diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
+index df2874a..21da052 100644
+--- a/src/main/resources/viafabricplus-bedrock.mixins.json
++++ b/src/main/resources/viafabricplus-bedrock.mixins.json
+@@ -135,7 +135,10 @@
+     "features.particle.MixinBedrockParticleRenderType",
+     "features.render.MixinBedrockHudVisibility",
+     "features.render.MixinMinecraftHudVisibility",
+-    "features.render.MixinBedrockCameraFade"
++    "features.render.MixinBedrockCameraFade",
++    "features.entities.MixinClientEntityTracking",
++    "features.entities.MixinMinecraftProjectileOwners",
++    "features.entities.MixinFishingHookOwner"
+   ],
+   "injectors": {
+     "defaultRequire": 1
+-- 
+2.55.0

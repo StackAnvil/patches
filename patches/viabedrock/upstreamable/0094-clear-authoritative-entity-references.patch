@@ -1,4 +1,4 @@
-From 5fdfbebf936a13d789dcc63f91f2d577802aa28e Mon Sep 17 00:00:00 2001
+From 54a222c958ad70f97b6409e004ffacab1308faed Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 00:57:32 +0200
 Subject: [PATCH] fix(entities): synchronize authoritative entity references
@@ -21,20 +21,261 @@ instead of scanning every actor on each spawn.
 Stateful regressions exercise real metadata updates, tracker spawn/removal
 hooks, and encoded Java metadata. Cover restoration, owner reassignment,
 late arrival, repeated spawn, independent wither heads, target unload and
-return, superseded references, and source replacement. Projectile ownership
-transport and visible native comparisons remain separate requirements.
+return, superseded references, and source replacement.
+
+Preserve projectile OWNER in standard Java spawn data when its actor exists.
+An independently advertised ownership channel carries late resolution,
+changes, and clearing to capable clients; ordinary Java clients retain the
+standard spawning path. A UUID for each Java spawn lifetime prevents native
+actor-ID reuse from changing a replacement projectile's owner.
+
+Actual strict-BDS small fireballs carry full-width negative OWNER IDs for
+their blaze shooters. Java 26.3 reconstructs projectile owners from spawn
+data but has no subsequent owner update packet. Keep decoding, reference
+resolution, channel gating, and frontend lifecycle indexing in core. Client
+setOwner integration remains in a separate add-on change.
+
+Cover real spawn handling across projectile families, late capability
+registration, replacement, unload and return, explicit clears, malformed
+payloads, and both frontend arrival orders. Visible native comparisons and
+complete projectile action behavior remain required.
 ---
+ .../model/NativeProjectileOwnerMessage.java   |  91 +++
+ .../api/model/NativeProjectileOwners.java     | 115 ++++
  .../viabedrock/api/model/entity/Entity.java   |   2 +
- .../protocol/packet/EntityPackets.java        |   3 +
+ .../protocol/packet/EntityPackets.java        |   5 +-
+ .../protocol/packet/MultiStatePackets.java    |   4 +
  .../protocol/packet/OtherPlayerPackets.java   |   1 +
- .../rewriter/EntityMetadataRewriter.java      |  78 +---
- .../storage/EntityReferenceTracker.java       | 145 ++++++
+ .../rewriter/EntityMetadataRewriter.java      |  80 +--
+ .../storage/EntityReferenceTracker.java       | 221 ++++++++
  .../protocol/storage/EntityTracker.java       |  19 +
- .../rewriter/EntityReferenceMetadataTest.java | 412 ++++++++++++++++++
- 7 files changed, 596 insertions(+), 64 deletions(-)
+ .../api/model/NativeProjectileOwnersTest.java | 181 ++++++
+ .../rewriter/EntityReferenceMetadataTest.java | 533 ++++++++++++++++++
+ 11 files changed, 1187 insertions(+), 65 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeProjectileOwnerMessage.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeProjectileOwners.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/EntityReferenceTracker.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeProjectileOwnersTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityReferenceMetadataTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeProjectileOwnerMessage.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeProjectileOwnerMessage.java
+new file mode 100644
+index 000000000..0e08570f8
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeProjectileOwnerMessage.java
+@@ -0,0 +1,91 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++
++import java.util.Objects;
++import java.util.UUID;
++
++/** Projectile Java UUIDs identify individual spawn lifetimes, including reused native actor IDs. */
++public sealed interface NativeProjectileOwnerMessage permits NativeProjectileOwnerMessage.SetOwner, NativeProjectileOwnerMessage.Remove {
++
++    String CHANNEL = "viabedrock:projectile_owner_v1";
++    int MAX_PAYLOAD_BYTES = 64;
++    Type<NativeProjectileOwnerMessage> TYPE = new Type<>(NativeProjectileOwnerMessage.class) {
++        @Override
++        public NativeProjectileOwnerMessage read(final ByteBuf buffer) {
++            if (buffer.readableBytes() > MAX_PAYLOAD_BYTES || Types.VAR_INT.readPrimitive(buffer) != 1
++                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IllegalArgumentException("Unsupported projectile ownership message");
++            }
++            final int kind = buffer.readUnsignedByte();
++            final UUID uuid = Types.UUID.read(buffer);
++            final NativeProjectileOwnerMessage message;
++            if (kind == 0) {
++                final int entityId = Types.VAR_INT.readPrimitive(buffer);
++                final Target owner = buffer.readBoolean()
++                        ? new Target(Types.UUID.read(buffer), Types.VAR_INT.readPrimitive(buffer), buffer.readBoolean()) : null;
++                message = new SetOwner(uuid, entityId, owner);
++            } else if (kind == 1) {
++                message = new Remove(uuid);
++            } else {
++                throw new IllegalArgumentException("Unknown projectile ownership message");
++            }
++            if (buffer.isReadable()) {
++                throw new IllegalArgumentException("Trailing projectile ownership data");
++            }
++            return message;
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final NativeProjectileOwnerMessage message) {
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            buffer.writeByte(message instanceof SetOwner ? 0 : 1);
++            Types.UUID.write(buffer, message.uuid());
++            if (message instanceof SetOwner set) {
++                Types.VAR_INT.writePrimitive(buffer, set.entityId);
++                buffer.writeBoolean(set.owner != null);
++                if (set.owner != null) {
++                    Types.UUID.write(buffer, set.owner.uuid);
++                    Types.VAR_INT.writePrimitive(buffer, set.owner.entityId);
++                    buffer.writeBoolean(set.owner.localPlayer);
++                }
++            }
++        }
++    };
++
++    UUID uuid();
++
++    record Target(UUID uuid, int entityId, boolean localPlayer) {
++        public Target {
++            Objects.requireNonNull(uuid);
++            if (entityId <= 0) {
++                throw new IllegalArgumentException("Invalid projectile owner entity ID");
++            }
++        }
++    }
++
++    record SetOwner(UUID uuid, int entityId, Target owner) implements NativeProjectileOwnerMessage {
++        public SetOwner {
++            Objects.requireNonNull(uuid);
++            if (entityId <= 0) {
++                throw new IllegalArgumentException("Invalid projectile entity ID");
++            }
++        }
++    }
++
++    record Remove(UUID uuid) implements NativeProjectileOwnerMessage {
++        public Remove {
++            Objects.requireNonNull(uuid);
++        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeProjectileOwners.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeProjectileOwners.java
+new file mode 100644
+index 000000000..7501bb791
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeProjectileOwners.java
+@@ -0,0 +1,115 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import java.util.HashMap;
++import java.util.LinkedHashSet;
++import java.util.Map;
++import java.util.Set;
++import java.util.UUID;
++import java.util.function.BiConsumer;
++import java.util.function.Function;
++
++/** Applies authoritative owners when the source and target exist in the frontend's entity set. */
++public final class NativeProjectileOwners<E> {
++
++    private final Function<NativeProjectileOwnerMessage.Target, E> lookup;
++    private final BiConsumer<E, E> assign;
++    private final Map<UUID, Binding<E>> sources = new HashMap<>();
++    private final Map<Integer, Set<Binding<E>>> targets = new HashMap<>();
++
++    public NativeProjectileOwners(final Function<NativeProjectileOwnerMessage.Target, E> lookup, final BiConsumer<E, E> assign) {
++        this.lookup = lookup;
++        this.assign = assign;
++    }
++
++    public void apply(final NativeProjectileOwnerMessage message) {
++        final Binding<E> previous = this.sources.remove(message.uuid());
++        if (previous != null) {
++            this.detach(previous);
++        }
++        if (message instanceof NativeProjectileOwnerMessage.SetOwner owner) {
++            final Binding<E> binding = new Binding<>(owner);
++            this.sources.put(owner.uuid(), binding);
++            if (owner.owner() != null) {
++                this.targets.computeIfAbsent(owner.owner().entityId(), ignored -> new LinkedHashSet<>()).add(binding);
++            }
++            this.resolve(binding);
++        }
++    }
++
++    public void actorSpawned(final int entityId, final UUID uuid) {
++        final Binding<E> source = this.sources.get(uuid);
++        if (source != null && source.message.entityId() == entityId) {
++            this.resolve(source);
++        }
++        for (final Binding<E> binding : this.targets.getOrDefault(entityId, Set.of())) {
++            this.resolve(binding);
++        }
++    }
++
++    /** Pass the actual removed actor so cleanup also works after lookup removal or ID reuse. */
++    public void actorRemoved(final int entityId, final UUID uuid, final E actor) {
++        final Binding<E> source = this.sources.get(uuid);
++        if (source != null && source.message.entityId() == entityId) {
++            this.sources.remove(uuid);
++            this.detach(source);
++        }
++        for (final Binding<E> binding : this.targets.getOrDefault(entityId, Set.of())) {
++            if (binding.resolvedTarget != null && binding.resolvedTarget == actor) {
++                binding.resolvedTarget = null;
++                final E projectile = this.lookup.apply(source(binding.message));
++                if (projectile != null) {
++                    this.assign.accept(projectile, null);
++                }
++            }
++        }
++    }
++
++    public void clear() {
++        this.sources.clear();
++        this.targets.clear();
++    }
++
++    private void resolve(final Binding<E> binding) {
++        final E projectile = this.lookup.apply(source(binding.message));
++        if (projectile == null) {
++            return;
++        }
++        final E owner = binding.message.owner() == null ? null : this.lookup.apply(binding.message.owner());
++        if (binding.resolvedSource != projectile || binding.resolvedTarget != owner) {
++            this.assign.accept(projectile, owner);
++            binding.resolvedSource = projectile;
++            binding.resolvedTarget = owner;
++        }
++    }
++
++    private void detach(final Binding<E> binding) {
++        if (binding.message.owner() == null) {
++            return;
++        }
++        final Set<Binding<E>> dependents = this.targets.get(binding.message.owner().entityId());
++        dependents.remove(binding);
++        if (dependents.isEmpty()) {
++            this.targets.remove(binding.message.owner().entityId());
++        }
++    }
++
++    private static NativeProjectileOwnerMessage.Target source(final NativeProjectileOwnerMessage.SetOwner message) {
++        return new NativeProjectileOwnerMessage.Target(message.uuid(), message.entityId(), false);
++    }
++
++    private static final class Binding<E> {
++        private final NativeProjectileOwnerMessage.SetOwner message;
++        private E resolvedSource;
++        private E resolvedTarget;
++
++        private Binding(final NativeProjectileOwnerMessage.SetOwner message) {
++            this.message = message;
++        }
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 index 099844428..e4ab26a1c 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
@@ -52,10 +293,12 @@ index 099844428..e4ab26a1c 100644
      }
  
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
-index b066520bd..46927b672 100644
+index b066520bd..74b778fb2 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
-@@ -182,4 +182,5 @@ public final class EntityPackets {
+@@ -181,5 +181,6 @@ public final class EntityPackets {
+-            wrapper.write(Types.VAR_INT, 0); // data
++            wrapper.write(Types.VAR_INT, entityTracker.references().projectileSpawnData(entity, entityData)); // data
              wrapper.send(BedrockProtocol.class);
              wrapper.cancel();
 +            entityTracker.entitySpawned(entity);
@@ -73,6 +316,19 @@ index b066520bd..46927b672 100644
 +            entityTracker.entitySpawned(entity);
  
              final PacketWrapper setEntityData = PacketWrapper.create(ClientboundPackets26_3.SET_ENTITY_DATA, wrapper.user());
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+index e4c2f7f97..8a4280179 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/MultiStatePackets.java
+@@ -196,4 +196,8 @@ public final class MultiStatePackets {
+                 ViaBedrockUtilityInterface.confirmPresence(wrapper.user());
+             }
++            if (channels.contains(net.raphimc.viabedrock.api.model.NativeProjectileOwnerMessage.CHANNEL)
++                    && wrapper.user().has(net.raphimc.viabedrock.protocol.storage.EntityTracker.class)) {
++                wrapper.user().get(net.raphimc.viabedrock.protocol.storage.EntityTracker.class).references().sendProjectileSnapshots(wrapper.user());
++            }
+         }
+     };
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
 index ac0962482..6a6e6ac0e 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/OtherPlayerPackets.java
@@ -84,7 +340,7 @@ index ac0962482..6a6e6ac0e 100644
  
              final PacketWrapper setEquipment = PacketWrapper.create(ClientboundPackets26_3.SET_EQUIPMENT, wrapper.user());
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
-index ed40425a3..39a02d52b 100644
+index ed40425a3..88739fc01 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/EntityMetadataRewriter.java
 @@ -28,4 +28,5 @@ import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
@@ -93,7 +349,7 @@ index ed40425a3..39a02d52b 100644
 +import net.raphimc.viabedrock.protocol.storage.EntityReferenceTracker;
  import net.raphimc.viabedrock.protocol.storage.EntityTracker;
  import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
-@@ -319,15 +320,7 @@ public final class EntityMetadataRewriter {
+@@ -319,15 +320,9 @@ public final class EntityMetadataRewriter {
              case OWNER -> {
                  final long ownerId = readNumber(entityData).longValue();
 -                if (ownerId == -1) {
@@ -108,10 +364,12 @@ index ed40425a3..39a02d52b 100644
 -                    javaEntityData.add(new EntityData(entity.getJavaEntityDataIndex(EntityDataFields.OWNERUUID), VersionedTypes.V26_3.entityDataTypes().optionalUUIDType, ownerEntity.javaUuid()));
 -                } else {
 +                    javaEntityData.add(entityTracker.references().update(entity, EntityReferenceTracker.Kind.OWNER, ownerId));
++                } else if (EntityReferenceTracker.isProjectile(entity.javaType())) {
++                    entityTracker.references().updateProjectileOwner(user, entity, ownerId);
 +                } else if (ownerId != -1L) {
                      ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received OWNER for non-TAMEABLE_ANIMAL entity " + entity.type());
                  }
-@@ -576,64 +569,21 @@ public final class EntityMetadataRewriter {
+@@ -576,64 +571,21 @@ public final class EntityMetadataRewriter {
                  }
              }
 -            case TARGET_A -> {
@@ -189,10 +447,10 @@ index ed40425a3..39a02d52b 100644
                      ViaBedrock.getPlatform().getLogger().log(Level.WARNING, "Received TARGET for non-GUARDIAN entity " + entity.type() + " with non-zero value " + targetId);
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityReferenceTracker.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityReferenceTracker.java
 new file mode 100644
-index 000000000..b42c9461e
+index 000000000..59935e901
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/EntityReferenceTracker.java
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,221 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -202,11 +460,17 @@ index 000000000..b42c9461e
 +
 +import com.viaversion.viaversion.api.connection.UserConnection;
 +import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.protocol.packet.State;
 +import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
 +import com.viaversion.viaversion.api.type.Types;
 +import com.viaversion.viaversion.api.type.types.version.VersionedTypes;
 +import com.viaversion.viaversion.protocols.v26_2to26_3.packet.ClientboundPackets26_3;
 +import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
++import net.raphimc.viabedrock.api.model.NativeProjectileOwnerMessage;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
++import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
 +
@@ -232,6 +496,43 @@ index 000000000..b42c9461e
 +    }
 +
 +    public EntityData update(final Entity source, final Kind kind, final long targetId) {
++        return metadata(source, kind, this.bind(source, kind, targetId));
++    }
++
++    public void updateProjectileOwner(final UserConnection user, final Entity source, final long targetId) {
++        sendProjectileMessage(user, projectileOwner(source, this.bind(source, Kind.PROJECTILE_OWNER, targetId)));
++    }
++
++    public static boolean isProjectile(final EntityTypes26_3 type) {
++        // ViaVersion groups fireballs separately from its projectile metadata family.
++        return type.isOrHasParent(EntityTypes26_3.PROJECTILE) || type.isOrHasParent(EntityTypes26_3.ABSTRACT_FIREBALL);
++    }
++
++    public int projectileSpawnData(final Entity source, final EntityData[] data) {
++        if (!isProjectile(source.javaType())) {
++            return 0;
++        }
++        long ownerId = -1L;
++        for (final EntityData field : data) {
++            if (field.id() == ActorDataIds.OWNER.getValue() && field.dataType() == EntityDataTypesBedrock.LONG
++                    && field.value() instanceof Long value) {
++                ownerId = value;
++            }
++        }
++        final Entity target = ownerId == -1L ? null : this.lookup.apply(ownerId);
++        return target == null ? 0 : target.javaId();
++    }
++
++    public void sendProjectileSnapshots(final UserConnection user) {
++        for (final EnumMap<Kind, Binding> kinds : this.sources.values()) {
++            final Binding binding = kinds.get(Kind.PROJECTILE_OWNER);
++            if (binding != null) {
++                sendProjectileMessage(user, projectileOwner(binding.source, binding.resolved));
++            }
++        }
++    }
++
++    private Entity bind(final Entity source, final Kind kind, final long targetId) {
 +        final EnumMap<Kind, Binding> bindings = this.sources.computeIfAbsent(source, ignored -> new EnumMap<>(Kind.class));
 +        final Binding previous = bindings.remove(kind);
 +        if (previous != null) {
@@ -247,46 +548,75 @@ index 000000000..b42c9461e
 +        if (bindings.isEmpty()) {
 +            this.sources.remove(source);
 +        }
-+        return metadata(source, kind, target);
++        return target;
 +    }
 +
 +    /** Call only after the target's Java spawn packet has been sent. */
-+    public Map<Entity, List<EntityData>> actorSpawned(final Entity target) {
-+        final Map<Entity, List<EntityData>> updates = new LinkedHashMap<>();
++    public Updates actorSpawned(final Entity target) {
++        final Updates updates = new Updates(new LinkedHashMap<>(), new ArrayList<>());
 +        if (this.lookup.apply(target.uniqueId()) != target) {
 +            return updates;
 +        }
 +        for (final Binding binding : this.targets.getOrDefault(target.uniqueId(), Set.of())) {
 +            if (binding.resolved != target) {
 +                binding.resolved = target;
-+                updates.computeIfAbsent(binding.source, ignored -> new ArrayList<>()).add(metadata(binding.source, binding.kind, target));
++                addUpdate(updates, binding, target);
 +            }
 +        }
 +        return updates;
 +    }
 +
-+    public Map<Entity, List<EntityData>> actorRemoved(final Entity actor) {
++    public Updates actorRemoved(final Entity actor) {
 +        final EnumMap<Kind, Binding> owned = this.sources.remove(actor);
++        final Updates updates = new Updates(new LinkedHashMap<>(), new ArrayList<>());
 +        if (owned != null) {
 +            owned.values().forEach(this::detach);
++            if (owned.containsKey(Kind.PROJECTILE_OWNER)) {
++                updates.owners.add(new NativeProjectileOwnerMessage.Remove(actor.javaUuid()));
++            }
 +        }
-+        final Map<Entity, List<EntityData>> updates = new LinkedHashMap<>();
 +        for (final Binding binding : this.targets.getOrDefault(actor.uniqueId(), Set.of())) {
 +            if (binding.resolved == actor) {
 +                binding.resolved = null;
-+                updates.computeIfAbsent(binding.source, ignored -> new ArrayList<>()).add(metadata(binding.source, binding.kind, null));
++                addUpdate(updates, binding, null);
 +            }
 +        }
 +        return updates;
 +    }
 +
-+    public static void sendUpdates(final UserConnection user, final Map<Entity, List<EntityData>> updates) {
-+        updates.forEach((entity, data) -> {
++    public static void sendUpdates(final UserConnection user, final Updates updates) {
++        updates.metadata.forEach((entity, data) -> {
 +            final PacketWrapper metadata = PacketWrapper.create(ClientboundPackets26_3.SET_ENTITY_DATA, user);
 +            metadata.write(Types.VAR_INT, entity.javaId());
 +            metadata.write(VersionedTypes.V26_3.entityDataList, data);
 +            metadata.send(BedrockProtocol.class);
 +        });
++        updates.owners.forEach(message -> sendProjectileMessage(user, message));
++    }
++
++    private static void addUpdate(final Updates updates, final Binding binding, final Entity target) {
++        if (binding.kind == Kind.PROJECTILE_OWNER) {
++            updates.owners.add(projectileOwner(binding.source, target));
++        } else {
++            updates.metadata.computeIfAbsent(binding.source, ignored -> new ArrayList<>())
++                    .add(metadata(binding.source, binding.kind, target));
++        }
++    }
++
++    private static NativeProjectileOwnerMessage.SetOwner projectileOwner(final Entity source, final Entity target) {
++        return new NativeProjectileOwnerMessage.SetOwner(source.javaUuid(), source.javaId(), target == null ? null
++                : new NativeProjectileOwnerMessage.Target(target.javaUuid(), target.javaId(), target instanceof ClientPlayerEntity));
++    }
++
++    private static void sendProjectileMessage(final UserConnection user, final NativeProjectileOwnerMessage message) {
++        final ChannelStorage channels = user.get(ChannelStorage.class);
++        if (channels != null && channels.hasChannel(NativeProjectileOwnerMessage.CHANNEL)
++                && user.getProtocolInfo().getServerState() == State.PLAY) {
++            final PacketWrapper payload = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, user);
++            payload.write(Types.STRING, NativeProjectileOwnerMessage.CHANNEL);
++            payload.write(NativeProjectileOwnerMessage.TYPE, message);
++            payload.send(BedrockProtocol.class);
++        }
 +    }
 +
 +    private void detach(final Binding binding) {
@@ -305,12 +635,16 @@ index 000000000..b42c9461e
 +                target == null ? 0 : target.javaId());
 +    }
 +
++    public record Updates(Map<Entity, List<EntityData>> metadata, List<NativeProjectileOwnerMessage> owners) {
++    }
++
 +    public enum Kind {
 +        OWNER(EntityDataFields.OWNERUUID, -1L, true),
 +        GUARDIAN_TARGET(EntityDataFields.ATTACK_TARGET, 0L, false),
 +        WITHER_TARGET_A(EntityDataFields.TARGET_A, -1L, false),
 +        WITHER_TARGET_B(EntityDataFields.TARGET_B, -1L, false),
-+        WITHER_TARGET_C(EntityDataFields.TARGET_C, -1L, false);
++        WITHER_TARGET_C(EntityDataFields.TARGET_C, -1L, false),
++        PROJECTILE_OWNER(null, -1L, false);
 +
 +        private final String field;
 +        private final long emptyId;
@@ -371,12 +705,199 @@ index f3cc43c2b..bcc847950 100644
 +
      public Entity getEntityByUid(final long uniqueId) {
          return this.entities.get(uniqueId);
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeProjectileOwnersTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeProjectileOwnersTest.java
+new file mode 100644
+index 000000000..c9cf61916
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeProjectileOwnersTest.java
+@@ -0,0 +1,181 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import io.netty.buffer.Unpooled;
++import org.junit.jupiter.api.Test;
++
++import java.util.HashMap;
++import java.util.Map;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeProjectileOwnersTest {
++
++    @Test
++    void resolvesBothArrivalOrdersAndClearsUnloadedTargetsWithoutLosingIdentity() {
++        final Map<Integer, Actor> actors = new HashMap<>();
++        final NativeProjectileOwners<Actor> owners = registry(actors);
++        final Actor projectile = new Actor(10);
++        final Actor target = new Actor(20);
++        final var message = new NativeProjectileOwnerMessage.SetOwner(projectile.uuid, projectile.id, target.reference());
++        owners.apply(roundTrip(message));
++        actors.put(target.id, target);
++        owners.actorSpawned(target.id, target.uuid);
++        actors.put(projectile.id, projectile);
++        owners.actorSpawned(projectile.id, projectile.uuid);
++        assertSame(target, projectile.owner);
++        assertEquals(1, projectile.assignments);
++        owners.actorSpawned(target.id, target.uuid);
++        assertEquals(1, projectile.assignments);
++        actors.remove(target.id);
++        owners.actorRemoved(target.id, target.uuid, target);
++        assertNull(projectile.owner);
++        actors.put(target.id, target);
++        owners.actorSpawned(target.id, target.uuid);
++        assertSame(target, projectile.owner);
++
++        owners.clear();
++        actors.remove(target.id);
++        owners.apply(message);
++        assertNull(projectile.owner);
++        actors.put(target.id, target);
++        owners.actorSpawned(target.id, target.uuid);
++        assertSame(target, projectile.owner);
++    }
++
++    @Test
++    void rejectsReusedJavaIdsAndRetainsExplicitClearingBeforeSourceArrival() {
++        final Map<Integer, Actor> actors = new HashMap<>();
++        final NativeProjectileOwners<Actor> owners = registry(actors);
++        final Actor source = new Actor(10);
++        final Actor target = new Actor(20);
++        final Actor reused = new Actor(20);
++        actors.put(source.id, source);
++        actors.put(reused.id, reused);
++        owners.apply(new NativeProjectileOwnerMessage.SetOwner(source.uuid, source.id, target.reference()));
++        assertNull(source.owner);
++        owners.actorSpawned(reused.id, reused.uuid);
++        assertNull(source.owner);
++        actors.put(target.id, target);
++        owners.actorSpawned(target.id, target.uuid);
++        assertSame(target, source.owner);
++        owners.apply(new NativeProjectileOwnerMessage.SetOwner(source.uuid, source.id, null));
++        assertNull(source.owner);
++        owners.actorSpawned(target.id, target.uuid);
++        assertNull(source.owner);
++
++        actors.remove(source.id);
++        source.owner = target;
++        owners.apply(new NativeProjectileOwnerMessage.SetOwner(source.uuid, source.id, null));
++        actors.put(source.id, source);
++        owners.actorSpawned(source.id, source.uuid);
++        assertNull(source.owner);
++    }
++
++    @Test
++    void discardsReplacedBindingsRemovedSourcesAndPriorConnectionState() {
++        final Map<Integer, Actor> actors = new HashMap<>();
++        final NativeProjectileOwners<Actor> owners = registry(actors);
++        final Actor source = new Actor(10);
++        final Actor old = new Actor(20);
++        final Actor current = new Actor(21);
++        actors.put(source.id, source);
++        owners.apply(new NativeProjectileOwnerMessage.SetOwner(source.uuid, source.id, old.reference()));
++        owners.apply(new NativeProjectileOwnerMessage.SetOwner(source.uuid, source.id, current.reference()));
++        actors.put(old.id, old);
++        owners.actorSpawned(old.id, old.uuid);
++        assertNull(source.owner);
++        actors.put(current.id, current);
++        owners.actorSpawned(current.id, current.uuid);
++        assertSame(current, source.owner);
++        owners.actorRemoved(old.id, old.uuid, old);
++        assertSame(current, source.owner);
++        owners.actorRemoved(source.id, source.uuid, source);
++        final Actor replacement = new Actor(source.id);
++        actors.put(replacement.id, replacement);
++        owners.actorSpawned(replacement.id, replacement.uuid);
++        owners.actorSpawned(current.id, current.uuid);
++        assertNull(replacement.owner);
++        owners.apply(new NativeProjectileOwnerMessage.SetOwner(replacement.uuid, replacement.id, old.reference()));
++        owners.apply(roundTrip(new NativeProjectileOwnerMessage.Remove(replacement.uuid)));
++        replacement.owner = null;
++        owners.actorSpawned(old.id, old.uuid);
++        assertNull(replacement.owner);
++        owners.apply(new NativeProjectileOwnerMessage.SetOwner(source.uuid, source.id, current.reference()));
++        owners.clear();
++        actors.put(source.id, source);
++        source.owner = null;
++        owners.actorSpawned(source.id, source.uuid);
++        assertNull(source.owner);
++    }
++
++    @Test
++    void roundTripsLocalOwnerIdentityAndRejectsMalformedPayloads() {
++        final UUID uuid = UUID.randomUUID();
++        final var owner = new NativeProjectileOwnerMessage.Target(UUID.randomUUID(), Integer.MAX_VALUE, true);
++        final var set = new NativeProjectileOwnerMessage.SetOwner(uuid, Integer.MAX_VALUE, owner);
++        assertEquals(set, roundTrip(set));
++        assertEquals(new NativeProjectileOwnerMessage.SetOwner(uuid, 1, null), roundTrip(new NativeProjectileOwnerMessage.SetOwner(uuid, 1, null)));
++        assertThrows(IllegalArgumentException.class, () -> new NativeProjectileOwnerMessage.SetOwner(uuid, 0, owner));
++        assertThrows(IllegalArgumentException.class, () -> new NativeProjectileOwnerMessage.Target(uuid, -1, false));
++        final var buffer = Unpooled.buffer();
++        try {
++            NativeProjectileOwnerMessage.TYPE.write(buffer, set);
++            final byte[] valid = new byte[buffer.readableBytes()];
++            buffer.getBytes(0, valid);
++            buffer.setByte(0, 2);
++            assertThrows(IllegalArgumentException.class, () -> NativeProjectileOwnerMessage.TYPE.read(buffer));
++            buffer.clear().writeBytes(valid).writeByte(0);
++            assertThrows(IllegalArgumentException.class, () -> NativeProjectileOwnerMessage.TYPE.read(buffer));
++            buffer.clear().writeBytes(valid).writerIndex(valid.length - 1);
++            assertThrows(IndexOutOfBoundsException.class, () -> NativeProjectileOwnerMessage.TYPE.read(buffer));
++            buffer.clear().writeZero(NativeProjectileOwnerMessage.MAX_PAYLOAD_BYTES + 1);
++            assertThrows(IllegalArgumentException.class, () -> NativeProjectileOwnerMessage.TYPE.read(buffer));
++        } finally {
++            buffer.release();
++        }
++    }
++
++    private static NativeProjectileOwners<Actor> registry(final Map<Integer, Actor> actors) {
++        return new NativeProjectileOwners<>(reference -> {
++            final Actor actor = actors.get(reference.entityId());
++            return actor != null && actor.uuid.equals(reference.uuid()) ? actor : null;
++        }, (source, owner) -> {
++            source.owner = owner;
++            source.assignments++;
++        });
++    }
++
++    private static NativeProjectileOwnerMessage roundTrip(final NativeProjectileOwnerMessage message) {
++        final var buffer = Unpooled.buffer();
++        try {
++            NativeProjectileOwnerMessage.TYPE.write(buffer, message);
++            final var result = NativeProjectileOwnerMessage.TYPE.read(buffer);
++            assertEquals(0, buffer.readableBytes());
++            return result;
++        } finally {
++            buffer.release();
++        }
++    }
++
++    private static final class Actor {
++        private final int id;
++        private final UUID uuid = UUID.randomUUID();
++        private Actor owner;
++        private int assignments;
++
++        private Actor(final int id) {
++            this.id = id;
++        }
++
++        private NativeProjectileOwnerMessage.Target reference() {
++            return new NativeProjectileOwnerMessage.Target(this.uuid, this.id, false);
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityReferenceMetadataTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityReferenceMetadataTest.java
 new file mode 100644
-index 000000000..6dcffc9f1
+index 000000000..8e27c7c31
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/EntityReferenceMetadataTest.java
-@@ -0,0 +1,412 @@
+@@ -0,0 +1,533 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -416,6 +937,8 @@ index 000000000..6dcffc9f1
 +import io.netty.buffer.Unpooled;
 +import io.netty.buffer.ByteBuf;
 +import net.raphimc.viabedrock.api.model.entity.Entity;
++import net.raphimc.viabedrock.api.model.NativeProjectileOwnerMessage;
++import net.raphimc.viabedrock.protocol.storage.ChannelStorage;
 +import net.raphimc.viabedrock.protocol.BedrockProtocol;
 +import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
 +import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
@@ -447,6 +970,8 @@ index 000000000..6dcffc9f1
 +    private Field managerField;
 +    private Object previousManager;
 +    private final List<PacketType> packetOrder = new ArrayList<>();
++    private final List<NativeProjectileOwnerMessage> owners = new ArrayList<>();
++    private final List<Spawn> spawns = new ArrayList<>();
 +
 +    @BeforeAll
 +    static void initializeTypes() throws Exception {
@@ -510,7 +1035,31 @@ index 000000000..6dcffc9f1
 +                        public void send(final Class<? extends Protocol> type, final boolean skipCurrentPipeline) {
 +                            try {
 +                                EntityReferenceMetadataTest.this.packetOrder.add(this.getPacketType());
-+                                if (this.getPacketType() == ClientboundPackets26_3.SET_ENTITY_DATA) {
++                                if (this.getPacketType() == ClientboundPackets26_3.ADD_ENTITY) {
++                                    this.resetReader();
++                                    final int id = this.read(Types.VAR_INT);
++                                    final UUID uuid = this.read(Types.UUID);
++                                    this.read(Types.VAR_INT);
++                                    for (int axis = 0; axis < 3; axis++) {
++                                        this.read(Types.DOUBLE);
++                                    }
++                                    this.read(Types.LOW_PRECISION_VECTOR);
++                                    for (int axis = 0; axis < 3; axis++) {
++                                        this.read(Types.BYTE);
++                                    }
++                                    EntityReferenceMetadataTest.this.spawns.add(new Spawn(id, uuid, this.read(Types.VAR_INT)));
++                                } else if (this.getPacketType() == ClientboundPackets26_3.CUSTOM_PAYLOAD) {
++                                    this.resetReader();
++                                    assertEquals(NativeProjectileOwnerMessage.CHANNEL, this.read(Types.STRING));
++                                    final var buffer = Unpooled.buffer();
++                                    try {
++                                        NativeProjectileOwnerMessage.TYPE.write(buffer, this.read(NativeProjectileOwnerMessage.TYPE));
++                                        EntityReferenceMetadataTest.this.owners.add(NativeProjectileOwnerMessage.TYPE.read(buffer));
++                                        assertEquals(0, buffer.readableBytes());
++                                    } finally {
++                                        buffer.release();
++                                    }
++                                } else if (this.getPacketType() == ClientboundPackets26_3.SET_ENTITY_DATA) {
 +                                    this.resetReader();
 +                                    EntityReferenceMetadataTest.this.sent.add(new MetadataUpdate(this.read(Types.VAR_INT),
 +                                            this.read(VersionedTypes.V26_3.entityDataList)));
@@ -697,22 +1246,118 @@ index 000000000..6dcffc9f1
 +        final Entity guardian = this.tracker.addEntity(this.actor(EntityTypes26_3.GUARDIAN), false);
 +        final long targetId = -231928233983L;
 +        assertEquals(0, this.value(this.update(guardian, ActorDataIds.TARGET, targetId), 0));
-+        this.replaceMapping("bedrockToJavaEntities", Map.of(EntityTypes26_3.END_CRYSTAL.identifier(), EntityTypes26_3.END_CRYSTAL));
++        this.spawnActor(targetId, EntityTypes26_3.END_CRYSTAL, new EntityData[0]);
++        assertEquals(ClientboundPackets26_3.ADD_ENTITY, this.packetOrder.get(0));
++        assertTrue(this.packetOrder.subList(1, this.packetOrder.size()).stream()
++                .allMatch(type -> type == ClientboundPackets26_3.SET_ENTITY_DATA));
++        final MetadataUpdate resolved = this.sent.get(0);
++        assertEquals(guardian.javaId(), resolved.entityId());
++        assertEquals(this.tracker.getEntityByUid(targetId).javaId(), this.value(resolved.data(), 0));
++    }
++
++    @Test
++    void writesKnownOwnerSpawnDataAndPublishesAfterSpawningAcrossProjectileFamilies() throws Exception {
++        final Entity target = this.target(-227633266687L, 141);
++        this.user.get(ChannelStorage.class).addChannels(List.of(NativeProjectileOwnerMessage.CHANNEL));
++        final EntityTypes26_3[] types = {EntityTypes26_3.SMALL_FIREBALL, EntityTypes26_3.ARROW, EntityTypes26_3.TRIDENT,
++            EntityTypes26_3.FIREWORK_ROCKET, EntityTypes26_3.FISHING_BOBBER, EntityTypes26_3.WIND_CHARGE, EntityTypes26_3.SPLASH_POTION};
++        for (final EntityTypes26_3 type : types) {
++            this.packetOrder.clear();
++            this.spawnActor(-100L - type.ordinal(), type,
++                    new EntityData[]{new EntityData(ActorDataIds.OWNER.getValue(), EntityDataTypesBedrock.LONG, target.uniqueId())});
++            final Spawn spawn = this.spawns.remove(0);
++            assertEquals(target.javaId(), spawn.owner());
++            assertEquals(ClientboundPackets26_3.ADD_ENTITY, this.packetOrder.get(0));
++            final var owner = (NativeProjectileOwnerMessage.SetOwner) this.owners.remove(0);
++            assertEquals(spawn.uuid(), owner.uuid());
++            assertEquals(spawn.id(), owner.entityId());
++            assertEquals(target.javaUuid(), owner.owner().uuid());
++            assertEquals(target.javaId(), owner.owner().entityId());
++        }
++    }
++
++    @Test
++    void resolvesLateProjectileOwnersAndRestoresTheirNewJavaIdentityAfterUnload() {
++        this.user.get(ChannelStorage.class).addChannels(List.of(NativeProjectileOwnerMessage.CHANNEL));
++        final Entity projectile = this.tracker.addEntity(this.actor(EntityTypes26_3.SNOWBALL), false);
++        final long nativeOwner = -227633266687L;
++        assertTrue(this.update(projectile, ActorDataIds.OWNER, nativeOwner).isEmpty());
++        assertNull(((NativeProjectileOwnerMessage.SetOwner) this.owners.remove(0)).owner());
++        final Entity late = this.target(nativeOwner, 71);
++        this.tracker.entitySpawned(late);
++        assertEquals(late.javaId(), ((NativeProjectileOwnerMessage.SetOwner) this.owners.remove(0)).owner().entityId());
++        this.tracker.removeEntity(late);
++        assertNull(((NativeProjectileOwnerMessage.SetOwner) this.owners.remove(0)).owner());
++        assertEquals(nativeOwner, (long) projectile.entityData().get(ActorDataIds.OWNER).value());
++        final Entity returned = this.target(nativeOwner, 72);
++        this.tracker.entitySpawned(returned);
++        final var restored = (NativeProjectileOwnerMessage.SetOwner) this.owners.remove(0);
++        assertEquals(returned.javaId(), restored.owner().entityId());
++        assertEquals(returned.javaUuid(), restored.owner().uuid());
++        this.tracker.entitySpawned(returned);
++        assertTrue(this.owners.isEmpty());
++        this.tracker.removeEntity(projectile);
++        assertEquals(new NativeProjectileOwnerMessage.Remove(projectile.javaUuid()), this.owners.remove(0));
++        this.tracker.removeEntity(returned);
++        this.tracker.entitySpawned(this.target(nativeOwner, 73));
++        assertTrue(this.owners.isEmpty());
++    }
++
++    @Test
++    void snapshotsProjectileOwnershipForLateChannelRegistrationAndCancelsClearedBindings() {
++        final Entity projectile = this.tracker.addEntity(this.actor(EntityTypes26_3.ARROW), false);
++        final Entity first = this.target(-19L, 81);
++        final Entity second = this.target(-20L, 82);
++        assertTrue(this.update(projectile, ActorDataIds.OWNER, first.uniqueId()).isEmpty());
++        assertTrue(this.owners.isEmpty());
++        this.user.get(ChannelStorage.class).addChannels(List.of(NativeProjectileOwnerMessage.CHANNEL));
++        this.tracker.references().sendProjectileSnapshots(this.user);
++        assertEquals(first.javaId(), ((NativeProjectileOwnerMessage.SetOwner) this.owners.remove(0)).owner().entityId());
++        this.update(projectile, ActorDataIds.OWNER, second.uniqueId());
++        assertEquals(second.javaId(), ((NativeProjectileOwnerMessage.SetOwner) this.owners.remove(0)).owner().entityId());
++        this.tracker.removeEntity(first);
++        assertTrue(this.owners.isEmpty());
++        this.update(projectile, ActorDataIds.OWNER, -1L);
++        assertNull(((NativeProjectileOwnerMessage.SetOwner) this.owners.remove(0)).owner());
++        this.tracker.removeEntity(second);
++        this.tracker.entitySpawned(this.target(second.uniqueId(), 83));
++        assertTrue(this.owners.isEmpty());
++    }
++
++    @Test
++    void ignoresNonProjectileAndMalformedOwnerSpawnFieldsWithoutTruncatingValidIds() {
++        final Entity target = this.target(Long.MIN_VALUE, 41);
++        final var owner = new EntityData(ActorDataIds.OWNER.getValue(), EntityDataTypesBedrock.LONG, target.uniqueId());
++        final Entity projectile = this.actor(EntityTypes26_3.ARROW);
++        assertEquals(target.javaId(), this.tracker.references().projectileSpawnData(projectile, new EntityData[]{owner}));
++        assertEquals(0, this.tracker.references().projectileSpawnData(this.actor(EntityTypes26_3.WOLF), new EntityData[]{owner}));
++        assertEquals(0, this.tracker.references().projectileSpawnData(projectile, new EntityData[0]));
++        assertEquals(0, this.tracker.references().projectileSpawnData(projectile,
++                new EntityData[]{new EntityData(ActorDataIds.OWNER.getValue(), EntityDataTypesBedrock.FLOAT, 41F)}));
++        assertEquals(0, this.tracker.references().projectileSpawnData(projectile,
++                new EntityData[]{owner, new EntityData(ActorDataIds.OWNER.getValue(), EntityDataTypesBedrock.LONG, -1L)}));
++        final Entity zeroUid = this.target(0L, 42);
++        assertEquals(zeroUid.javaId(), this.tracker.references().projectileSpawnData(projectile,
++                new EntityData[]{new EntityData(ActorDataIds.OWNER.getValue(), EntityDataTypesBedrock.LONG, 0L)}));
++    }
++
++    private void spawnActor(final long uniqueId, final EntityTypes26_3 type, final EntityData[] data) throws Exception {
++        this.replaceMapping("bedrockToJavaEntities", Map.of(type.identifier(), type));
 +        final Field typeId = EntityTypes26_3.class.getDeclaredField("id");
 +        typeId.setAccessible(true);
-+        final int previousId = typeId.getInt(EntityTypes26_3.END_CRYSTAL);
-+        typeId.setInt(EntityTypes26_3.END_CRYSTAL, EntityTypes26_3.END_CRYSTAL.ordinal());
++        final int previousId = typeId.getInt(type);
++        typeId.setInt(type, type.ordinal());
 +        final var input = Unpooled.buffer();
 +        try {
-+            BedrockTypes.VAR_LONG.write(input, targetId);
-+            BedrockTypes.UNSIGNED_VAR_LONG.write(input, 20L);
-+            BedrockTypes.STRING.write(input, EntityTypes26_3.END_CRYSTAL.identifier());
++            BedrockTypes.VAR_LONG.write(input, uniqueId);
++            BedrockTypes.UNSIGNED_VAR_LONG.write(input, 20L + type.ordinal());
++            BedrockTypes.STRING.write(input, type.identifier());
 +            BedrockTypes.POSITION_3F.write(input, new Position3f(0F, 64F, 0F));
 +            BedrockTypes.POSITION_3F.write(input, new Position3f(0F, 0F, 0F));
 +            BedrockTypes.POSITION_3F.write(input, new Position3f(0F, 0F, 0F));
 +            BedrockTypes.FLOAT_LE.write(input, 0F);
 +            BedrockTypes.UNSIGNED_VAR_INT.write(input, 0);
-+            BedrockTypes.ENTITY_DATA_ARRAY.write(input, new EntityData[0]);
++            BedrockTypes.ENTITY_DATA_ARRAY.write(input, data);
 +            BedrockTypes.ENTITY_PROPERTIES.write(input, new EntityProperties(new Int2IntOpenHashMap(), new Int2ObjectOpenHashMap<>()));
 +            BedrockTypes.ENTITY_LINK_ARRAY.write(input, new EntityLink[0]);
 +            final TestProtocol protocol = new TestProtocol();
@@ -723,15 +1368,9 @@ index 000000000..6dcffc9f1
 +            } catch (final Exception error) {
 +                throw new AssertionError(error.getCause() == null ? error : error.getCause());
 +            }
-+            assertEquals(ClientboundPackets26_3.ADD_ENTITY, this.packetOrder.get(0));
-+            assertTrue(this.packetOrder.subList(1, this.packetOrder.size()).stream()
-+                    .allMatch(type -> type == ClientboundPackets26_3.SET_ENTITY_DATA));
-+            final MetadataUpdate resolved = this.sent.get(0);
-+            assertEquals(guardian.javaId(), resolved.entityId());
-+            assertEquals(this.tracker.getEntityByUid(targetId).javaId(), this.value(resolved.data(), 0));
 +        } finally {
 +            input.release();
-+            typeId.setInt(EntityTypes26_3.END_CRYSTAL, previousId);
++            typeId.setInt(type, previousId);
 +        }
 +    }
 +
@@ -775,7 +1414,7 @@ index 000000000..6dcffc9f1
 +    private void replaceMapping(final String name, final Object value) throws Exception {
 +        final Field field = BedrockProtocol.MAPPINGS.getClass().getDeclaredField(name);
 +        field.setAccessible(true);
-+        this.previousMappings.put(field, field.get(BedrockProtocol.MAPPINGS));
++        this.previousMappings.putIfAbsent(field, field.get(BedrockProtocol.MAPPINGS));
 +        field.set(BedrockProtocol.MAPPINGS, value);
 +    }
 +
@@ -783,6 +1422,9 @@ index 000000000..6dcffc9f1
 +        private TestProtocol() {
 +            EntityPackets.register(this);
 +        }
++    }
++
++    private record Spawn(int id, UUID uuid, int owner) {
 +    }
 +
 +    private record MetadataUpdate(int entityId, List<EntityData> data) {

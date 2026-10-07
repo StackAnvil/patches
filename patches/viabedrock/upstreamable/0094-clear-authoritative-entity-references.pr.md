@@ -17,7 +17,11 @@ A returning actor resolves to its new Java entity ID or UUID.
 Explicit clearing, reference replacement, source removal, and respawn preparation discard obsolete bindings.
 Multiple changed fields on one source share one metadata packet.
 The dependency index avoids scanning every actor on each spawn.
-This change stays in ViaBedrock core and requires no add-on implementation.
+Metadata translation and known projectile owner spawning stay in ViaBedrock core.
+Later projectile changes use the independently advertised `viabedrock:projectile_owner_v1` channel.
+The add-on applies those owners when Java entities become available.
+The core also provides the frontend dependency index and bounded wire codec.
+Ordinary Java clients receive the standard owner spawn field.
 
 ## Target evidence
 
@@ -42,24 +46,42 @@ Six additional regressions cover late arrival, target unload and return, coalesc
 The real actor packet handler test verifies that Java spawning precedes dependent metadata.
 Repeated spawn notifications do not emit duplicate reference updates.
 
-The full core build passes with 755 tests, zero failures, and 19 skips.
+The full core build passes with 763 tests, zero failures, and 19 skips.
 The patch applies independently to pinned upstream without StackAnvil setup.
-Its nine standalone tests pass with an external init script that supplies the full stack's test classpath and JUnit configuration.
+Its seventeen standalone tests pass with an external init script that supplies the full stack's test classpath and JUnit configuration.
 
 The add-on build passes with 594 tests, zero failures, and 114 skips; ViaProxy also builds successfully.
 Every original core file matches the add-on's bundled core, with only Loom's added Fabric metadata.
 ViaProxy contains identical translator bytecode.
-Both rebuilt routes reach initialization and spawn against strict BDS, then pass a real movement control.
+Both rebuilt routes reach initialization and spawn against strict BDS 1.26.51.1, build 51061372, protocol 2193.
+Movement, incoming small-fireball contact, and fireball reflection pass on each route, for six controls in total.
+A read-only observer runs on each Java client's main thread.
+It records the same fireball changing from an unavailable owner to the actual local player.
+The corresponding BDS metadata changes OWNER from the ghast's full-width negative ID to the player's native ID.
+The fixture removes each shooter after accepting its launch; client observations retain an unavailable owner afterward.
 Both recorders exit successfully, and the owned server stops.
-These route controls verify integration and do not establish live guardian beam or ownership parity.
+The reviewed nine artifact replacements preserve all 26 unrelated distribution and Maven files.
+Rollback copies remain outside the active artifact directories.
+These observations verify the sampled owner update through direct and ViaProxy connections.
+Known-owner spawn fields have production packet coverage; these live controls use the add-on on both routes.
 
 ## Limits
 
 The live BDS session observes an active guardian target and the first wither head's active target.
 It does not establish an active elder guardian cycle, active cycles for the other heads, or a live tameable ownership removal.
 Those paths have sequence and wire-codec coverage.
-Projectile ownership transport remains a separate gap.
 An existing strict-BDS capture contains small-fireball owner IDs that resolve to the corresponding blaze actors.
-Java 26.3 projectile reconstruction reads the owner from spawn data, while ViaBedrock currently writes zero there.
-Tameable owner metadata cannot substitute for projectile spawn ownership or later owner changes.
+Java 26.3 projectile reconstruction reads the owner from spawn data.
+The translator now supplies that field when the owner exists.
+ViaVersion groups fireballs separately from its projectile metadata family, so the owner check covers both families.
+Java has no standard packet for later owner changes.
+A capable client receives clearing, delayed resolution, reassignment, unload, and return updates on the new channel.
+Per-spawn Java UUIDs prevent native actor-ID reuse from binding replacement projectiles.
+A local-player marker resolves the actual client player when the Java and translated UUIDs differ.
+
+Eight additional regressions exercise actual spawning across seven projectile families and owner channel registration.
+They also cover both frontend arrival orders, removal after lookup deletion, source replacement, explicit clearing, and malformed payloads.
+Known owners use real Java spawn data; updates pass through the ownership codec.
+Late updates and fishing bobber lifecycle require the companion add-on integration.
+Visible native comparisons, fishing behavior, pickup, return, and complete projectile action behavior remain required.
 This change does not establish complete entity relationship or visible beam parity.

@@ -854,3 +854,51 @@ Raw traffic and client bytecode inspection remain private.
 The current-boot native GPU guard remains in force.
 All eight original groups and the complete movement, combat, item-use, block-action, inventory, network, and world-boundary matrix remain active.
 Strict BDS remains the primary server reference; Boar diagnostics, native comparisons, CubeCraft, and actual Windows/macOS joins remain required.
+
+### Projectile owner transport, October 7, 2026
+
+**Implemented:** ViaBedrock now writes known projectile owners into Java 26.3 spawn data.
+This includes fireballs, which ViaVersion groups outside its ordinary projectile metadata family.
+The existing strict-BDS capture contains full-width negative owner IDs for small fireballs and their blaze shooters.
+Those IDs now resolve without truncation.
+
+Java has no standard packet for later projectile owner changes.
+Core retains the authoritative native reference and publishes resolved changes on the independently advertised `viabedrock:projectile_owner_v1` channel.
+The core also supplies the bounded wire codec and frontend dependency index.
+The add-on uses Java's normal owner setter after checking source and target identities.
+Both frontend arrival orders, owner unload and return, replacement, explicit clearing, disconnects, and world replacement have handling.
+Client tracking callbacks include chunk unloading.
+Local-player references require the actual current client player.
+
+Java fishing bobbers normally discard themselves when they cannot resolve their owner.
+On Bedrock connections, pending bobbers now remain available for authoritative server removal.
+Reassignment clears the previous player's fishing pointer before assigning the new owner.
+Ordinary Java connections retain their existing discard behavior.
+
+**Automated verification:** Seventeen targeted tests pass on the full stack and on clean pinned upstream.
+Eight new regressions cover real spawning across seven projectile families, late channel registration, both frontend arrival orders, removal, replacement, and malformed payloads.
+The full core build reports 763 tests, zero failures, and 19 skips; Checkstyle passes.
+The add-on reports 594 tests, zero failures, and 114 skips; ViaProxy builds successfully.
+All 1,320 original core files match the add-on bundle, with only Loom's added Fabric metadata.
+All 1,051 core classes match ViaProxy.
+
+**Live verification:** Direct and ViaProxy clients reach initialization and spawn against strict BDS 1.26.51.1, build 51061372, protocol 2193.
+Movement, incoming small-fireball contact, and fireball reflection pass on each route.
+A read-only observer on each Java client's main thread records the fireball owner changing to the actual local player.
+The corresponding native OWNER update changes from the ghast's ID to the player's ID.
+The fixture removes its shooters after accepting launches, and the client observes unavailable owners afterward.
+Both recorders exit successfully, and the owned server stops.
+These six controls verify the sampled update and integration through both routes.
+They do not establish native visible parity or an ordinary Java client without the add-on.
+Nine reviewed artifact replacements preserve 26 unrelated distribution and Maven files, with rollback copies outside those directories.
+
+The [core reference record](../patches/viabedrock/upstreamable/0094-clear-authoritative-entity-references.pr.md) and [client owner record](../patches/viafabricplus-bedrock/upstreamable/0027-apply-authoritative-projectile-owner-changes.pr.md) retain architecture and evidence.
+Raw traffic, client observations, and bytecode inspection remain private.
+
+**Remaining:** Native visible ownership and fishing comparisons, pickup, return, and complete projectile action behavior remain required.
+The host has rebooted since the recorded native launch.
+Its GPU safety marker now refers to that previous boot, and the supported read-only doctor still blocks launching.
+The guard remains enabled while graphics recovery is unverified.
+All eight original coverage groups and the complete gameplay matrix remain active.
+Strict BDS stays the primary server reference.
+Boar diagnostics, native comparisons, CubeCraft, and actual Windows/macOS joins remain required.
