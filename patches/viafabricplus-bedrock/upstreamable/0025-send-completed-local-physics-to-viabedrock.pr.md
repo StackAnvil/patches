@@ -1175,3 +1175,11 @@ The retained effect subsequently expires. The observer supplies no client physic
 
 Native queued replay can restore an expired effect through clamped history. Pending drain and full physics rewind remain incomplete.
 The [coverage ledger](../../../docs/bedrock-coverage.md#future-commands-and-native-queued-effect-replay-october-7-2026) records the combined native fixture and remaining requirements.
+
+### Native frame-capture boundaries
+
+The new 344-case native fixture verifies capture clocks, guards, input fill, history eviction, unsigned wrap, and ring growth.
+These results establish required history behavior. They do not verify complete world simulation or scheduler phase ordering.
+Completed movement payloads and the shared effect timeline remain insufficient for full physics rewind.
+The production path still requires ordered snapshots and captured input, queued command replay, and actual client simulation.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-frame-capture-clocks-and-history-boundaries-october-7-2026) records the evidence and remaining implementation requirements.

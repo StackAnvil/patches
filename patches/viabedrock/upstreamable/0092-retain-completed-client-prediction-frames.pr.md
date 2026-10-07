@@ -810,3 +810,16 @@ The transfer and bounded component-state expectations match all 42 cases.
 The fixture supplies snapshot and input boundaries and uses spare ring capacity.
 Ordinary movement for zero-mask commands, ring growth, eviction, irregular clocks, full ownership, and complete world movement remain unverified.
 The [coverage ledger](../../../docs/bedrock-coverage.md#subsequent-native-frame-capture-and-pending-commands) records the evidence and remaining production replay work.
+
+### Native capture clocks and history boundaries
+
+The original capture caller obtains its clock through a level virtual method and fills retained input after frame capture.
+A new 344-case native fixture verifies caller guards, input fill, eviction, clock gaps, unsigned wrap, and physical ring growth.
+It also executes 216 original queued callbacks and countdowns after capture.
+Nonconsecutive clocks reset history. MAX-to-zero remains contiguous. Pending active commands preserve original duration through these changes.
+
+The fixture supplies registry/input boundaries and allocator operations. Growth binds imported CRT copy/fill operations.
+It does not verify complete native ownership, world physics, or scheduler phase ordering.
+The production tick/frame mapping remains distinct from ordered simulation history.
+Actual snapshot/input/command replay and client physics integration remain required.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-frame-capture-clocks-and-history-boundaries-october-7-2026) records the complete evidence scope.

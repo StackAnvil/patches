@@ -1532,3 +1532,15 @@ The fixture supplies snapshot and input boundaries. It does not execute complete
 
 Full rewind, pending drain, clock synchronization, mixed actions, both routes, and the complete gameplay matrix remain required.
 The [coverage ledger](bedrock-coverage.md#future-commands-and-native-queued-effect-replay-october-7-2026) records evidence, rollout checks, and remaining limits.
+
+## Native history boundaries, October 7, 2026
+
+A further 344 native cases verify capture guards, input fill, clock continuity, history eviction, unsigned wrap, and physical ring growth.
+Nonconsecutive captures discard older history. MAX-to-zero remains contiguous.
+Pending active effects retain their original duration after eviction and clock resets, before the original countdown.
+These results determine the history rules needed for production replay.
+
+Core tick/frame associations and the add-on effect timeline do not retain complete world snapshots, captured inputs, and queued commands.
+Actual physics rewind and reconciliation of mixed actions remain incomplete.
+Both connection routes, terrain changes, attributes, combat, item use, inventory actions, and the complete matrix remain required.
+The [coverage ledger](bedrock-coverage.md#native-frame-capture-clocks-and-history-boundaries-october-7-2026) records the native functions, fixture boundaries, and verification limits.

@@ -7055,3 +7055,41 @@ The fixture supplies ECS lookup, allocation, reused input objects, snapshot regi
 It uses spare ring capacity. History growth, eviction, irregular clocks, complete ownership, and native world movement remain unverified.
 Private cases and proof remain under `.stackanvil/research/movement-command-replay/pending-capture-cases.json` and `pending-capture-proof.json`.
 This evidence resolves the sampled intermediate pending states. Production command drain and full physics replay still require implementation and route verification.
+
+## Native frame-capture clocks and history boundaries, October 7, 2026
+
+**Native evidence, production incomplete:** The executable contains a direct call from `1461ac8a0` to the frame-capture function `142bbc060`.
+The caller obtains a clock through the level virtual method at slot `0x278` and stores it in the replay component.
+An absent external context skips this clock update and capture.
+Capture also requires a valid entity component and history storage. Actor byte `+0x269` guards the entire operation.
+The fixture does not assign an unverified gameplay meaning to that byte.
+After capture, the caller fills the retained input through the original `14328da90` method.
+
+The new fixture verifies 344 cases against the pinned 1.26.51.1 executable:
+
+| Domain | Cases | Verified behavior |
+| --- | ---: | --- |
+| Caller conditions | 32 | Context availability, actor guard, component validity, history availability, and input validity control capture and input fill. |
+| Clocks and limits | 288 | Contiguous capture retains history up to its limit. Duplicate, backward, and skipped clocks reset history to the new frame. |
+| Unsigned wrap | 12 | MAX-to-zero remains contiguous. Skips and duplicate clocks reset history, including across this boundary. |
+| Physical growth | 12 | An eight-slot ring grows to sixteen slots and preserves retained pointer order across three initial head positions. |
+
+The clock/limit cases execute 216 original queued callbacks and 216 original countdowns after capture.
+Pending active commands retain their original duration through eviction and clock resets.
+The independent verifier finds no mismatches in the bounded input-copy, capture, ring, and component-state expectations.
+Private scripts, cases, and proof remain under `.stackanvil/research/movement-history/`.
+
+The fixture supplies level clock values, profiling/context providers, ECS storage, snapshot copy/restore, cached input methods, and allocator boundaries.
+Growth also binds the imported CRT byte-copy and byte-fill functions. The original CRT DLLs do not run.
+Original native frame capture, eviction, input fill, command application, and countdown run inside these boundaries.
+These checks do not verify complete registry ownership, native world physics, scheduler phase ordering, or visible client behavior.
+
+**Production audit:** Core retains exact tick/frame associations. The add-on sends completed movement results and uses the shared effect timeline.
+Neither path retains ordered world snapshots, captured inputs, and queued commands for actual physics replay.
+The effect timeline cannot substitute for that history. Full rewind remains required through direct connections and ViaProxy.
+The next implementation must preserve native clock continuity, input validity, pending-command transfer, snapshot restoration, and command/input/physics phase order.
+It must also reconcile terrain, attributes, effects, actions, corrections, and lifecycle changes during replay.
+All eight coverage groups, the complete gameplay matrix, strict BDS, Boar diagnostics, CubeCraft, and platform joins remain in scope.
+
+CI completed successfully for the published timing fix and pending-command evidence.
+This continuation changes evidence documentation. It does not deploy new runtime artifacts or claim additional live movement parity.
