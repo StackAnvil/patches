@@ -24,7 +24,7 @@ Research targets official Bedrock 1.26.51.1, build 51061372, protocol 2193. Orig
 
 A bounded desktop capture records five actual CubeCraft forms: four action forms and one custom settings form.
 All four action forms resolve against the accepted pack and licensed baseline definitions.
-The custom form retains its existing settings controls.
+The custom form resolves all thirteen original content positions against the complete baseline definitions.
 These packet and resolver checks do not establish native screenshots or font parity.
 
 Original native form decoding and click routines execute four private controls on the target build.
@@ -38,9 +38,44 @@ The old core closes that menu locally.
 The repaired client retains the menu across twelve samples until a client-origin close after 1,149 ms.
 The lifecycle fix belongs to the existing server-authoritative inventory patch.
 
+## Custom forms
+
+Clients can advertise `viabedrock:native_custom_form` separately from the existing action-form channel.
+Custom scenes use format 2 and include a bounded program for the shared core resolver.
+The client can update local input state and resolve the same definitions without another server request.
+Older clients keep the existing action scene format and Java dialogs.
+
+The supported types are label, header, divider, toggle, input, slider, step slider and dropdown.
+Responses retain every original content position, including null entries for prose.
+Nested dropdown choices retain their owning input index and option index.
+The program includes language translations, texture metadata, submit and cancel commands, and widget state bindings.
+Optional bindings with type `none` or `ignored` do not overwrite authored widget state.
+
+Unsupported multiselect controls keep the ordinary form flow because the pinned form library does not expose that model.
+Missing definitions, oversized scenes and client rendering errors also retain the existing Java dialog.
+The explicit fallback request rebuilds that dialog from the tracked form without clearing its response identity.
+Degenerate scalar ranges use this fallback rather than exporting a non-finite slider fraction.
+
+Original custom normalization and response routines preserve null entries and typed values in twelve controlled content positions.
+Private native controls also establish scalar slider fractions, raw step indices and option counts.
+Scalar and step captions use the resource translation `options.sliderLabelFormat`.
+A separate native callback fixture covers 36 scalar and eight step input coordinates.
+Its scalar `roundf` boundary uses host finite-value arithmetic, not the official Windows CRT.
+The later slider fixtures establish CPU coordinate production and thumb offsets.
+Generated tick instantiation, live drawing and coupled input dispatch remain separate verification work.
+
+Eighteen targeted core tests pass for both action and custom scenes.
+The actual captured settings form resolves 177 required definitions, fifteen enabled input nodes and no missing templates.
+The serialized program resolves again after a toggle state change and retains the language format.
+These checks use the complete private baseline with 208 UI definitions.
+They do not establish live addon drawing or submitted custom responses.
+The full 98-patch replay passes.
+The current core build passes 910 tests: 880 passed, 30 skipped and no failures.
+Main, test and tool Checkstyle checks pass.
+
 ## Verification and limits
 
-The full core build passes 903 tests: 873 passed, 30 skipped, no failures. Tests cover expression bounds, native results, variable defaults, hidden indices, explicit indices, texture priority, malformed metadata and the scene wire format.
+The full core build passes 910 tests: 880 passed, 30 skipped, no failures. Tests cover expression bounds, native results, variable defaults, hidden indices, explicit indices, texture priority, malformed metadata and the scene wire format.
 Additional cases cover both form schemas, empty and null precedence, typed factories, button ordinals, HTTPS image bindings and formatted hover text. The full 98-patch replay also passes.
 
 An actual accepted pack supplies its Loot and gifting images as JPEGs.
@@ -69,3 +104,26 @@ The runtime reads the packaged archive and includes its identity in resource-pac
 The archive remains optional; accepted pack providers can supply UI definitions instead.
 Keep acquired native assets private. The current tracked add-on bundles do not contain baseline UI definitions.
 A build without either source cannot resolve scenes that inherit missing native templates.
+
+
+## Native slider state retention
+
+Original executable fixtures pass 184 controls on the pinned Bedrock build.
+They cover thumb offsets, pointer coordinates, state selection, progress clipping and value publication.
+Native named-state setters activate authored hidden hover and locked branches.
+The resolver now retains those branches and their bound descendants while their inactive computed visibility remains false.
+Selected-state rendering can use each descendant's own bound visibility without activating unrelated hidden controls.
+Original input indices, ignored controls and missing-template behavior remain unchanged.
+
+Twenty-one targeted resolver tests pass, including three new state-retention cases.
+The original source fails two of those cases because it discards required descendants.
+Tests cover conditional bindings, serialized program updates, owner visibility and scalar/step response indices.
+The actual captured Settings form resolves 177 definitions, fifteen input nodes and no missing templates.
+These checks do not establish live slider drawing, native GPU output or coupled input dispatch.
+
+The final state-retention source passes a clean replay of all 98 patches.
+The Java 25 core build passes 910 tests: 880 passed, 30 skipped and no failures.
+Main, test and tool Checkstyle checks pass.
+The private candidate contains the same verified 208-definition baseline archive as core v6.
+All 37 installed artifacts and all frozen v6 files remain unchanged.
+Live addon state activation and submitted custom responses still require verification before release.
