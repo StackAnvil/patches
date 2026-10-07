@@ -970,3 +970,41 @@ The catch driver reacts to the recorded native bite event; it does not prove tha
 
 **Remaining:** Native visible parity, displayed rewards, ordinary Java live coverage, enchantments, repeated casts, interruptions, and the complete fishing matrix remain required.
 All eight coverage groups, strict BDS, Boar diagnostics, both routes, CubeCraft, and actual Windows/macOS joins remain active.
+
+### Native fishing feedback, October 7, 2026
+
+**Verified executable behavior:** The matching Windows client handles events 12, 13, and 14 in its fishing-hook event function.
+Type information and a virtual table in the matching Linux BDS identified the corresponding server function.
+Shared particle hashes then identified the Windows function.
+A Ghidra session decompiled that function without changing the saved program.
+The executable hashes and all proprietary instructions remain in private research artifacts.
+
+The event 13 handler produces these results:
+
+| Result | Native behavior |
+| --- | --- |
+| Hook motion | Add `-0.5F` to the existing vertical velocity, with float arithmetic. Horizontal velocity stays unchanged. |
+| Sound | Call the native sound helper with event argument 26 and the actor position. Audio resolution remains unverified. |
+| Effect position | Use the actor's X/Z and `floor(boxMinY) + 1F`. Negative fractional heights use floor. |
+| Direction variable | Construct `variable.direction` from `(20F * boxWidth + 1F, 0F, boxWidth)`. |
+| Named effects | Emit `minecraft:fish_hook_particle`, followed by `minecraft:water_wake_particle`, at the effect position. |
+| Additional effect | Emit legacy particle event 27 with that position and direction. |
+
+**Native execution:** 108 cases execute the event dispatch, float impulse, shared reference operations, and sound arguments.
+Another 90 cases execute the entire bite handler across six heights, five widths, and three starting velocities.
+These cases verify the ordered effect calls, positions, width arithmetic, and arguments for direction construction.
+The supplied provider records the calls.
+Molang storage, string construction, particle simulation, and sound resolution use explicit fixture boundaries.
+The fixtures do not establish the displayed result, subsequent hook physics, or resource availability.
+
+**Implementation decision:** This handler does not start a fixed bite timer.
+A Java biting flag with an assumed duration does not reproduce this handler.
+The existing false Java flag alone does not establish which native state needs translation.
+Core must translate the actual events, metadata, effect positions, variables, and sound behavior.
+The existing native particle transport can carry the effects through ViaProxy.
+An additive impulse requires the client's current hook velocity and must preserve native float rounding.
+Subsequent physics and any state outside this handler still need verification.
+
+**Remaining:** No production fishing-event translation or visible native parity is claimed from these fixtures.
+Events 11, 12, and 14, audio resolution, particle playback, hook physics, catch inventory display, and both client routes remain open.
+The complete fishing matrix, ordinary Java coverage, all eight coverage groups, Boar diagnostics, CubeCraft, and actual Windows/macOS joins remain required.

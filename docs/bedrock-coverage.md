@@ -6570,3 +6570,17 @@ The [fishing retrieval record](bedrock-complex-gameplay.md#fishing-retrieval-con
 Native bite timing, expiry, particles, sound, displayed rewards, enchantments, interruptions, and ordinary Java live coverage remain required.
 No production bite translation is claimed from these server controls.
 All eight coverage groups, the full gameplay matrix, both routes, native baselines, Boar diagnostics, CubeCraft, and actual Windows/macOS joins remain required.
+
+## Native fishing feedback, October 7, 2026
+
+Native executable research identifies the matching client handler for fishing events 12, 13, and 14.
+Bounded execution verifies event 13's float impulse, effect positions, direction construction, and ordered particle calls.
+The 108 impulse cases and 90 complete-handler cases retain explicit boundaries for external libraries and providers.
+The [native fishing record](bedrock-complex-gameplay.md#native-fishing-feedback-october-7-2026) records those boundaries and the exact behavior.
+
+A bite adds `-0.5F` to the hook's current vertical velocity.
+Its particles use the water surface position and width-dependent variables.
+This handler does not start a fixed bite timer.
+Subsequent physics, audio resolution, particle playback, and visible results remain unverified.
+No production event translation is claimed from this research.
+All eight coverage groups, the full gameplay matrix, both routes, native baselines, Boar diagnostics, CubeCraft, and actual Windows/macOS joins remain required.
