@@ -265,3 +265,19 @@ The new channel test fails with the preceding decoder and passes with the correc
 
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-world-light-reads-and-block-fields-october-7-2026) records the exact fixture boundaries.
 Supplied core arrays establish reader equivalence, not native propagation or visible parity.
+
+## Native face neighborhood selection
+
+Core now selects sides, diagonal substitution, outside-normal ambient brightness, and source light independently of Java's renderer.
+The sampler keeps ambient brightness separate from opaque-full-block identity.
+It returns physical corner light and shaded color, with nested interpolation available to client integrations.
+Authored emission raises block light without raising skylight.
+Native face bounds use tolerances of `0.0005` and `0.9995`.
+
+The production sampler matches 12,288 original native corner results across all directions, planes, source opacity flags, and side masks.
+Each client route also matches 4,032 original native vertex lights and colors across seven bounds.
+Numeric tests cover emission floors and the exact sampling thresholds.
+The full core suite passes 812 tests with 26 optional skips and no failures or errors. Checkstyle passes.
+
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-terrain-neighborhood-sampling-october-7-2026) records the supplied-input boundaries.
+Runtime block flags, native propagation, cached emissive brightness, dark-result below-sampling, and visible native comparison remain required.

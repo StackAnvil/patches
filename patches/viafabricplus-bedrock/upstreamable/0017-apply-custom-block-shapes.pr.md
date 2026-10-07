@@ -200,3 +200,23 @@ Client full-face output supplies baseline corner light; the native fixture indep
 These checks isolate interpolation. They do not establish native neighbor selection or visible parity.
 The complete add-on stack and build pass with the normal bundled-asset input.
 Both complete recorded CubeCraft scene replays pass transport, resource loading, and rendering checks.
+
+## Native face neighborhood selection
+
+Registered annotated ambient faces now use the shared ViaBedrock sampler.
+This replaces the Java local-index repair hooks and corrects source, side-plane, and diagonal selection.
+World reads apply authored emission only to block light.
+Physical corner light remains unweighted while ambient color uses the native nested interpolation.
+Ordinary blocks and unannotated faces retain their original calculations.
+The zero-strength flat path uses native corners; nonzero-strength flat rendering retains its previous behavior.
+
+Direct and ViaProxy clients each match 4,032 original native light coordinates and colors across 1,008 face cases.
+Seven bounds cover full, inset, expanded, shifted, and sampling-threshold cases.
+Ordinary annotated/unannotated controls preserve color and light across all cases.
+Both clients load 276 accepted CubeCraft block definitions.
+The selected route faces have zero authored emission; emitting custom source states remain unverified on these routes.
+All 30 patches replay; the 605-test suite passes with 117 optional skips and no failures or errors.
+
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-terrain-neighborhood-sampling-october-7-2026) records supplied flags and channel values.
+These checks do not establish native propagation, runtime block identity, or visible parity.
+Cached solidity, per-type ambient overrides, rotated geometry, alternative renderers, enhanced lighting, and nonzero-strength flat paths remain open.

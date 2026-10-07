@@ -1,4 +1,4 @@
-From 726f82db58c643b13caf4819473a67164d6efe3a Mon Sep 17 00:00:00 2001
+From 65838d6f27c2bf03ffbafd36967ea1927da5a861 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:39:38 +0200
 Subject: [PATCH] feat(blocks): apply native custom block shapes and lighting
@@ -123,14 +123,24 @@ Retain each native corner light coordinate on inset cuboid faces. The
 pinned native face emitters interpolate ambient color across authored
 bounds but submit unweighted corner light. Java blends the four packed
 corners again on partial faces, which changes torch and sky gradients.
-Replace only those four weighted results on registered annotated custom
-faces; retain the existing shared core maxima and ordinary Java blending.
+Retain these coordinates on registered annotated custom faces alongside
+shared core maxima; ordinary Java blending remains unchanged.
 
 Original native emission executes all six directions and seven bounds
 with distinct light channels, including expanded and tiny-inset faces.
 All 168 submitted light coordinates retain their corner identity.
-Native source/diagonal selection and runtime block flags remain separate
-requirements; supplied-input neighborhood diagnostics expose differences.
+Native runtime block flags remain a separate requirement.
+
+Route annotated ambient faces through the shared core neighborhood sampler.
+Remove the previous Java local-index and interpolation repair hooks: Java
+selects a different source light and tests diagonal blockers one step
+farther out. Sample native planes and preserve both ambient interpolation
+and unweighted physical corner light. Read world channels with emission
+applied only to block light, avoiding Java's sky emission floor.
+
+Original 1.26.51.1 instructions validate 12,288 complete corner selections
+and the 0.0005/0.9995 plane tolerances. Cached solidity/per-type ambient
+identity, rotated-face behavior and visible native scenes remain unverified.
 ---
  .../bedrock/block/BedrockBlockFace.java       |  22 +++
  .../block/BedrockCustomBlockResources.java    |  81 +++++++++
@@ -143,17 +153,17 @@ requirements; supplied-input neighborhood diagnostics expose differences.
  .../block/MixinCustomBlockCollisions.java     |  39 +++++
  .../block/MixinCustomBlockConnection.java     |  24 +++
  .../block/MixinCustomBlockCulling.java        |  34 ++++
- .../block/MixinCustomBlockLighting.java       | 165 ++++++++++++++++++
+ .../block/MixinCustomBlockLighting.java       | 109 ++++++++++++
  .../block/MixinCustomBlockResources.java      |  24 +++
  .../block/MixinCustomBlockSession.java        |  24 +++
- .../features/block/MixinCustomBlockState.java | 162 +++++++++++++++++
- .../block/MixinRedstoneWireBlock.java         |  29 +++
+ .../features/block/MixinCustomBlockState.java | 162 ++++++++++++++++++
+ .../block/MixinRedstoneWireBlock.java         |  29 ++++
  .../viafabricplus-bedrock.mixins.json         |  12 ++
  .../block/BedrockCustomBlockLightingTest.java |  54 ++++++
  .../BedrockCustomBlockResourcesTest.java      |  91 ++++++++++
  .../block/BedrockCustomBlocksTest.java        |  89 ++++++++++
  .../block/BedrockCustomCullingTest.java       |  51 ++++++
- 21 files changed, 1242 insertions(+)
+ 21 files changed, 1186 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockBlockFace.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlockResources.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/block/BedrockCustomBlocks.java
@@ -784,10 +794,10 @@ index 0000000..b7ffee9
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockLighting.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockLighting.java
 new file mode 100644
-index 0000000..cdf3902
+index 0000000..dba18f8
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/block/MixinCustomBlockLighting.java
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,109 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -796,8 +806,6 @@ index 0000000..cdf3902
 +package com.viaversion.viafabricplus.bedrock.injection.mixin.features.block;
 +
 +import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
-+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
-+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 +import com.llamalad7.mixinextras.sugar.Local;
 +import com.mojang.blaze3d.vertex.QuadInstance;
 +import com.viaversion.viafabricplus.bedrock.block.BedrockBlockFace;
@@ -808,144 +816,90 @@ index 0000000..cdf3902
 +import net.minecraft.core.BlockPos;
 +import net.minecraft.core.Direction;
 +import net.minecraft.util.ARGB;
++import net.minecraft.util.LightCoordsUtil;
++import net.minecraft.world.level.LightLayer;
 +import net.minecraft.world.level.block.state.BlockState;
-+import org.joml.Vector3fc;
++import net.raphimc.viabedrock.api.model.CustomBlockCulling;
++import net.raphimc.viabedrock.api.model.CustomBlockFaceLighting;
 +import net.raphimc.viabedrock.api.model.CustomBlockLighting;
++import org.joml.Vector3fc;
 +import org.spongepowered.asm.mixin.Mixin;
-+import org.spongepowered.asm.mixin.Shadow;
 +import org.spongepowered.asm.mixin.Unique;
 +import org.spongepowered.asm.mixin.injection.At;
 +import org.spongepowered.asm.mixin.injection.Inject;
-+import org.spongepowered.asm.mixin.injection.ModifyVariable;
 +import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 +
 +@Mixin(BlockModelLighter.class)
 +public abstract class MixinCustomBlockLighting {
 +
-+    @Shadow
-+    public abstract void prepareQuadAmbientOcclusion(BlockAndTintGetter level, BlockState state, BlockPos pos, BakedQuad quad, QuadInstance instance);
-+
-+    @Inject(method = "prepareQuadFlat", at = @At("HEAD"), cancellable = true)
-+    private void nativeUnoccludedCorners(final BlockAndTintGetter level, final BlockState state, final BlockPos pos,
-+                                         final int lightCoords, final BakedQuad quad, final QuadInstance instance, final CallbackInfo ci) {
-+        final CustomBlockLighting lighting = lighting(state, quad);
-+        if (lighting != null && lighting.ambientOcclusion() == 0F) {
-+            // Zero strength removes ambient attenuation, not native corner light sampling.
-+            this.prepareQuadAmbientOcclusion(level, state, pos, quad, instance);
++    @Inject(method = "prepareQuadAmbientOcclusion", at = @At("HEAD"), cancellable = true)
++    private void nativeAmbientCorners(final BlockAndTintGetter level, final BlockState state, final BlockPos pos,
++                                       final BakedQuad quad, final QuadInstance instance, final CallbackInfo ci) {
++        final CustomBlockLighting material = lighting(state, quad);
++        if (material != null) {
++            prepareNativeFace(level, state, pos, quad, instance, material);
 +            ci.cancel();
 +        }
 +    }
 +
-+    @WrapOperation(method = "prepareQuadAmbientOcclusion", at = @At(value = "INVOKE", target = "Lnet/minecraft/util/LightCoordsUtil;smoothBlend(IIII)I"))
-+    private int nativeCornerLight(final int first, final int second, final int third, final int fourth,
-+                                  final Operation<Integer> original, @Local(argsOnly = true) final BlockState state,
-+                                  @Local(argsOnly = true) final BakedQuad quad) {
-+        return lighting(state, quad) == null ? original.call(first, second, third, fourth)
-+            : CustomBlockLighting.maximumLight(first, second, third, fourth);
-+    }
-+
-+    // Native cuboids interpolate ambient color, but retain each vertex's corner light.
-+    @ModifyExpressionValue(method = "prepareQuadAmbientOcclusion", at = @At(value = "INVOKE",
-+        target = "Lnet/minecraft/util/LightCoordsUtil;smoothWeightedBlend(IIIIFFFF)I", ordinal = 0), require = 1, allow = 1)
-+    private int nativePartialLight1(final int original, @Local(index = 62) final int corner,
-+                                    @Local(argsOnly = true) final BlockState state, @Local(argsOnly = true) final BakedQuad quad) {
-+        return lighting(state, quad) == null ? original : corner;
-+    }
-+
-+    @ModifyExpressionValue(method = "prepareQuadAmbientOcclusion", at = @At(value = "INVOKE",
-+        target = "Lnet/minecraft/util/LightCoordsUtil;smoothWeightedBlend(IIIIFFFF)I", ordinal = 1), require = 1, allow = 1)
-+    private int nativePartialLight2(final int original, @Local(index = 63) final int corner,
-+                                    @Local(argsOnly = true) final BlockState state, @Local(argsOnly = true) final BakedQuad quad) {
-+        return lighting(state, quad) == null ? original : corner;
-+    }
-+
-+    @ModifyExpressionValue(method = "prepareQuadAmbientOcclusion", at = @At(value = "INVOKE",
-+        target = "Lnet/minecraft/util/LightCoordsUtil;smoothWeightedBlend(IIIIFFFF)I", ordinal = 2), require = 1, allow = 1)
-+    private int nativePartialLight3(final int original, @Local(index = 64) final int corner,
-+                                    @Local(argsOnly = true) final BlockState state, @Local(argsOnly = true) final BakedQuad quad) {
-+        return lighting(state, quad) == null ? original : corner;
-+    }
-+
-+    @ModifyExpressionValue(method = "prepareQuadAmbientOcclusion", at = @At(value = "INVOKE",
-+        target = "Lnet/minecraft/util/LightCoordsUtil;smoothWeightedBlend(IIIIFFFF)I", ordinal = 3), require = 1, allow = 1)
-+    private int nativePartialLight4(final int original, @Local(index = 65) final int corner,
-+                                    @Local(argsOnly = true) final BlockState state, @Local(argsOnly = true) final BakedQuad quad) {
-+        return lighting(state, quad) == null ? original : corner;
-+    }
-+
-+    @WrapOperation(method = "prepareQuadAmbientOcclusion", at = @At(value = "INVOKE",
-+        target = "Lcom/mojang/blaze3d/vertex/QuadInstance;setColor(II)V"), require = 8, allow = 8)
-+    private void nativeInterpolatedColor(final QuadInstance instance, final int vertexIndex, final int color,
-+                                         final Operation<Void> original, @Local(argsOnly = true) final BlockState state,
-+                                         @Local(argsOnly = true) final BakedQuad quad,
-+                                         @Local(index = 42) final float first, @Local(index = 43) final float second,
-+                                         @Local(index = 44) final float third, @Local(index = 45) final float fourth) {
-+        if (lighting(state, quad) == null) {
-+            original.call(instance, vertexIndex, color);
-+            return;
++    @Inject(method = "prepareQuadFlat", at = @At("HEAD"), cancellable = true)
++    private void nativeUnoccludedCorners(final BlockAndTintGetter level, final BlockState state, final BlockPos pos,
++                                         final int lightCoords, final BakedQuad quad, final QuadInstance instance, final CallbackInfo ci) {
++        final CustomBlockLighting material = lighting(state, quad);
++        if (material != null && material.ambientOcclusion() == 0F) {
++            // Zero strength removes ambient attenuation, not native corner light sampling.
++            prepareNativeFace(level, state, pos, quad, instance, material);
++            ci.cancel();
 +        }
-+        final Vector3fc vertex = quad.position(vertexIndex);
-+        // Java's corner order follows its adjacency table. Native faces group the X or Z axis first.
-+        final float ambient = switch (quad.direction()) {
-+            case DOWN -> CustomBlockLighting.interpolate(second, third, first, fourth, vertex.x(), vertex.z());
-+            case UP -> CustomBlockLighting.interpolate(third, second, fourth, first, vertex.x(), vertex.z());
-+            case NORTH -> CustomBlockLighting.interpolate(fourth, third, first, second, vertex.x(), vertex.y());
-+            case SOUTH -> CustomBlockLighting.interpolate(second, third, first, fourth, vertex.x(), vertex.y());
-+            case WEST -> CustomBlockLighting.interpolate(third, fourth, second, first, vertex.z(), vertex.y());
-+            case EAST -> CustomBlockLighting.interpolate(second, first, third, fourth, vertex.z(), vertex.y());
-+        };
-+        original.call(instance, vertexIndex, ARGB.gray(Math.clamp(ambient, 0F, 1F)));
-+    }
-+
-+    // These four corner averages occur in both the full-face and partial-face paths.
-+    // Shade each corner before Java interpolates it across the face.
-+    @ModifyVariable(method = "prepareQuadAmbientOcclusion", at = @At("STORE"), index = 42, require = 2, allow = 2)
-+    private float nativeCornerShade1(final float ambient, @Local(argsOnly = true) final BlockAndTintGetter level,
-+                                     @Local(argsOnly = true) final BlockState state, @Local(argsOnly = true) final BakedQuad quad) {
-+        return shadeCorner(ambient, level, state, quad);
-+    }
-+
-+    @ModifyVariable(method = "prepareQuadAmbientOcclusion", at = @At("STORE"), index = 43, require = 2, allow = 2)
-+    private float nativeCornerShade2(final float ambient, @Local(argsOnly = true) final BlockAndTintGetter level,
-+                                     @Local(argsOnly = true) final BlockState state, @Local(argsOnly = true) final BakedQuad quad) {
-+        return shadeCorner(ambient, level, state, quad);
-+    }
-+
-+    @ModifyVariable(method = "prepareQuadAmbientOcclusion", at = @At("STORE"), index = 44, require = 2, allow = 2)
-+    private float nativeCornerShade3(final float ambient, @Local(argsOnly = true) final BlockAndTintGetter level,
-+                                     @Local(argsOnly = true) final BlockState state, @Local(argsOnly = true) final BakedQuad quad) {
-+        return shadeCorner(ambient, level, state, quad);
-+    }
-+
-+    @ModifyVariable(method = "prepareQuadAmbientOcclusion", at = @At("STORE"), index = 45, require = 2, allow = 2)
-+    private float nativeCornerShade4(final float ambient, @Local(argsOnly = true) final BlockAndTintGetter level,
-+                                     @Local(argsOnly = true) final BlockState state, @Local(argsOnly = true) final BakedQuad quad) {
-+        return shadeCorner(ambient, level, state, quad);
 +    }
 +
 +    @Unique
-+    private static float shadeCorner(final float ambient, final BlockAndTintGetter level,
-+                                     final BlockState state, final BakedQuad quad) {
-+        final CustomBlockLighting lighting = lighting(state, quad);
-+        if (lighting == null) return ambient;
-+        final Direction direction = quad.materialInfo().shadeDirectionOverride();
-+        return lighting.shade(ambient, level.cardinalLighting().byFace(direction == null ? quad.direction() : direction));
++    private static void prepareNativeFace(final BlockAndTintGetter level, final BlockState state, final BlockPos pos,
++                                          final BakedQuad quad, final QuadInstance instance, final CustomBlockLighting material) {
++        final var direction = CustomBlockCulling.Direction.values()[quad.direction().ordinal()];
++        final int innerAxis = direction.axis() == 0 ? 2 : 0;
++        final int outerAxis = direction.axis() == 1 ? 2 : 1;
++        float minInner = Float.POSITIVE_INFINITY, maxInner = Float.NEGATIVE_INFINITY;
++        float minOuter = Float.POSITIVE_INFINITY, maxOuter = Float.NEGATIVE_INFINITY;
++        float bound = direction.positive() ? Float.NEGATIVE_INFINITY : Float.POSITIVE_INFINITY;
++        for (int i = 0; i < 4; i++) {
++            final Vector3fc vertex = quad.position(i);
++            minInner = Math.min(minInner, vertex.get(innerAxis));
++            maxInner = Math.max(maxInner, vertex.get(innerAxis));
++            minOuter = Math.min(minOuter, vertex.get(outerAxis));
++            maxOuter = Math.max(maxOuter, vertex.get(outerAxis));
++            bound = direction.positive() ? Math.max(bound, vertex.get(direction.axis())) : Math.min(bound, vertex.get(direction.axis()));
++        }
++        final Direction shadeDirection = quad.materialInfo().shadeDirectionOverride();
++        final BlockPos.MutableBlockPos samplePos = new BlockPos.MutableBlockPos();
++        final var face = CustomBlockFaceLighting.sample(direction, CustomBlockFaceLighting.outerPlane(direction, bound), state.isSolidRender(),
++                nativeLight(level, state, pos), material, level.cardinalLighting().byFace(shadeDirection == null ? quad.direction() : shadeDirection),
++                (x, y, z) -> {
++                    samplePos.setWithOffset(pos, x, y, z);
++                    final BlockState sample = level.getBlockState(samplePos);
++                    return new CustomBlockFaceLighting.Sample(nativeLight(level, sample, samplePos), sample.getShadeBrightness(level, samplePos), sample.isSolidRender());
++                });
++        final float middleInner = (minInner + maxInner) * 0.5F, middleOuter = (minOuter + maxOuter) * 0.5F;
++        for (int i = 0; i < 4; i++) {
++            final Vector3fc vertex = quad.position(i);
++            final float inner = vertex.get(innerAxis), outer = vertex.get(outerAxis);
++            instance.setLightCoords(i, face.corner(inner > middleInner, outer > middleOuter).light());
++            instance.setColor(i, ARGB.gray(Math.clamp(face.shade(inner, outer), 0F, 1F)));
++        }
 +    }
 +
-+    @ModifyExpressionValue(method = "prepareQuadAmbientOcclusion", at = @At(value = "INVOKE",
-+        target = "Lnet/minecraft/client/renderer/block/BlockModelLighter;getDirectionalBrightness(Lnet/minecraft/world/level/CardinalLighting;Lnet/minecraft/client/resources/model/geometry/BakedQuad;Lnet/minecraft/core/Direction;)F"))
-+    private float nativeAmbientDimming(final float original, @Local(argsOnly = true) final BlockState state,
-+                                       @Local(argsOnly = true) final BakedQuad quad) {
-+        // The native exponent already includes dimming. Do not multiply it twice.
-+        return lighting(state, quad) == null ? original : 1F;
++    @Unique
++    private static int nativeLight(final BlockAndTintGetter level, final BlockState state, final BlockPos pos) {
++        return CustomBlockFaceLighting.withBlockEmission(LightCoordsUtil.pack(level.getBrightness(LightLayer.BLOCK, pos),
++                level.getBrightness(LightLayer.SKY, pos)), state.getLightEmission());
 +    }
 +
 +    @ModifyExpressionValue(method = "prepareQuadFlat", at = @At(value = "INVOKE",
 +        target = "Lnet/minecraft/client/renderer/block/BlockModelLighter;getDirectionalBrightness(Lnet/minecraft/world/level/CardinalLighting;Lnet/minecraft/client/resources/model/geometry/BakedQuad;Lnet/minecraft/core/Direction;)F"))
 +    private float nativeFlatDimming(final float original, @Local(argsOnly = true) final BlockState state,
 +                                    @Local(argsOnly = true) final BakedQuad quad) {
-+        final CustomBlockLighting lighting = lighting(state, quad);
-+        return lighting == null ? original : lighting.shade(1F, original);
++        final CustomBlockLighting material = lighting(state, quad);
++        return material == null ? original : material.shade(1F, original);
 +    }
 +
 +    @Unique

@@ -1,4 +1,4 @@
-From 4c493dd9122310be4ce2dae3efc1121998e3d17b Mon Sep 17 00:00:00 2001
+From 31ce1da2516d5cd5233ab0d447376670fb880bb3 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:38:26 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -200,8 +200,22 @@ channel binding across negative coordinates, compact light arrays and
 emission floors. These references originate from actual core light
 arrays supplied to native chunk records; they verify reading and fixture
 conversion, not native propagation or complete visible parity.
+
+Select terrain sides and diagonals in the native sampled plane, use
+outside-normal ambient brightness even on inset faces, and choose source
+light from the outside normal only for outer opaque faces. Keep these
+rules in a renderer-independent sampler alongside physical corner mapping.
+Apply authored emission to block light without raising skylight.
+
+Execute the original 1.26.51.1 corner routine for all six directions,
+inner/outer planes, both source opacity flags, every side blocker mask,
+and heterogeneous channel/ambient patterns. All 12,288 corner selections
+match. Original tessellator constants establish face tolerances of
+0.0005 and 0.9995. Cached solidity, geometry-full initialization, per-type
+ambient overrides, and visible native comparison remain separate work.
 ---
  .../api/model/CustomBlockCulling.java         | 206 +++++++
+ .../api/model/CustomBlockFaceLighting.java    |  98 +++
  .../api/model/CustomBlockLighting.java        |  59 ++
  .../api/model/CustomBlockOffset.java          |  97 +++
  .../api/model/CustomBlockProperties.java      | 150 +++++
@@ -227,7 +241,7 @@ conversion, not native propagation or complete visible parity.
  .../protocol/storage/ResourcePackStorage.java |  44 +-
  .../protocol/storage/VoxelShapeRegistry.java  | 125 ++++
  .../api/model/CustomBlockCullingTest.java     |  54 ++
- .../api/model/CustomBlockLightingTest.java    | 113 ++++
+ .../api/model/CustomBlockLightingTest.java    | 171 ++++++
  .../api/model/CustomBlockOffsetTest.java      |  80 +++
  .../api/model/CustomBlockPropertiesTest.java  |  69 +++
  .../http/ConvertedResourcePackCacheTest.java  |  29 +
@@ -240,8 +254,9 @@ conversion, not native propagation or complete visible parity.
  .../protocol/storage/ChunkTrackerTest.java    |  24 +
  .../storage/CustomBlockPackStorageTest.java   | 169 ++++++
  .../storage/VoxelShapeRegistryTest.java       | 130 ++++
- 39 files changed, 4314 insertions(+), 23 deletions(-)
+ 40 files changed, 4470 insertions(+), 23 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockCulling.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockFaceLighting.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockOffset.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java
@@ -476,6 +491,110 @@ index 000000000..f01a834b7
 +
 +        public List<Rectangle> slice(final Direction direction) {
 +            return this.slices.getOrDefault(direction, List.of());
++        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockFaceLighting.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockFaceLighting.java
+new file mode 100644
+index 000000000..ef477d59b
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockFaceLighting.java
+@@ -0,0 +1,98 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.api.model.CustomBlockCulling.Direction;
++
++/** Native terrain neighborhood selection, independent of the client renderer and world storage. */
++public final class CustomBlockFaceLighting {
++
++    // Side order follows the native corner winding, including the face's orientation.
++    private static final Direction[][] SIDES = {
++            {Direction.NORTH, Direction.WEST, Direction.SOUTH, Direction.EAST},
++            {Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST},
++            {Direction.UP, Direction.WEST, Direction.DOWN, Direction.EAST},
++            {Direction.UP, Direction.EAST, Direction.DOWN, Direction.WEST},
++            {Direction.UP, Direction.SOUTH, Direction.DOWN, Direction.NORTH},
++            {Direction.UP, Direction.NORTH, Direction.DOWN, Direction.SOUTH}
++    };
++
++    private CustomBlockFaceLighting() {
++    }
++
++    /** Native bounds use a half-thousandth tolerance, independently of source block solidity. */
++    public static boolean outerPlane(final Direction direction, final float bound) {
++        return direction.positive() ? bound >= 0.9995F : bound <= 0.0005F;
++    }
++
++    /** Apply authored emission only to block light. Emission does not create skylight. */
++    public static int withBlockEmission(final int light, final int emission) {
++        return (light & 0xFF0000) | Math.max(light & 0xFF, Math.clamp(emission, 0, 15) << 4);
++    }
++
++    public static Face sample(final Direction direction, final boolean outer, final boolean sourceOpaque,
++                              final int sourceLight, final CustomBlockLighting material, final float directional,
++                              final Neighborhood neighborhood) {
++        final int nx = step(direction, 0);
++        final int ny = step(direction, 1);
++        final int nz = step(direction, 2);
++        final Sample normal = neighborhood.sample(nx, ny, nz);
++        final int baseLight = outer && sourceOpaque ? normal.light() : sourceLight;
++        final int px = outer ? nx : 0;
++        final int py = outer ? ny : 0;
++        final int pz = outer ? nz : 0;
++        final Direction[] directions = SIDES[direction.ordinal()];
++        final Sample[] sides = new Sample[4];
++        for (int i = 0; i < 4; i++) {
++            sides[i] = neighborhood.sample(px + step(directions[i], 0), py + step(directions[i], 1), pz + step(directions[i], 2));
++        }
++        final Corner[] corners = new Corner[4];
++        for (int i = 0; i < 4; i++) {
++            final int next = (i + 1) & 3;
++            final int x = step(directions[i], 0) + step(directions[next], 0);
++            final int y = step(directions[i], 1) + step(directions[next], 1);
++            final int z = step(directions[i], 2) + step(directions[next], 2);
++            // Native diagonal blockers are the sampled sides, without an additional outward step.
++            final Sample diagonal = sides[i].opaque() && sides[next].opaque() ? sides[next] : neighborhood.sample(px + x, py + y, pz + z);
++            final float ambient = (normal.ambient() + sides[i].ambient() + sides[next].ambient() + diagonal.ambient()) * 0.25F;
++            final int inner = direction.axis() == 0 ? z : x;
++            final int outerAxis = direction.axis() == 1 ? z : y;
++            final int index = (inner > 0 ? 1 : 0) | (outerAxis > 0 ? 2 : 0);
++            corners[index] = new Corner(CustomBlockLighting.maximumLight(sides[i].light(), sides[next].light(), diagonal.light(), baseLight),
++                    material.shade(ambient, directional));
++        }
++        return new Face(corners[0], corners[1], corners[2], corners[3]);
++    }
++
++    private static int step(final Direction direction, final int axis) {
++        return direction.axis() == axis ? (direction.positive() ? 1 : -1) : 0;
++    }
++
++    @FunctionalInterface
++    public interface Neighborhood {
++        Sample sample(int x, int y, int z);
++    }
++
++    /** Opacity controls the diagonal fallback; ambient brightness is a separate native property. */
++    public record Sample(int light, float ambient, boolean opaque) {
++    }
++
++    public record Corner(int light, float shade) {
++    }
++
++    /** Inner axis is X for horizontal/North/South faces and Z for West/East faces. */
++    public record Face(Corner lowerLower, Corner upperLower, Corner lowerUpper, Corner upperUpper) {
++
++        public Corner corner(final boolean upperInner, final boolean upperOuter) {
++            return upperOuter ? (upperInner ? this.upperUpper : this.lowerUpper) : (upperInner ? this.upperLower : this.lowerLower);
++        }
++
++        public float shade(final float inner, final float outer) {
++            return CustomBlockLighting.interpolate(this.lowerLower.shade(), this.upperLower.shade(), this.lowerUpper.shade(), this.upperUpper.shade(), inner, outer);
 +        }
 +    }
 +
@@ -3209,10 +3328,10 @@ index 000000000..d9e0da375
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java
 new file mode 100644
-index 000000000..1ed6dc112
+index 000000000..2f5290ced
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,171 @@
 +package net.raphimc.viabedrock.api.model;
 +
 +import com.viaversion.viaversion.libs.gson.JsonParser;
@@ -3221,6 +3340,8 @@ index 000000000..1ed6dc112
 +
 +import java.nio.file.Files;
 +import java.nio.file.Path;
++import java.util.HashMap;
++import java.util.List;
 +
 +import static org.junit.jupiter.api.Assertions.*;
 +
@@ -3242,6 +3363,31 @@ index 000000000..1ed6dc112
 +        assertEquals(0, CustomBlockLighting.maximumLight(0, 0, 0, 0));
 +        // Smooth channels can retain fractional levels after interpolation.
 +        assertEquals(0x00BD00E7, CustomBlockLighting.maximumLight(0x002400E7, 0x00BD0008, 0, 0x008400C9));
++    }
++
++    @Test
++    void emissionPreservesSkylightAndFacePlaneUsesNativeTolerance() {
++        assertEquals(0x003000F0, CustomBlockFaceLighting.withBlockEmission(0x00300020, 15));
++        assertEquals(0x00F00080, CustomBlockFaceLighting.withBlockEmission(0x00F00080, 7));
++        for (final var direction : CustomBlockCulling.Direction.values()) {
++            final float boundary = direction.positive() ? 0.9995F : 0.0005F;
++            assertTrue(CustomBlockFaceLighting.outerPlane(direction, boundary));
++            assertFalse(CustomBlockFaceLighting.outerPlane(direction, direction.positive() ? Math.nextDown(boundary) : Math.nextUp(boundary)));
++            assertTrue(CustomBlockFaceLighting.outerPlane(direction, direction.positive() ? Math.nextUp(boundary) : Math.nextDown(boundary)));
++        }
++    }
++
++    @Test
++    void insetFaceUsesSourceLightAndOutsideAmbientSample() {
++        final var face = CustomBlockFaceLighting.sample(CustomBlockCulling.Direction.UP, false, true, 0x003000E0,
++                new CustomBlockLighting(1F, false), 0.5F, (x, y, z) -> new CustomBlockFaceLighting.Sample(
++                        y == 0 ? 0x00600040 : 0x00F000F0, y == 0 ? 1F : 0.2F, false));
++        for (boolean inner : new boolean[]{false, true}) {
++            for (boolean outer : new boolean[]{false, true}) {
++                assertEquals(0x006000E0, face.corner(inner, outer).light());
++                assertEquals(0.8F, face.corner(inner, outer).shade());
++            }
++        }
 +    }
 +
 +    @Test
@@ -3285,6 +3431,37 @@ index 000000000..1ed6dc112
 +                assertEquals(javaLight(sample.get("light").getAsInt()), CustomBlockLighting.maximumLight(
 +                        javaLight(inputs.get(0).getAsInt()), javaLight(inputs.get(1).getAsInt()),
 +                        javaLight(inputs.get(2).getAsInt()), javaLight(inputs.get(3).getAsInt())));
++            }
++        }
++    }
++
++    @Test
++    void nativeNeighborhoodSelectionMatchesAllFacesAndBlockers() throws Exception {
++        final String fixture = System.getProperty("stackanvil.test.nativeNeighborhood");
++        Assumptions.assumeTrue(fixture != null);
++        final var cases = JsonParser.parseString(Files.readString(Path.of(fixture))).getAsJsonObject().getAsJsonArray("cases");
++        assertFalse(cases.isEmpty());
++        for (final var value : cases) {
++            final var row = value.getAsJsonObject();
++            final var direction = CustomBlockCulling.Direction.values()[row.get("face").getAsInt()];
++            final var samples = new HashMap<List<Integer>, CustomBlockFaceLighting.Sample>();
++            for (final var element : row.getAsJsonArray("samples")) {
++                final var sample = element.getAsJsonObject();
++                final var offset = sample.getAsJsonArray("offset");
++                samples.put(List.of(offset.get(0).getAsInt(), offset.get(1).getAsInt(), offset.get(2).getAsInt()),
++                        new CustomBlockFaceLighting.Sample(javaLight(sample.get("light").getAsInt()), sample.get("ambient").getAsFloat(), sample.get("opaque").getAsBoolean()));
++            }
++            final var actual = CustomBlockFaceLighting.sample(direction, row.get("outer").getAsInt() != 0, row.get("ownSolid").getAsInt() != 0,
++                    javaLight(row.get("sourceLight").getAsInt()), new CustomBlockLighting(1F, true), 0.8F,
++                    (x, y, z) -> samples.get(List.of(x, y, z)));
++            // Physical native vertex order, independently recorded by the original face emitters.
++            final int[][] cornerOrder = {{0, 2, 3, 1}, {1, 3, 2, 0}, {2, 0, 1, 3}, {3, 1, 0, 2}, {3, 1, 0, 2}, {2, 0, 1, 3}};
++            for (int i = 0; i < 4; i++) {
++                final int index = cornerOrder[direction.ordinal()][i];
++                final var corner = actual.corner((index & 1) != 0, (index & 2) != 0);
++                final var expected = row.getAsJsonArray("corners").get(i).getAsJsonObject();
++                assertEquals(javaLight(expected.get("light").getAsInt()), corner.light());
++                assertEquals(expected.get("color").getAsFloat(), corner.shade(), 2E-7F);
 +            }
 +        }
 +    }

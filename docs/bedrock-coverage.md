@@ -7760,3 +7760,48 @@ This test-only increment does not replace runtime artifacts or establish a new l
 Native geometry-full and cached-solidity initialization, per-type ambient overrides, emissive custom states, world-provider integration, and nonzero-strength flat paths remain open.
 Controlled visible comparisons, alternate terrain renderers, enhanced lighting, dimensions, time, weather, brightness, status effects, propagation, fluid filtering, chunk boundaries, and relighting remain required.
 All movement, combat, protocol, account, asset, and platform requirements retain their scope.
+
+## Native terrain neighborhood sampling, October 7, 2026
+
+**Goal classification: progress. Full Bedrock and lighting parity remain incomplete.**
+
+**Production changes:** Core now selects native face neighborhoods independently of the Java renderer.
+It samples diagonal blockers in the side plane and substitutes the second side when both sides are opaque.
+Inset faces retain outside-normal ambient brightness and source-cell light.
+Outer opaque faces use outside-normal light. Other outer faces retain source-cell light.
+Authored emission raises block light without raising skylight.
+Native bounds select the outer plane at `0.0005` or below and `0.9995` or above.
+
+The add-on consumes this sampler for registered custom faces with accepted lighting annotations.
+It removes the earlier Java local-index repair hooks.
+Each vertex retains its physical corner light and interpolates shaded ambient color across authored coordinates.
+Ordinary Java blocks and unannotated faces retain their existing path.
+Nonzero-strength flat rendering retains its previous behavior and remains a separate verification requirement.
+
+**Native reference:** The original target corner routine passes 3,072 complete neighborhood cases, or 12,288 corner checks.
+These cover six directions, both planes, both source opacity flags, every side-blocker mask, and heterogeneous light and ambient values.
+The production sampler matches both selected light and shaded ambient values.
+Original tessellator instructions establish the plane thresholds independently of Java's face classification.
+
+**Client verification:** The direct CubeCraft replay matches all 4,032 controlled native vertex colors and light coordinates.
+The full-face subset now matches all 576 colors and lights.
+Seven bounds cover full cubes, insets, expanded geometry, tiny insets, both sides of the plane threshold, and shifted subcubes.
+Ordinary annotated/unannotated controls retain both their light and color.
+ViaProxy independently matches all 4,032 native colors and lights across the same 1,008 face cases.
+Both clients load 276 accepted custom block definitions.
+The probes select source opacity from client metadata and supply air/stone neighbor values.
+These results verify sampling and integration with those inputs; they do not establish native block identity.
+The selected route faces have zero authored emission. Emitting custom source states still need route verification.
+
+**Build verification:** All 97 core and 30 add-on patches replay successfully.
+The full core suite passes 812 tests with 26 optional skips. The add-on passes 605 tests with 117 optional skips.
+Both suites have zero failures and errors. Core Checkstyle and the ViaProxy build pass.
+The pinned Jenkins identity and all four upstream artifact checksums pass fresh verification.
+The add-on contains 1,257 identical core entries in its nested Fabric JAR; ViaProxy contains 1,256 identical entries, excluding the standalone manifest.
+
+**Boundaries and remaining work:** These fixtures supply neighboring block flags, ambient values, and world channels.
+They do not establish actual native runtime block identities or native propagation.
+Geometry-full and cached-solidity initialization, per-type ambient overrides, cached emissive brightness, and native dark-result below-sampling remain required.
+Alternative terrain renderers, rotated geometry, enhanced lighting, and controlled visible native comparisons remain open.
+Dimensions, time, weather, brightness, status effects, fluid filtering, chunk boundaries, and relighting retain their verification requirements.
+All movement, combat, protocol, account, asset, and platform requirements retain their scope.
