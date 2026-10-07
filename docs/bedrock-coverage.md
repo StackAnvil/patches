@@ -8417,6 +8417,25 @@ Supported scenes travel through the same custom payload on direct and ViaProxy r
 Ordinary Java clients receive a readable projection through standard dialogs.
 These paths do not establish complete JSON UI or native visual parity.
 
+A later desktop run verifies accepted native textures in the Lobby and Wardrobe screens.
+Their visible layouts remain incorrect: hidden stack children advance the layout cursor and reduce the available fill space, labels overflow, and some panels shrink or shift.
+The live drawing path also rejects an asymmetric nine-slice and opens ordinary form controls.
+The metric-only scene checks did not exercise that drawing path.
+The owning renderer patch is correcting these defects with actual texture regions and native stack and nine-slice consumer fixtures.
+The screenshots and raw runtime evidence remain private.
+
+Original native stack execution distinguishes measured size from space used to position siblings.
+Earlier aggregate fixtures seed an invisible child's measured extent; default intrinsic size and explicit `100%c` include that cached extent.
+The stack cursor and fill remainder instead use zero for an invisible child's contribution.
+These controls cover both orientations and do not establish that a disabled button has the same behavior.
+Subsequent execution through the original constructor, registration and topological scheduler establishes that a newly hidden control starts with a zero metric and skips dimension evaluation.
+Execution through the actual visibility setter establishes hidden, visible, hidden and visible metrics of zero, authored size, zero and authored size.
+The setter resets computed size when hiding; the earlier direct aggregate tests bypass that lifecycle.
+The renderer must preserve authored properties and collection identities while resetting hidden computed metrics.
+Original native nine-slice execution establishes left, top, right and bottom border order, source scaling from UV and base dimensions, and signed center regions for small destinations.
+Fractional source borders must reach the Java drawing path without integer rounding.
+These CPU consumer checks do not establish final GPU clipping or winding behavior.
+
 Native fixtures establish expression, grid, missing-template and size-unit behavior for Bedrock 1.26.51.1.
 Earlier private probes use real server definitions and textures with synthetic form records.
 A subsequent desktop capture records four actual action forms and one custom settings form.
@@ -8426,7 +8445,13 @@ The Wardrobe scene retains all sixteen bound hover-text nodes and their formatte
 Private renderer checks accept all four captured action scenes, including the Wardrobe tooltip controls.
 Each enabled action has positive bounds and nonzero alpha.
 These checks use inferred font and image metrics, so actual desktop rendering and interaction still require verification.
-The full replay passes 869 core tests, with 30 skipped.
+The full replay passes 873 core tests, with 30 skipped.
+
+The accepted server pack also contains JPEG UI assets omitted by the former PNG-only export.
+Core now normalizes JPEG and TGA images through the existing content decoders, retaining image priority and metadata.
+Three affected actual assets retain identical decoded pixels after the production resource rewriter exports them as PNGs.
+The UI conversion revision invalidates older converted packs.
+These conversion checks do not establish complete desktop rendering.
 
 Legacy `buttons` remains supported through the existing form codec.
 Non-null legacy buttons take precedence over `elements`, including an empty array; null legacy buttons defer to elements.

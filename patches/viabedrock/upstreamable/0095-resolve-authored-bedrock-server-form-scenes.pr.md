@@ -9,6 +9,7 @@ Ordinary Java clients receive resolved captions through Java dialogs. Clients th
 - Load named UI files in pack order and inherit templates without server-specific names or layout rules.
 - Evaluate bounded expressions, variable defaults, collection bindings, explicit collection indices and variable-defined child controls.
 - Preserve visibility, original indices and authored controls. Export accepted texture bytes with their nine-slice metadata.
+- Normalize JPEG and TGA UI images to PNG with the existing content decoders. Retain pack priority and PNG-before-JPEG-before-TGA lookup order, and check dimensions before decoding. Resolve explicit source extensions and their metadata to the normalized image identity.
 - Decode legacy `buttons` and typed `elements` through the existing form codec. Non-null `buttons` takes precedence, including an empty array.
 - Keep header, label and divider collection positions separate from button response ordinals.
 - Preserve public HTTPS image bindings for asynchronous client loading. Core does not fetch images on its packet or conversion threads.
@@ -39,8 +40,15 @@ The lifecycle fix belongs to the existing server-authoritative inventory patch.
 
 ## Verification and limits
 
-The full core build passes 899 tests: 869 passed, 30 skipped, no failures. Tests cover expression bounds, native results, variable defaults, hidden indices, explicit indices, texture priority, malformed metadata and the scene wire format.
+The full core build passes 903 tests: 873 passed, 30 skipped, no failures. Tests cover expression bounds, native results, variable defaults, hidden indices, explicit indices, texture priority, malformed metadata and the scene wire format.
 Additional cases cover both form schemas, empty and null precedence, typed factories, button ordinals, HTTPS image bindings and formatted hover text. The full 98-patch replay also passes.
+
+An actual accepted pack supplies its Loot and gifting images as JPEGs.
+The previous PNG-only export omitted these images and triggered the renderer's ordinary-form fallback.
+Private checks run the production resolver and resource rewriter against that pack and compare the decoded pixels of three affected images with their exported PNGs.
+Tests also cover image priority across layers, TGA orientation and alpha, malformed image headers, oversized dimensions, and upper-layer replacements at the texture limit.
+Valid PNG bytes retain their original encoding after a dimension check; compressed pixel data can still fail later decoding, which the client handles as an individual unavailable image.
+The UI conversion revision changes the cache identity so existing conversions are regenerated.
 
 Native GPU rendering, font metrics, dynamic binding controllers, forward control references and additional animation types remain open. If licensed base definitions are unavailable, inherited scenes can use ordinary-form fallback. Native assets and raw captures remain private.
 

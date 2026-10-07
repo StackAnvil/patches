@@ -1,4 +1,4 @@
-From 5c5bba0396cd383c0150a976ae4a9f1bca06a347 Mon Sep 17 00:00:00 2001
+From 000a8c5b0fa0be0ab60c747b43e3f3d306552cf7 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 18:42:36 +0200
 Subject: [PATCH] feat(ui): resolve authored Bedrock server form scenes
@@ -27,27 +27,41 @@ header/label/divider positions, without inferring native GPU behavior.
 Preserve authored HTTPS image URLs and file-system bindings in the scene.
 The client renderer loads their bytes asynchronously; packet and resource
 workers do not perform network image downloads.
+
+Normalize accepted JPEG and TGA UI textures to PNG using the existing
+content decoders, retain native per-layer image priority and metadata,
+and bound dimensions before decoding. Actual accepted server assets use
+JPEG for Loot and gifting images; omitting them forced whole-form fallback.
+Version the UI conversion identity so prior PNG-only caches are rebuilt.
+
+Resolve explicit source extensions and their metadata to the normalized
+PNG identity. Validate PNG dimensions before client decoding and permit
+upper-layer replacements at the texture limit without adding entries.
 ---
  build.gradle                                  |  11 +
  .../api/model/NativeFormMessage.java          |  55 ++
  .../http/ConvertedResourcePackCache.java      |   4 +-
- .../api/resourcepack/ui/ServerFormUi.java     | 810 ++++++++++++++++++
+ .../api/resourcepack/ui/ServerFormUi.java     | 808 ++++++++++++++++++
  .../api/resourcepack/ui/UiExpression.java     | 304 +++++++
+ .../api/resourcepack/ui/UiTextures.java       |  92 ++
  .../protocol/packet/InventoryPackets.java     | 436 +++++++---
  .../rewriter/ResourcePackRewriter.java        |   2 +
  .../ServerFormUiResourceRewriter.java         |  35 +
  .../protocol/storage/ResourcePackStorage.java |  14 +-
  .../api/model/NativeFormMessageTest.java      |  51 ++
- .../api/resourcepack/ui/ServerFormUiTest.java | 284 ++++++
+ .../api/resourcepack/ui/ServerFormUiTest.java | 290 +++++++
  .../api/resourcepack/ui/UiExpressionTest.java |  56 ++
- 12 files changed, 1938 insertions(+), 124 deletions(-)
+ .../api/resourcepack/ui/UiTexturesTest.java   | 111 +++
+ 14 files changed, 2145 insertions(+), 124 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFormMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUi.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiExpression.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/ServerFormUiResourceRewriter.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeFormMessageTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiExpressionTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTexturesTest.java
 
 diff --git a/build.gradle b/build.gradle
 index b32de43c6..91df8408c 100644
@@ -160,10 +174,10 @@ index 830a3f1eb..f4cdec690 100644
              identity.append('\n').append(entry.getKey()).append(':').append(visual.bedrockState()).append(':').append(visual.modelJson())
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUi.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUi.java
 new file mode 100644
-index 000000000..a2977a353
+index 000000000..7918859e5
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUi.java
-@@ -0,0 +1,810 @@
+@@ -0,0 +1,808 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -221,11 +235,7 @@ index 000000000..a2977a353
 +        this.formattingColors = storage.getTextFormatting().colors();
 +        final Map<String, byte[]> builtin = Builtins.FILES;
 +        this.loadFiles(builtin, false);
-+        builtin.forEach((path, bytes) -> {
-+            if (path.startsWith("textures/ui/")) {
-+                this.textureFiles.put(path, bytes);
-+            }
-+        });
++        UiTextures.load(builtin, this.textureFiles);
 +        for (final ResourcePack pack : storage.getPackStackBottomToTop()) {
 +            final Map<String, byte[]> files = new LinkedHashMap<>();
 +            for (final String path : loadedPaths(pack)) {
@@ -235,14 +245,16 @@ index 000000000..a2977a353
 +                }
 +            }
 +            this.loadFiles(files, storage.isServerPack(pack));
++            final Map<String, byte[]> textures = new LinkedHashMap<>();
 +            for (final String path : pack.content().getFilesDeep("textures/ui/", "")) {
-+                if (safePath(path) && (path.endsWith(".png") || path.endsWith(".json"))) {
++                if (safePath(path)) {
 +                    final byte[] bytes = pack.content().get(path);
-+                    if (bytes.length <= 16 * MAX_FILE_BYTES && this.textureFiles.size() < 8192) {
-+                        this.textureFiles.put(path, bytes);
++                    if (bytes.length <= 16 * MAX_FILE_BYTES && textures.size() < 8192) {
++                        textures.put(path, bytes);
 +                    }
 +                }
 +            }
++            UiTextures.load(textures, this.textureFiles);
 +        }
 +    }
 +
@@ -252,12 +264,7 @@ index 000000000..a2977a353
 +        this.formattingColors = Map.of();
 +        for (final Map<String, byte[]> files : layers) {
 +            this.loadFiles(files, true);
-+            files.forEach((path, bytes) -> {
-+                if (safePath(path) && path.startsWith("textures/ui/")
-+                        && (path.endsWith(".png") || path.endsWith(".json")) && bytes.length <= 16 * MAX_FILE_BYTES) {
-+                    this.textureFiles.put(path, bytes);
-+                }
-+            });
++            UiTextures.load(files, this.textureFiles);
 +        }
 +    }
 +
@@ -531,14 +538,19 @@ index 000000000..a2977a353
 +    }
 +
 +    public static String builtinIdentity() {
-+        return Builtins.IDENTITY;
++        // Include the UI image conversion revision so cached PNG-only conversions are not reused.
++        return "2:" + Builtins.IDENTITY;
 +    }
 +
 +    public static String textureId(final String path) {
 +        if (!safePath(path)) {
 +            throw new IllegalArgumentException("Invalid UI texture");
 +        }
-+        return "viabedrock:textures/server_ui/" + path.replaceAll("\\.png$", "") + ".png";
++        return "viabedrock:textures/server_ui/" + textureBasename(path) + ".png";
++    }
++
++    private static String textureBasename(final String path) {
++        return path.replaceAll("\\.(png|jpg|tga)$", "");
 +    }
 +
 +    private static List<String> loadedPaths(final ResourcePack pack) {
@@ -709,7 +721,7 @@ index 000000000..a2977a353
 +                    }
 +                } else if (!texture.isEmpty() && safePath(texture)) {
 +                    node.addProperty("texture", textureId(texture));
-+                    final byte[] metadata = ServerFormUi.this.textureFiles.get(texture.replaceAll("\\.png$", "") + ".json");
++                    final byte[] metadata = ServerFormUi.this.textureFiles.get(textureBasename(texture) + ".json");
 +                    if (metadata != null) {
 +                        final JsonElement parsed = JsonParser.parseString(new String(metadata, StandardCharsets.UTF_8));
 +                        if (parsed.isJsonObject()) {
@@ -1281,6 +1293,104 @@ index 000000000..3316b9345
 +            return true;
 +        }
 +        return false;
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java
+new file mode 100644
+index 000000000..b41ee231c
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTextures.java
+@@ -0,0 +1,92 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.ui;
++
++import java.io.ByteArrayInputStream;
++import java.io.IOException;
++import java.util.LinkedHashSet;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++import javax.imageio.ImageIO;
++import net.raphimc.viabedrock.api.resourcepack.content.Content;
++
++/** Normalizes a pack layer using the same image format priority as Bedrock content lookups. */
++final class UiTextures {
++
++    private UiTextures() {
++    }
++
++    static void load(final Map<String, byte[]> files, final Map<String, byte[]> result) {
++        final Set<String> images = new LinkedHashSet<>();
++        for (final var entry : files.entrySet()) {
++            final String path = entry.getKey();
++            if (!path.startsWith("textures/ui/") || !path.matches("[A-Za-z0-9_./-]{1,256}")
++                    || path.contains("..") || entry.getValue().length > 16 * 1024 * 1024) {
++                continue;
++            }
++            if (path.endsWith(".json")) {
++                if (result.size() < 8192 || result.containsKey(path)) {
++                    result.put(path, entry.getValue());
++                }
++            } else if (path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".tga")) {
++                images.add(path.substring(0, path.length() - 4));
++            }
++        }
++        for (final String path : images) {
++            if (result.size() >= 8192 && !result.containsKey(path + ".png")) {
++                continue;
++            }
++            for (final String format : List.of("png", "jpg", "tga")) {
++                final byte[] bytes = files.get(path + "." + format);
++                if (bytes == null || bytes.length > 16 * 1024 * 1024) {
++                    continue;
++                }
++                try {
++                    validateDimensions(bytes, format);
++                    final byte[] png = new Content.LazyImage(bytes, format).getPngBytes();
++                    if (png.length <= 16 * 1024 * 1024) {
++                        result.put(path + ".png", png);
++                    }
++                } catch (final IOException | RuntimeException malformed) {
++                    // An unusable image cannot prevent unrelated controls or textures from loading.
++                }
++                break;
++            }
++        }
++    }
++
++    private static void validateDimensions(final byte[] bytes, final String format) throws IOException {
++        if (format.equals("tga")) {
++            if (bytes.length < 18) {
++                throw new IOException("Truncated UI texture");
++            }
++            validateDimensions(Byte.toUnsignedInt(bytes[12]) | Byte.toUnsignedInt(bytes[13]) << 8,
++                    Byte.toUnsignedInt(bytes[14]) | Byte.toUnsignedInt(bytes[15]) << 8);
++            return;
++        }
++        try (var input = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
++            final var readers = ImageIO.getImageReaders(input);
++            if (!readers.hasNext()) {
++                throw new IOException("Unsupported UI texture");
++            }
++            final var reader = readers.next();
++            try {
++                reader.setInput(input, true, true);
++                validateDimensions(reader.getWidth(0), reader.getHeight(0));
++            } finally {
++                reader.dispose();
++            }
++        }
++    }
++
++    private static void validateDimensions(final int width, final int height) throws IOException {
++        if (width <= 0 || height <= 0 || width > 4096 || height > 4096) {
++            throw new IOException("UI texture exceeds dimension limits");
++        }
 +    }
 +
 +}
@@ -1918,10 +2028,10 @@ index 000000000..29e1c7578
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java
 new file mode 100644
-index 000000000..96082ef0f
+index 000000000..7173dc961
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ServerFormUiTest.java
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,290 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1930,10 +2040,13 @@ index 000000000..96082ef0f
 +package net.raphimc.viabedrock.api.resourcepack.ui;
 +
 +import com.viaversion.viaversion.libs.gson.*;
++import java.awt.image.BufferedImage;
++import java.io.ByteArrayOutputStream;
 +import java.nio.charset.StandardCharsets;
 +import java.util.List;
 +import java.util.HashMap;
 +import java.util.Map;
++import javax.imageio.ImageIO;
 +import org.junit.jupiter.api.Test;
 +import static org.junit.jupiter.api.Assertions.*;
 +
@@ -2087,17 +2200,20 @@ index 000000000..96082ef0f
 +    }
 +
 +    @Test
-+    void textureMetadataUsesPackPriorityAndMalformedMetadataFallsBackWithoutFailingTheForm() {
++    void textureMetadataUsesPackPriorityAndMalformedMetadataFallsBackWithoutFailingTheForm() throws Exception {
 +        final String textured = UI.replace("\"type\":\"button\"", "\"type\":\"button\",\"texture\":\"textures/ui/card\"");
 +        final Map<String, byte[]> base = new HashMap<>(definitions(textured));
-+        base.put("textures/ui/card.png", new byte[]{1, 2, 3});
++        final var pixels = new ByteArrayOutputStream();
++        assertTrue(ImageIO.write(new BufferedImage(32, 32, BufferedImage.TYPE_INT_RGB), "png", pixels));
++        final byte[] png = pixels.toByteArray();
++        base.put("textures/ui/card.png", png);
 +        base.put("textures/ui/card.json", "{\"nineslice_size\":2,\"base_size\":[32,32]}".getBytes(StandardCharsets.UTF_8));
 +        final Map<String, byte[]> override = Map.of("textures/ui/card.json", "{\"nineslice_size\":4}".getBytes(StandardCharsets.UTF_8));
 +        final var ui = new ServerFormUi(List.of(base, override));
 +        final var button = ui.resolve(form("tile:One")).getAsJsonObject("root").getAsJsonArray("children").get(0).getAsJsonObject().getAsJsonArray("children").get(0).getAsJsonObject();
 +        assertEquals(4, button.get("nineslice_size").getAsInt());
 +        assertEquals(ServerFormUi.textureId("textures/ui/card"), button.get("texture").getAsString());
-+        assertArrayEquals(new byte[]{1, 2, 3}, ui.textures().get("textures/ui/card.png"));
++        assertArrayEquals(png, ui.textures().get("textures/ui/card.png"));
 +        assertNull(new ServerFormUi(List.of(base, Map.of("textures/ui/card.json", "{".getBytes(StandardCharsets.UTF_8)))).resolve(form("tile:One")));
 +    }
 +
@@ -2265,6 +2381,123 @@ index 000000000..6d8c7baa2
 +        assertThrows(IllegalArgumentException.class, () -> UiExpression.evaluate("(1) external", Map.of()));
 +        assertThrows(IllegalArgumentException.class, () -> UiExpression.evaluate("'unterminated", Map.of()));
 +        assertThrows(IllegalArgumentException.class, () -> UiExpression.evaluate("'" + "x".repeat(8192) + "'", Map.of()));
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTexturesTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTexturesTest.java
+new file mode 100644
+index 000000000..9f9a4c77b
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/UiTexturesTest.java
+@@ -0,0 +1,111 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.resourcepack.ui;
++
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import java.awt.image.BufferedImage;
++import java.io.ByteArrayInputStream;
++import java.io.ByteArrayOutputStream;
++import java.nio.charset.StandardCharsets;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import javax.imageio.ImageIO;
++import org.junit.jupiter.api.Test;
++import static org.junit.jupiter.api.Assertions.*;
++
++class UiTexturesTest {
++
++    @Test
++    void jpegConversionPreservesDecodedPixelsAndLayerPriority() throws Exception {
++        final var image = new BufferedImage(3, 2, BufferedImage.TYPE_INT_RGB);
++        image.setRGB(1, 0, 0xBD3716);
++        final byte[] jpeg = encode(image, "jpg");
++        final byte[] png = encode(image, "png");
++        final var lower = new ServerFormUi(List.of(Map.of("textures/ui/item.png", png,
++                "textures/ui/item.jpg", jpeg)));
++        assertArrayEquals(png, lower.textures().get("textures/ui/item.png"));
++        final String definition = """
++                {"namespace":"server_form","main_screen_content":{"type":"button","collection_index":0,
++                 "$pressed_button_name":"button.form_button_click","texture":"textures/ui/item.jpg"}}
++                """;
++        final var upper = new ServerFormUi(List.of(lower.textures(), Map.of("textures/ui/item.jpg", jpeg,
++                "textures/ui/item.json", "{\"nineslice_size\":2}".getBytes(StandardCharsets.UTF_8),
++                "ui/server_form.json", definition.getBytes(StandardCharsets.UTF_8))));
++        final var form = JsonParser.parseString("{\"type\":\"form\",\"title\":\"\",\"elements\":[{\"type\":\"button\",\"text\":\"\"}]}").getAsJsonObject();
++        final var root = upper.resolve(form).getAsJsonObject("root");
++        assertEquals(ServerFormUi.textureId("textures/ui/item"), root.get("texture").getAsString());
++        assertEquals(2, root.get("nineslice_size").getAsInt());
++        final var decoded = ImageIO.read(new ByteArrayInputStream(jpeg));
++        final var normalized = ImageIO.read(new ByteArrayInputStream(upper.textures().get("textures/ui/item.png")));
++        assertEquals(decoded.getWidth(), normalized.getWidth());
++        assertEquals(decoded.getHeight(), normalized.getHeight());
++        assertArrayEquals(decoded.getRGB(0, 0, 3, 2, null, 0, 3), normalized.getRGB(0, 0, 3, 2, null, 0, 3));
++        assertEquals(2, upper.textures().size());
++    }
++
++    @Test
++    void tgaConversionRetainsOrientationAndAlpha() throws Exception {
++        final byte[] tga = new byte[26];
++        tga[2] = 2;
++        tga[12] = 2;
++        tga[14] = 1;
++        tga[16] = 32;
++        tga[17] = 0x30;
++        tga[18] = 0x11;
++        tga[19] = 0x22;
++        tga[20] = 0x33;
++        tga[21] = 0x44;
++        tga[22] = 0x55;
++        tga[23] = 0x66;
++        tga[24] = 0x77;
++        tga[25] = (byte) 0x88;
++        final var ui = new ServerFormUi(List.of(Map.of("textures/ui/item.tga", tga)));
++        final var image = ImageIO.read(new ByteArrayInputStream(ui.textures().get("textures/ui/item.png")));
++        assertEquals(0x88776655, image.getRGB(0, 0));
++        assertEquals(0x44332211, image.getRGB(1, 0));
++    }
++
++    @Test
++    void malformedAndOversizedImagesLeaveUnrelatedTexturesUsable() throws Exception {
++        final byte[] png = encode(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB), "png");
++        final byte[] oversized = encode(new BufferedImage(4097, 1, BufferedImage.TYPE_INT_RGB), "jpg");
++        final var result = new HashMap<String, byte[]>();
++        UiTextures.load(Map.of("textures/ui/retained.png", png, "textures/ui/broken.jpg", new byte[]{1, 2},
++                "textures/ui/oversized.jpg", oversized, "textures/ui/../../foreign.jpg", oversized), result);
++        assertEquals(1, result.size());
++        assertArrayEquals(png, result.get("textures/ui/retained.png"));
++        UiTextures.load(Map.of("textures/ui/retained.jpg", new byte[]{1, 2}), result);
++        assertArrayEquals(png, result.get("textures/ui/retained.png"));
++        UiTextures.load(Map.of("textures/ui/retained.png", new byte[]{1, 2},
++                "textures/ui/oversized.png", encode(new BufferedImage(4097, 1, BufferedImage.TYPE_INT_RGB), "png")), result);
++        assertEquals(1, result.size());
++        assertArrayEquals(png, result.get("textures/ui/retained.png"));
++    }
++
++    @Test
++    void aFullLayerAllowsUpperReplacementsWithoutAddingNewEntries() throws Exception {
++        final byte[] png = encode(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB), "png");
++        final var result = new HashMap<String, byte[]>();
++        for (int index = 0; index < 8192; index++) {
++            result.put("textures/ui/" + index + ".png", png);
++        }
++        final var image = new BufferedImage(2, 1, BufferedImage.TYPE_INT_RGB);
++        image.setRGB(0, 0, 0xB26722);
++        final byte[] replacement = encode(image, "png");
++        UiTextures.load(Map.of("textures/ui/0.png", replacement, "textures/ui/new.png", png), result);
++        assertEquals(8192, result.size());
++        assertArrayEquals(replacement, result.get("textures/ui/0.png"));
++        assertFalse(result.containsKey("textures/ui/new.png"));
++    }
++
++    private static byte[] encode(final BufferedImage image, final String format) throws Exception {
++        final var output = new ByteArrayOutputStream();
++        assertTrue(ImageIO.write(image, format, output));
++        return output.toByteArray();
 +    }
 +
 +}
