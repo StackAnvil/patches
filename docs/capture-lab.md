@@ -207,3 +207,19 @@ For an authorized Java render run, use `server-replay replay <fixture-directory>
 The normal virtual display and zero-volume defaults still apply.
 These Java options cannot change native-client GPU guards.
 Keep actual render evidence separate from CPU layout results and synthetic fixture provenance.
+
+### Isolate the Java launcher
+
+Replay clients copy mutable Prism data into their private runtime directory.
+This includes cache, metadata, icons, and the Java runtime.
+Only assets and libraries use shared directories, with explicit read-only Flatpak mounts.
+Both global and instance Java selections use the copied Prism runtime.
+External Java paths, including system runtimes, require a separate sandbox contract and are rejected by isolated replay.
+Escaping source links and write-through links in profile configuration cause preparation to stop.
+
+Java cleanup records process IDs and start times, including launcher descendants.
+It verifies these identities immediately before each signal.
+A reused or unrecorded process ID stops cleanup without signaling that process.
+Display and audio teardown use separate ownership checks.
+The Java route refuses forced cleanup and process-group signals.
+If normal shutdown fails, inspect the private `process-ownership.json` and logs before further cleanup.

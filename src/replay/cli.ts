@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { closeSync, existsSync, openSync } from "node:fs";
-import { chmod, cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, delimiter } from "node:path";
 import { createServer } from "node:net";
@@ -14,6 +14,8 @@ import { configureShaders, graphicsFailures, installGraphicsProfile, readGraphic
 import { activeDisplay, displayEnv, stopDisplay } from "../lab/display.ts";
 import { inspectJournal } from "./journal.ts";
 import { prepareFormFixture } from "./form-fixture.ts";
+import { prepareReplayPrismData, rebindReplayJavaConfig, validateReplayProfile } from "./java-profile.ts";
+import { OwnedProcesses } from "./owned-processes.ts";
 import { requireNativeOfflineReplay, requireNativeReplayProcessNamespaces, type NativeOfflineProof } from "./native-offline.ts";
 import { prepareNativeReplayPrefix } from "./native-prefix.ts";
 import { prepareNativeProfile } from "./native-profile.ts";
@@ -33,6 +35,8 @@ const prismData = join(homedir(), ".var/app/org.prismlauncher.PrismLauncher/data
 const accountDefault = join(prismData, "instances/StackAnvil Desktop 26.3/minecraft/config/viafabricplus/bedrock.json");
 const children: ChildProcess[] = [];
 let nativeClient: { pid: number; directory: string } | undefined;
+let javaCleanup: OwnedProcesses | undefined;
+let javaDisplayCleanup: OwnedProcesses | undefined;
 
 function alive(pid?: number): boolean { if (!pid) return false; try { process.kill(pid, 0); return true; } catch { return false; } }
 async function logText(path: string): Promise<string> { return existsSync(path) ? readFile(path, "utf8") : ""; }
@@ -40,6 +44,7 @@ function service(program: string, args: string[], cwd: string, log: string, env 
   const fd = openSync(log, "wx", 0o600);
   const child = spawn(program, args, { cwd, env, detached: true, stdio: ["ignore", fd, fd] });
   closeSync(fd); children.push(child);
+  if (javaCleanup && child.pid) javaCleanup.capture(child.pid);
   return child;
 }
 async function port(udp = false): Promise<number> {
@@ -115,24 +120,35 @@ async function buildFabricRecorder(jar: string, build: string): Promise<string> 
 }
 
 async function launchJava(directory: string, address: string, client: "addon" | "proxy", recorder: string, graphics: GraphicsProfile, account?: string, guiScale?: number, softwareRendering = false): Promise<{ pid: number; log: string }> {
+  const existingDisplay = await activeDisplay();
   const isolated = await displayEnv(true);
   if (!isolated) throw new Error("The replay lab requires a private virtual display.");
+  if (javaCleanup && !existingDisplay) {
+    const owned = await activeDisplay();
+    if (!owned) throw new Error("The owned Java display disappeared.");
+    javaDisplayCleanup = new OwnedProcesses();
+    for (const pid of [owned.pid, ...(owned.audioPid ? [owned.audioPid] : [])]) {
+      javaDisplayCleanup.capture(pid);
+      javaCleanup.exclude(pid);
+    }
+  }
   const sourceName = process.env.STACKANVIL_REPLAY_INSTANCE ?? "StackAnvil Integration 26.3";
   const source = join(prismData, "instances", sourceName);
   if (!existsSync(join(source, "instance.cfg"))) throw new Error("Prepare the integration Prism instance with bun run test:integration first.");
+  await validateReplayProfile(source);
   const name = `Replay-${basename(directory)}`;
   const prism = join(directory, "prism");
   await mkdir(prism, { mode: 0o700 });
   await mkdir(join(prism, "logs"), { mode: 0o700 });
   await mkdir(join(prism, "instances"), { mode: 0o700 });
-  for (const entry of await readdir(prismData, { withFileTypes: true })) {
-    if (entry.name === "logs" || entry.name === "instances") continue;
-    if (entry.isDirectory()) await symlink(join(prismData, entry.name), join(prism, entry.name), "dir");
-    else if (entry.isFile()) await writeFile(join(prism, entry.name), await readFile(join(prismData, entry.name)), { mode: 0o600 });
-  }
+  const readOnlyData = await prepareReplayPrismData(prismData, prism);
+  const globalCfg = join(prism, "prismlauncher.cfg");
+  if (existsSync(globalCfg)) await rebindReplayJavaConfig(globalCfg, prismData, prism);
   const instance = join(prism, "instances", name);
   await mkdir(instance, { mode: 0o700 });
   for (const file of ["instance.cfg", "mmc-pack.json"]) await cp(join(source, file), join(instance, file));
+  const cfgPath = join(instance, "instance.cfg");
+  await rebindReplayJavaConfig(cfgPath, prismData, prism);
   if (address.startsWith("nethernet://")) {
     // Prism's host/port launcher option appends a Java port to URI addresses.
     const pack = JSON.parse(await readFile(join(instance, "mmc-pack.json"), "utf8")) as { components: { uid: string; version: string }[] };
@@ -195,6 +211,7 @@ async function launchJava(directory: string, address: string, client: "addon" | 
   await writeFile(join(game, "stackanvil-replay-directory.txt"), directory, { mode: 0o600 });
   const launcherLog = join(directory, "launcher.log");
   service("flatpak", ["run", "--nosocket=wayland", "--socket=x11", `--filesystem=${join(root, ".stackanvil/lab")}:ro`, `--filesystem=${directory}`,
+    ...readOnlyData.map(path => `--filesystem=${path}:ro`),
     ...(client === "addon" ? [`--filesystem=${join(privateRoot, "client-assets")}`] : []),
     `--env=DISPLAY=${isolated.DISPLAY}`, `--env=XAUTHORITY=${isolated.XAUTHORITY}`, "--env=WAYLAND_DISPLAY=", "--env=QT_QPA_PLATFORM=xcb",
     "--env=SDL_VIDEODRIVER=x11", "--env=SDL_VIDEO_DRIVER=x11", "--env=SDL_VIDEO_FORCE_EGL=1", "--env=PULSE_SINK=stackanvil_silent",
@@ -205,7 +222,14 @@ async function launchJava(directory: string, address: string, client: "addon" | 
   while (Date.now() < until) {
     const { stdout } = await execute("ps", ["-eo", "pid=,args="], { maxBuffer: 8 * 1024 * 1024 });
     const line = stdout.split("\n").find((line) => line.includes("org.prismlauncher.EntryPoint") && line.includes(name));
-    if (line) return { pid: Number(line.trim().split(/\s/)[0]), log: join(game, "logs/latest.log") };
+    javaCleanup?.captureDescendants();
+    if (line) {
+      const pid = Number(line.trim().split(/\s/)[0]);
+      if (basename(await readlink(`/proc/${pid}/exe`)) !== "java" || !javaCleanup?.owns(pid)) {
+        throw new Error("Matching Java process is not a captured private launcher descendant.");
+      }
+      return { pid, log: join(game, "logs/latest.log") };
+    }
     await Bun.sleep(500);
   }
   throw new Error(`Minecraft startup timed out. Read ${launcherLog}.`);
@@ -266,6 +290,15 @@ async function launchNative(directory: string, bind: number, nativeHome?: string
 }
 
 async function stopAll(gamePid?: number): Promise<void> {
+  if (javaCleanup) {
+    javaCleanup.captureDescendants();
+    if (gamePid) javaCleanup.signal(gamePid, "SIGTERM");
+    for (const identity of javaCleanup.all().toReversed()) javaCleanup.signal(identity.pid, "SIGTERM");
+    const until = Date.now() + 15_000;
+    while (Date.now() < until && javaCleanup.all().some(identity => javaCleanup!.alive(identity.pid))) await Bun.sleep(100);
+    if (javaCleanup.all().some(identity => javaCleanup!.alive(identity.pid))) throw new Error("Owned Java processes did not stop normally; forced cleanup refused.");
+    return;
+  }
   if (nativeClient && alive(nativeClient.pid)) {
     try {
       await ui(["key", "Alt+F4"], nativeClient.directory, "bedrock");
@@ -343,6 +376,7 @@ Java replay options: --gui-scale 1..4 --software-rendering. Virtual display and 
   const graphics = args.includes("--shaders") ? "shaders" : args.includes("--modpack") ? "optimized" : "plain";
   if (client === "native" && graphics !== "plain") throw new Error("--modpack and --shaders require a Java client.");
   if (client !== "addon" && client !== "proxy" && client !== "native") throw new Error("--client must be addon, proxy, or native.");
+  if (client !== "native") javaCleanup = new OwnedProcesses();
   const nativeOffline = mode === "replay" && client === "native" ? await requireNativeOfflineReplay() : undefined;
   if (!Number.isInteger(seconds) || seconds < 20 || seconds > 300) throw new Error("--seconds must be between 20 and 300.");
   if (mode === "record" && input === "hive" && client !== "native" && !args.includes("--allow-hive")) throw new Error("ViaBedrock blacklists The Hive because translated clients can be banned. Use an official client capture, or explicitly pass --allow-hive for this diagnostic join.");
@@ -422,6 +456,7 @@ Java replay options: --gui-scale 1..4 --software-rendering. Virtual display and 
     let waitingForAddonSpawn = client === "addon";
     let until = Date.now() + (waitingForNativeConnection ? 300_000 : waitingForAddonSpawn ? 1_200_000 : seconds * 1000);
     while (!stopped && Date.now() < until && alive(gamePid) && (!child || alive(child.pid))) {
+      javaCleanup?.captureDescendants();
       if (waitingForNativeConnection && existsSync(join(directory, "packets.sbr"))) {
         waitingForNativeConnection = false;
         until = Date.now() + seconds * 1000;
@@ -445,8 +480,22 @@ Java replay options: --gui-scale 1..4 --software-rendering. Virtual display and 
     }
     unexpectedClientExit = !alive(gamePid);
   } finally {
+    if (javaCleanup) await writeFile(join(directory, "process-ownership.json"), JSON.stringify({
+      java: javaCleanup.all(), display: javaDisplayCleanup?.all() ?? [],
+    }, null, 2), { mode: 0o600 });
     await stopAll(gamePid);
-    if (ownedDisplay) await stopDisplay();
+    if (ownedDisplay) await stopDisplay(javaDisplayCleanup ? {
+      process: pid => {
+        if (!javaDisplayCleanup!.alive(pid)) throw new Error("Owned display process exited before teardown.");
+      },
+      audioModule: async id => {
+        const { stdout } = await execute("pactl", ["-f", "json", "list", "modules"]);
+        const modules = JSON.parse(stdout) as { index: number; name: string; argument: string }[];
+        if (!modules.some(module => module.index === id && module.name === "module-null-sink" && /(?:^|\s)sink_name=stackanvil_silent(?:\s|$)/.test(module.argument))) {
+          throw new Error("Owned audio module identity changed; unload refused.");
+        }
+      },
+    } : undefined);
     process.off("SIGINT", abort); process.off("SIGTERM", abort);
     // Proxy libraries write their own saves with default permissions.
     for (const name of ["saves.json", "viaproxy.yml"]) if (existsSync(join(proxyHome, name))) await chmod(join(proxyHome, name), 0o600);

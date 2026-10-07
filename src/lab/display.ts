@@ -92,14 +92,21 @@ export async function displayEnv(start = false): Promise<NodeJS.ProcessEnv | und
     WAYLAND_DISPLAY: "", STACKANVIL_UI_ISOLATED: "1", PULSE_SINK: "stackanvil_silent" };
 }
 
-export async function stopDisplay(): Promise<void> {
+export async function stopDisplay(guard?: { process: (pid: number) => void; audioModule: (id: number) => Promise<void> }): Promise<void> {
   const state = await activeDisplay();
   if (!state) { console.log("Virtual display is stopped."); await rm(stateFile, { force: true }); return; }
+  guard?.process(state.pid);
   process.kill(state.pid, "SIGINT");
   for (let attempt = 0; attempt < 50 && existsSync(socketPath()); attempt++) await Bun.sleep(100);
   if (existsSync(socketPath())) throw new Error(`Xvfb ${state.pid} did not stop.`);
-  if (state.audioPid && alive(state.audioPid)) process.kill(state.audioPid, "SIGINT");
-  if (state.audioModuleId) await execute("pactl", ["unload-module", String(state.audioModuleId)]);
+  if (state.audioPid && alive(state.audioPid)) {
+    guard?.process(state.audioPid);
+    process.kill(state.audioPid, "SIGINT");
+  }
+  if (state.audioModuleId) {
+    await guard?.audioModule(state.audioModuleId);
+    await execute("pactl", ["unload-module", String(state.audioModuleId)]);
+  }
   await rm(stateFile, { force: true });
   console.log(`Stopped virtual display ${state.display}.`);
 }
