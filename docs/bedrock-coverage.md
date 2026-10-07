@@ -7312,3 +7312,43 @@ Capture the outgoing input clock source and verify its relationship to retained 
 Keep zero-duration scheduling, ownership, collision, mixed actions, both routes, strict BDS, native baselines, Boar diagnostics, and platform joins required.
 The preceding research commit passes [GitHub CI](https://github.com/StackAnvil/patches/actions/runs/37582044429).
 This continuation adds native research and a production audit. It does not add a live game join.
+
+## Native player-input and retained-history clock, October 7, 2026
+
+**Native evidence:** New execution probes use the pinned 1.26.51.1 executable and protocol 2193.
+They identify the outgoing input clock and replace the retained-history fixture's supplied clock getter with the original getter.
+
+The original tick function `1411713d0` increments the unsigned clock at `LevelData + 0x328`.
+It then publishes that value into registry state named `CurrentTickComponent`.
+The canonical ClientLevel holder getter `1412f4940` and data getter `141179960` execute unchanged in the fixture.
+Player-input builder `1447696a0` reads the published component into its materialized packet at offset `0xa8`.
+The native schema labels this field `Client Tick`.
+Its original metadata getter `143d74850` and setter `143d74650` access payload offset `0x78`, after the packet's `0x30` header.
+
+Fifty-six cases execute the original tick update, component lookup, complete input builder, and metadata accessors.
+Distinct initial registry values distinguish published ticks from stale state.
+Without a tick update, the packet retains the registry value even when the level clock differs.
+Without a registry context, tick advancement leaves the registry value unchanged.
+Unsigned values cross the signed 32-bit and 64-bit boundaries. MAX advances to zero.
+Twenty additional cases cover absent, invalid, const-only, and null context entries, plus disabled packet sending.
+The builder uses its initialized zero tick for unavailable context. A disabled actor produces no packet.
+
+Fourteen further cases execute capture wrapper `1461ac8a0` through the canonical clock getter `14117ec00` and original frame capture `142bbc060`.
+The retained clock equals the level clock without an offset or truncation.
+Independent expectations verify frame continuity, discontinuity resets, and the 95 input bytes copied by the original input-fill method.
+All 90 cases pass. Native metadata accessor checks also pass in all 56 builder cases.
+Private queries, executable probes, cases, and independent verification remain under `.stackanvil/research/movement-auth-clock/`.
+
+The fixtures supply ECS pools, context entries, level data, ownership helpers, and pre-tick world callbacks.
+The packet send boundary copies the materialized packet. Raw wire serialization does not execute.
+Actual scheduler ordering, startup timing, full world simulation, and native ownership remain unverified.
+These results establish the clock source shared by published player input and retained history.
+They do not establish a constant offset between Bedrock ticks and Java completed frames.
+
+**Production status: incomplete.** Production still lacks ordered command/input history and actual client physics rewind.
+The previous 28 replay mismatches remain unresolved. This continuation changes no production source or runtime artifacts.
+Next, verify capture, local admission, physics, and packet sending within the ordinary native scheduler.
+Then integrate replay with exact frame bindings, snapshots, external state, input, and queued commands.
+Both routes, mixed gameplay actions, strict BDS, native baselines, Boar diagnostics, and platform joins remain required.
+The preceding research commit passes [GitHub CI](https://github.com/StackAnvil/patches/actions/runs/37583682412).
+Those runner checks do not replace live game joins.

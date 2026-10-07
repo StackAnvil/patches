@@ -1608,3 +1608,13 @@ It differs after 28 of 84 historical rewinds, including 14 cases with the curren
 Production still needs ordered command/input replay and actual historical physics.
 Native clock advancement, complete snapshots, world ownership, mixed actions, both routes, and the full matrix remain required.
 The [coverage ledger](bedrock-coverage.md#native-generation-of-effect-input-and-remaining-replay-gaps-october-7-2026) records the exact functions, boundaries, and production audit.
+
+## Native input-clock source, October 7, 2026
+
+The original level tick update publishes `CurrentTickComponent`, which the player-input builder reads.
+Retained-frame capture reads the same level clock through the canonical native getter.
+All 90 new execution cases pass, including unsigned wrap, stale or missing registry state, packet guards, and retained input.
+The native `Client Tick` metadata accessors verify the packet field in 56 cases.
+Scheduler ordering, startup timing, Java frame alignment, and complete physics rewind remain unverified.
+The 28 production replay mismatches remain unresolved. Every scenario and route in this matrix remains required.
+The [coverage ledger](bedrock-coverage.md#native-player-input-and-retained-history-clock-october-7-2026) records the functions, fixture boundaries, and next implementation steps.

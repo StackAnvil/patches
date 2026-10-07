@@ -1252,3 +1252,13 @@ Source eligibility, clocks, ECS discovery, ownership, and non-effect snapshot ca
 Full historical physics, clock advancement/alignment, zero-duration scheduling, and both-route verification remain required.
 This continuation changes research ledgers without changing production source or runtime artifacts.
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-generation-of-effect-input-and-remaining-replay-gaps-october-7-2026) records the native paths and production gaps.
+
+### Native player-input clock source
+
+Original tick advancement publishes the level clock into `CurrentTickComponent`; the player-input builder reads that value.
+Retained-frame capture executes through the canonical level clock getter without an offset.
+All 90 new native cases pass. Original `Client Tick` metadata getter/setter checks pass in 56 builder cases.
+Fixtures supply registry storage, ownership helpers, and pre-tick world callbacks. Raw wire encoding and ordinary scheduling remain unverified.
+Production still needs ordered command/input history, exact Java frame bindings, and full physics replay.
+The existing 28 replay mismatches remain unresolved. No production source changes in this continuation.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-player-input-and-retained-history-clock-october-7-2026) records the evidence and remaining requirements.
