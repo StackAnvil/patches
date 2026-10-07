@@ -29,7 +29,7 @@ Not every actor event has a Java translation.
 Complete event data, position overrides, unsupported effects, and live visual comparisons remain requirements.
 
 The complete 97-patch core stack replays and builds successfully.
-Checkstyle passes, with 767 tests, 19 optional skips, and no failures.
+Checkstyle passes, with 768 tests, 19 optional skips, and no failures.
 
 ## Fishing bite motion
 
@@ -48,3 +48,36 @@ Audio, particles, later hook physics, ordinary Java feedback, and complete visib
 Genuine strict BDS casts verify this capability on direct and ViaProxy connections.
 The client observer records the exact float update and unchanged horizontal motion for the same hook lifetime.
 Three invalid-message controls per route leave motion unchanged.
+
+## Fishing splash and shared sound arguments
+
+Bite event 13 also sends splash feedback through standard Java sound packets.
+This path works without the motion capability.
+It follows the motion message when that capability is present.
+The existing shared actor sound method now suppresses silent actors and preserves the full actor identity and baby flag.
+Its data argument is `-1`, so missing block data cannot select palette index zero.
+Existing hurt and death callers retain the same method.
+
+Seventy-two cases execute the native sound helper and actor identifier constructor for build 51061372, protocol 2193.
+The native flag lookup and baby accessor execute unchanged.
+Provider boundaries supply actor definition and unique identity getters and record the final sound call.
+The cases cover silent bit 17, neighboring bits, baby bit 11, four signed identities, and three actor positions.
+The production test uses the same combinations and verifies packet arguments and suppression.
+
+The adjacent fixed [sound enum](https://github.com/LiteLDev/LeviLamina/blob/455c4181b5f83d04689957e8aad17790581c0fc0/src/mc/deps/shared_types/legacy/LevelSoundEvent.h) identifies Splash as 26.
+The native executable verifies that argument.
+ViaBedrock retains its existing `random.splash` mapping, with volume `0.25` and pitch from `0.6` to `1.4` for fishing hooks.
+Native sample selection, audible output, captions, later hook physics, and complete particle behavior remain requirements.
+
+Fresh strict BDS runs verify the splash packet and resolved sound-engine request with direct and ViaProxy add-on clients.
+A stock Java client through ViaProxy verifies the same path, with no Fabric, VFP, add-on, or recorder mod.
+The normal resource-pack prompt is accepted before that client joins.
+One bite splash per route uses volume `0.25`, matching packet and engine positions and pitch, player category, and no looping or delay.
+The engine resolves Java liquid splash samples. Master volume remains zero, so native audible and caption parity remain unverified.
+Packet position quantization and native local hook position also remain comparison requirements.
+
+Real early-reel, bite-reel, and cow retrieval controls pass on all three routes.
+Actual hook metadata attaches to the cow. All nine hooks disappear and clear the local fishing pointers.
+All recorders exit successfully, and the owned BDS stops.
+The first engine observer queried an unresolved sound instance and supplies no positive engine evidence.
+The corrected observer records after the original method returns, without changing gameplay arguments.

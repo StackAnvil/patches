@@ -6596,3 +6596,23 @@ Three invalid-message controls per route leave motion unchanged.
 The [fishing bite record](bedrock-complex-gameplay.md#fishing-bite-impulses-october-7-2026) retains the build results, observer failure, and remaining boundaries.
 Particles, audio, later hook physics, visible native parity, ordinary Java feedback, and the full fishing matrix remain required.
 All eight coverage groups and the complete gameplay, server, and platform requirements remain active.
+
+## Fishing splash feedback, October 7, 2026
+
+Core now sends splash feedback for native fishing bite event 13 through standard Java sound packets.
+It sends the sound after the optional motion message, independently of the motion capability.
+The shared actor sound method suppresses silent actors and preserves baby flags, actor definitions, and full signed actor identities.
+Its data argument is `-1`, which prevents a fallback through block palette index zero.
+
+Seventy-two native cases execute the sound helper, flag lookup, and actor identifier constructor against build 51061372, protocol 2193.
+The production argument test covers the same flag, identity, and position combinations.
+The full core build passes 768 tests, with zero failures and 19 optional skips.
+The add-on passes 594 tests, with zero failures and 114 optional skips.
+ViaProxy builds against the same core, and the complete 97-patch core stack replays successfully.
+
+Real strict BDS casts verify the splash packet and resolved sound-engine request on three routes.
+These routes use the add-on directly, the add-on through ViaProxy, and stock Java through ViaProxy without any mods.
+Early-reel, bite-reel, cow retrieval, actual hook attachment, and local pointer cleanup pass on each route.
+The recorders exit successfully, and the owned BDS stops.
+The [fishing sound record](bedrock-complex-gameplay.md#fishing-splash-and-actor-sound-arguments-october-7-2026) retains native boundaries and remaining requirements.
+Native sample selection, audible output, captions, particles, later hook physics, and the complete gameplay matrix remain required.

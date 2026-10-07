@@ -987,8 +987,8 @@ The event 13 handler produces these results:
 | Sound | Call the native sound helper with event argument 26 and the actor position. Audio resolution remains unverified. |
 | Effect position | Use the actor's X/Z and `floor(boxMinY) + 1F`. Negative fractional heights use floor. |
 | Direction variable | Construct `variable.direction` from `(20F * boxWidth + 1F, 0F, boxWidth)`. |
-| Named effects | Emit `minecraft:fish_hook_particle`, followed by `minecraft:water_wake_particle`, at the effect position. |
-| Additional effect | Emit legacy particle event 27 with that position and direction. |
+| Effect order | Emit `minecraft:fish_hook_particle`, then legacy particle event 27, then `minecraft:water_wake_particle`. |
+| Legacy effect | Event 27 uses that position and direction. Its particle factory still needs verification. |
 
 **Native execution:** 108 cases execute the event dispatch, float impulse, shared reference operations, and sound arguments.
 Another 90 cases execute the entire bite handler across six heights, five widths, and three starting velocities.
@@ -1051,3 +1051,59 @@ The corrected observer resolves its callback through the system class loader, an
 **Remaining:** Events 11, 12, and 14, bite particles, audio resolution, later hook physics, and native visible comparisons remain required.
 Displayed rewards, ordinary Java feedback, enchantments, repeated casts, interrupted use, and the complete fishing matrix remain open.
 All eight coverage groups, strict BDS, Boar diagnostics, CubeCraft, and actual Windows/macOS joins remain required.
+
+### Fishing splash and actor sound arguments, October 7, 2026
+
+**Implemented:** Native bite event 13 now sends splash feedback through the standard core sound path.
+The sound follows the optional motion message and does not require that capability.
+The shared actor sound method suppresses silent actors and preserves baby flags, actor definitions, and full signed unique IDs.
+It supplies data `-1`, which prevents absent block data from selecting block palette index zero.
+Existing hurt and death callers use the same corrected method.
+
+**Native verification:** Another 72 cases execute the matching sound helper, flag lookup, and actor identifier constructor.
+They cover six flag combinations, four signed identities, and three positions.
+Silent bit 17 suppresses sound. Neighboring bits 16 and 18 do not suppress it.
+Baby bit 11, actor positions, actor identities, event 26, data `-1`, and the non-global argument match.
+Actor definition and identity getters use explicit provider boundaries.
+These cases do not execute audio selection, sample playback, captions, or particle simulation.
+
+The adjacent fixed headers identify [Splash as 26](https://github.com/LiteLDev/LeviLamina/blob/455c4181b5f83d04689957e8aad17790581c0fc0/src/mc/deps/shared_types/legacy/LevelSoundEvent.h).
+The [actor identifier layout](https://github.com/LiteLDev/LeviLamina/blob/455c4181b5f83d04689957e8aad17790581c0fc0/src/mc/world/actor/ActorSoundIdentifier.h) supplies a research lead.
+The matching executable establishes the behavior for build 51061372 and protocol 2193.
+All proprietary instructions and captures remain private.
+
+**Build verification:** The full core build passes 768 tests, with zero failures and 19 optional skips.
+The add-on passes 594 tests, with zero failures and 114 optional skips.
+ViaProxy builds against the same core, and all 1,240 non-manifest core entries match in both clients.
+The 97-patch core stack replays successfully.
+The metadata patch changes only context, and the standalone entity reference patch remains byte-identical.
+
+**Live verification:** Real casts against strict BDS produce native bite event 13 on all three routes.
+The routes use the add-on directly, the add-on through ViaProxy, and stock Java through ViaProxy.
+The stock profile contains Minecraft and LWJGL, with no Fabric, VFP, add-on, or recorder mod.
+It joins after acceptance of the normal resource-pack prompt.
+
+Each route receives one bite splash at volume `0.25`, with pitch inside the configured range.
+The sound engine receives the packet's exact position, volume, pitch, and player category on the render thread.
+Playback is non-relative, non-looping, and has no delay.
+The resolved Java samples are `minecraft:liquid/splash` or `minecraft:liquid/splash2`.
+Master volume remains zero, so these checks do not establish audible output or native sample and caption parity.
+Standard packets quantize position to eighths of a block. Native local hook position remains a separate comparison requirement.
+
+All three routes pass real early-reel, bite-reel, and live-cow retrieval controls.
+Early reeling gives no reward or durability loss. Bite reeling gives one reward and uses one durability point.
+Cow retrieval pulls the target and uses three durability points.
+Actual Java hook metadata attaches to the cow on each route.
+All nine hooks disappear, and the actual local fishing pointers clear.
+Server reward observations do not establish the client's displayed inventory.
+The recorders exit successfully, and the owned BDS stops.
+The private fixture returns to its original checksum. Existing BDS and ViaProxy processes remain unchanged.
+
+The first observer queried volume before the sound engine resolved its sample.
+Its packet records are valid, but that observer supplies no positive engine evidence.
+Fresh runs use a corrected observer after the original engine method returns, without changing gameplay arguments.
+
+**Remaining:** Events 11, 12, and 14, all three native particle calls, later hook physics, and native visual comparisons remain required.
+Native audio samples, captions, displayed rewards, enchantments, repeated casts, interruptions, and the full fishing matrix remain open.
+Ordinary Java splash and these hook controls are verified. Complete ordinary Java fishing feedback remains required.
+All eight coverage groups, the full gameplay matrix, Boar diagnostics, CubeCraft, and actual Windows/macOS joins remain required.

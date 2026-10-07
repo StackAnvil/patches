@@ -1,4 +1,4 @@
-From 47ace4f851bd7728ca00498562206e41acbc8be8 Mon Sep 17 00:00:00 2001
+From eaa1c6ed35eec8aef92a3e3e6a4e48d96c6e3890 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 00:11:24 +0200
 Subject: [PATCH] feat(entity-events): translate Bedrock actor events to Java
@@ -26,15 +26,25 @@ Bounded native execution verifies 108 impulse cases and 90 complete bite
 handler cases against Windows 1.26.51.1 protocol 2193. Keep particles,
 audio, subsequent physics, ordinary Java behavior and visible native
 comparisons as separate remaining requirements.
+
+Translate bite splash feedback through the standard core sound pipeline,
+including clients without the motion capability. Native 1.26.51.1's sound
+helper suppresses silent actors and forwards the actor definition, baby
+flag, full signed unique ID and data -1. Preserve those shared semantics
+in the existing actor sound method instead of treating absent block data
+as palette index zero. Seventy-two native helper/identifier cases cover
+silent and neighboring flags, age, signed identity and actor position.
 ---
- .../api/model/NativeFishingBite.java          | 55 ++++++++++++++++
- .../viabedrock/api/model/entity/Entity.java   |  2 +-
- .../protocol/packet/EntityPackets.java        | 51 ++++++++++++++-
- .../api/model/NativeFishingBiteTest.java      | 57 +++++++++++++++++
- .../protocol/packet/EntityPacketsTest.java    | 63 +++++++++++++++++++
- 5 files changed, 224 insertions(+), 4 deletions(-)
+ .../api/model/NativeFishingBite.java          | 55 ++++++++++++
+ .../viabedrock/api/model/entity/Entity.java   | 10 ++-
+ .../protocol/packet/EntityPackets.java        | 53 ++++++++++-
+ .../api/model/NativeFishingBiteTest.java      | 57 ++++++++++++
+ .../api/model/entity/EntitySoundTest.java     | 90 +++++++++++++++++++
+ .../protocol/packet/EntityPacketsTest.java    | 63 +++++++++++++
+ 6 files changed, 322 insertions(+), 6 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFishingBite.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeFishingBiteTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/EntitySoundTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/EntityPacketsTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeFishingBite.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeFishingBite.java
@@ -99,20 +109,33 @@ index 000000000..20180894d
 +
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index e4ab26a1c..376b1714c 100644
+index e4ab26a1c..b894b6e29 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-@@ -167,7 +167,7 @@ public class Entity {
+@@ -162,14 +162,18 @@ public class Entity {
+     }
+ 
+     public void playSound(final String soundEvent) {
++        final Set<ActorFlags> flags = this.entityFlags();
++        if (flags.contains(ActorFlags.SILENT)) {
++            return;
++        }
+         final PacketWrapper levelSoundEvent = PacketWrapper.create(ClientboundBedrockPackets.LEVEL_SOUND_EVENT, this.user);
+         levelSoundEvent.write(BedrockTypes.STRING, soundEvent); // event
          levelSoundEvent.write(BedrockTypes.POSITION_3F, this.position); // position
-         levelSoundEvent.write(BedrockTypes.VAR_INT, 0); // data
+-        levelSoundEvent.write(BedrockTypes.VAR_INT, 0); // data
++        levelSoundEvent.write(BedrockTypes.VAR_INT, -1); // no block sound data
          levelSoundEvent.write(BedrockTypes.STRING, this.type); // entity identifier
 -        levelSoundEvent.write(Types.BOOLEAN, false); // is baby mob
-+        levelSoundEvent.write(Types.BOOLEAN, this.entityFlags().contains(ActorFlags.BABY)); // is baby mob
++        levelSoundEvent.write(Types.BOOLEAN, flags.contains(ActorFlags.BABY)); // is baby mob
          levelSoundEvent.write(Types.BOOLEAN, false); // is global sound
-         levelSoundEvent.write(BedrockTypes.LONG_LE, -1L); // entity unique id
+-        levelSoundEvent.write(BedrockTypes.LONG_LE, -1L); // entity unique id
++        levelSoundEvent.write(BedrockTypes.LONG_LE, this.uniqueId); // entity unique id
          levelSoundEvent.write(BedrockTypes.OPTIONAL_POSITION_3F, null); // fire at position
+         levelSoundEvent.send(BedrockProtocol.class, false);
+     }
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
-index 74b778fb2..6d5bf7d10 100644
+index 74b778fb2..b6ce48323 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
 @@ -35,6 +35,7 @@ import com.viaversion.viaversion.util.Key;
@@ -131,24 +154,26 @@ index 74b778fb2..6d5bf7d10 100644
  import net.raphimc.viabedrock.protocol.data.enums.java.Relative;
  import net.raphimc.viabedrock.protocol.data.enums.java.generated.EquipmentSlot;
  import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
-@@ -476,6 +478,16 @@ public final class EntityPackets {
+@@ -476,6 +478,18 @@ public final class EntityPackets {
                  return;
              }
              switch (event) {
 +                case FISHHOOK_HOOKTIME -> {
 +                    wrapper.cancel();
-+                    if (entity.javaType() == EntityTypes26_3.FISHING_BOBBER
-+                            && wrapper.user().get(ChannelStorage.class).hasChannel(NativeFishingBite.CHANNEL)) {
-+                        final PacketWrapper bite = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, wrapper.user());
-+                        bite.write(Types.STRING, NativeFishingBite.CHANNEL);
-+                        bite.write(NativeFishingBite.TYPE, new NativeFishingBite(entity.javaId(), entity.javaUuid()));
-+                        bite.send(BedrockProtocol.class);
++                    if (entity.javaType() == EntityTypes26_3.FISHING_BOBBER) {
++                        if (wrapper.user().get(ChannelStorage.class).hasChannel(NativeFishingBite.CHANNEL)) {
++                            final PacketWrapper bite = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, wrapper.user());
++                            bite.write(Types.STRING, NativeFishingBite.CHANNEL);
++                            bite.write(NativeFishingBite.TYPE, new NativeFishingBite(entity.javaId(), entity.javaUuid()));
++                            bite.send(BedrockProtocol.class);
++                        }
++                        entity.playSound("splash");
 +                    }
 +                }
                  case HURT -> {
                      final CompoundTag damageTypeRegistry = gameSession.getJavaRegistries().getCompoundTag(RegistryKeys.DAMAGE_TYPE);
                      final SharedTypes_Legacy_ActorDamageCause damageCause = SharedTypes_Legacy_ActorDamageCause.getByValue(data, SharedTypes_Legacy_ActorDamageCause.Override);
-@@ -505,12 +517,17 @@ public final class EntityPackets {
+@@ -505,12 +519,17 @@ public final class EntityPackets {
                      }
                      if (entity != entityTracker.getClientPlayer()) {
                          entity.playSound("death");
@@ -169,7 +194,7 @@ index 74b778fb2..6d5bf7d10 100644
                  }
              }
          });
-@@ -704,6 +721,34 @@ public final class EntityPackets {
+@@ -704,6 +723,34 @@ public final class EntityPackets {
          return entity;
      }
  
@@ -264,6 +289,102 @@ index 000000000..689e584b2
 +        for (int index = 0; index < input.length; index++) {
 +            assertEquals(nativeBits[index], Float.floatToRawIntBits(NativeFishingBite.verticalVelocity(input[index])));
 +        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/entity/EntitySoundTest.java b/src/test/java/net/raphimc/viabedrock/api/model/entity/EntitySoundTest.java
+new file mode 100644
+index 000000000..864c2bd28
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/entity/EntitySoundTest.java
+@@ -0,0 +1,90 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model.entity;
++
++import com.viaversion.viaversion.api.Via;
++import com.viaversion.viaversion.api.ViaManager;
++import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
++import com.viaversion.viaversion.api.minecraft.entitydata.EntityData;
++import com.viaversion.viaversion.api.protocol.Protocol;
++import com.viaversion.viaversion.api.protocol.ProtocolManager;
++import com.viaversion.viaversion.api.protocol.packet.PacketWrapper;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
++import net.raphimc.viabedrock.protocol.data.enums.bedrock.ActorDataIds;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import net.raphimc.viabedrock.protocol.types.BedrockTypes;
++import net.raphimc.viabedrock.protocol.types.entitydata.EntityDataTypesBedrock;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.InvocationHandler;
++import java.lang.reflect.Proxy;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class EntitySoundTest {
++
++    @Test
++    void matchesNativeSoundSuppressionAndActorArguments() throws Exception {
++        final var manager = Via.class.getDeclaredField("manager");
++        manager.setAccessible(true);
++        final Object previousManager = manager.get(null);
++        final List<PacketWrapper> sent = new ArrayList<>();
++        try {
++            final ProtocolManager protocols = proxy(ProtocolManager.class, (ignored, method, arguments) -> {
++                if (!method.getName().equals("createPacketWrapper")) {
++                    throw new AssertionError(method.getName());
++                }
++                return new PacketWrapperImpl(ClientboundBedrockPackets.LEVEL_SOUND_EVENT, null, null) {
++                    @Override
++                    public void send(final Class<? extends Protocol> protocol, final boolean skipCurrentPipeline) {
++                        assertSame(BedrockProtocol.class, protocol);
++                        assertFalse(skipCurrentPipeline);
++                        sent.add(this);
++                    }
++                };
++            });
++            manager.set(null, proxy(ViaManager.class, (ignored, method, arguments) -> protocols));
++            // Matching native cases include neighboring bits so they cannot conceal an off-by-one flag test.
++            for (final long flags : new long[]{0L, 1L << 11, 1L << 17, (1L << 11) | (1L << 17), 1L << 16, 1L << 18}) {
++                for (final long id : new long[]{-1L, -201863462911L, 1L, 1L << 62}) {
++                    for (final Position3f position : new Position3f[]{new Position3f(-0.125F, 0F, 0.25F),
++                        new Position3f(12.5F, -7.25F, 9F), new Position3f(-100F, 250F, 21F)}) {
++                        sent.clear();
++                        final Entity actor = new Entity(null, id, 1, "minecraft:fishing_hook", 2, UUID.randomUUID(), EntityTypes26_3.FISHING_BOBBER);
++                        actor.position = position;
++                        actor.entityData().put(ActorDataIds.RESERVED_0, new EntityData(0, EntityDataTypesBedrock.LONG, flags));
++                        actor.playSound("splash");
++                        if ((flags & (1L << 17)) != 0) {
++                            assertTrue(sent.isEmpty());
++                            continue;
++                        }
++                        assertEquals(1, sent.size());
++                        final PacketWrapper sound = sent.getFirst();
++                        assertEquals(position, sound.get(BedrockTypes.POSITION_3F, 0));
++                        assertEquals(-1, sound.get(BedrockTypes.VAR_INT, 0));
++                        assertEquals(id, sound.get(BedrockTypes.LONG_LE, 0));
++                        assertEquals((flags & (1L << 11)) != 0, sound.get(Types.BOOLEAN, 0));
++                        assertFalse(sound.get(Types.BOOLEAN, 1));
++                        assertNull(sound.get(BedrockTypes.OPTIONAL_POSITION_3F, 0));
++                    }
++                }
++            }
++        } finally {
++            manager.set(null, previousManager);
++        }
++    }
++
++    private static <T> T proxy(final Class<T> type, final InvocationHandler handler) {
++        return type.cast(Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, handler));
 +    }
 +
 +}
