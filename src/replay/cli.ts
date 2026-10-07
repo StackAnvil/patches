@@ -13,6 +13,7 @@ import { installModpack } from "../integration/modpack.ts";
 import { configureShaders, graphicsFailures, installGraphicsProfile, readGraphicsLock, type GraphicsProfile } from "../integration/graphics.ts";
 import { activeDisplay, displayEnv, stopDisplay } from "../lab/display.ts";
 import { inspectJournal } from "./journal.ts";
+import { prepareFormFixture } from "./form-fixture.ts";
 import { requireNativeOfflineReplay, requireNativeReplayProcessNamespaces, type NativeOfflineProof } from "./native-offline.ts";
 import { prepareNativeReplayPrefix } from "./native-prefix.ts";
 import { prepareNativeProfile } from "./native-profile.ts";
@@ -113,7 +114,7 @@ async function buildFabricRecorder(jar: string, build: string): Promise<string> 
   return output;
 }
 
-async function launchJava(directory: string, address: string, client: "addon" | "proxy", recorder: string, graphics: GraphicsProfile, account?: string): Promise<{ pid: number; log: string }> {
+async function launchJava(directory: string, address: string, client: "addon" | "proxy", recorder: string, graphics: GraphicsProfile, account?: string, guiScale?: number, softwareRendering = false): Promise<{ pid: number; log: string }> {
   const isolated = await displayEnv(true);
   if (!isolated) throw new Error("The replay lab requires a private virtual display.");
   const sourceName = process.env.STACKANVIL_REPLAY_INSTANCE ?? "StackAnvil Integration 26.3";
@@ -145,6 +146,15 @@ async function launchJava(directory: string, address: string, client: "addon" | 
   const game = join(instance, "minecraft");
   await mkdir(game, { mode: 0o700 });
   for (const file of ["config", "options.txt"]) if (existsSync(join(source, "minecraft", file))) await cp(join(source, "minecraft", file), join(game, file), { recursive: true });
+  if (guiScale !== undefined) {
+    const optionsFile = join(game, "options.txt");
+    let options = existsSync(optionsFile) ? await readFile(optionsFile, "utf8") : "";
+    for (const [key, value] of [["guiScale", String(guiScale)], ["soundCategory_master", "0"], ["fullscreen", "false"]]) {
+      const line = new RegExp(`^${key}:.*$`, "m");
+      options = line.test(options) ? options.replace(line, `${key}:${value}`) : `${options.trimEnd()}\n${key}:${value}\n`;
+    }
+    await writeFile(optionsFile, options, { mode: 0o600 });
+  }
   const config = join(game, "config/viafabricplus");
   await mkdir(config, { recursive: true, mode: 0o700 });
   const settingsFile = join(config, "settings.json");
@@ -188,6 +198,7 @@ async function launchJava(directory: string, address: string, client: "addon" | 
     ...(client === "addon" ? [`--filesystem=${join(privateRoot, "client-assets")}`] : []),
     `--env=DISPLAY=${isolated.DISPLAY}`, `--env=XAUTHORITY=${isolated.XAUTHORITY}`, "--env=WAYLAND_DISPLAY=", "--env=QT_QPA_PLATFORM=xcb",
     "--env=SDL_VIDEODRIVER=x11", "--env=SDL_VIDEO_DRIVER=x11", "--env=SDL_VIDEO_FORCE_EGL=1", "--env=PULSE_SINK=stackanvil_silent",
+    ...(softwareRendering ? ["--env=LIBGL_ALWAYS_SOFTWARE=1", "--env=GALLIUM_DRIVER=llvmpipe", "--env=MESA_LOADER_DRIVER_OVERRIDE=llvmpipe"] : []),
     "org.prismlauncher.PrismLauncher", "--dir", prism, "--launch", name,
     ...(address.startsWith("nethernet://") ? [] : ["--server", address])], root, launcherLog, isolated);
   const until = Date.now() + 60_000;
@@ -283,6 +294,16 @@ async function stopAll(gamePid?: number): Promise<void> {
 }
 async function main(): Promise<void> {
   const [mode, input, ...args] = Bun.argv.slice(2);
+  if (mode === "--help" || mode === "help" || (mode === "form-fixture" && input === "--help")) {
+    console.log(`Usage: bun run server-replay <record server|replay directory|inspect directory> [--seconds 120]
+       bun run server-replay form-fixture /absolute/plan.json [--dry-run] [--verbose]
+       bun run server-replay form-fixture /absolute/plan.json --apply --reviewed-preview <sha256> [--verbose]
+
+Form fixtures combine a protocol-2193 bootstrap, captured form JSON, and declared decrypted packs.
+The default is a read-only verbose preview. Apply creates a fresh private directory only.
+Java replay options: --gui-scale 1..4 --software-rendering. Virtual display and zero audio remain enabled.`);
+    return;
+  }
   if (mode === "selftest") {
     const jar = await artifact("viaproxy");
     const { classes } = await buildPlugin(jar);
@@ -292,12 +313,33 @@ async function main(): Promise<void> {
     }
     return;
   }
+  if (mode === "form-fixture" && input) {
+    if (args.includes("--apply") && args.includes("--dry-run")) throw new Error("Choose --dry-run or --apply.");
+    const known = new Set(["--apply", "--dry-run", "--verbose", "--reviewed-preview"]);
+    for (let index = 0; index < args.length; index++) {
+      if (!known.has(args[index]!)) throw new Error("Unknown form fixture option.");
+      if (args[index] === "--reviewed-preview") index++;
+    }
+    const reviewedAt = args.indexOf("--reviewed-preview");
+    const reviewed = reviewedAt < 0 ? undefined : args[reviewedAt + 1];
+    if (args.includes("--apply") && (!reviewed || !/^[0-9a-f]{64}$/.test(reviewed))) {
+      throw new Error("Fixture creation requires --apply --reviewed-preview <preview-sha256>.");
+    }
+    if (!args.includes("--apply") && reviewed !== undefined) throw new Error("--reviewed-preview requires --apply.");
+    const preview = await Effect.runPromise(prepareFormFixture(resolve(input), privateRoot, args.includes("--apply") ? reviewed : undefined));
+    console.log(JSON.stringify(preview, null, 2));
+    return;
+  }
   if (mode === "inspect" && input) { console.log(JSON.stringify(await inspectJournal(join(resolve(input), "packets.sbr")), null, 2)); return; }
-  if (!input || (mode !== "record" && mode !== "replay")) throw new Error("Usage: bun run server-replay <record cubecraft|hive|lifeboat|galaxite|minehut|geyser|local --target host:port|replay directory|inspect directory> [--seconds 120]");
+  if (!input || (mode !== "record" && mode !== "replay")) throw new Error("Run bun run server-replay --help for recording, replay, and form-fixture usage.");
   const option = (name: string) => { const at = args.indexOf(name); return at < 0 ? undefined : args[at + 1]; };
   const seconds = Number(option("--seconds") ?? 120);
   const client = option("--client") ?? (mode === "replay" ? "addon" : "proxy");
   const transportOnly = args.includes("--transport-only");
+  const guiScale = option("--gui-scale") === undefined ? undefined : Number(option("--gui-scale"));
+  const softwareRendering = args.includes("--software-rendering");
+  if (guiScale !== undefined && (!Number.isInteger(guiScale) || guiScale < 1 || guiScale > 4)) throw new Error("--gui-scale must be between 1 and 4.");
+  if (client === "native" && (guiScale !== undefined || softwareRendering)) throw new Error("Java GUI/rendering options cannot change the native client guard.");
   const graphics = args.includes("--shaders") ? "shaders" : args.includes("--modpack") ? "optimized" : "plain";
   if (client === "native" && graphics !== "plain") throw new Error("--modpack and --shaders require a Java client.");
   if (client !== "addon" && client !== "proxy" && client !== "native") throw new Error("--client must be addon, proxy, or native.");
@@ -372,7 +414,7 @@ async function main(): Promise<void> {
       ?? (mode === "record" && input !== "local" ? process.env.STACKANVIL_BEDROCK_ACCOUNT ?? accountDefault : undefined) : undefined;
     const game = client === "native"
       ? await launchNative(directory, bind!, option("--native-home"), mode === "replay" || args.includes("--native-manual-connect"), nativeOffline)
-      : await launchJava(directory, client === "addon" ? target! : `127.0.0.1:${bind}`, client, recorder, graphics, assetAccount ? resolve(assetAccount) : undefined);
+      : await launchJava(directory, client === "addon" ? target! : `127.0.0.1:${bind}`, client, recorder, graphics, assetAccount ? resolve(assetAccount) : undefined, guiScale, softwareRendering);
     gamePid = game.pid;
     console.log(`Private ${mode} session: ${directory}`);
     // Keep connection setup separate from the requested gameplay scene.

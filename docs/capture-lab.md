@@ -160,3 +160,50 @@ Gameplay acknowledgments can arrive after a transport timeout while the client d
 Camera preset observations wait until core finishes its custom-block resource-pack gate.
 Both direct and ViaProxy recorders retain the latest preset table until its decoder runs.
 This prevents the observer from treating an intentionally queued packet as an unhandled packet.
+
+## Build a controlled form fixture
+
+A form fixture combines a recorded protocol-2193 bootstrap with captured form requests and declared decrypted pack exports.
+It is a controlled fixture with mixed provenance, not an unchanged server recording.
+The fixture preserves form JSON and response indices. It does not contact the recorded server.
+
+Keep the plan, packs, journal, and screenshots in ignored private directories.
+Use a fresh direct child of `.stackanvil/replay` for the output.
+The source recording must contain StartGame and spawn packets before the chosen cutoff.
+
+The plan contains:
+
+- `source`, `sourceSha256`, and `output`: absolute recording directory, journal checksum, and fresh output directory.
+- `bootstrapSeconds`: an integer from 10 to 120.
+- `intervalSeconds`: an integer from 10 to 60 between form requests.
+- `forms`: one to 16 entries with `id`, absolute `source`, and `sha256` for each captured JSON file.
+- `packs`: replacement entries with `from`, absolute `source`, `sha256`, and explicit `decrypted: true` provenance.
+- Optional `uiFiles` on a replacement: the expected number of `ui/*.json` definitions.
+
+Pack filenames and manifest identities must agree. Replacements must retain the recorded pack version.
+For declared decrypted exports, the fixture updates advertised UUIDs and archive lengths, then removes original encryption and CDN fields.
+ReplayServer serves these archives through its owned loopback HTTP endpoint.
+Unreplaced fixture metadata remains intact until the normal replay handshake supplies local delivery details.
+
+1. Run the default read-only preview:
+
+   ```bash
+   bun run server-replay form-fixture /absolute/private/plan.json --dry-run --verbose
+   ```
+
+2. Review every input checksum, pack identity, output action, and journal summary.
+3. Use the returned `previewSha256` to create the reviewed fixture:
+
+   ```bash
+   bun run server-replay form-fixture /absolute/private/plan.json --apply --reviewed-preview <previewSha256> --verbose
+   ```
+
+Apply rejects changed inputs and existing output paths, including symlinks.
+It creates private files exclusively and publishes `fixture.json` after input verification.
+A failed creation removes only its newly owned output directory.
+The command does not launch a client or change installed artifacts.
+
+For an authorized Java render run, use `server-replay replay <fixture-directory>` with `--gui-scale 1..4` and `--software-rendering`.
+The normal virtual display and zero-volume defaults still apply.
+These Java options cannot change native-client GPU guards.
+Keep actual render evidence separate from CPU layout results and synthetic fixture provenance.
