@@ -1,4 +1,4 @@
-From 9203172f60eeec901ce77b4cbca250761693b98f Mon Sep 17 00:00:00 2001
+From 7b4af7cca17a07751d834880e6d69ff130d1ec96 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 25 Sep 2026 16:53:07 +0200
 Subject: [PATCH] feat(bedrock): render custom entities and player skins
@@ -349,6 +349,19 @@ ten pixels plus authored extra spacing. The ordinary and sneaking name
 producer passes zero extra spacing and unit scale. Layout and anchor tests
 cover twelve cases. Absolute glyph origin and native GPU comparisons remain
 unverified; keep proprietary executable fixtures private.
+
+Use the target name foreground consumer to determine pixel scale, row
+origin and world lift. Preserve native float multiplication order and
+integer half-width centering. Its original LF splitter drops only
+zero-length rows; retain whitespace and translated segment styles.
+Replace the earlier inferred final-row anchor with the executed consumer
+layout. Ordinary Java names retain the original renderer path.
+
+Original Bedrock 1.26.51.1 protocol 2193 instructions verify twelve
+transform cases, 210 row/width cases, eight splitter controls and the empty
+foreground exit. Font rasterization, camera/quaternion orientation,
+backgrounds, stripped formatting-only rows and native GPU comparisons
+remain separate requirements.
 ---
  build.gradle.kts                              |   6 +
  .../bedrock/ViaFabricPlusBedrock.java         |  17 ++
@@ -359,7 +372,7 @@ unverified; keep proprietary executable fixtures private.
  .../render/MixinBedrockActorRenderType.java   |  47 ++++
  .../render/MixinBedrockNameTagMetadata.java   |  33 +++
  .../render/MixinBedrockNameTagRenderer.java   |  56 ++++
- .../features/render/MixinBedrockNameTags.java |  60 ++++
+ .../features/render/MixinBedrockNameTags.java |  72 +++++
  .../render/MixinBedrockRidingMetadata.java    |  38 +++
  .../render/MixinBedrockRidingPosition.java    |  27 ++
  .../render/MixinEntityRenderDispatcher.java   |  93 ++++++
@@ -374,7 +387,7 @@ unverified; keep proprietary executable fixtures private.
  .../bedrock/render/BedrockEntityRenderer.java | 185 ++++++++++++
  .../bedrock/render/BedrockGeometry.java       | 215 ++++++++++++++
  .../bedrock/render/BedrockNameTagAnchors.java |  75 +++++
- .../bedrock/render/BedrockNameTags.java       |  59 ++++
+ .../bedrock/render/BedrockNameTags.java       |  76 +++++
  .../bedrock/render/BedrockPlayerRenderer.java |  53 ++++
  .../bedrock/render/BedrockPlayerSkins.java    | 264 ++++++++++++++++++
  .../bedrock/render/BedrockRidingAnchors.java  |  71 +++++
@@ -394,12 +407,12 @@ unverified; keep proprietary executable fixtures private.
  .../bedrock/render/BedrockCubeFacesTest.java  | 182 ++++++++++++
  .../render/BedrockEntityRendererTest.java     |  50 ++++
  .../render/BedrockNameTagAnchorsTest.java     | 120 ++++++++
- .../bedrock/render/BedrockNameTagsTest.java   | 100 +++++++
+ .../bedrock/render/BedrockNameTagsTest.java   | 127 +++++++++
  .../render/BedrockPlayerMaterialsTest.java    |  42 +++
  .../render/BedrockRidingAnchorsTest.java      | 130 +++++++++
  .../render/BedrockShaderPipelinesTest.java    |  40 +++
  .../render/CustomEntityRenderStoreTest.java   |  62 ++++
- 49 files changed, 3174 insertions(+), 1 deletion(-)
+ 49 files changed, 3230 insertions(+), 1 deletion(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockActorRenderType.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/compat/iris/MixinIrisPipelines.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinAbstractClientPlayer.java
@@ -781,10 +794,10 @@ index 0000000..4b616d4
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java
 new file mode 100644
-index 0000000..1fb05cd
+index 0000000..1dae6e4
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/render/MixinBedrockNameTags.java
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,72 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -825,23 +838,35 @@ index 0000000..1fb05cd
 +                                                           @Local(argsOnly = true) final boolean seeThrough) {
 +        final boolean nativeContext = BedrockNameTagAnchors.enabled(
 +                ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST));
-+        return original.call(pose, x, y, name, light,
++        return original.call(pose, nativeContext ? BedrockNameTags.centerX(x) : x, y, name, light,
 +                BedrockNameTags.foregroundColor(nativeContext, seeThrough, mode, color), background, mode);
++    }
++
++    @WrapOperation(method = "submitNameTag", at = @At(value = "INVOKE",
++            target = "Lcom/mojang/blaze3d/vertex/PoseStack;scale(FFF)V"))
++    private void scaleNativeName(final PoseStack poses, final float x, final float y, final float z,
++                                 final Operation<Void> original) {
++        if (BedrockNameTagAnchors.enabled(ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST))) {
++            final float scale = BedrockNameTags.pixelScale(1F);
++            original.call(poses, scale, -scale, scale);
++        } else {
++            original.call(poses, x, y, z);
++        }
 +    }
 +
 +    @WrapMethod(method = "submitNameTag")
 +    private void renderServerNameLines(final PoseStack poses, final @Nullable Vec3 attachment,
 +                                      final int offset, final Component name, final boolean seeThrough,
 +                                      final int light, final CameraRenderState camera, final Operation<Void> original) {
-+        if (!BedrockNameTagAnchors.enabled(ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST))
-+                || !name.getString().contains("\n")) {
++        if (!BedrockNameTagAnchors.enabled(ViaFabricPlus.api().targetVersion().equals(BedrockProtocolVersion.BEDROCK_LATEST))) {
 +            original.call(poses, attachment, offset, name, seeThrough, light, camera);
 +            return;
 +        }
-+        for (final var line : BedrockNameTags.layout(name, offset)) {
-+            if (!line.text().getString().isEmpty()) {
-+                original.call(poses, attachment, line.baseline(), line.text(), seeThrough, light, camera);
-+            }
++        final var lines = BedrockNameTags.layout(name, offset);
++        final Vec3 lifted = attachment == null || lines.size() <= 1 ? attachment
++                : attachment.add(0, BedrockNameTags.rowLift(lines.size()), 0);
++        for (final var line : lines) {
++            original.call(poses, lifted, line.baseline(), line.text(), seeThrough, light, camera);
 +        }
 +    }
 +}
@@ -2019,10 +2044,10 @@ index 0000000..02572ba
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTags.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTags.java
 new file mode 100644
-index 0000000..a1b01c9
+index 0000000..44d5b98
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTags.java
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,76 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2053,7 +2078,23 @@ index 0000000..a1b01c9
 +        return mode == Font.DisplayMode.SEE_THROUGH ? color | 0xFF000000 : color;
 +    }
 +
++    public static float pixelScale(final float recordScale) {
++        // Keep the two original native float multiplications in order.
++        return recordScale * 1.6F * 0.016666668F;
++    }
++
++    public static float centerX(final float javaCenter) {
++        // Java centers at -width / 2F; native truncates the integer half-width first.
++        final int halfWidth = (int) -javaCenter;
++        return -(float) halfWidth;
++    }
++
++    public static double rowLift(final int rows) {
++        return Math.max(0, rows - 1) * 0.125;
++    }
++
 +    public static List<Line> layout(final Component name, final int baseline) {
++        if (name.getString().isEmpty()) return List.of();
 +        if (!name.getString().contains("\n")) return List.of(new Line(name, baseline));
 +        final List<MutableComponent> rows = new ArrayList<>();
 +        rows.add(Component.empty());
@@ -2068,9 +2109,10 @@ index 0000000..a1b01c9
 +            append(rows.getLast(), text.substring(start), style);
 +            return Optional.empty();
 +        }, Style.EMPTY);
++        rows.removeIf(row -> row.getString().isEmpty());
 +        final List<Line> lines = new ArrayList<>(rows.size());
 +        for (int index = 0; index < rows.size(); index++) {
-+            lines.add(new Line(rows.get(index), baseline - (rows.size() - index - 1) * LINE_ADVANCE));
++            lines.add(new Line(rows.get(index), baseline + index * LINE_ADVANCE));
 +        }
 +        return List.copyOf(lines);
 +    }
@@ -3552,10 +3594,10 @@ index 0000000..012ca09
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java
 new file mode 100644
-index 0000000..f211bba
+index 0000000..7ca90b8
 --- /dev/null
 +++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockNameTagsTest.java
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,127 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -3610,13 +3652,13 @@ index 0000000..f211bba
 +    }
 +
 +    @Test
-+    void keepsStyledSiblingsAcrossNewlinesAndAnchorsTheLastRow() {
++    void keepsStyledSiblingsAcrossNewlinesAndStartsAtTheOrigin() {
 +        final var red = Style.EMPTY.withColor(ChatFormatting.RED);
 +        final var blue = Style.EMPTY.withColor(ChatFormatting.BLUE).withBold(true);
 +        final var name = Component.literal("a\nb").setStyle(red)
 +            .append(Component.literal("c\nd").setStyle(blue));
 +        final var lines = BedrockNameTags.layout(name, 4);
-+        assertEquals(List.of(-16, -6, 4), lines.stream().map(BedrockNameTags.Line::baseline).toList());
++        assertEquals(List.of(4, 14, 24), lines.stream().map(BedrockNameTags.Line::baseline).toList());
 +        assertEquals(List.of(red), styles(lines.getFirst().text()));
 +        assertEquals(List.of(red, blue), styles(lines.get(1).text()));
 +        assertEquals(List.of(blue), styles(lines.getLast().text()));
@@ -3624,14 +3666,18 @@ index 0000000..f211bba
 +    }
 +
 +    @Test
-+    void retainsBlankRowsAndWholeUnicodeCodepoints() {
-+        final var name = Component.literal("\n\n\uD83D\uDE00\n");
-+        final var lines = BedrockNameTags.layout(name, 2);
-+        assertEquals(List.of(-28, -18, -8, 2), lines.stream().map(BedrockNameTags.Line::baseline).toList());
-+        assertTrue(lines.getFirst().text().getString().isEmpty());
-+        assertTrue(lines.get(1).text().getString().isEmpty());
-+        assertEquals(1, lines.get(2).text().getString().codePointCount(0, lines.get(2).text().getString().length()));
-+        assertTrue(lines.getLast().text().getString().isEmpty());
++    void skipsEmptyNativeRowsAndKeepsWholeUnicodeCodepoints() {
++        final var lines = BedrockNameTags.layout(Component.literal("\n\n\uD83D\uDE00\n"), 2);
++        assertEquals(1, lines.size());
++        assertEquals(2, lines.getFirst().baseline());
++        assertEquals(1, lines.getFirst().text().getString().codePointCount(0, lines.getFirst().text().getString().length()));
++        assertTrue(BedrockNameTags.layout(Component.literal("\n\n"), 2).isEmpty());
++        assertTrue(BedrockNameTags.layout(Component.empty(), 2).isEmpty());
++        assertEquals(0, BedrockNameTags.rowLift(0));
++        assertEquals(3, BedrockNameTags.layout(Component.literal("a\n \nb"), 0).size());
++        final var separated = BedrockNameTags.layout(Component.literal("a\n\nb\n"), 0);
++        assertEquals(List.of(0, 10), separated.stream().map(BedrockNameTags.Line::baseline).toList());
++        assertEquals(0.125, BedrockNameTags.rowLift(separated.size()));
 +    }
 +
 +    @Test
@@ -3643,8 +3689,31 @@ index 0000000..f211bba
 +        assertEquals(2, lines.size());
 +        assertEquals(styles(first), styles(lines.getFirst().text()));
 +        assertEquals(styles(second), styles(lines.getLast().text()));
-+        assertEquals(-10, lines.getFirst().baseline());
-+        assertEquals(0, lines.getLast().baseline());
++        assertEquals(0, lines.getFirst().baseline());
++        assertEquals(10, lines.getLast().baseline());
++    }
++
++    @Test
++    void reproducesNativePixelScaleAndIntegerHalfWidths() {
++        assertEquals(0x3C5A740F, Float.floatToRawIntBits(BedrockNameTags.pixelScale(0.5F)));
++        assertEquals(0x3CDA740F, Float.floatToRawIntBits(BedrockNameTags.pixelScale(1F)));
++        assertEquals(0x3D5A740F, Float.floatToRawIntBits(BedrockNameTags.pixelScale(2F)));
++        for (final int width : new int[]{0, 1, 2, 7, 8, 15, 16}) {
++            assertEquals(-(float) (width / 2), BedrockNameTags.centerX(-width / 2F));
++        }
++    }
++
++    @Test
++    void liftsTheOriginBeforeAdvancingEachNativeRow() {
++        for (int rows = 1; rows <= 4; rows++) {
++            assertEquals((rows - 1) * 0.125, BedrockNameTags.rowLift(rows));
++            final var lines = BedrockNameTags.layout(Component.literal("a\n".repeat(rows - 1) + "b"), 0);
++            for (int row = 0; row < rows; row++) {
++                assertEquals(row * 10, lines.get(row).baseline());
++                final double position = BedrockNameTags.rowLift(rows) - lines.get(row).baseline() * BedrockNameTags.pixelScale(1F);
++                assertEquals((rows - 1) * 0.125 - row * Float.intBitsToFloat(0x3CDA740F) * 10, position, 0.0000001);
++            }
++        }
 +    }
 +
 +    private static List<Style> styles(final Component component) {

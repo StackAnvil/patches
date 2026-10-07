@@ -1262,3 +1262,30 @@ Fixtures supply registry storage, ownership helpers, and pre-tick world callback
 Production still needs ordered command/input history, exact Java frame bindings, and full physics replay.
 The existing 28 replay mismatches remain unresolved. No production source changes in this continuation.
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-player-input-and-retained-history-clock-october-7-2026) records the evidence and remaining requirements.
+
+### Native creative and spectator flight, October 7, 2026
+
+Core now retains raw game mode, inherited level mode, independent vertical flight speed, and native friction and drag modifiers.
+It sends a versioned snapshot after joining and refreshes it after mode, ability, metadata, and attribute changes.
+The add-on uses the shared calculation after collision resolution and preserves ordinary Java movement.
+Normal jump and sneak requests use their native input fields. Independent slow requests have no Java bindings.
+
+The matching Bedrock 1.26.51.1, protocol 2193 control routine passes 18,000 bounded comparisons.
+Its drag and friction routines pass another 3,456 bit-exact comparisons.
+An eight-step native sequence covers mode, request, speed, modifier, and legacy-friction changes.
+Targeted tests cover wire serialization, state changes, channel and join gates, and reconnect defaults.
+
+These checks establish the bounded calculation and snapshot behavior.
+They do not establish full flight trajectories, collision ordering, historical replay, strict BDS or Boar parity.
+The add-on still depends on client observations for block friction and collision results.
+Live flight and corrections through both routes remain required.
+
+The first combined client startup exposed a flight hook conflict with pinned VFP.
+A constant modifier could not compose with VFP's existing velocity-threshold modifier.
+The revised hook changes four cutoff comparisons through MixinExtras expressions.
+It preserves actual magnitudes and VFP's threshold, including the separate player horizontal cutoff.
+The failed official-artifact launch remains a negative control.
+The replay supervisor now checks client failure before reading a packet journal, so startup errors remain visible.
+The retained bad-artifact rerun rejects startup without a secondary missing-file error.
+
+Final direct and ViaProxy runs, with plain graphics and Iris, verify the actual local flight context, production identities, and merged movement handlers. The corrected cutoff hook starts without an injection conflict. These observations do not drive flight or establish live trajectory parity.\nThe [combined runtime record](../../../docs/bedrock-coverage.md#final-combined-runtime-verification) retains the complete scene gates and remaining requirements.\n

@@ -208,7 +208,7 @@ This replaces the Java local-index repair hooks and corrects source, side-plane,
 World reads apply authored emission only to block light.
 Physical corner light remains unweighted while ambient color uses the native nested interpolation.
 Ordinary blocks and unannotated faces retain their original calculations.
-The zero-strength flat path uses native corners; nonzero-strength flat rendering retains its previous behavior.
+The flat path uses native corners for every accepted material strength, independently of Java model AO selection.
 
 Direct and ViaProxy clients each match 4,032 original native light coordinates and colors across 1,008 face cases.
 Seven bounds cover full, inset, expanded, shifted, and sampling-threshold cases.
@@ -219,7 +219,7 @@ All 30 patches replay; the 605-test suite passes with 117 optional skips and no 
 
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-terrain-neighborhood-sampling-october-7-2026) records supplied flags and channel values.
 These checks do not establish native propagation, runtime block identity, or visible parity.
-Cached solidity, per-type ambient overrides, rotated geometry, alternative renderers, enhanced lighting, and nonzero-strength flat paths remain open.
+Cached solidity, per-type ambient overrides, rotated geometry, alternative renderers, enhanced lighting, remain open.
 
 ## Sodium and Iris terrain lighting
 
@@ -235,7 +235,7 @@ The add-on has no compile-time Sodium dependency.
 
 Two adapter tests cover 432 face, plane, and vertex-order combinations, plus inset emission and authored shade direction.
 Compatibility targets Sodium 0.9.2, Iris 1.11.7, and Complementary Reimagined r5.9.3 on Java 26.3.
-Native propagation, runtime block identities, nonzero-strength flat paths, enhanced-lighting equivalence, and visible native GPU comparisons remain separate requirements.
+Native propagation, runtime block identities, enhanced-lighting equivalence, and visible native GPU comparisons remain separate requirements.
 
 The final built artifact passes actual Sodium `shadeQuad` dispatch checks with a copied client `LevelSlice`.
 Ordinary output matches the unwrapped pipeline; accepted native output matches the shared sampler.
@@ -259,3 +259,17 @@ Strict skin, drawing, unresolved-model, and combined client/proxy error checks r
 The observer is test tooling and changes no production packet timing or actor selection.
 The original client-only audit failure remains preserved privately.
 These results establish recorded-scene compatibility on software Mesa; live joins and native visible lighting parity remain required.
+
+## Native material sampling in flat model lighting
+
+Accepted native faces now use the shared corner sampler when Java chooses flat model lighting.
+Authored ambient strength still affects corner colors and light selection. Java model AO selection does not replace those inputs.
+The obsolete directional-expression hook is removed. Ordinary states and unannotated faces retain Java behavior.
+Three targeted adapter tests cover heterogeneous strengths, independent sky and block maxima, opaque diagonal fallback, and authored shade direction.
+
+The original cached and uncached corner routines agree in 1,920 supplied cases, covering 7,680 corners across five strengths and six directions.
+A preserved old-artifact runtime control fails on the nonzero-strength flat path while the complete recorded scene still passes its independent audit.
+Final route verification is recorded in the coverage ledger.
+Native global graphics-setting dispatch, actual world classification, propagation, enhanced lighting, and native visible comparisons remain required.
+
+Final direct and ViaProxy plain runs each pass 1,200 exact corner checks and 120 actual flat dispatches. Both Iris routes pass actual enable, disable, re-enable, and resource reload controls, preserving ordinary rendering and later emissive processing. Software Mesa compatibility does not establish native visible lighting parity.\nThe [combined runtime record](../../../docs/bedrock-coverage.md#final-combined-runtime-verification) retains the complete scene gates and remaining requirements.\n

@@ -7899,3 +7899,172 @@ The source publication preserves the user's `AGENTS.md` edit unstaged and includ
 **Remaining:** Native propagation, runtime block identities, per-type ambient and emissive overrides, world providers, enhanced lighting, and nonzero-strength flat paths remain open.
 Controlled visible native comparisons across dimensions, time, weather, brightness, effects, fluids, chunk boundaries, and relighting remain required.
 All packet, gameplay, combat, account, asset, Dressing Room, and platform requirements retain their scope.
+
+## Native geometry classification and compatibility flags, October 7, 2026
+
+**Verified arithmetic and field initialization:** Original Bedrock 1.26.51.1 instructions pass 2,016 supplied-record checks.
+The geometry constructor marks a full block from the canonical full-block or full-block-v1 hashed name and matching string content.
+Matching mesh volume alone does not establish this flag. Hash-collision and mismatched-name controls remain false.
+The constructor copies compatibility flags into separate component fields; cached solidity and opaque-full-block remain distinct.
+
+The complete original version handler retains legacy top rotation and block-type light absorption below supplied version fields 1.19.4.
+It ignores geometry for solidity below supplied fields 1.21.90 and upgrades the canonical full-block name to v1 below 1.26.0.
+Authoring-version parsing and normalization remain unverified; these thresholds describe the supplied native records.
+Boundary versions and pre-existing flag values are included in 1,872 cases.
+A further 144 cases execute the constructor through its original classification and flag writes.
+The fixture supplies canonical static strings, allocation, and memory-copy boundaries.
+It stops before the remaining constructor body; it does not reproduce complete native geometry creation.
+
+**Remaining:** Verify networked description flags, actual runtime opacity, the solid-tag producer, and complete world classification.
+No production opacity change follows from these partial constructor checks.
+Native propagation, visible rendering, enhanced lighting, and all other goal requirements retain their scope.
+
+### Native custom-block runtime properties, October 7, 2026
+
+The matching native component finalizer passes 12,140 controlled executions.
+It resolves authored components from the block before inherited components.
+Its canonical geometry, opaque-full, emission, filter, and tessellation fields follow separate rules.
+Opaque-full requires canonical full geometry and native material layers 5, 9, or 17.
+Without a material component, it uses the legacy block-type property bit.
+The geometry flag that ignores shape for cached solidity does not control this opaque-full field.
+
+Without authored filtering, the finalizer reads a native zero constant for geometry that uses the modern filter path.
+Absent geometry or the legacy absorption flag selects the block-type virtual getter.
+Authored emission and filtering copy their component bytes after independent owner lookup.
+Material presence and the tessellation check use the same native component identity global.
+
+The fixture executes original lookups and finalization.
+Component identities, registries, payloads, TLS, and virtual getter results remain supplied boundaries.
+It does not establish authoring defaults or how render methods become native material layers.
+The current [creator reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/blockreference/examples/blockcomponents/minecraftblock_light_dampening?view=minecraft-bedrock-stable) documents range validation; it does not establish these runtime fallback bindings.
+
+Core still uses one model occlusion flag across several distinct native properties.
+The add-on shares that flag for solidity, culling, shading, and related block behavior.
+Network flag bindings, parser defaults, material-layer production, and cached solidity must be verified before separating those production paths.
+No universal alpha-test opacity or default-filter change follows from this fixture alone.
+
+## Bundle actions, flight state, names, and flat lighting, October 7, 2026
+
+**Bundle actions:** Core now handles slot-held and cursor-held insertion and extraction, selected extraction, merging, and compaction.
+Capacity calculation retains stack limits and nested-bundle overhead. Unavailable nested contents, cycles, and shulker boxes cannot produce insertion requests.
+Java bundle selection decodes two VarInts and validates the full slot before narrowing.
+Selection queues before subsequent clicks; pending closes reject it.
+Rollback restores complete dynamic identities, including zero, without overwriting newer authoritative revisions.
+Ten stateful action tests and nine registered packet-handler tests pass.
+
+An isolated official BDS 1.26.51.1, build 51061372, protocol 2193 accepts append, merge reordering, selected extraction, compaction, nesting, and cursor-held actions.
+It rejects overweight and shulker requests with result 55 and a stale atomic request with result 49.
+The authoritative retry succeeds. These are headless protocol probes.
+Graphical native and translated inventory comparisons through direct connections and ViaProxy remain required, including dropping during use.
+
+**Flight:** Core retains raw and inherited game mode, independent vertical flight speed, legacy friction, friction, and air drag.
+A versioned channel sends this state after joining and refreshes it after relevant authoritative changes.
+Seven targeted tests execute actual snapshot serialization, state transitions, channel gates, and reconnect defaults.
+The add-on preserves captured input and collision results, then applies the shared native calculation.
+Normal jump and sneak map to native normal requests; independent slow requests have no Java binding.
+
+Original target instructions and generated production classes agree in 18,000 vertical-control and 3,456 drag/friction comparisons.
+Normal downward input applies minus 0.22 in native float arithmetic; the separate slow request applies minus 0.15.
+Creative and spectator horizontal coast remain distinct. An eight-step native sequence covers changes in mode, input, speed, and modifiers.
+Full trajectories, historical physics, strict BDS, Boar, live corrections, and native input timing remain unverified.
+
+The first combined production startup failed because a flight constant modifier conflicted with pinned VFP's existing threshold modifier.
+The owning patch now modifies four cutoff comparisons through MixinExtras expressions, preserving magnitudes and VFP's thresholds.
+The actual repaired client starts; the old-artifact failure remains private as a negative control.
+The replay supervisor reports the startup error before inspecting a nonexistent packet journal.
+The retained failing-artifact rerun confirms that the original client failure remains visible.
+
+**Names:** The native foreground consumer establishes exact float pixel scale, negative integer half-width, ten-pixel row advance, and 0.125 world lift per additional row.
+Original splitting drops empty LF segments and retains whitespace-only rows.
+The add-on preserves styles and ordinary Java behavior. Fourteen targeted layout and anchor tests pass.
+Native fixtures cover twelve transforms, 210 widths, eight splitters, and the empty foreground exit.
+Full native camera basis, glyph raster origin, backgrounds, and visible GPU comparisons remain open.
+
+**Flat lighting:** All accepted authored strengths now reach the shared corner sampler when Java selects flat model lighting.
+Ordinary states and unannotated faces retain Java calculations. The obsolete directional-expression hook is removed.
+Three targeted tests cover mixed strengths, independent sky/block maxima, diagonal opacity, and directional shade.
+Original cached and uncached native routines agree in 1,920 supplied cases and 7,680 corners.
+The old production artifact fails a nonzero-strength runtime control while its independent full-scene audit passes.
+Native propagation, actual world classification, enhanced lighting, and visible native comparisons remain open.
+
+**Builds:** All 97 core and 30 add-on patches replay, with changes folded into their owning patches.
+Core runs 844 cases with 814 passes and 30 optional skips; the add-on runs 610 with 493 passes and 117 optional skips.
+Both have zero failures or errors. Core Checkstyle, ViaProxy, and the pinned Jenkins artifact verification pass.
+All 1,260 core entries match both downstream bundles, excluding the standalone manifest; Fabric adds its own metadata.
+The tooling check and all 163 tests pass with 739 assertions.
+
+**Artifact rollout:** Nine exact artifact targets replace their reviewed predecessors, with rollback copies and complete inventories retained privately.
+The flight-hook repair replaces only its three add-on targets after a second dry run.
+All 26 unrelated files in the original 35-file inventory remain unchanged. No shared test server is restarted.
+Private evidence is under `.stackanvil/research/lighting-flat/`, with native movement and name fixtures in their respective research directories.
+
+### Native wire flags and material layers
+
+Original geometry and filter readers pass 16,657 typed-tag controls.
+The geometry writer produces one-byte flags. The reader defaults missing or wrongly typed flags to false.
+The captured scene has two complete geometry flag compounds containing zero-valued integer tags; those do not establish positive flag behavior.
+Absent or wrongly typed wire filter values read as zero. Authoring defaults remain a separate producer requirement.
+
+Another 120 original material-reader and runtime-constructor cases bind `blend` to layer 3, `opaque` to 5, `alpha_test` to 8, and `alpha_test_single_sided` to 11.
+The runtime constructor copies the resolved layer without reading image data.
+The fixture supplies a native-layout string table populated from executed enum getters.
+It does not exclude a later image-based optimization elsewhere in the native pipeline.
+These typed wire, parser, finalizer, and cached-property results retain their separate evidence limits.
+Runtime block identities, complete authoring defaults, and final world-property bindings remain required before changing production classification.
+
+Nine further controls execute the named `minecraft:light_dampening` description factories and original name initialization.
+Four complete factory entries initialize the absorption byte to 15 with the matching native description vtable.
+Allocation, control-flow registration, and the generic reflection tail remain supplied boundaries.
+Full authored JSON parsing and component omission have not executed.
+This factory value stays distinct from a missing wire field's zero and a missing modern runtime component's zero fallback.
+
+### Flight input transitions and mixed swimming state
+
+Thirty-seven stateful original input-preclear, jump-state, normal-request, and vertical-controller steps match the generated shared calculation.
+They cover released keys, reversals, simultaneous up/down requests, flight start/stop, raw and inherited modes, speed changes, and idle boundaries.
+Input-device polling, ECS storage, and level-mode callbacks remain supplied; collision and full physics do not execute between these steps.
+
+A separate original swim-control fixture passes 3,072 bounded cases, including native angle indexing and floating-point wrap.
+The look-vector table remains supplied.
+With retained swimming, flying, recent water contact, and no jump, this routine uses a different rate from the current Java swimming path.
+Native scheduler order and state eligibility remain under investigation.
+This is a retained candidate mismatch, not established live trajectory parity or a production fix.
+
+### Native light-emission conversion
+
+Original legacy JSON migration and modern wire routines pass 3,409 bounded controls.
+Sixty admitted numeric cases execute the validator and transformation; eighteen negative controls reject invalid values.
+The migration converts admitted values with a double multiplication by 15, truncation, and byte storage.
+Fractional boundaries, numeric types, signed zero, out-of-range values, and nonfinite values are included.
+Only admitted values enter the transform; the transform itself does not clamp.
+
+The modern typed wire reader requires a byte-valued `emission` field and defaults absent or wrongly typed fields to zero.
+Another 256 cases round-trip every byte through the original modern writer, typed byte writer, and reader without clamping.
+Registry/map insertion and typed-tag allocation remain supplied fixture boundaries.
+The captured legacy `minecraft:block_light_emission` float shape has no verified decoder, precedence, or version normalization yet.
+No production alias equates that shape with modern byte emission.
+
+### Final combined runtime verification
+
+The corrected artifacts pass four complete recorded-scene runs: direct and ViaProxy, each with plain graphics and with Iris.
+Every run installs all 216 geometry skins without rejection or empty model updates.
+Both direct audits and both proxy observers account for all 31 expected controller identities.
+The proxy shader client sees 29 actor identities after readiness; the observer retains original evaluation of the two transient actors.
+Transport, native drawing, unresolved-model, and combined client/proxy error checks remain strict.
+
+Each plain run passes 1,200 exact corner light/color checks and 120 actual flat model dispatches across six faces and five strengths.
+Ordinary states and unannotated quads retain Java output.
+Each shader run passes actual Iris enable, disable with reload, re-enable with reload, and resource reload stages.
+Native and ordinary Sodium dispatch, material import/reset/copy, normals, culling, and later emissive processing pass at each stage.
+The tested versions are Iris 1.11.7, Sodium 0.9.2, Complementary Reimagined r5.9.3, and Java 26.3.
+
+Every route also passes nine real name-submission controls, producing twenty captured submissions in an accepted native context.
+The read-only flight probe sees the actual local entity and negotiated core snapshot through both routes.
+It verifies merged client handlers and production class identities, including the corrected cutoff hook.
+It does not drive flight or establish trajectory parity.
+
+The runs use isolated profiles, zero volume, and software Mesa llvmpipe.
+All owned clients, proxies, launchers, and displays stop normally. Shared test servers retain their original process identities.
+The aggregate evidence remains private at `.stackanvil/research/lighting-flat/final-combined-runtime-evidence.json`.
+Original startup, nonzero flat-lighting, and client-only proxy audit failures remain retained.
+These recorded-scene checks establish tested integration compatibility; native GPU, full name camera/font, live movement, world propagation, enhanced lighting, and platform joins remain required.

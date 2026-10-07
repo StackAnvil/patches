@@ -228,3 +228,22 @@ The ordinary and sneaking name producer supplies zero extra spacing and unit sca
 Twelve name-layout and anchor tests pass.
 Absolute foreground glyph origin and direct native visible comparisons remain unverified.
 The bridge still requires an accepted Bedrock context; ordinary Java labels retain their existing path.
+
+## Native name foreground layout
+
+The target foreground consumer establishes a pixel scale of `recordScale * 1.6F * 0.016666668F` in native float order.
+It centers each row at the negative integer half-width, starts at the foreground origin, and advances ten pixels per retained row.
+Multiline names lift the world origin by `(rows - 1) * 0.125`.
+The original LF splitter drops zero-length segments while retaining whitespace-only rows.
+The add-on reproduces this layout and preserves translated segment styles.
+This replaces the earlier final-row anchor inferred from the name-record builder alone.
+Ordinary Java connections retain their original name renderer.
+
+Original Bedrock 1.26.51.1, protocol 2193 instructions pass twelve supplied transform cases, 210 row/width cases, eight splitter cases, and the empty foreground exit.
+Fourteen targeted tests cover names and anchors.
+Pinned Java 26.3 has one scale call with `(+,-,+)` signs and returns before any submission when attachment is null.
+The hook keeps that Java basis and changes its magnitude.
+Native uses a different position-facing or quaternion basis before its `(-,-,+)` scale.
+Complete handedness equivalence, font raster origin and metrics, backgrounds, stripped formatting-only rows, and native GPU comparisons remain unverified.
+
+Final artifacts pass nine real name-submission controls and twenty captured submissions on each direct and ViaProxy route, with plain graphics and Iris. Full native camera, font raster, and GPU comparisons remain required.\nThe [combined runtime record](../../../docs/bedrock-coverage.md#final-combined-runtime-verification) retains the complete scene gates and remaining requirements.\n

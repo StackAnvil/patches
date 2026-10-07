@@ -151,5 +151,30 @@ Partial dynamic snapshots retain their existing prefix update semantics.
 Three tests cover separate zero and one contents, malformed identities, and unsigned container-ID encoding.
 These tests fail when zero is rejected again.
 The probe uses a headless protocol client and does not establish native graphical or Java bundle UI parity.
-Java insertion, extraction, selection, nesting, weights, and complete rejection recovery remain separate live requirements.
+Java insertion, extraction, selection, nesting, weights, and rejection recovery now have core paths described below.
+Graphical native and translated route comparisons remain required.
 Raw captures stay private.
+
+## Bundle actions and selection
+
+Core translates primary and secondary pickup clicks for bundles in a slot or on the cursor.
+Insertion retains native capacity, item stack sizes, nesting overhead, and dynamic storage identity.
+Merged stacks move through accepted Swap and Place actions. Selected extraction uses Take and compaction Place actions.
+Unavailable nested contents, cycles, shulker boxes, and full bundles cannot create insertion requests.
+
+Java 26.3 sends bundle selection as two VarInts: slot ID and selected item index, without a container ID.
+The registered handler resolves the current screen, validates the full slot value, and queues selection before later clicks.
+Pending native closes cannot accept a selection. Large signed slot values cannot alias valid slots after narrowing.
+Rejected predictions restore dynamic containers by complete identity, including zero, while preserving newer authoritative revisions.
+Partial server snapshots retain prefix update semantics.
+
+Ten stateful tests exercise actual click dispatch, nesting, ordering, network identity, acknowledgment, and rollback.
+Nine packet tests execute the actual registered mapping against raw packet buffers.
+They verify full decoding, player inventory fallback, queued selection and extraction, invalid slots, and pending-close controls.
+Only the packet transport boundary is mocked; production registration, decoding, container state, and request construction execute.
+Mockito remains a test-only dependency with its explicit JVM agent.
+
+Isolated official BDS 1.26.51.1, build 51061372, protocol 2193 accepts insertion, merge reordering, selected extraction, nesting, and cursor-held bundle actions.
+It rejects overweight and shulker requests with result 55, and an atomic request with a stale second action with result 49.
+A retry with the original authoritative identity succeeds after rejection.
+These probes use a headless protocol driver. Native graphical, Java direct and ViaProxy, ordinary Java, and in-use dropping comparisons remain required.
