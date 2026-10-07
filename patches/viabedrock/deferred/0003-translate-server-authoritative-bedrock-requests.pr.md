@@ -264,3 +264,23 @@ The first capture contains no left-click `ATTACK` or `MODAL_FORM_REQUEST`.
 The second capture records five raw forms for separate resolver checks.
 It does not establish a native graphical or left-click comparison.
 Raw traffic, server assets and client data remain private.
+
+## Native container opening identity
+
+Core retains the original CONTAINER_OPEN type, packet position, and actor unique ID separately from the translated menu and physical block binding.
+Unknown actors and actor placeholder positions retain their actual packet values.
+An accepted menu receives a connection-local generation. Reopening a reused protocol ID advances that generation.
+Pending close retains the original generation and opening context until acknowledgment or recovery clears it.
+UPDATE_EQUIP can open a mount before CONTAINER_OPEN. The later packet enriches the same menu without advancing its generation or replacing contents.
+An equipment-only or trade-driven opening has no fabricated CONTAINER_OPEN context.
+Read-only binding state distinguishes unresolved chunks, physical blocks, and server-owned menus.
+This extends the server-owned lifecycle feature under the existing ViaBedrock #276 prerequisite.
+
+Verification uses real packet translation and stateful tracker transitions.
+It covers reused IDs, pending close, rejected competing opens, stale enrichment, unknown actor identity, late block resolution, both mount opening orders, and recovery.
+Titles, actor capacity, item request semantics, and native graphical inventory rendering remain unchanged.
+This component supplies metadata for a future general inventory UI bridge. It does not establish native title construction or native pixels.
+
+Targeted verification passes all 29 cases, with no skips, failures, or errors. Main and test Checkstyle tasks pass.
+
+The complete 98-patch replay preserves all seven tested source files byte-for-byte. Full combined build and live native inventory presentation remain pending.
