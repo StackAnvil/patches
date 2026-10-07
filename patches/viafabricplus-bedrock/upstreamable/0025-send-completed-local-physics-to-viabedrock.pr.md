@@ -1183,3 +1183,15 @@ These results establish required history behavior. They do not verify complete w
 Completed movement payloads and the shared effect timeline remain insufficient for full physics rewind.
 The production path still requires ordered snapshots and captured input, queued command replay, and actual client simulation.
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-frame-capture-clocks-and-history-boundaries-october-7-2026) records the evidence and remaining implementation requirements.
+
+### Native replay dispatch and immutable identity
+
+A further 2,396 native cases verify the original manager, replay callback, and immutable identity capture.
+They execute 416 system callbacks and 2,054 snapshot insertions without mismatches in the bounded expectations.
+Dispatch follows the supplied category's ordered indices. Optional hooks surround each system's replay method.
+The immutable snapshot preserves actor identity and classification. It does not replace mutable movement snapshots.
+
+Fixtures supply category membership, system implementations, ECS storage, and ownership boundaries.
+The game's registered movement order, profiling mode, complete physics replay, and live correction behavior remain unverified.
+Ordered mutable snapshots, external state, captured input, and queued commands remain production requirements.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-replay-dispatch-and-identity-snapshots-october-7-2026) records evidence and remaining verification limits.

@@ -7093,3 +7093,49 @@ All eight coverage groups, the complete gameplay matrix, strict BDS, Boar diagno
 
 CI completed successfully for the published timing fix and pending-command evidence.
 This continuation changes evidence documentation. It does not deploy new runtime artifacts or claim additional live movement parity.
+
+## Native replay dispatch and identity snapshots, October 7, 2026
+
+**Native evidence, production incomplete:** The original correction wrapper `1463b0f30` delegates through the manager method `1425c6cf0` to `1425c82d0`.
+The manager selects the first matching category by its 16-bit identifier.
+With profiling disabled, it dispatches the selected category's system indices in their stored order.
+Repeated indices execute repeatedly. An absent category or an empty index list executes no systems.
+The original callback `1463cc440` calls an optional before hook, the system's replay method, and an optional after hook.
+It passes the retained registry to the system and its index to both hooks.
+It reads the after-hook pointer after the system returns.
+
+A new fixture executes 2,396 cases against the pinned 1.26.51.1 executable:
+
+| Domain | Cases | Verified behavior |
+| --- | ---: | --- |
+| Replay callback | 80 | Optional hooks, full 32-bit system indices, registry identity, and a changed after-hook pointer. |
+| Native dispatch | 256 | Four category identifiers, missing categories, empty lists, permutations, repeated indices, and optional hooks. |
+| Immutable identity capture | 2,060 | All 2,048 presence masks, six existing valid snapshots, and six snapshots with invalid entity generations. |
+
+These cases execute 416 system replay callbacks and 2,054 immutable snapshot insertions.
+The independent result verifier finds no mismatches in the bounded dispatch and snapshot expectations.
+Scripts, native queries, cases, checksums, and proof remain private under `.stackanvil/research/movement-replay-phases/`.
+
+The original immutable capture function `14327a6c0` stores a 24-byte identity snapshot.
+Its fields are actor type, unique ID, runtime ID, and eight classification flags.
+Those flags cover actor-added, boat, collidable mob, horse, local player, mob, player, and mob-travel classifications.
+Absent identity fields retain defaults: actor type 1, unique ID -1, and runtime ID 0.
+An existing snapshot for a valid entity generation remains unchanged.
+An invalid generation permits a new capture.
+Mutable movement state uses a separate snapshot path.
+This identity snapshot does not contain terrain, item use, movement attributes, or effect countdowns.
+
+The fixture supplies category membership, system objects, hook implementations, ECS storage, cached snapshot views, and storage insertion.
+It also supplies function-object destruction. The original wrapper, manager, callback, and immutable capture instructions execute within these boundaries.
+These checks verify the supplied category order. They do not establish the game's registered movement phase order.
+Profiling mode, registry ownership, full world physics, and live correction replay remain unverified.
+
+**Next production requirements:** Ordered history must retain mutable movement snapshots, captured input, external state, and queued commands.
+Replay must use the native movement category's verified phase order and preserve actor identity across restoration.
+It must also prevent repeated network actions, inventory transactions, sounds, and other ordinary tick side effects.
+Exact wire tick/frame associations remain distinct from the native level clock. Neither justifies guessed clock offsets or blanket history resets.
+The existing effect timeline and completed movement payloads remain insufficient for full rewind.
+All eight coverage groups, both routes, the complete gameplay matrix, strict BDS, Boar diagnostics, CubeCraft, and platform joins remain required.
+
+The preceding documentation CI completed successfully.
+This continuation changes evidence documentation. It deploys no runtime artifacts and claims no additional live movement parity.

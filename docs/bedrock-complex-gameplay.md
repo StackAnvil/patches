@@ -1544,3 +1544,16 @@ Core tick/frame associations and the add-on effect timeline do not retain comple
 Actual physics rewind and reconciliation of mixed actions remain incomplete.
 Both connection routes, terrain changes, attributes, combat, item use, inventory actions, and the complete matrix remain required.
 The [coverage ledger](bedrock-coverage.md#native-frame-capture-clocks-and-history-boundaries-october-7-2026) records the native functions, fixture boundaries, and verification limits.
+
+## Native replay dispatch and identity snapshots, October 7, 2026
+
+A further 2,396 native cases verify replay dispatch, callback hooks, and immutable identity capture.
+The original manager uses the selected category's ordered system indices. Repeated indices execute repeatedly.
+The callback surrounds each system with optional hooks and passes the retained registry to its replay method.
+The immutable snapshot preserves actor identity and classification. Mutable physics state uses a separate snapshot path.
+
+The fixture supplies category membership, system implementations, ECS storage, and ownership boundaries.
+Actual registered phase order, profiling mode, full physics rewind, and live correction behavior remain unverified.
+Production still requires complete mutable snapshots, external state, captured inputs, and queued command replay.
+Both routes and all movement, combat, item, block, inventory, and lifecycle cases remain required.
+The [coverage ledger](bedrock-coverage.md#native-replay-dispatch-and-identity-snapshots-october-7-2026) records the functions, case domains, and remaining limits.
