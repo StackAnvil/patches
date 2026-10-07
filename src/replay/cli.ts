@@ -120,6 +120,18 @@ async function buildFabricRecorder(jar: string, build: string): Promise<string> 
 }
 
 async function launchJava(directory: string, address: string, client: "addon" | "proxy", recorder: string, graphics: GraphicsProfile, account?: string, guiScale?: number, softwareRendering = false): Promise<{ pid: number; log: string }> {
+  const softwareIcd = "/usr/share/vulkan/icd.d/lvp_icd.x86_64.json";
+  if (softwareRendering) {
+    try {
+      const { stdout } = await execute("flatpak", ["run", "--nodevice=all", "--command=cat", "org.prismlauncher.PrismLauncher", softwareIcd]);
+      const manifest = JSON.parse(stdout) as { ICD?: { library_path?: unknown } };
+      if (typeof manifest.ICD?.library_path !== "string" || !/(?:^|\/)libvulkan_lvp\.so(?:\.\d+)*$/.test(manifest.ICD.library_path)) {
+        throw new Error("Unexpected software Vulkan driver.");
+      }
+    } catch {
+      throw new Error("Software replay requires the readable lavapipe ICD in the Prism Flatpak runtime.");
+    }
+  }
   const existingDisplay = await activeDisplay();
   const isolated = await displayEnv(true);
   if (!isolated) throw new Error("The replay lab requires a private virtual display.");
@@ -215,7 +227,7 @@ async function launchJava(directory: string, address: string, client: "addon" | 
     ...(client === "addon" ? [`--filesystem=${join(privateRoot, "client-assets")}`] : []),
     `--env=DISPLAY=${isolated.DISPLAY}`, `--env=XAUTHORITY=${isolated.XAUTHORITY}`, "--env=WAYLAND_DISPLAY=", "--env=QT_QPA_PLATFORM=xcb",
     "--env=SDL_VIDEODRIVER=x11", "--env=SDL_VIDEO_DRIVER=x11", "--env=SDL_VIDEO_FORCE_EGL=1", "--env=PULSE_SINK=stackanvil_silent",
-    ...(softwareRendering ? ["--env=LIBGL_ALWAYS_SOFTWARE=1", "--env=GALLIUM_DRIVER=llvmpipe", "--env=MESA_LOADER_DRIVER_OVERRIDE=llvmpipe"] : []),
+    ...(softwareRendering ? ["--nodevice=all", "--env=LIBGL_ALWAYS_SOFTWARE=1", "--env=GALLIUM_DRIVER=llvmpipe", "--env=MESA_LOADER_DRIVER_OVERRIDE=llvmpipe", `--env=VK_DRIVER_FILES=${softwareIcd}`] : []),
     "org.prismlauncher.PrismLauncher", "--dir", prism, "--launch", name,
     ...(address.startsWith("nethernet://") ? [] : ["--server", address])], root, launcherLog, isolated);
   const until = Date.now() + 60_000;
