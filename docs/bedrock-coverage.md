@@ -7630,3 +7630,66 @@ Fresh private rollback copies cover those nine exact files. All 26 unrelated art
 Arbitrary model rotations, alternative terrain renderers, enhanced lighting, and controlled visible comparisons remain required.
 Dimensions, time, weather, brightness, status effects, propagation, fluid filtering, chunk boundaries, and relighting retain their native verification requirements.
 All other movement, combat, protocol, account, asset, and platform requirements retain their scope.
+
+
+## Native inset-face light coordinates: October 7, 2026
+
+**Goal-turn classification:** Progress. The owning add-on patch preserves native corner light on resized custom faces.
+The full Bedrock coverage goal remains active.
+
+**Native evidence:** All six original face emission functions in Bedrock 1.26.51.1 retain each physical corner's supplied light coordinates across seven cuboid bounds.
+The private executable fixture passes 168 submitted vertices across 42 faces.
+Bounds include full faces, three inset sizes, expanded faces, an inset below Java's partial-face threshold, and an asymmetric face.
+The native functions interpolate ambient colors while retaining corner light values without bounds weighting.
+The fixture supplies distinct corner light bytes, bounds, and a texture component with variant flags disabled.
+It substitutes the floor import and intercepts mesh submission. Native world sampling, runtime block identity, the mesh writer, and the GPU do not execute.
+
+**Additional native verification:** The original cached corner routine now feeds all six original face emitters directly through its output buffers.
+Twenty-four submitted vertices verify the physical binding of supplied neighbor inputs to corner colors.
+The original cached and uncached corner routines also match exactly across 288 supplied-cache cases, or 1,152 corners.
+The uncached routine executes its original block and light lookup wrappers against a populated cache.
+Cases cover six directions, eight neighbor profiles, two source flags, and three ambient strengths.
+Backing-world cache misses and the identity of actual native block flags remain unverified.
+
+**Production change:** Registered, annotated custom faces retain their corresponding corner light at each of Java's four partial-face blend sites.
+Each hook requires exactly one matching invocation and reads the computed corner value from the pinned renderer.
+Ambient color interpolation still uses the shared core arithmetic. Ordinary states and unannotated faces retain Java's light blending.
+Propagation and translated chunk light remain in ViaBedrock core. This correction requires client terrain integration.
+
+**Neighbor sampling remains open:** Private direct and ViaProxy probes each evaluate 576 vertices across eight supplied neighboring worlds.
+Each route matches 504 supplied native colors and 198 supplied native light values exactly.
+The 72 color differences and 378 light differences remain diagnostic requirements.
+The references supply air/stone ambient values and native flags, including a source flag inferred from Java solidity.
+They do not establish the corresponding flags on native runtime blocks.
+The routes select accepted faces independently, so their sampled source states and emission values can differ.
+These probes establish neither route metadata equivalence nor emissive-state parity.
+Source-light selection and diagonal-neighbor selection require further native investigation before changing production behavior.
+
+
+**Client verification:** Direct and ViaProxy clients each load 276 custom definitions and pass 1,512 corner-light checks across 378 faces.
+Cases cover six directions, seven bounds, three uneven light profiles, and strengths zero, one, and two.
+The probes clone accepted full-unit faces from zero-emission custom states, then compare each resized face with its full-face corner values.
+Each route also passes 1,512 ordinary-state light controls against unannotated custom faces.
+Bounds change the unannotated Java results in 216 faces, or 864 vertices, while the annotated faces retain their corner light.
+Source state IDs and emission values are recorded. The routes can select different accepted models.
+Each probe restores original annotations and uses supplied air neighbors. It does not place blocks or compare visible native images.
+The native fixture independently verifies bounds invariance; full-face client output supplies the baseline light values for these tests.
+This comparison isolates interpolation and does not close the source or diagonal sampling differences above.
+
+**Build verification:** The complete 30-patch add-on stack replays successfully.
+With the normal bundled-asset input, the build runs 605 tests, including 117 optional skips, with zero failures or errors.
+The first manual build omits that input and fails two bundled-asset tests. The corrected command passes both tests.
+Fresh Jenkins metadata and all four dependency checksums match the pin.
+All 1,252 core archive entries remain identical in the add-on bundle.
+The preceding iteration's GitHub CI completes successfully.
+
+Both complete recorded CubeCraft scene replays pass transport, resource loading, and rendering checks.
+
+**Rollout verification:** A reviewed local plan replaces exactly the add-on distribution JAR, Maven JAR, and distribution manifest.
+Fresh private rollback copies cover those three files. All 32 unrelated artifacts and existing servers remain unchanged.
+
+**Remaining:** Native runtime block flags, backing-world lookup, source and diagonal selection, emissive custom states, and nonzero-strength flat paths require verification.
+Alternative terrain renderers, arbitrary model rotations, enhanced lighting, and controlled visible comparisons remain required.
+Dimensions, time, weather, brightness, status effects, propagation, fluid filtering, chunk boundaries, and relighting retain their native verification requirements.
+The preceding intermittent ViaProxy handshake timeout remains an independent requirement.
+All other movement, combat, protocol, account, asset, and platform requirements retain their scope.

@@ -172,3 +172,31 @@ The probes clone accepted CubeCraft faces and restore their annotations.
 Native functions consume supplied corner colors and report submitted vertex positions and colors.
 Native world lookup, neighbor-to-color assignment, the mesh writer, the GPU, and visible comparisons remain unverified.
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-face-interpolation-arithmetic-october-7-2026) records full route results and remaining requirements.
+
+
+## Preserve corner light on inset faces
+
+Java blends corner light across partial-face bounds. The target native cuboid emitters keep each physical corner's light unchanged.
+All six original face emission functions retain supplied light coordinates across seven bounds, or 168 submitted vertices.
+The terrain hook now selects each computed corner value at the four partial-face light blend sites.
+Each injection requires exactly one matching invocation in the pinned renderer.
+Registered custom faces require accepted lighting annotations. Ordinary states and unannotated faces retain their original blending.
+Ambient color interpolation remains unchanged.
+
+The native fixture supplies corner light, cuboid bounds, and a texture component with variant flags disabled.
+It intercepts mesh submission and substitutes the float floor import.
+Separate fixtures verify supplied neighbor-to-color binding through the original corner routine and six face emitters.
+Original cached and uncached lookup paths agree across 288 supplied-cache cases, or 1,152 corners.
+Backing-world lookup, native runtime block flag identity, emissive states, and visible lighting remain open.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-inset-face-light-coordinates-october-7-2026) records the client checks and remaining scope.
+
+
+Direct and ViaProxy clients each pass 1,512 corner-light checks across 378 cloned accepted faces.
+Cases cover six directions, seven bounds, three uneven light profiles, and three strengths.
+Each route passes 1,512 ordinary-state controls against unannotated custom faces.
+Bounds change the Java controls in 864 vertices while the annotated faces retain their full-face corner light.
+The probes use supplied air neighbors, select zero-emission source states, record their IDs, and restore original annotations.
+Client full-face output supplies baseline corner light; the native fixture independently verifies bounds invariance.
+These checks isolate interpolation. They do not establish native neighbor selection or visible parity.
+The complete add-on stack and build pass with the normal bundled-asset input.
+Both complete recorded CubeCraft scene replays pass transport, resource loading, and rendering checks.
