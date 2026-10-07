@@ -27,7 +27,7 @@ static int capture_drag_error(Display *display, XErrorEvent *event) {
     return 0;
 }
 
-static int parse_drag_integer(const char *text, int *value) {
+static int parse_nonnegative_integer(const char *text, int *value) {
     char *end;
     errno = 0;
     long parsed = strtol(text, &end, 10);
@@ -47,13 +47,13 @@ static int drag_pointer(Display *display, Window root, int argc, char **argv) {
         : argc > 3 && strcmp(argv[3], "right") == 0 ? 3 : 0;
     int x[64], y[64];
     if (argc < 9 || (argc - 5) % 2 || count > 64 || !button
-        || !parse_drag_integer(argv[4], &dwell_ms) || dwell_ms < 1 || dwell_ms > 1000
+        || !parse_nonnegative_integer(argv[4], &dwell_ms) || dwell_ms < 1 || dwell_ms > 1000
         || count * dwell_ms > 10000) {
         fprintf(stderr, "Drag needs left or right, 2 to 64 points, and a dwell of 1 to 1000 ms totaling at most 10000 ms\n");
         return 1;
     }
     for (int i = 0; i < count; i++) {
-        if (!parse_drag_integer(argv[5 + i * 2], &x[i]) || !parse_drag_integer(argv[6 + i * 2], &y[i])) {
+        if (!parse_nonnegative_integer(argv[5 + i * 2], &x[i]) || !parse_nonnegative_integer(argv[6 + i * 2], &y[i])) {
             fprintf(stderr, "Drag coordinates must be nonnegative integers\n"); return 1;
         }
     }
@@ -276,13 +276,31 @@ int main(int argc, char **argv) {
                 XSendEvent(display, root, False, SubstructureRedirectMask | SubstructureNotifyMask, &event);
             }
             XFlush(display);
-        } else if (strcmp(argv[1], "resize") == 0 && argc == 5) {
+        } else if (strcmp(argv[1], "resize") == 0 && (argc == 5 || argc == 7)) {
             int width = atoi(argv[3]), height = atoi(argv[4]);
             if (width < 640 || height < 360 || width > 16384 || height > 16384) {
                 fprintf(stderr, "Invalid window size\n"); return 1;
             }
-            XResizeWindow(display, window, (unsigned)width, (unsigned)height);
-            XFlush(display);
+            if (argc == 7) {
+                int x, y;
+                XWindowAttributes root_attributes;
+                const char *isolated = getenv("STACKANVIL_UI_ISOLATED");
+                if (!isolated || strcmp(isolated, "1") != 0) {
+                    fprintf(stderr, "Window placement requires an isolated capture display\n"); return 1;
+                }
+                if (!parse_nonnegative_integer(argv[3], &width) || !parse_nonnegative_integer(argv[4], &height)
+                    || !parse_nonnegative_integer(argv[5], &x) || !parse_nonnegative_integer(argv[6], &y)
+                    || !XGetWindowAttributes(display, root, &root_attributes)
+                    || width > root_attributes.width || height > root_attributes.height
+                    || x > root_attributes.width - width || y > root_attributes.height - height) {
+                    fprintf(stderr, "Window placement must fit the capture display\n"); return 1;
+                }
+                XMoveResizeWindow(display, window, x, y, (unsigned)width, (unsigned)height);
+                XSync(display, False);
+            } else {
+                XResizeWindow(display, window, (unsigned)width, (unsigned)height);
+                XFlush(display);
+            }
         } else if (strcmp(argv[1], "button-hold") == 0 && argc == 5) {
             int button = strcmp(argv[3], "left") == 0 ? 1 : strcmp(argv[3], "right") == 0 ? 3 : 0;
             int duration_ms = atoi(argv[4]);
@@ -373,8 +391,8 @@ int main(int argc, char **argv) {
                 XFlush(display);
                 if (press + 1 < presses) usleep(70000);
             }
-        } else { fprintf(stderr, "Usage: capture-x11 list|pixel ID X Y|screenshot ID FILE|resize ID WIDTH HEIGHT|click|double-click ID X Y [left|right]|mouse-hold ID X Y BUTTON MS|key|double-key ID NAME|key-hold ID NAME MS\n"); return 2; }
-    } else { fprintf(stderr, "Usage: capture-x11 list|pixel ID X Y|screenshot ID FILE|resize ID WIDTH HEIGHT|click|double-click ID X Y [left|right]|mouse-hold ID X Y BUTTON MS|key|double-key ID NAME|key-hold ID NAME MS\n"); return 2; }
+        } else { fprintf(stderr, "Usage: capture-x11 list|pixel ID X Y|screenshot ID FILE|resize ID WIDTH HEIGHT [X Y]|click|double-click ID X Y [left|right]|mouse-hold ID X Y BUTTON MS|key|double-key ID NAME|key-hold ID NAME MS\n"); return 2; }
+    } else { fprintf(stderr, "Usage: capture-x11 list|pixel ID X Y|screenshot ID FILE|resize ID WIDTH HEIGHT [X Y]|click|double-click ID X Y [left|right]|mouse-hold ID X Y BUTTON MS|key|double-key ID NAME|key-hold ID NAME MS\n"); return 2; }
     XCloseDisplay(display);
     return 0;
 }
