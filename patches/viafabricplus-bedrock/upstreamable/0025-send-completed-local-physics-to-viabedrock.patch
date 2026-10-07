@@ -1,4 +1,4 @@
-From f2d87471e53f9e4efbbdf9282584fbf8f343fec6 Mon Sep 17 00:00:00 2001
+From 64c553840b6c20721b8956e13c40a7a5ef1549dd Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:53 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -299,6 +299,19 @@ zero-relative entity teleport starts local interpolation in Java 26.3.
 Use core's player and teleport identity pairing without changing
 position, velocity, acknowledgments, or other entities. Clear pending
 state across connection changes and mismatched position packets.
+
+Apply the shared core geyser calculation at the start of local travel
+with confirmed movement effects, float body coordinates and current
+world collision/fluid observations. Preserve the original velocity when
+no boost applies and exclude the Flying ability. Remove the local player
+from Java's geyser launch ticker to prevent a second impulse and a Java
+fall-distance reset. Core owns the scan, profiles, gates and rounding;
+the client supplies world observations on direct and ViaProxy routes.
+
+The pinned native callback and four helpers match 6,780 cases. Client
+world adapters distinguish sulfur states, source/flowing/falling fluids
+and waterlogged collision shapes. Full native phase ordering, speculative
+geyser admission, live trajectories and history replay remain required.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   6 +
  .../access/IBedrockPlayerPosture.java         |  14 ++
@@ -307,12 +320,13 @@ state across connection changes and mismatched position packets.
  .../movement/MixinEntityFluidInteraction.java |  16 ++
  ...tyFluidInteraction_CurrentAccumulator.java |  49 +++--
  .../movement/MixinFireworkRocketEntity.java   |  28 +++
- .../features/movement/MixinLivingEntity.java  |  72 +++++++
+ .../features/movement/MixinLivingEntity.java  |  81 ++++++++
  .../features/movement/MixinLocalPlayer.java   | 194 +++++++++++++++++-
  .../mixin/features/movement/MixinPlayer.java  |  55 +++--
  .../MixinPlayerCorrectionPacketListener.java  |  23 +++
+ .../MixinPotentSulfurBlockEntity.java         |  33 +++
  .../features/movement/MixinVoxelShape.java    |  28 +++
- .../bedrock/input/BedrockMovementEffects.java |  72 +++++++
+ .../bedrock/input/BedrockMovementEffects.java |  76 +++++++
  .../input/BedrockPlayerCorrections.java       |  44 ++++
  .../bedrock/input/MovementEffectPayload.java  |  24 +++
  .../input/PlayerCorrectionPayload.java        |  24 +++
@@ -320,16 +334,19 @@ state across connection changes and mismatched position packets.
  .../input/UnderwaterMovementPayload.java      |  24 +++
  .../movement/BedrockCollisionContacts.java    |  50 +++++
  .../bedrock/movement/BedrockFluidPhysics.java |  86 ++++++++
+ .../movement/BedrockGeyserPhysics.java        |  53 +++++
  .../movement/BedrockPlayerPosture.java        |  63 ++++++
- .../viafabricplus-bedrock.mixins.json         |   4 +
+ .../viafabricplus-bedrock.mixins.json         |   5 +
  .../BedrockCollisionContactsTest.java         |  39 ++++
  .../movement/BedrockFluidPhysicsTest.java     | 121 +++++++++++
+ .../movement/BedrockGeyserPhysicsTest.java    | 101 +++++++++
  .../movement/BedrockPlayerPostureTest.java    |  45 ++++
- 25 files changed, 1096 insertions(+), 61 deletions(-)
+ 28 files changed, 1297 insertions(+), 61 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinFireworkRocketEntity.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayerCorrectionPacketListener.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPotentSulfurBlockEntity.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinVoxelShape.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockPlayerCorrections.java
@@ -339,9 +356,11 @@ state across connection changes and mismatched position packets.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/input/UnderwaterMovementPayload.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContacts.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysics.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockGeyserPhysics.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPosture.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContactsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockGeyserPhysicsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPostureTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
@@ -627,10 +646,10 @@ index 0000000..b648ca3
 +
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-index 1c9125e..f287573 100644
+index 1c9125e..74b0c2a 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-@@ -21,18 +21,32 @@
+@@ -21,27 +21,108 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -638,6 +657,7 @@ index 1c9125e..f287573 100644
 +import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
  import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
 +import com.viaversion.viafabricplus.bedrock.input.BedrockMovementEffects;
++import com.viaversion.viafabricplus.bedrock.movement.BedrockGeyserPhysics;
 +import net.minecraft.client.player.LocalPlayer;
  import net.minecraft.core.Holder;
 +import net.minecraft.core.registries.Registries;
@@ -662,8 +682,18 @@ index 1c9125e..f287573 100644
 +import org.spongepowered.asm.mixin.injection.ModifyConstant;
  import org.spongepowered.asm.mixin.injection.Redirect;
  import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  
-@@ -42,6 +56,64 @@ public abstract class MixinLivingEntity {
+ @Mixin(LivingEntity.class)
+ public abstract class MixinLivingEntity {
+ 
++    @Inject(method = "travel", at = @At("HEAD"))
++    private void applyNativeGeyserTravel(final Vec3 input, final CallbackInfo ci) {
++        if ((Object) this instanceof LocalPlayer player && BedrockInputPermissions.isBedrockConnection()) {
++            BedrockGeyserPhysics.apply(player);
++        }
++    }
++
      @Shadow
      public abstract @Nullable MobEffectInstance getEffect(final Holder<MobEffect> effect);
  
@@ -1082,6 +1112,45 @@ index 0000000..906163e
 +        BedrockPlayerCorrections.apply(Minecraft.getInstance().player, packet.id());
 +    }
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPotentSulfurBlockEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPotentSulfurBlockEntity.java
+new file mode 100644
+index 0000000..ddb9bb3
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPotentSulfurBlockEntity.java
+@@ -0,0 +1,33 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
++
++import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
++import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.world.entity.Entity;
++import net.minecraft.world.level.Level;
++import net.minecraft.world.level.block.entity.PotentSulfurBlockEntity;
++import net.minecraft.world.phys.AABB;
++import org.spongepowered.asm.mixin.Mixin;
++import org.spongepowered.asm.mixin.injection.At;
++
++import java.util.List;
++import java.util.function.Predicate;
++
++@Mixin(PotentSulfurBlockEntity.class)
++public abstract class MixinPotentSulfurBlockEntity {
++
++    @WrapOperation(method = "lambda$static$5", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/Level;getEntitiesOfClass(Ljava/lang/Class;Lnet/minecraft/world/phys/AABB;Ljava/util/function/Predicate;)Ljava/util/List;"))
++    private static <T extends Entity> List<T> excludeNativeLocalTravel(final Level level, final Class<T> type, final AABB box,
++                                                                      final Predicate<? super T> predicate, final Operation<List<T>> original) {
++        // Core applies confirmed native lift during local travel. Java's block ticker must not add a second impulse or reset fall distance.
++        return original.call(level, type, box, (Predicate<T>) entity -> predicate.test(entity)
++                && !(entity instanceof LocalPlayer && BedrockInputPermissions.isBedrockConnection()));
++    }
++
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinVoxelShape.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinVoxelShape.java
 new file mode 100644
 index 0000000..39a52c2
@@ -1118,10 +1187,10 @@ index 0000000..39a52c2
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java
 new file mode 100644
-index 0000000..143b1f8
+index 0000000..cd4e565
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,76 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1188,6 +1257,10 @@ index 0000000..143b1f8
 +
 +    public static boolean hasDolphinBoost(final int entityId) {
 +        return TIMELINE.hasDolphinBoost(entityId);
++    }
++
++    public static boolean hasGeyserBoost(final int entityId) {
++        return TIMELINE.hasGeyserBoost(entityId);
 +    }
 +
 +    public static @Nullable Float underwaterSpeed(final int entityId) {
@@ -1512,6 +1585,65 @@ index 0000000..d45e6d4
 +    }
 +
 +}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockGeyserPhysics.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockGeyserPhysics.java
+new file mode 100644
+index 0000000..c169135
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockGeyserPhysics.java
+@@ -0,0 +1,53 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.movement;
++
++import com.viaversion.viafabricplus.bedrock.input.BedrockMovementEffects;
++import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.core.BlockPos;
++import net.minecraft.world.level.BlockGetter;
++import net.minecraft.world.level.block.Blocks;
++import net.minecraft.world.level.block.PotentSulfurBlock;
++import net.minecraft.world.level.block.state.properties.PotentSulfurState;
++import net.minecraft.world.level.material.Fluids;
++import net.minecraft.world.phys.Vec3;
++import net.raphimc.viabedrock.api.model.GeyserMovement;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++
++/** Supplies local block and collision observations to the core geyser rule. */
++public final class BedrockGeyserPhysics {
++
++    public static void apply(final LocalPlayer player) {
++        if (!BedrockMovementEffects.hasGeyserBoost(player.getId()) || player.getAbilities().flying) {
++            return;
++        }
++        final var box = player.getBoundingBox();
++        final Vec3 motion = player.getDeltaMovement();
++        final float velocity = GeyserMovement.calculate(
++                new Position3f((float) box.minX, (float) box.minY, (float) box.minZ),
++                new Position3f((float) box.maxX, (float) box.maxY, (float) box.maxZ),
++                (float) motion.y, true, false, (x, y, z) -> cell(player.level(), new BlockPos(x, y, z)));
++        if (Float.floatToRawIntBits(velocity) != Float.floatToRawIntBits((float) motion.y)) {
++            player.setDeltaMovement(new Vec3(motion.x, velocity, motion.z));
++        }
++    }
++
++    public static GeyserMovement.Cell cell(final BlockGetter level, final BlockPos position) {
++        final var state = level.getBlockState(position);
++        final var fluid = state.getFluidState();
++        final boolean mainWater = state.is(Blocks.WATER);
++        final boolean sourceWater = fluid.is(Fluids.WATER) && fluid.isSource();
++        final boolean erupting = state.is(Blocks.POTENT_SULFUR)
++                && (state.getValue(PotentSulfurBlock.STATE) == PotentSulfurState.ERUPTING
++                || state.getValue(PotentSulfurBlock.STATE) == PotentSulfurState.CONTINUOUS);
++        return new GeyserMovement.Cell(!state.getCollisionShape(level, position).isEmpty(), erupting,
++                mainWater && sourceWater, !mainWater && sourceWater, fluid.isSource());
++    }
++
++    private BedrockGeyserPhysics() {
++    }
++
++}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPosture.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPosture.java
 new file mode 100644
 index 0000000..0f102d6
@@ -1582,10 +1714,10 @@ index 0000000..0f102d6
 +
 +}
 diff --git a/src/main/resources/viafabricplus-bedrock.mixins.json b/src/main/resources/viafabricplus-bedrock.mixins.json
-index 794e12a..f87f3a1 100644
+index 794e12a..820f2b2 100644
 --- a/src/main/resources/viafabricplus-bedrock.mixins.json
 +++ b/src/main/resources/viafabricplus-bedrock.mixins.json
-@@ -110,12 +110,16 @@
+@@ -110,12 +110,17 @@
      "features.input.MixinMouseHandler",
      "features.input.MixinInputPermissionConnection",
      "features.input.MixinMinecraftInputPermissions",
@@ -1596,6 +1728,7 @@ index 794e12a..f87f3a1 100644
      "features.movement.MixinEntityFluidInteraction_CurrentAccumulator",
      "features.movement.MixinHoneyBlock",
      "features.movement.MixinLivingEntity",
++    "features.movement.MixinPotentSulfurBlockEntity",
 +    "features.movement.MixinFireworkRocketEntity",
      "features.movement.MixinLocalPlayer",
 +    "features.movement.MixinPlayerCorrectionPacketListener",
@@ -1771,6 +1904,113 @@ index 0000000..dfed580
 +            assertEquals(original.minZ, adjusted.minZ);
 +            assertEquals(original.maxZ, adjusted.maxZ);
 +        }
++    }
++
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockGeyserPhysicsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockGeyserPhysicsTest.java
+new file mode 100644
+index 0000000..f4e2dba
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockGeyserPhysicsTest.java
+@@ -0,0 +1,101 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.movement;
++
++import net.minecraft.SharedConstants;
++import net.minecraft.core.BlockPos;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.level.BlockGetter;
++import net.minecraft.world.level.block.Blocks;
++import net.minecraft.world.level.block.PotentSulfurBlock;
++import net.minecraft.world.level.block.entity.BlockEntity;
++import net.minecraft.world.level.block.state.BlockState;
++import net.minecraft.world.level.block.state.properties.BlockStateProperties;
++import net.minecraft.world.level.block.state.properties.PotentSulfurState;
++import net.minecraft.world.level.material.FluidState;
++import net.raphimc.viabedrock.api.model.GeyserMovement;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockGeyserPhysicsTest {
++
++    @BeforeAll
++    static void initializeBlocks() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void distinguishesEruptingFromInactiveSulfurStates() {
++        for (final PotentSulfurState state : PotentSulfurState.values()) {
++            final var cell = cell(Blocks.POTENT_SULFUR.defaultBlockState().setValue(PotentSulfurBlock.STATE, state));
++            assertTrue(cell.colliding());
++            assertEquals(state == PotentSulfurState.ERUPTING || state == PotentSulfurState.CONTINUOUS, cell.erupting());
++            assertFalse(cell.sourceLiquid());
++        }
++    }
++
++    @Test
++    void distinguishesSourceFlowingFallingAndExtraLayerWater() {
++        final var source = cell(Blocks.WATER.defaultBlockState());
++        assertTrue(source.mainSourceWater());
++        assertTrue(source.sourceLiquid());
++        assertFalse(source.colliding());
++        for (int depth = 1; depth < 16; depth++) {
++            final var flowing = cell(Blocks.WATER.defaultBlockState().setValue(BlockStateProperties.LEVEL, depth));
++            assertFalse(flowing.mainSourceWater());
++            assertFalse(flowing.sourceLiquid());
++        }
++        final var wetSlab = cell(Blocks.OAK_SLAB.defaultBlockState().setValue(BlockStateProperties.WATERLOGGED, true));
++        assertTrue(wetSlab.extraSourceWater());
++        assertFalse(wetSlab.mainSourceWater());
++        assertTrue(wetSlab.colliding());
++        final var drySlab = cell(Blocks.OAK_SLAB.defaultBlockState());
++        assertFalse(drySlab.extraSourceWater());
++    }
++
++    @Test
++    void lavaRejectsTheCapWithoutContributingWaterDepth() {
++        final var source = cell(Blocks.LAVA.defaultBlockState());
++        assertTrue(source.sourceLiquid());
++        assertFalse(source.mainSourceWater());
++        assertFalse(source.extraSourceWater());
++        assertFalse(cell(Blocks.LAVA.defaultBlockState().setValue(BlockStateProperties.LEVEL, 1)).sourceLiquid());
++    }
++
++    private static GeyserMovement.Cell cell(final BlockState state) {
++        final BlockGetter level = new BlockGetter() {
++            @Override
++            public BlockEntity getBlockEntity(final BlockPos position) {
++                return null;
++            }
++
++            @Override
++            public BlockState getBlockState(final BlockPos position) {
++                return state;
++            }
++
++            @Override
++            public FluidState getFluidState(final BlockPos position) {
++                return state.getFluidState();
++            }
++
++            @Override
++            public int getHeight() {
++                return 384;
++            }
++
++            @Override
++            public int getMinY() {
++                return -64;
++            }
++        };
++        return BedrockGeyserPhysics.cell(level, BlockPos.ZERO);
 +    }
 +
 +}

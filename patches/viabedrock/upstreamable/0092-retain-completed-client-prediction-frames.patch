@@ -1,4 +1,4 @@
-From 8ae12986880f376b42d2ea6a4776dacdd4194d25 Mon Sep 17 00:00:00 2001
+From 3a38ae4f6cddc6ea8330eb24f6eb3eec3f2f11f5 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:28 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -232,12 +232,25 @@ sine table initializer. Execute 8,732 boosted and unboosted target kernel
 cases with the corrected producer table and compare every float output.
 These cases retain supplied sinf, CRT remainder, status slots and boost
 components; they do not close the separate Windows CRT rounding gap.
+
+Implement confirmed geyser boost calculations from native MovementTick
+0x146655f00 and its original block-column helpers. Share the 24-cell
+downward scan, both block layers, source-water depth, clear-top checks,
+flying exclusion, strict profile height and pre-addition velocity caps.
+Preserve float rounding and cap overshoot. Keep world access separate
+from the core rule so client integrations can use local collision shapes.
+
+Private execution of the pinned 1.26.51.1 callback and all four helpers
+matches 6,780 positive and negative cases. Original property lookup and
+component admission execute unchanged. Native world trajectory, client
+phase ordering and correction/history comparisons remain required.
 ---
  .../api/model/CollisionContact.java           |  80 ++++++++
  .../viabedrock/api/model/FluidCurrent.java    |  44 +++++
+ .../viabedrock/api/model/GeyserMovement.java  |  70 +++++++
  .../viabedrock/api/model/GlideMovement.java   |  64 ++++++
  .../viabedrock/api/model/MovementEffect.java  |  59 ++++++
- .../api/model/MovementEffectTimeline.java     |  60 ++++++
+ .../api/model/MovementEffectTimeline.java     |  64 ++++++
  .../api/model/PlayerCorrection.java           |  45 +++++
  .../api/model/PlayerCorrectionTracker.java    |  27 +++
  .../viabedrock/api/model/PlayerPosture.java   |  63 ++++++
@@ -266,9 +279,11 @@ components; they do not close the separate Windows CRT rounding gap.
  .../storage/PlayerPredictionStorage.java      |  78 ++++++++
  .../api/model/CollisionContactTest.java       |  60 ++++++
  .../api/model/FluidCurrentTest.java           |  56 ++++++
+ .../model/GeyserMovementReferenceTest.java    |  50 +++++
+ .../api/model/GeyserMovementTest.java         | 106 ++++++++++
  .../api/model/GlideMovementTest.java          | 115 +++++++++++
  .../api/model/MovementEffectTest.java         |  51 +++++
- .../api/model/MovementEffectTimelineTest.java |  61 ++++++
+ .../api/model/MovementEffectTimelineTest.java |  64 ++++++
  .../api/model/PlayerCorrectionTest.java       |  67 +++++++
  .../api/model/PlayerPostureTest.java          | 152 +++++++++++++++
  .../api/model/PlayerPredictionTest.java       | 139 +++++++++++++
@@ -284,9 +299,10 @@ components; they do not close the separate Windows CRT rounding gap.
  .../packet/ClientPlayerPacketsTest.java       |  32 ++-
  .../packet/MovementEffectPacketsTest.java     | 116 +++++++++++
  .../packet/PlayerCorrectionPacketTest.java    | 184 ++++++++++++++++++
- 51 files changed, 2588 insertions(+), 43 deletions(-)
+ 54 files changed, 2821 insertions(+), 43 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FluidCurrent.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/GeyserMovement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/GlideMovement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/MovementEffect.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java
@@ -303,6 +319,8 @@ components; they do not close the separate Windows CRT rounding gap.
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/PlayerPredictionStorage.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CollisionContactTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/FluidCurrentTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementReferenceTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/GlideMovementTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java
@@ -456,6 +474,82 @@ index 000000000..45fe897b6
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/GeyserMovement.java b/src/main/java/net/raphimc/viabedrock/api/model/GeyserMovement.java
+new file mode 100644
+index 000000000..292df8788
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/GeyserMovement.java
+@@ -0,0 +1,70 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.protocol.model.Position3f;
++
++/** Native 1.26.51 geyser movement using the player's current block column. */
++public final class GeyserMovement {
++
++    private static final float[] SPEED_LIMITS = {0.4F, 0.5F, 0.6F, 0.7F};
++
++    public static float calculate(final Position3f minimum, final Position3f maximum, final float verticalMotion,
++                                  final boolean boosted, final boolean flying, final BlockAccess blocks) {
++        if (!boosted || flying) {
++            return verticalMotion;
++        }
++        final int x = coordinate((maximum.x() - minimum.x()) * 0.5F + minimum.x());
++        int y = coordinate(minimum.y());
++        final int z = coordinate((maximum.z() - minimum.z()) * 0.5F + minimum.z());
++        // Native queries 24 cells, then considers the following cell even when none collided.
++        for (int distance = 0; distance < 24; distance++) {
++            if (blocks.cell(x, y, z).colliding()) {
++                break;
++            }
++            y--;
++        }
++        if (!blocks.cell(x, y, z).erupting()) {
++            return verticalMotion;
++        }
++        int depth = 0;
++        for (int offset = 1; offset <= 4; offset++) {
++            final Cell cell = blocks.cell(x, y + offset, z);
++            if (!cell.mainSourceWater() && !(cell.extraSourceWater() && !cell.colliding())) {
++                break;
++            }
++            depth = offset;
++        }
++        final Cell top = blocks.cell(x, y + depth + 1, z);
++        // Any source liquid rejects the cap, including lava. Flowing liquid does not.
++        if (depth == 0 || top.sourceLiquid() || top.colliding()) {
++            return verticalMotion;
++        }
++        if (minimum.y() < (float) (y + depth * 6 + 1) && verticalMotion < SPEED_LIMITS[depth - 1]) {
++            // The cap is checked before addition; native can overshoot it by this increment.
++            return verticalMotion + 0.2F;
++        }
++        return verticalMotion;
++    }
++
++    private static int coordinate(final float value) {
++        final float floor = (float) Math.floor(value);
++        // Match the x64 float-to-int conversion rather than Java's saturating conversion.
++        return !Float.isFinite(floor) || floor >= 0x1p31F || floor < -0x1p31F ? Integer.MIN_VALUE : (int) floor;
++    }
++
++    private GeyserMovement() {
++    }
++
++    @FunctionalInterface
++    public interface BlockAccess {
++        Cell cell(int x, int y, int z);
++    }
++
++    public record Cell(boolean colliding, boolean erupting, boolean mainSourceWater, boolean extraSourceWater, boolean sourceLiquid) {
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/GlideMovement.java b/src/main/java/net/raphimc/viabedrock/api/model/GlideMovement.java
 new file mode 100644
 index 000000000..e3df1f47a
@@ -593,10 +687,10 @@ index 000000000..8ed1101b9
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java b/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java
 new file mode 100644
-index 000000000..8b901b937
+index 000000000..3b2b68d41
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,64 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -639,6 +733,10 @@ index 000000000..8b901b937
 +
 +    public boolean hasDolphinBoost(final int entityId) {
 +        return this.hasEffect(entityId, MovementEffectType.DOLPHIN_BOOST);
++    }
++
++    public boolean hasGeyserBoost(final int entityId) {
++        return this.hasEffect(entityId, MovementEffectType.GEYSER_BOOST);
 +    }
 +
 +    private boolean hasEffect(final int entityId, final MovementEffectType type) {
@@ -2122,6 +2220,174 @@ index 000000000..7bbf5c907
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementReferenceTest.java b/src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementReferenceTest.java
+new file mode 100644
+index 000000000..e46ebbb44
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementReferenceTest.java
+@@ -0,0 +1,50 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonElement;
++import com.google.gson.JsonParser;
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import org.junit.jupiter.api.Test;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.HashMap;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assumptions.assumeTrue;
++
++class GeyserMovementReferenceTest {
++
++    @Test
++    void matchesOriginalWorldQueriesAndMotionAcrossPrivateNativeFixtures() throws Exception {
++        final String reference = System.getenv("STACKANVIL_GEYSER_REFERENCE");
++        assumeTrue(reference != null);
++        final JsonArray cases = JsonParser.parseString(Files.readString(Path.of(reference))).getAsJsonArray();
++        for (final JsonElement element : cases) {
++            final var scenario = element.getAsJsonObject();
++            final Map<Position3f, GeyserMovement.Cell> blocks = new HashMap<>();
++            for (final JsonElement entry : scenario.getAsJsonArray("world")) {
++                final JsonArray cell = entry.getAsJsonArray();
++                final int main = cell.get(3).getAsInt();
++                final int extra = cell.get(4).getAsInt();
++                blocks.put(new Position3f(cell.get(0).getAsFloat(), cell.get(1).getAsFloat(), cell.get(2).getAsFloat()),
++                        new GeyserMovement.Cell(main == 1 || main == 6 || main >= 7, main == 10 || main == 11,
++                                main == 2, extra == 2, main == 2 || main == 4 || extra == 2 || extra == 4));
++            }
++            final JsonArray box = scenario.getAsJsonArray("box");
++            final float result = GeyserMovement.calculate(
++                    new Position3f(box.get(0).getAsFloat(), box.get(1).getAsFloat(), box.get(2).getAsFloat()),
++                    new Position3f(box.get(3).getAsFloat(), box.get(4).getAsFloat(), box.get(5).getAsFloat()),
++                    scenario.get("velocity").getAsFloat(), scenario.get("active").getAsBoolean(), scenario.get("excluded").getAsBoolean(),
++                    (x, y, z) -> blocks.getOrDefault(new Position3f(x, y, z), new GeyserMovement.Cell(false, false, false, false, false)));
++            assertEquals((int) scenario.get("expected").getAsLong(), Float.floatToRawIntBits(result));
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementTest.java b/src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementTest.java
+new file mode 100644
+index 000000000..9fc7bd39e
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementTest.java
+@@ -0,0 +1,106 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import net.raphimc.viabedrock.protocol.model.Position3f;
++import org.junit.jupiter.api.Test;
++
++import java.util.HashMap;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class GeyserMovementTest {
++
++    private static final GeyserMovement.Cell AIR = new GeyserMovement.Cell(false, false, false, false, false);
++    private static final GeyserMovement.Cell SULFUR = new GeyserMovement.Cell(true, true, false, false, false);
++    private static final GeyserMovement.Cell WATER = new GeyserMovement.Cell(false, false, true, false, true);
++
++    @Test
++    void selectsEveryProfileAndChecksTheCapBeforeAddingLift() {
++        final float[] caps = {0.4F, 0.5F, 0.6F, 0.7F};
++        for (int depth = 1; depth <= 4; depth++) {
++            final Map<Integer, GeyserMovement.Cell> column = column(depth);
++            final float cap = caps[depth - 1];
++            assertEquals(cap, calculate(depth + 1.25F, cap, column));
++            assertEquals(Float.floatToRawIntBits(Math.nextDown(cap) + 0.2F),
++                    Float.floatToRawIntBits(calculate(depth + 1.25F, Math.nextDown(cap), column)));
++            assertEquals(0.2F, calculate(depth * 6 + 0.99999F, 0F, column));
++            assertEquals(0F, calculate(depth * 6 + 1F, 0F, column));
++        }
++    }
++
++    @Test
++    void rejectsSourceLiquidAndCollisionAboveTheWaterButAcceptsFlowingLiquid() {
++        final Map<Integer, GeyserMovement.Cell> column = column(4);
++        for (final GeyserMovement.Cell top : new GeyserMovement.Cell[]{
++            WATER, new GeyserMovement.Cell(false, false, false, false, true),
++            new GeyserMovement.Cell(true, false, false, false, false)}) {
++            column.put(5, top);
++            assertEquals(0F, calculate(6F, 0F, column));
++        }
++        column.put(5, AIR);
++        assertEquals(0.2F, calculate(6F, 0F, column));
++        column.put(2, AIR);
++        column.put(3, WATER);
++        // Only the immediately contiguous water column participates.
++        assertEquals(0.2F, calculate(4F, 0F, column));
++    }
++
++    @Test
++    void extraLayerWaterRequiresAnEmptyMainCollisionBox() {
++        final Map<Integer, GeyserMovement.Cell> column = column(1);
++        column.put(1, new GeyserMovement.Cell(false, false, false, true, true));
++        assertEquals(0.2F, calculate(2F, 0F, column));
++        column.put(1, new GeyserMovement.Cell(true, false, false, true, true));
++        assertEquals(0F, calculate(2F, 0F, column));
++    }
++
++    @Test
++    void preservesAdmissionAndUsesFloatCenterAtNegativeCoordinates() {
++        final Position3f min = new Position3f(-0.75F, -31.75F, -0.75F);
++        final Position3f max = new Position3f(-0.15F, -29.95F, -0.15F);
++        final Map<Integer, GeyserMovement.Cell> column = column(1);
++        final GeyserMovement.BlockAccess blocks = (x, y, z) -> {
++            assertEquals(-1, x);
++            assertEquals(-1, z);
++            return column.getOrDefault(y + 33, AIR);
++        };
++        assertEquals(0.2F, GeyserMovement.calculate(min, max, 0F, true, false, blocks));
++        final GeyserMovement.BlockAccess unexpected = (x, y, z) -> {
++            throw new AssertionError();
++        };
++        assertEquals(-0F, GeyserMovement.calculate(min, max, -0F, false, false, unexpected));
++        assertEquals(0.3F, GeyserMovement.calculate(min, max, 0.3F, true, true, unexpected));
++    }
++
++    @Test
++    void retainsTheTerminalCandidateAndStopsAtTheFirstCollision() {
++        final Map<Integer, GeyserMovement.Cell> column = column(4);
++        assertEquals(0.2F, calculate(24F, 0F, column));
++        assertEquals(0F, calculate(25F, 0F, column));
++        column.put(8, new GeyserMovement.Cell(true, false, false, false, false));
++        assertEquals(0F, calculate(24F, 0F, column));
++        column.remove(8);
++        column.put(0, new GeyserMovement.Cell(true, false, false, false, false));
++        assertEquals(0F, calculate(24F, 0F, column));
++    }
++
++    private static float calculate(final float bottom, final float velocity, final Map<Integer, GeyserMovement.Cell> column) {
++        return GeyserMovement.calculate(new Position3f(0F, bottom, 0F), new Position3f(0.6F, bottom + 1.8F, 0.6F),
++                velocity, true, false, (x, y, z) -> column.getOrDefault(y, AIR));
++    }
++
++    private static Map<Integer, GeyserMovement.Cell> column(final int depth) {
++        final Map<Integer, GeyserMovement.Cell> result = new HashMap<>();
++        result.put(0, SULFUR);
++        for (int y = 1; y <= depth; y++) {
++            result.put(y, WATER);
++        }
++        return result;
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/GlideMovementTest.java b/src/test/java/net/raphimc/viabedrock/api/model/GlideMovementTest.java
 new file mode 100644
 index 000000000..be74f06d7
@@ -2302,10 +2568,10 @@ index 000000000..fdf73f7c1
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java
 new file mode 100644
-index 000000000..ea6f84fef
+index 000000000..a314eb9d4
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java
-@@ -0,0 +1,61 @@
+@@ -0,0 +1,64 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2352,6 +2618,8 @@ index 000000000..ea6f84fef
 +        assertTrue(timeline.hasDolphinBoost(1));
 +        assertFalse(timeline.hasGlideBoost(2));
 +        assertFalse(timeline.hasDolphinBoost(2));
++        assertTrue(timeline.hasGeyserBoost(2));
++        assertFalse(timeline.hasGeyserBoost(1));
 +        assertEquals(0, timeline.completeFrame());
 +        assertTrue(timeline.hasGlideBoost(1));
 +        assertFalse(timeline.hasDolphinBoost(1));
@@ -2362,6 +2630,7 @@ index 000000000..ea6f84fef
 +        assertEquals(1, timeline.completeFrame());
 +        assertFalse(timeline.hasGlideBoost(2));
 +        timeline.clear();
++        assertFalse(timeline.hasGeyserBoost(2));
 +        assertFalse(timeline.hasGlideBoost(2));
 +        assertEquals(0, timeline.completeFrame());
 +    }

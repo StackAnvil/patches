@@ -966,3 +966,44 @@ CubeConverter passes all 16 tests.
 Both complete patch stacks replay, all four project builds pass, and the TypeScript check passes.
 Native GPU execution remains blocked by the current-boot guard.
 Fresh native comparisons, rewind, resimulation, vehicle reconciliation, and the full gameplay matrix remain required.
+
+## Confirmed geyser movement and local Java lift, October 7, 2026
+
+ Core owns the geyser calculation and confirmed effect timeline.
+The add-on supplies local block, fluid, and collision observations at the start of player travel.
+It excludes the local Bedrock player from Java's geyser launch ticker, including its fall-distance reset.
+The existing movement-effect channel carries confirmations through direct and ViaProxy connections.
+
+The pinned 1.26.51.1 callback `146655f00` checks the Flying ability and scans the body-center block column.
+It queries 24 downward cells and then considers the following cell as a final candidate.
+Only erupting or continuous potent sulfur qualifies.
+One to four contiguous source-water cells select speed limits `0.4F`, `0.5F`, `0.6F`, and `0.7F`.
+Extra-layer water counts only when the main collision box is empty.
+A colliding cap or source liquid above the column rejects the boost.
+This source-liquid check includes lava.
+Below the selected height limit, motion below its speed limit gains `0.2F`.
+The check precedes addition, so the resulting motion can exceed that speed limit.
+
+ The original callback and helpers `149951440`, `1499514e0`, `1499518f0`, and `1430167b0` execute unchanged.
+All 6,780 controlled cases match the production Java result bit for bit.
+Fixtures supply block lookup, collision AABBs, dispatch, floor rounding, component storage, and packed block properties.
+Native property lookup, Flying admission, profile selection, cap checks, and the motion update execute inside the original instructions.
+Cases include inactive effects, all sulfur states, both water layers, source and flowing liquids, obstructions, negative coordinates, and speed limits.
+Portable tests retain scan, height, overshoot, effect-lifecycle, and fluid-adapter controls.
+
+**Incomplete or unverified:** These checks do not establish complete native world trajectories or client phase ordering.
+Speculative local geyser admission, server confirmation timing, native fall-distance behavior, correction replay, and live boosted route comparisons remain required.
+Stock Java motion, mixed fluids, vehicles, Boar, CubeCraft, platform joins, and the full gameplay matrix also remain in scope.
+Private executable, Ghidra, and fixture evidence stays under `.stackanvil/research/geyser-boost/`.
+
+**Regression checks:** The full core suite reports 787 tests with no failures or errors; 19 optional fixture tests skip.
+The add-on reports 605 tests with no failures or errors; 117 optional fixture tests skip.
+All three new client fluid-adapter tests execute.
+Core and add-on patch replay and standalone PR checks pass.
+ViaProxy builds against the updated core.
+All 1,249 embedded core files match in both client and proxy bundles, excluding their bundle-specific manifest.
+
+The current client spawns through ViaProxy on strict BDS 1.26.51.1 and remains connected for 20 seconds.
+An ordinary Java 26.3 connection also completes the same stability check.
+Runtime inspection confirms that both the sulfur ticker wrapper and the player travel injection transform their intended classes.
+These connection checks do not exercise an active geyser or establish ordinary Java geyser motion.
