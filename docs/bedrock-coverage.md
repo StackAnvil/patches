@@ -7693,3 +7693,70 @@ Alternative terrain renderers, arbitrary model rotations, enhanced lighting, and
 Dimensions, time, weather, brightness, status effects, propagation, fluid filtering, chunk boundaries, and relighting retain their native verification requirements.
 The preceding intermittent ViaProxy handshake timeout remains an independent requirement.
 All other movement, combat, protocol, account, asset, and platform requirements retain their scope.
+
+## Native world-light reads and block fields: October 7, 2026
+
+**Goal-turn classification:** Progress. Native instruction tests establish the world-reader layout, cache-miss behavior, and component flag initialization.
+The full Bedrock coverage goal remains active.
+This iteration corrects a native test fixture decoder. It does not change production rendering or propagated light.
+The preceding inset-face correction passes GitHub CI on Ubuntu, Windows, and macOS, including the complete build.
+
+**World reads:** The original world-light function in Bedrock 1.26.51.1, build 51061372, matches 262,144 supplied voxel values.
+Inputs come from the current ViaBedrock core light engine across four nine-chunk profiles, with both sky-lit and unlit configurations.
+Profiles include emission, filtering, secondary water, an enclosed cavity, absent chunks, and a missing input section.
+The fixture transposes Java's YZX nibble storage into native XZY storage and compares reads by physical coordinates.
+Negative chunk coordinates, section boundaries, zero arrays, and compact full-sky arrays participate in the comparison.
+Another 65,536 checks cover every synthetic light-channel pair and source-floor combination across a nonuniform section.
+World defaults pass 1,416 checks; shortened section vectors pass 64 fallback checks.
+
+Native packed light stores sky in the low byte and block light in the high byte.
+The original reader clamps only the block byte to the supplied source floor.
+The earlier corner fixture decoder reverses these channels. Component-wise maxima commute with that reversal, so those tests still pass.
+The owning core patch now corrects the decoder and adds an independent native world-read fixture test.
+Its 1,152 reference values retain physical channel identity across coordinates and source floors.
+Production Java light packing and the production maximum helper already use the correct Java layout.
+
+**Backing-light cache path:** The original light-cache wrapper now calls the original world reader during misses.
+It passes 12,288 source-floor combinations and 12,288 cache-hit controls at three asymmetric coordinates.
+Native source floors take the greater of authored emission and one quarter of cached emissive brightness, truncated to an integer.
+The fixture sweeps emission levels zero to fifteen and all stored emissive byte values.
+Emissive values above the native brightness range are arithmetic controls, not examples of real blocks.
+Six cache-default checks pass. Sixteen below-sample checks and sixteen nonzero controls verify the dark-result gate.
+The below-sample path also executes the original block-cache wrapper with supplied block records.
+
+**Block field identity:** Versioned [LeviLamina headers](https://github.com/LiteLDev/LeviLamina/tree/50340734955465bc895374f6c701aa8ffd73d0b0/src/mc/world/level/block) identify the target component layout.
+The original component finalizer passes 2,028 cases with supplied geometry, materials, emission, and filtering components.
+Cases cover own and inherited components, both geometry-full flags, empty materials, every single render layer, and every ordered two-layer combination.
+With a material component, the opaque-full-block flag requires full geometry and only opaque render layers: ordinary, seasonal, or internal shifted opaque.
+Without that component, 512 controls verify the separate legacy opaque bit.
+The finalizer writes opaque-full-block at block offset `0xA3`, authored emission at `0xA4`, and filtering at `0xA5`.
+The cached emissive brightness at `0x70` is a separate field.
+These identities correct the earlier private interpretation of `0xA4` as an unknown filtering hint.
+
+**Default ambient values:** Another 1,024 controls execute the original default block shade-brightness getter without substituted calls.
+It returns the native float `0.2` when cached solidity, opaque-full-block, or the legacy shade property applies; otherwise it returns `1.0`.
+Cached solidity is a distinct field at `0x71`. It must not be inferred solely from the opaque-full-block flag.
+Initializing that solidity field and resolving per-type overrides remain separate requirements.
+
+**Fixture boundaries:** The tests supply native chunk records, component-provider results, and block-cache records.
+The world tests substitute the chunk-provider virtual call; cache tests also supply the maximum-height result.
+The finalizer tests supply geometry's full-block flag rather than executing its initializer.
+Actual world ownership, native propagation, runtime block identities, per-type ambient overrides, the mesh writer, and the GPU remain outside these fixtures.
+Matching reads from supplied core light arrays does not prove that native propagation produces the same arrays.
+Read-only Ghidra queries preserve all four persistent project files; Ghidra removes two stale temporary files while opening the project.
+The desktop bridge attempt exits without an attached session. No desktop input or persistent annotations are applied.
+
+**Test verification:** The targeted seven-test lighting suite passes with one optional face-color fixture skipped.
+Material, corner, and world-channel native fixtures execute. Core Checkstyle passes.
+The new world-channel test fails with the earlier decoder and passes after restoring the correction.
+The owning core patch exports successfully after all 97 patches replay.
+
+**Publication plan:** The reviewed plan changes the coverage ledger, owning core patch, and its PR notes.
+Private rollback copies cover those three files before commit and push to `main`.
+All 35 existing artifact identities remain unchanged, and the existing servers retain their process identities.
+This test-only increment does not replace runtime artifacts or establish a new live comparison.
+
+**Remaining:** Source and diagonal selection still require production correction and route verification against the identified fields.
+Native geometry-full and cached-solidity initialization, per-type ambient overrides, emissive custom states, world-provider integration, and nonzero-strength flat paths remain open.
+Controlled visible comparisons, alternate terrain renderers, enhanced lighting, dimensions, time, weather, brightness, status effects, propagation, fluid filtering, chunk boundaries, and relighting remain required.
+All movement, combat, protocol, account, asset, and platform requirements retain their scope.

@@ -240,3 +240,28 @@ The fixture executes all six original target face emission functions with suppli
 It intercepts mesh submission to record positions and colors. It does not execute native world lookup, neighbor color assignment, or the GPU.
 Both connection routes verify the integrated face mapping and expanded bounds against 12,096 native colors per route.
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-face-interpolation-arithmetic-october-7-2026) records route results and remaining scope.
+
+## Native fixture channel identity
+
+The original target world-light reader stores sky in its low byte and block light in its high byte.
+The native fixture decoder now maps these channels to Java's packed layout correctly.
+Independent maxima commute with the preceding reversal, so the existing corner tests could not detect the decoder error.
+The production Java light layout and maximum helper retain their current behavior.
+
+An optional reference test checks 1,152 original native world reads against independently read physical channels from core light arrays.
+The private fixtures also verify 262,144 core voxel reads, native XZY storage, negative coordinates, compact section arrays, defaults, and block-channel floors.
+The native light-cache wrapper executes the original world reader during misses and retains cached results without reapplying source floors.
+
+Versioned [LeviLamina headers](https://github.com/LiteLDev/LeviLamina/tree/50340734955465bc895374f6c701aa8ffd73d0b0/src/mc/world/level/block) identify the component fields.
+The original finalizer verifies the opaque-full-block, emission, and filtering field writes across 2,028 supplied component cases and 512 legacy-bit controls.
+These tests supply component lookup and geometry's full-block flag. They do not execute actual runtime block initialization or ambient-value lookup.
+
+The original default shade getter also passes 1,024 flag controls without substituted calls.
+It distinguishes cached solidity from opaque-full-block. Either flag, or its legacy shade property, selects the native `0.2` ambient value.
+Actual cached-solidity initialization and per-type overrides remain unverified.
+
+The seven-test lighting suite passes with one optional face-color fixture skipped, and Core Checkstyle passes.
+The new channel test fails with the preceding decoder and passes with the corrected decoder.
+
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-world-light-reads-and-block-fields-october-7-2026) records the exact fixture boundaries.
+Supplied core arrays establish reader equivalence, not native propagation or visible parity.
