@@ -1,4 +1,4 @@
-From 231d0e26138456e8cf717aa7647676c00b618696 Mon Sep 17 00:00:00 2001
+From ea4f0beedef0d2870a8064075e122b3cd9a761a7 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 18:42:36 +0200
 Subject: [PATCH] feat(ui): resolve authored Bedrock server UI scenes
@@ -90,6 +90,19 @@ Expose the original merged control to the domain decorator without changing
 form actions. An unrelated later text binding clears the count annotation.
 The frontend can draw real Java stack counts once at that authored geometry
 while retaining unrelated numeric labels; no control-name heuristic is used.
+
+Preserve authored members when a higher resource-pack layer partially
+overrides the same namespace and control name. Keep an existing explicit
+parent until an upper declaration supplies another parent, and retain
+top-level replacement for controls and binding arrays.
+
+Versioned target UI and accepted server inputs contain partial count,
+chest-title, keyboard-image and text-entry-label declarations without a
+type. Whole-definition replacement erased their lower type and bindings.
+This layering behavior is inferred from those target inputs; original
+native definition-store merge execution remains separate verification.
+Four regression cases and actual three/six-row scene probes retain the
+63/90 native count labels, title labels and real collection addresses.
 ---
  build.gradle                                  |  11 +
  .../api/model/NativeContainerMessage.java     |  84 ++
@@ -97,7 +110,7 @@ while retaining unrelated numeric labels; no control-name heuristic is used.
  .../http/ConvertedResourcePackCache.java      |   4 +-
  .../api/resourcepack/ui/ContainerUi.java      | 277 ++++++
  .../api/resourcepack/ui/FormBindings.java     | 280 ++++++
- .../api/resourcepack/ui/JsonUiProgram.java    | 906 ++++++++++++++++++
+ .../api/resourcepack/ui/JsonUiProgram.java    | 911 ++++++++++++++++++
  .../api/resourcepack/ui/ServerFormUi.java     | 253 +++++
  .../api/resourcepack/ui/UiBindings.java       |  40 +
  .../api/resourcepack/ui/UiExpression.java     | 304 ++++++
@@ -111,15 +124,15 @@ while retaining unrelated numeric labels; no control-name heuristic is used.
  .../protocol/storage/ResourcePackStorage.java |  28 +-
  .../api/model/NativeContainerMessageTest.java |  73 ++
  .../api/model/NativeFormMessageTest.java      |  51 +
- .../api/resourcepack/ui/ContainerUiTest.java  | 161 ++++
- .../resourcepack/ui/JsonUiProgramTest.java    | 158 +++
+ .../api/resourcepack/ui/ContainerUiTest.java  | 201 ++++
+ .../resourcepack/ui/JsonUiProgramTest.java    | 230 +++++
  .../ui/ServerCustomFormUiTest.java            | 146 +++
  .../ui/ServerFormUiSliderStateTest.java       | 126 +++
  .../api/resourcepack/ui/ServerFormUiTest.java | 291 ++++++
  .../api/resourcepack/ui/UiExpressionTest.java |  56 ++
  .../api/resourcepack/ui/UiTexturesTest.java   | 111 +++
  .../NativeContainerOpeningPacketTest.java     | 173 ++++
- 28 files changed, 4126 insertions(+), 132 deletions(-)
+ 28 files changed, 4243 insertions(+), 132 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeContainerMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFormMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/ContainerUi.java
@@ -913,10 +926,10 @@ index 000000000..fa089a61d
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
 new file mode 100644
-index 000000000..f57e8a3a9
+index 000000000..b7bfa8447
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgram.java
-@@ -0,0 +1,906 @@
+@@ -0,0 +1,911 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1200,11 +1213,16 @@ index 000000000..f57e8a3a9
 +                        continue;
 +                    }
 +                    final String[] name = entry.getKey().split("@", 2);
-+                    if (this.definitions.size() >= 8192) {
++                    final String identity = namespace + "." + name[0];
++                    final Definition lower = this.definitions.get(identity);
++                    if (lower == null && this.definitions.size() >= MAX_NODES) {
 +                        throw new IllegalArgumentException("Too many UI definitions");
 +                    }
-+                    this.definitions.put(namespace + "." + name[0],
-+                            new Definition(entry.getValue().getAsJsonObject(), name.length == 2 ? (name[1].contains(".") ? name[1] : namespace + "." + name[1]) : ""));
++                    final JsonObject value = lower == null ? new JsonObject() : lower.value.deepCopy();
++                    merge(value, entry.getValue().getAsJsonObject());
++                    final String parent = name.length == 2 ? (name[1].contains(".") ? name[1] : namespace + "." + name[1])
++                            : lower == null ? "" : lower.parent;
++                    this.definitions.put(identity, new Definition(value, parent));
 +                }
 +                if (server) {
 +                    this.customizedFiles.add(file.getKey());
@@ -3435,10 +3453,10 @@ index 000000000..29e1c7578
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ContainerUiTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ContainerUiTest.java
 new file mode 100644
-index 000000000..98e42f4f6
+index 000000000..145cb6539
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/ContainerUiTest.java
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,201 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3588,6 +3606,46 @@ index 000000000..98e42f4f6
 +    }
 +
 +    @Test
++    void partialPackLabelsRetainCountSourcesAndTitlesForBothChestFamilies() {
++        final String lower = """
++                {"namespace":"chest","small_chest_screen":{"$screen_content":"chest.panel"},
++                 "large_chest_screen":{"$screen_content":"chest.panel"},
++                 "small_chest_panel@chest.panel":{},"large_chest_panel@chest.panel":{},
++                 "panel":{"type":"panel","controls":[{"title@chest.title":{}},
++                   {"external":{"type":"grid","collection_name":"container_items","grid_item_template":"chest.cell"}},
++                   {"storage":{"type":"grid","collection_name":"inventory_items","grid_item_template":"chest.cell"}},
++                   {"hotbar":{"type":"grid","collection_name":"hotbar_items","grid_item_template":"chest.cell"}}]},
++                 "title":{"type":"label","text":"$container_title","color":[1,1,1]},
++                 "cell":{"type":"panel","controls":[{"count@chest.count_label":{}}]},
++                 "count_label":{"type":"label","$source|default":"#inventory_stack_count","text":"$source",
++                   "bindings":[{"binding_name":"$source","binding_type":"collection","binding_collection_name":"$item_collection_name"}]}}
++                """;
++        final String upper = """
++                {"namespace":"chest","title":{"text":"$container_title"},
++                 "count_label":{"$font|default":"small","font_size":"$font","offset":[2,3]}}
++                """;
++        final var ui = new ContainerUi(new JsonUiProgram(List.of(Map.of("ui/chest_screen.json", lower.getBytes(StandardCharsets.UTF_8)),
++                Map.of("ui/chest_screen.json", upper.getBytes(StandardCharsets.UTF_8)))));
++        for (final ContainerUi.Kind kind : ContainerUi.Kind.values()) {
++            final var view = menu(kind, "Actual title", 16);
++            final var scene = ui.resolve(view);
++            assertNotNull(scene);
++            final var labels = nodes(scene.getAsJsonObject("root")).stream()
++                    .filter(node -> "label".equals(JsonUiProgram.string(node, "type"))).toList();
++            final var counts = labels.stream().filter(node -> node.has("inventory_count")).toList();
++            assertEquals(view.slots().size(), counts.size());
++            assertEquals(16, counts.getFirst().get("text").getAsInt());
++            assertTrue(counts.stream().allMatch(node -> "slot".equals(node.get("inventory_count").getAsString())));
++            assertTrue(counts.stream().allMatch(node -> "small".equals(node.get("font_size").getAsString())));
++            assertEquals(2, counts.getFirst().getAsJsonArray("offset").get(0).getAsInt());
++            final var titles = labels.stream().filter(node -> "title".equals(JsonUiProgram.string(node, "name"))).toList();
++            assertEquals(1, titles.size());
++            assertEquals("Actual title", titles.getFirst().get("text").getAsString());
++            assertEquals(scene, ContainerUi.fromProgram(ui.exportProgram(kind, view.title())).resolve(view));
++        }
++    }
++
++    @Test
 +    void invalidAndIncompleteMenusCannotInventSlotAssociations() {
 +        final var complete = menu(ContainerUi.Kind.CHEST_3_ROWS, "Actual", 1);
 +        final var slots = new ArrayList<>(complete.slots());
@@ -3602,10 +3660,10 @@ index 000000000..98e42f4f6
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java
 new file mode 100644
-index 000000000..852aae66b
+index 000000000..27814167f
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/resourcepack/ui/JsonUiProgramTest.java
-@@ -0,0 +1,158 @@
+@@ -0,0 +1,230 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3704,6 +3762,78 @@ index 000000000..852aae66b
 +        final var result = ui.resolve("example.root", new Bindings());
 +        assertEquals(1, result.root().getAsJsonArray("children").size());
 +        assertEquals("Global caption", result.root().getAsJsonArray("children").get(0).getAsJsonObject().get("text").getAsString());
++    }
++
++    @Test
++    void partialDefinitionsRetainLabelBindingsAndImageTypesAcrossLayers() {
++        final String lower = """
++                {"namespace":"example","root":{"type":"panel","collection_name":"first","collection_index":0,"controls":[
++                  {"caption@example.caption":{}},{"icon@example.icon":{}}]},
++                 "caption":{"type":"label","text":"#caption","offset":[0,1]},
++                 "icon":{"type":"image","texture":"textures/ui/lower","size":[16,16]}}
++                """;
++        final String upper = """
++                {"namespace":"example","caption":{"font_size":"small","offset":[2,3]},
++                 "icon":{"texture":"textures/ui/upper"}}
++                """;
++        final var ui = new JsonUiProgram(List.of(Map.of("ui/example.json", lower.getBytes(StandardCharsets.UTF_8)),
++                Map.of("ui/example.json", upper.getBytes(StandardCharsets.UTF_8))));
++        final var scene = ui.resolve("example.root", new Bindings());
++        final var children = scene.root().getAsJsonArray("children");
++        final var caption = children.get(0).getAsJsonObject();
++        assertEquals("label", caption.get("type").getAsString());
++        assertEquals("first-0", caption.get("text").getAsString());
++        assertEquals("small", caption.get("font_size").getAsString());
++        assertEquals(2, caption.getAsJsonArray("offset").get(0).getAsInt());
++        final var icon = children.get(1).getAsJsonObject();
++        assertEquals("image", icon.get("type").getAsString());
++        assertTrue(icon.get("texture").getAsString().contains("upper"));
++        assertEquals(16, icon.getAsJsonArray("size").get(0).getAsInt());
++        assertEquals(scene.root(), JsonUiProgram.fromProgram(ui.export(scene.requiredDefinitions(), new JsonObject()))
++                .resolve("example.root", new Bindings()).root());
++    }
++
++    @Test
++    void partialDefinitionsPreserveTheirParentUntilAnExplicitParentChangesIt() {
++        final String lower = """
++                {"namespace":"example","first":{"type":"label","text":"First","size":[10,10]},
++                 "second":{"type":"image","texture":"textures/ui/second","size":[20,20]},
++                 "root@first":{"offset":[1,2]}}
++                """;
++        final Map<String, byte[]> base = Map.of("ui/example.json", lower.getBytes(StandardCharsets.UTF_8));
++        final Map<String, byte[]> partial = Map.of("ui/example.json", """
++                {"namespace":"example","root":{"offset":[3,4]}}
++                """.getBytes(StandardCharsets.UTF_8));
++        final var inherited = new JsonUiProgram(List.of(base, partial)).resolve("example.root", new Bindings()).root();
++        assertEquals("label", inherited.get("type").getAsString());
++        assertEquals("First", inherited.get("text").getAsString());
++        assertEquals(3, inherited.getAsJsonArray("offset").get(0).getAsInt());
++        final Map<String, byte[]> replacementParent = Map.of("ui/example.json", """
++                {"namespace":"example","root@second":{"alpha":0.5}}
++                """.getBytes(StandardCharsets.UTF_8));
++        final var replaced = new JsonUiProgram(List.of(base, partial, replacementParent))
++                .resolve("example.root", new Bindings()).root();
++        assertEquals("image", replaced.get("type").getAsString());
++        assertFalse(replaced.has("text"));
++        assertEquals(20, replaced.getAsJsonArray("size").get(0).getAsInt());
++        assertEquals(3, replaced.getAsJsonArray("offset").get(0).getAsInt());
++        assertEquals(0.5, replaced.get("alpha").getAsDouble());
++    }
++
++    @Test
++    void upperControlsArraysReplaceLowerArraysWithoutMergingTheirChildren() {
++        final var ui = new JsonUiProgram(List.of(Map.of("ui/example.json", """
++                {"namespace":"example","root":{"type":"panel","size":[90,40],"controls":[
++                  {"old":{"type":"label","text":"Old"}}]}}
++                """.getBytes(StandardCharsets.UTF_8)), Map.of("ui/example.json", """
++                {"namespace":"example","root":{"type":"panel","controls":[
++                  {"new":{"type":"label","text":"New"}}]}}
++                """.getBytes(StandardCharsets.UTF_8))));
++        final var root = ui.resolve("example.root", new Bindings()).root();
++        assertEquals(90, root.getAsJsonArray("size").get(0).getAsInt());
++        final var children = root.getAsJsonArray("children");
++        assertEquals(1, children.size());
++        assertEquals("New", children.get(0).getAsJsonObject().get("text").getAsString());
 +    }
 +
 +    private static final class Bindings implements UiBindings {
