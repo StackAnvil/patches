@@ -1146,3 +1146,36 @@ Emitter startup does not establish visible native particle parity or displayed r
 Production distance gates, particle simulation, audio/particle timing, local-position comparisons, and complete visible parity remain required.
 Ordinary Java's null hook mapping and particle limits remain fallback limitations.
 The full fishing action matrix and all other gameplay requirements remain in scope.
+
+## Fishing particle distance, October 7, 2026
+
+Core now supplies native legacy distance calculations and continuous option semantics.
+The add-on samples the rendered camera and exposes a persisted particle render-distance slider.
+The native default is zero; the range is zero to one, with a change tolerance of `0.001F`.
+The raw chunk setting and this particle setting remain independent.
+Only the legacy wake uses the gate; the hook effect and final named wake retain their own paths.
+
+Fifty-two bounded native option cases verify initialization, clamping, change tolerance, infinities, and NaN.
+Another 480 cases execute the complete legacy gate and the actual camera and setting getters.
+Production Java matches every distance decision and threshold bit pattern.
+The [core patch notes](../patches/viabedrock/deferred/0001-translate-bedrock-actor-events-to-java-statuses.pr.md#native-legacy-particle-range) record fixture boundaries and target addresses.
+Camera setup, graph lookup, simulation, and visible output remain outside those execution fixtures.
+
+Twelve additional native getter cases cover mixed axes, fractional camera offsets, and large coordinates.
+Production tests preserve their float bits, including axis-dependent addition rounding.
+
+Core reports 772 tests with zero failures and 19 optional skips.
+The add-on reports 596 tests with zero failures and 114 optional skips.
+Persistence tests preserve continuous values, reject invalid stored types, and clamp admitted numeric values.
+Both stacks replay, and all 1,241 core entries match the add-on and ViaProxy bundles, excluding bundle metadata.
+
+Fresh strict BDS runs on Linux verify near/default, far/default, and far/full controls through direct and ViaProxy routes.
+The direct recording contains 32 native bite events; ViaProxy contains nine.
+Each event has the expected distance decision and two or three independent native emitter starts.
+Both use raw render distance 12. A 50-block rendered-camera offset rejects the default legacy wake and admits it at full distance.
+Settings search, mouse, keyboard, and reset controls work in the actual client.
+After clearing the camera, real reeling gives one server inventory reward, one durability point, and no remaining hook on each route.
+The private fixture returns to its original checksum, and both user-owned servers remain unchanged.
+
+Visible native comparisons, named-emitter range behavior, Java fallback limits, and complete fishing parity remain required.
+All eight coverage groups, the full gameplay matrix, strict BDS, Boar diagnostics, real servers, and platform joins remain in scope.

@@ -1,4 +1,4 @@
-From a6a5003cf1211a6dc60ee672bf0152b7ae2c7f34 Mon Sep 17 00:00:00 2001
+From 85189f3b427338f77a41fb38eff528b946ecd758 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Wed, 7 Oct 2026 02:53:57 +0200
 Subject: [PATCH] feat(entities): apply native fishing bite impulses
@@ -28,15 +28,34 @@ Prepare resources and independent Molang environments off the render thread.
 The cold archive load otherwise delayed live rod input by about 850 ms.
 Bound pending preparation to 32 requests and reject stale resource generations
 and worlds before starting effects. Keep the bite impulse immediate.
+
+Apply the legacy wake distance gate using the rendered camera, raw chunk
+setting and a persisted continuous native particle-distance slider. Keep
+the two named emissions independent and sample the decision before async
+preparation. Core owns the calculation and native option semantics; only
+local camera sampling and settings presentation require this integration.
+The pinned option starts at zero and ignores changes within 0.001, without
+quantizing values. Use the native Minecraft slider with keyboard controls.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |  6 ++
- .../appearance/BedrockServerParticles.java    | 77 +++++++++++++++++++
+ .../appearance/BedrockServerParticles.java    | 87 +++++++++++++++++++
  .../appearance/BedrockServerResources.java    |  2 +
- .../render/BedrockFishingFeedback.java        | 30 ++++++++
- .../render/NativeFishingBitePayload.java      | 24 ++++++
- 5 files changed, 139 insertions(+)
+ .../core/integration/MixinSettingsScreen.java |  4 +
+ .../render/BedrockFishingFeedback.java        | 30 +++++++
+ .../render/NativeFishingBitePayload.java      | 24 +++++
+ .../settings/ParticleViewDistanceEntry.java   | 40 +++++++++
+ .../settings/ParticleViewDistanceScreen.java  | 61 +++++++++++++
+ .../bedrock/settings/BedrockSettings.java     |  5 ++
+ .../settings/ParticleViewDistanceSetting.java | 45 ++++++++++
+ .../viafabricplus-bedrock/lang/en_us.json     |  1 +
+ .../ParticleViewDistanceSettingTest.java      | 51 +++++++++++
+ 12 files changed, 356 insertions(+)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFishingFeedback.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeFishingBitePayload.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/settings/ParticleViewDistanceEntry.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/screen/settings/ParticleViewDistanceScreen.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/settings/ParticleViewDistanceSetting.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/settings/ParticleViewDistanceSettingTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index 20f0aea..88d2ed4 100644
@@ -63,10 +82,10 @@ index 20f0aea..88d2ed4 100644
              ClientPlayNetworking.registerReceiver(NativeProjectileOwnerPayload.TYPE,
                  (payload, context) -> BedrockProjectileOwners.accept(listener.getConnection(), payload.message())));
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticles.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticles.java
-index ceb82a0..85dd9ed 100644
+index ceb82a0..4a9d0d5 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticles.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockServerParticles.java
-@@ -10,22 +10,99 @@ import io.netty.buffer.Unpooled;
+@@ -10,22 +10,109 @@ import io.netty.buffer.Unpooled;
  import net.minecraft.client.Minecraft;
  import net.minecraft.client.multiplayer.ClientLevel;
  import net.minecraft.core.RegistryAccess;
@@ -80,6 +99,7 @@ index ceb82a0..85dd9ed 100644
 +import net.minecraft.server.packs.resources.ResourceManager;
  import net.raphimc.viabedrock.api.model.NativeParticlePlaybackMessage;
 +import net.raphimc.viabedrock.api.model.NativeFishingBite;
++import net.raphimc.viabedrock.api.model.NativeParticleRange;
 +import net.raphimc.viabedrock.api.model.MolangVariables;
  import net.raphimc.viabedrock.protocol.model.Position3f;
  
@@ -103,12 +123,21 @@ index ceb82a0..85dd9ed 100644
 +        final Position3f origin = NativeFishingBite.particleOrigin(
 +                new Position3f((float) hook.getX(), (float) hook.getY(), (float) hook.getZ()), (float) hook.getBoundingBox().minY);
 +        final Position3f direction = NativeFishingBite.particleDirection(hook.getBbWidth());
++        final var camera = minecraft.gameRenderer.mainCamera();
++        final var cameraPosition = camera.position();
++        final Position3f renderedCamera = camera.isInitialized() ? new Position3f((float) cameraPosition.x(),
++                (float) cameraPosition.y(), (float) cameraPosition.z()) : null;
++        // Only the middle, legacy wake passes through Level's native distance gate.
++        final List<String> effects = NativeParticleRange.contains(origin, renderedCamera, minecraft.options.renderDistance().get(),
++                ViaFabricPlusBedrock.impl().settings().particleViewDistance().value(), false)
++                ? NativeFishingBite.PARTICLE_EFFECTS
++                : List.of(NativeFishingBite.PARTICLE_EFFECTS.getFirst(), NativeFishingBite.PARTICLE_EFFECTS.getLast());
 +        final var variables = new MolangVariables(List.of(new MolangVariables.Member("variable.direction",
 +                new MolangVariables.Members(List.of(new MolangVariables.Member("x", new MolangVariables.Scalar(direction.x())),
 +                        new MolangVariables.Member("y", new MolangVariables.Scalar(direction.y())),
 +                        new MolangVariables.Member("z", new MolangVariables.Scalar(direction.z())))))));
 +        if (!FISHING_RESOURCES.acquire()) {
-+            for (final String effect : NativeFishingBite.PARTICLE_EFFECTS) fishingFallback(effect, level, origin);
++            for (final String effect : effects) fishingFallback(effect, level, origin);
 +            return;
 +        }
 +        final ResourceManager manager = minecraft.getResourceManager();
@@ -120,11 +149,11 @@ index ceb82a0..85dd9ed 100644
 +                    || BedrockServerResources.generation() != generation) return;
 +            if (error != null) {
 +                ViaFabricPlusBedrock.impl().logger().debug("Could not prepare fishing particle resources", error);
-+                for (final String effect : NativeFishingBite.PARTICLE_EFFECTS) fishingFallback(effect, level, origin);
++                for (final String effect : effects) fishingFallback(effect, level, origin);
 +                return;
 +            }
-+            for (int index = 0; index < NativeFishingBite.PARTICLE_EFFECTS.size(); index++) {
-+                final String effect = NativeFishingBite.PARTICLE_EFFECTS.get(index);
++            for (int index = 0; index < effects.size(); index++) {
++                final String effect = effects.get(index);
 +                try {
 +                    BedrockParticlePlayback.play(particles.resources(), effect, particles.environments().get(index),
 +                            null, position(origin), null).whenComplete((started, failure) -> minecraft.execute(() -> {
@@ -140,7 +169,7 @@ index ceb82a0..85dd9ed 100644
 +            Thread.ofVirtual().name("Bedrock fishing resources").start(() -> {
 +                try {
 +                    final var resources = BedrockServerResources.library(manager, BedrockBuiltinAssets.load());
-+                    final List<BedrockMolang> environments = NativeFishingBite.PARTICLE_EFFECTS.stream().map(_ -> {
++                    final List<BedrockMolang> environments = effects.stream().map(_ -> {
 +                        final var environment = new BedrockMolang();
 +                        environment.variables(variables);
 +                        return environment;
@@ -179,6 +208,28 @@ index e274777..18ef61c 100644
      static void clear() { GENERATION.incrementAndGet(); snapshot = null; BedrockAcceptedResources.clear(); }
  
      static BedrockResourceLibrary library() throws IOException {
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinSettingsScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinSettingsScreen.java
+index 6d19ff0..5fde823 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinSettingsScreen.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/integration/MixinSettingsScreen.java
+@@ -24,6 +24,8 @@ package com.viaversion.viafabricplus.bedrock.injection.mixin.core.integration;
+ import com.viaversion.viafabricplus.api.settings.base.Setting;
+ import com.viaversion.viafabricplus.bedrock.settings.ActionSetting;
+ import com.viaversion.viafabricplus.bedrock.screen.settings.ActionListEntry;
++import com.viaversion.viafabricplus.bedrock.settings.ParticleViewDistanceSetting;
++import com.viaversion.viafabricplus.bedrock.screen.settings.ParticleViewDistanceEntry;
+ import com.viaversion.viafabricplus.screen.base.list.VFPListEntry;
+ import com.viaversion.viafabricplus.screen.impl.SettingsScreen;
+ import org.spongepowered.asm.mixin.Mixin;
+@@ -38,6 +40,8 @@ public abstract class MixinSettingsScreen {
+     private static void createActionEntry(final Setting setting, final CallbackInfoReturnable<VFPListEntry> cir) {
+         if (setting instanceof final ActionSetting actionSetting) {
+             cir.setReturnValue(new ActionListEntry(actionSetting));
++        } else if (setting instanceof final ParticleViewDistanceSetting particleSetting) {
++            cir.setReturnValue(new ParticleViewDistanceEntry(particleSetting));
+         }
+     }
+ 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFishingFeedback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFishingFeedback.java
 new file mode 100644
 index 0000000..85d4911
@@ -243,6 +294,269 @@ index 0000000..fd8d750
 +    @Override
 +    public Type<NativeFishingBitePayload> type() {
 +        return TYPE;
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/settings/ParticleViewDistanceEntry.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/settings/ParticleViewDistanceEntry.java
+new file mode 100644
+index 0000000..c1c7c26
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/settings/ParticleViewDistanceEntry.java
+@@ -0,0 +1,40 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.settings;
++
++import com.viaversion.viafabricplus.bedrock.settings.ParticleViewDistanceSetting;
++import com.viaversion.viafabricplus.screen.base.VFPScreen;
++import com.viaversion.viafabricplus.screen.base.list.VFPListEntry;
++import net.minecraft.ChatFormatting;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.network.chat.Component;
++import org.jspecify.annotations.NonNull;
++
++public final class ParticleViewDistanceEntry extends VFPListEntry {
++    private final ParticleViewDistanceSetting setting;
++
++    public ParticleViewDistanceEntry(final ParticleViewDistanceSetting setting) { this.setting = setting; }
++
++    @Override
++    public @NonNull Component getNarration() {
++        return Component.translatable("options.generic_value", this.setting.name(), this.setting.percentage());
++    }
++
++    @Override
++    public void mappedMouseClicked() {
++        new ParticleViewDistanceScreen(this.setting).open(Minecraft.getInstance().gui.screen());
++    }
++
++    @Override
++    public void mappedRender(final GuiGraphicsExtractor graphics, final int entryWidth, final int entryHeight) {
++        final var font = Minecraft.getInstance().font;
++        final var value = this.setting.percentage();
++        final int offset = font.width(value) + 2;
++        this.renderScrollableText(graphics, this.setting.name().copy().withStyle(ChatFormatting.GRAY), offset);
++        graphics.text(font, value, entryWidth - offset, (entryHeight - font.lineHeight) / 2, VFPScreen.ACCENT_COLOR);
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/screen/settings/ParticleViewDistanceScreen.java b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/settings/ParticleViewDistanceScreen.java
+new file mode 100644
+index 0000000..82dd89d
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/screen/settings/ParticleViewDistanceScreen.java
+@@ -0,0 +1,61 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.screen.settings;
++
++import com.viaversion.viafabricplus.bedrock.settings.ParticleViewDistanceSetting;
++import com.viaversion.viafabricplus.screen.base.VFPScreen;
++import net.minecraft.client.gui.GuiGraphicsExtractor;
++import net.minecraft.client.gui.components.AbstractSliderButton;
++import net.minecraft.client.gui.components.Button;
++import net.minecraft.network.chat.Component;
++import net.raphimc.viabedrock.api.model.NativeParticleRange;
++import org.jspecify.annotations.NonNull;
++
++public final class ParticleViewDistanceScreen extends VFPScreen {
++    private final ParticleViewDistanceSetting setting;
++
++    public ParticleViewDistanceScreen(final ParticleViewDistanceSetting setting) {
++        super(setting.name(), true);
++        this.setting = setting;
++    }
++
++    @Override
++    protected void init() {
++        super.init();
++        final int sliderWidth = Math.min(300, this.width - 40);
++        this.addRenderableWidget(new DistanceSlider((this.width - sliderWidth) / 2, this.height / 2 - 10,
++                sliderWidth, this.setting));
++        this.addFooter(Button.builder(Component.translatable("controls.reset"), _ -> {
++            this.setting.set(NativeParticleRange.DEFAULT_VIEW_DISTANCE);
++            this.rebuildWidgets();
++        }).build(), Button.builder(Component.translatable("gui.done"), _ -> this.onClose()).build());
++    }
++
++    @Override
++    public void extractRenderState(final @NonNull GuiGraphicsExtractor graphics, final int mouseX,
++                                   final int mouseY, final float partialTick) {
++        super.extractRenderState(graphics, mouseX, mouseY, partialTick);
++        this.renderScreenTitle(graphics);
++    }
++
++    private static final class DistanceSlider extends AbstractSliderButton {
++        private final ParticleViewDistanceSetting setting;
++
++        private DistanceSlider(final int x, final int y, final int width, final ParticleViewDistanceSetting setting) {
++            super(x, y, width, 20, Component.empty(), setting.value());
++            this.setting = setting;
++            this.updateMessage();
++        }
++
++        @Override
++        protected void updateMessage() {
++            this.setMessage(Component.translatable("options.generic_value", this.setting.name(), this.setting.percentage()));
++        }
++
++        @Override
++        protected void applyValue() { this.setting.set((float) this.value); }
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/BedrockSettings.java b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/BedrockSettings.java
+index e2e2996..2ace614 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/BedrockSettings.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/BedrockSettings.java
+@@ -39,6 +39,7 @@ public final class BedrockSettings {
+     private final BooleanSetting replaceDefaultPort;
+     private final BooleanSetting muteEmoteChat;
+     private final BooleanSetting allowCameraShake;
++    private final ParticleViewDistanceSetting particleViewDistance;
+     private final BooleanSetting captions;
+     private final BooleanSetting hideOwnCaptions;
+     private final BooleanSetting hideAmbientCaptions;
+@@ -54,6 +55,8 @@ public final class BedrockSettings {
+         this.replaceDefaultPort = group.registerBoolean("replace_default_port", true);
+         this.muteEmoteChat = group.registerBoolean("mute_emote_chat", false);
+         this.allowCameraShake = group.registerBoolean("allow_camera_shake", true);
++        this.particleViewDistance = new ParticleViewDistanceSetting();
++        group.register("particle_view_distance", this.particleViewDistance);
+         this.captions = group.registerBoolean("captions", false);
+         this.hideOwnCaptions = group.registerBoolean("hide_own_captions", false);
+         this.hideAmbientCaptions = group.registerBoolean("hide_ambient_captions", false);
+@@ -80,6 +83,8 @@ public final class BedrockSettings {
+ 
+     public BooleanSetting allowCameraShake() { return this.allowCameraShake; }
+ 
++    public ParticleViewDistanceSetting particleViewDistance() { return this.particleViewDistance; }
++
+     public BooleanSetting captions() { return this.captions; }
+     public BooleanSetting hideOwnCaptions() { return this.hideOwnCaptions; }
+     public BooleanSetting hideAmbientCaptions() { return this.hideAmbientCaptions; }
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/settings/ParticleViewDistanceSetting.java b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/ParticleViewDistanceSetting.java
+new file mode 100644
+index 0000000..d77a008
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/settings/ParticleViewDistanceSetting.java
+@@ -0,0 +1,45 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.settings;
++
++import com.google.gson.JsonObject;
++import com.viaversion.viafabricplus.api.settings.base.Setting;
++import net.minecraft.network.chat.Component;
++import net.raphimc.viabedrock.api.model.NativeParticleRange;
++
++/** The native option is continuous and ignores changes within its comparison tolerance. */
++public final class ParticleViewDistanceSetting implements Setting {
++    private static final String KEY = "particle_view_distance";
++    private float value = NativeParticleRange.DEFAULT_VIEW_DISTANCE;
++
++    public float value() { return this.value; }
++
++    public void set(final float requested) {
++        this.value = NativeParticleRange.updateViewDistance(this.value, requested);
++    }
++
++    public Component percentage() {
++        return Component.literal((Math.round(this.value * 1000F) / 10F) + "%");
++    }
++
++    @Override
++    public Component name() {
++        return Component.translatable("bedrock_settings.viafabricplus.particle_view_distance");
++    }
++
++    @Override
++    public void write(final JsonObject object) {
++        object.addProperty(KEY, this.value);
++    }
++
++    @Override
++    public void read(final JsonObject object) {
++        final var stored = object.get(KEY);
++        if (stored != null && stored.isJsonPrimitive() && stored.getAsJsonPrimitive().isNumber()) {
++            this.set(stored.getAsFloat());
++        }
++    }
++}
+diff --git a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
+index e49ed95..cbca64a 100644
+--- a/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
++++ b/src/main/resources/assets/viafabricplus-bedrock/lang/en_us.json
+@@ -388,6 +388,7 @@
+   "bedrock_marketplace.viafabricplus.wallet_refresh": "Refresh balance",
+   "bedrock_marketplace.viafabricplus.wallet_sign_in_short": "Sign in",
+   "bedrock_settings.viafabricplus.allow_camera_shake": "Allow camera shake",
++  "bedrock_settings.viafabricplus.particle_view_distance": "Particle render distance",
+   "bedrock_settings.viafabricplus.captions": "Bedrock closed captions",
+   "bedrock_settings.viafabricplus.hide_own_captions": "Hide captions for your sounds",
+   "bedrock_settings.viafabricplus.hide_ambient_captions": "Hide ambient and weather captions",
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/settings/ParticleViewDistanceSettingTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/settings/ParticleViewDistanceSettingTest.java
+new file mode 100644
+index 0000000..dc0d440
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/settings/ParticleViewDistanceSettingTest.java
+@@ -0,0 +1,51 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.settings;
++
++import com.google.gson.JsonArray;
++import com.google.gson.JsonNull;
++import com.google.gson.JsonObject;
++import com.google.gson.JsonPrimitive;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class ParticleViewDistanceSettingTest {
++    @Test
++    void persistsContinuousValuesWithoutRounding() {
++        final var setting = new ParticleViewDistanceSetting();
++        setting.set(0.37251F);
++        final var json = new JsonObject();
++        setting.write(json);
++        final var loaded = new ParticleViewDistanceSetting();
++        loaded.read(json);
++        assertEquals(0.37251F, loaded.value());
++        loaded.set(2F);
++        loaded.write(json);
++        setting.read(json);
++        assertEquals(1F, setting.value());
++        loaded.set(-1F);
++        loaded.write(json);
++        setting.read(json);
++        assertEquals(0F, setting.value());
++    }
++
++    @Test
++    void retainsStateWhenSavedDataIsMissingOrHasAnInvalidType() {
++        final var setting = new ParticleViewDistanceSetting();
++        setting.set(0.5F);
++        final var json = new JsonObject();
++        setting.write(json);
++        final String key = json.keySet().iterator().next();
++        for (final var invalid : new com.google.gson.JsonElement[]{JsonNull.INSTANCE, new JsonObject(), new JsonArray(), new JsonPrimitive(true)}) {
++            json.add(key, invalid);
++            setting.read(json);
++            assertEquals(0.5F, setting.value());
++        }
++        setting.read(new JsonObject());
++        assertEquals(0.5F, setting.value());
 +    }
 +}
 -- 

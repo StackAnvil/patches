@@ -6637,3 +6637,23 @@ Cold preparation now runs off the render thread with a bound of 32 pending reque
 Configured native distance gates, actual simulation and visible comparisons remain required.
 Java fallback limits and the unmapped hook effect remain explicit gaps.
 Full fishing parity and the complete goal remain incomplete.
+
+## Fishing legacy particle distance, October 7, 2026
+
+Core implements the pinned legacy-particle radius and float camera-distance calculations.
+The add-on supplies the rendered camera and a persisted continuous particle-distance slider.
+The native default is zero, with bounds zero and one and a `0.001F` change tolerance.
+Only the legacy wake is distance-gated; named hook and wake effects retain their independent paths.
+
+Fifty-two native option cases and 480 complete gate/getter cases establish these numeric boundaries.
+Production Java matches every recorded gate decision and squared-radius bit pattern.
+Core, add-on, and ViaProxy builds pass; both patch stacks replay.
+The [distance record](bedrock-complex-gameplay.md#fishing-particle-distance-october-7-2026) retains the execution scope and test counts.
+
+Fresh Linux strict BDS recordings verify near/default, far/default, and far/full controls through direct and ViaProxy routes.
+All 41 native bite events match their distance decisions and expected two or three independent emitter starts.
+Settings search, mouse, keyboard, and reset controls work in the actual client.
+Each route also reels one server inventory reward and removes its hook after clearing the camera.
+
+Visible output, particle simulation, named-emitter range behavior, and full fishing parity remain incomplete.
+The complete goal, ordinary Java fallback requirements, and actual Windows/macOS joins remain required.

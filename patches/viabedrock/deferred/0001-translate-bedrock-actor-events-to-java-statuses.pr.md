@@ -123,3 +123,45 @@ The existing splash packet and resolved engine requests also pass.
 Direct and ViaProxy splash callbacks now reach the render thread in about 15 and 28 ms in these runs.
 Native visible particles, displayed rewards, configured distance settings, and complete fishing behavior remain required.
 The private fixture is restored, the owned BDS instances stop, and both user-owned servers remain unchanged.
+
+## Native legacy particle range
+
+The pinned client uses rendered-camera distance for the legacy wake only.
+`ParticleSystemInterfaceProxy::getDistanceToCameraSqr` at `14216e350` reads its `LevelRendererPlayer` reference.
+The adjacent [client header](https://github.com/LiteLDev/LeviLamina/blob/455c4181b5f83d04689957e8aad17790581c0fc0/src-client/mc/client/particlesystem/particle/ParticleSystemInterfaceProxy.h) supplies names; the pinned executable establishes addresses and float arithmetic.
+The constructor subscribes to independent VIEW_DISTANCE 36 and PARTICLE_VIEW_DISTANCE 37 options.
+Their stored keys are `gfx_viewdistance` and `gfx_particleviewdistance`.
+
+Registration at `1420d133b` initializes particle view distance to zero, with bounds zero and one.
+The native float setter at `14091f1a0` ignores changes within `0.001F`, then clamps admitted values.
+This tolerance does not quantize the continuous value. NaN retains the current value.
+Fifty-two native execution cases cover initialization, clamping, tolerance, infinities, and NaN.
+Base construction, registry operations, parsed input, and change notification remain opaque boundaries.
+
+`NativeParticleRange` owns the shared option update, radius, and camera-distance calculations.
+The radius is `(clamp((chunks << 4) * 0.5F, 40F, 64F) - 32F) * particleViewDistance + 32F`.
+Global legacy particles multiply that radius by five before squaring it.
+The native JBE comparison admits exact boundaries and unordered distances; absent providers do not emit.
+All subtraction, multiplication, and addition preserve native float precision and ordering.
+
+Another 480 native cases execute the complete legacy gate and actual provider getters.
+They cover camera boundaries, eight chunk distances, five particle settings, global scaling, NaN, and infinities.
+Production Java matches every recorded result and threshold bit pattern.
+Only final engine dispatch is an opaque recording boundary in this fixture.
+Camera setup, graph lookup, particle simulation, and visible output are outside its scope.
+
+Twelve additional getter cases cover all three axes, fractional camera offsets, and large coordinates.
+Production tests compare the recorded native float bits, including axis-dependent addition rounding.
+
+Core reports 772 tests, zero failures, and 19 optional skips after this change.
+The add-on controls the local camera sample and persisted continuous setting.
+Ordinary Java retains its standard particle translation and Java culling behavior.
+Full visible native comparisons and general named-emitter distance behavior remain required.
+
+Fresh Linux strict BDS runs verify near/default, far/default, and far/full controls on both routes.
+The direct run records 32 native bite events; ViaProxy records nine.
+Every event matches its distance decision and expected two or three independent native emitter starts.
+Both use raw render distance 12; a 50-block camera offset rejects the default legacy wake and admits it at full distance.
+Mouse, keyboard, settings search, reset, and continuous-value persistence checks pass.
+After clearing the camera, each real reel yields one server inventory reward, one durability point, and no remaining hook.
+Emitter admission and startup do not establish visible native simulation parity.

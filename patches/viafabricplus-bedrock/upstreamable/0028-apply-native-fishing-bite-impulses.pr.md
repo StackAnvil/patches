@@ -89,3 +89,31 @@ The existing splash packet and resolved engine requests also pass.
 Direct and ViaProxy splash callbacks now reach the render thread in about 15 and 28 ms in these runs.
 Native visible particles, displayed rewards, configured distance settings, and complete fishing behavior remain required.
 The private fixture is restored, the owned BDS instances stop, and both user-owned servers remain unchanged.
+
+## Native particle distance setting
+
+The add-on now samples the rendered camera for the middle, legacy wake.
+It uses core's `NativeParticleRange` with the raw render-distance setting and a separate particle view-distance value.
+Only that legacy wake passes through this gate. The hook effect and final named wake keep their independent paths.
+The decision is captured before asynchronous resource preparation, including Java fallbacks when resources are unavailable.
+
+The new setting preserves the native zero default, continuous zero-to-one range, and `0.001F` change tolerance.
+It does not substitute Java's particle-quality option or round persisted values to displayed percentages.
+VFP's settings search opens a normal Minecraft slider, with keyboard support, reset, and narration.
+The pinned VFP API has no numeric setting, so the add-on supplies a persisted setting and its screen entry.
+No VFP fork or dependency change is required.
+
+Fresh strict BDS recordings on Linux verify near/default, far/default, and far/full controls through direct and ViaProxy routes.
+All 41 native bite events match their distance decisions and expected two or three independent emitter starts.
+Actual settings search, mouse, keyboard, and reset controls pass.
+After clearing the camera, each real reel produces one server inventory reward, one durability point, and no remaining hook.
+The private fixture returns to its original checksum, and both user-owned servers remain unchanged.
+
+The [core evidence](../../viabedrock/deferred/0001-translate-bedrock-actor-events-to-java-statuses.pr.md#native-legacy-particle-range) records the pinned option registration, camera getter, and execution boundaries.
+Fifty-two native option cases establish defaults, clamping, and change tolerance.
+Another 480 cases execute the legacy gate and actual getters; production Java matches every decision and threshold.
+Core reports 772 tests with zero failures and 19 optional skips.
+The add-on reports 596 tests with zero failures and 114 optional skips.
+ViaProxy builds against the same core, and all 1,241 core entries match both client bundles, excluding bundle metadata.
+
+Native visible comparisons, simulation, named-emitter distance behavior, fallback limits, and the full fishing matrix remain required.
