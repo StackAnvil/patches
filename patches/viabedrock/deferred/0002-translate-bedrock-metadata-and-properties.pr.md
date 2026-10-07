@@ -33,3 +33,16 @@ The controlled BDS probe does not establish full Java or ViaProxy gameplay parit
 
 The complete 95-patch core stack replays and builds successfully.
 Checkstyle passes, with 683 tests passing, 19 optional skips, and no failures.
+
+## Native actor picking boxes
+
+Metadata 118 carries picking boxes independently from physical width and height in fields 53 and 54. Core retains its typed `Hitboxes` list, sorts endpoints, and derives each part around actor position plus pivot. Sparse metadata and position updates refresh owned targets; actor removal and replacement remove their aliases.
+
+Stock Java clients receive separate nonphysical Interaction entities. Their equal X/Z requirement uses an enclosing width. Clients that advertise both native actor and picking channels receive exact rectangular part dimensions and owner identity. Clicks resolve to the authoritative native owner while retaining the selected part's click position. Physical collision dimensions remain unchanged.
+
+Evidence targets Bedrock 1.26.51.1, build 51061372, protocol 2193. Eight private executions establish the original typed parser and translation arithmetic. The native picker consumes the part list and uses physical fallback only for empty or missing parts. Missing or wrongly typed FloatTag components default to zero; finite zero-volume parts remain valid. CPU fixture allocations and the Windows comparison seam remain boundaries.
+
+Fifteen core tests and three add-on state tests pass. They cover decoding, bounded serialization, part lifetime, alias routing, sparse updates, and actual capability gates. The observed Wumpus/Discord failure motivates the change, but post-fix live clicks are not verified. Native radius production, inside tests, target ordering, scheduler behavior, and complete reach parity remain requirements. No guessed box inflation or server-specific whitelist is added.
+## Paired native picking build
+
+The complete 98-patch core stack replays cleanly. A fresh build passes 915 tests with 30 optional skips and no failures or errors. Main, test, and tool Checkstyle pass. The private candidate retains the exact reviewed picking sources. Installed artifacts remain unchanged; joined NPC click acceptance and native radius behavior remain unverified.
