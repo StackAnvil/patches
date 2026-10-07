@@ -1,4 +1,4 @@
-From 918c609ca158106dcd8d63354c56c42f9283ebe9 Mon Sep 17 00:00:00 2001
+From 91bbb6f4e021e380223a3d73008d60064acac689 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 01:02:13 +0200
 Subject: [PATCH] fix(nethernet): accept BDS capability responses without
@@ -15,12 +15,24 @@ close, and reject certificate validation failures instead of downgrading.
 
 Loopback tests cover native-style plaintext TLS rejection, empty capability
 responses, unsupported endpoints, SDP delivery and invalid answers.
+
+Share the existing self-signed game identity factory with transports so
+HTTP clients can sign the offer before LOGIN_START and preserve the same
+key through login. Exact BDS 1.26.51.1 protocol2193 rejects the unsigned
+offer with numeric37 and opens ICE/DTLS with the self-signed assertion.
+Token tests verify public-key binding and fresh reconnect keys.
 ---
  .../netty/nethernet/BedrockHttpSignaling.java | 188 ++++++++++++++++
+ .../protocol/packet/LoginPackets.java         |  27 +--
+ .../viabedrock/protocol/storage/AuthData.java |  39 ++++
  .../nethernet/BedrockHttpSignalingTest.java   | 208 ++++++++++++++++++
- 2 files changed, 396 insertions(+)
+ .../protocol/packet/LoginIdentityTest.java    |  90 ++++++++
+ .../protocol/storage/AuthDataTest.java        |  44 ++++
+ 6 files changed, 570 insertions(+), 26 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/netty/nethernet/BedrockHttpSignaling.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/netty/nethernet/BedrockHttpSignalingTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/LoginIdentityTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/storage/AuthDataTest.java
 
 diff --git a/src/main/java/net/raphimc/viabedrock/netty/nethernet/BedrockHttpSignaling.java b/src/main/java/net/raphimc/viabedrock/netty/nethernet/BedrockHttpSignaling.java
 new file mode 100644
@@ -216,6 +228,112 @@ index 000000000..d50777de4
 +    }
 +
 +}
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/LoginPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/LoginPackets.java
+index c5129c362..335ebb526 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/packet/LoginPackets.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/LoginPackets.java
+@@ -50,11 +50,7 @@ import javax.crypto.SecretKey;
+ import javax.crypto.spec.SecretKeySpec;
+ import java.nio.charset.StandardCharsets;
+ import java.security.*;
+-import java.time.Instant;
+-import java.time.temporal.ChronoUnit;
+ import java.util.Base64;
+-import java.util.Date;
+-import java.util.Locale;
+ import java.util.UUID;
+ 
+ public final class LoginPackets {
+@@ -134,28 +130,7 @@ public final class LoginPackets {
+             wrapper.write(Types.INT, handshakeStorage.protocolVersion()); // protocol version
+ 
+             if (!wrapper.user().has(AuthData.class)) { // Generate self-signed JWT if no AuthData has been provided by the implementation
+-                final Instant now = Instant.now();
+-                final KeyPair sessionKeyPair = CryptUtil.generateEcdsa384KeyPair();
+-                final String encodedPublicKey = Base64.getEncoder().encodeToString(sessionKeyPair.getPublic().getEncoded());
+-                final long rawXuid = Fnv1.fnv1_64(javaUsername.getBytes(StandardCharsets.UTF_8));
+-                final String xuid = String.valueOf(Math.abs(rawXuid));
+-                final String multiplayerToken = Jwts.builder()
+-                    .signWith(sessionKeyPair.getPrivate(), Jwts.SIG.ES384)
+-                    .header().add("x5u", encodedPublicKey).and()
+-                    .claim(Claims.AUDIENCE, "api://auth-minecraft-services/multiplayer") // audience
+-                    .claim("cpk", encodedPublicKey) // client public key
+-                    .claim("leguuid", UUID.nameUUIDFromBytes(("pocket-auth-1-xuid:" + xuid).getBytes(StandardCharsets.UTF_8))) // ? (Should be the same as SelfSignedId)
+-                    .claim("mid", Long.toHexString(rawXuid).toUpperCase(Locale.ROOT)) // PlayFab entity id
+-                    .claim("nid", "") // ?
+-                    .claim("nname", "") // ?
+-                    .claim("pid", "") // ?
+-                    .claim("pname", "") // ?
+-                    .claim("xid", xuid) // xuid
+-                    .claim("xname", javaUsername) // display name
+-                    .issuedAt(Date.from(now))
+-                    .expiration(Date.from(now.plus(365, ChronoUnit.DAYS)))
+-                    .compact();
+-                wrapper.user().put(new AuthData(multiplayerToken, sessionKeyPair));
++                wrapper.user().put(AuthData.createSelfSigned(javaUsername));
+             }
+             final AuthData authData = wrapper.user().get(AuthData.class);
+             final ProtocolInfo protocolInfo = wrapper.user().getProtocolInfo();
+diff --git a/src/main/java/net/raphimc/viabedrock/protocol/storage/AuthData.java b/src/main/java/net/raphimc/viabedrock/protocol/storage/AuthData.java
+index cb50fbeb8..b15cd6ace 100644
+--- a/src/main/java/net/raphimc/viabedrock/protocol/storage/AuthData.java
++++ b/src/main/java/net/raphimc/viabedrock/protocol/storage/AuthData.java
+@@ -18,9 +18,19 @@
+ package net.raphimc.viabedrock.protocol.storage;
+ 
+ import com.viaversion.viaversion.api.connection.StorableObject;
++import io.jsonwebtoken.Claims;
++import io.jsonwebtoken.Jwts;
++import net.raphimc.viabedrock.api.util.CryptUtil;
++import net.raphimc.viabedrock.api.util.Fnv1;
+ import net.raphimc.viabedrock.api.util.Jwt;
+ 
++import java.nio.charset.StandardCharsets;
+ import java.security.KeyPair;
++import java.time.Instant;
++import java.time.temporal.ChronoUnit;
++import java.util.Base64;
++import java.util.Date;
++import java.util.Locale;
+ import java.util.UUID;
+ 
+ public class AuthData implements StorableObject {
+@@ -50,6 +60,35 @@ public class AuthData implements StorableObject {
+         this(multiplayerToken, sessionKeyPair, deviceId);
+     }
+ 
++    /** Creates one offline identity for transport signaling and the subsequent game login. */
++    public static AuthData createSelfSigned(final String username) {
++        final Instant now = Instant.now();
++        final KeyPair sessionKeyPair = CryptUtil.generateEcdsa384KeyPair();
++        final String encodedPublicKey = Base64.getEncoder().encodeToString(sessionKeyPair.getPublic().getEncoded());
++        final long rawXuid = Fnv1.fnv1_64(username.getBytes(StandardCharsets.UTF_8));
++        final String xuid = String.valueOf(Math.abs(rawXuid));
++        final UUID selfSignedId = UUID.nameUUIDFromBytes(("pocket-auth-1-xuid:" + xuid).getBytes(StandardCharsets.UTF_8));
++        final String multiplayerToken = Jwts.builder()
++            .signWith(sessionKeyPair.getPrivate(), Jwts.SIG.ES384)
++            .header().add("x5u", encodedPublicKey).and()
++            .claim(Claims.AUDIENCE, "api://auth-minecraft-services/multiplayer") // audience
++            .claim("cpk", encodedPublicKey) // client public key
++            .claim("leguuid", selfSignedId)
++            .claim("mid", Long.toHexString(rawXuid).toUpperCase(Locale.ROOT)) // PlayFab entity id
++            .claim("nid", "") // ?
++            .claim("nname", "") // ?
++            .claim("pid", "") // ?
++            .claim("pname", "") // ?
++            .claim("xid", xuid) // xuid
++            .claim("xname", username) // display name
++            .issuedAt(Date.from(now))
++            .expiration(Date.from(now.plus(365, ChronoUnit.DAYS)))
++            .compact();
++        final AuthData authData = new AuthData(multiplayerToken, sessionKeyPair);
++        authData.setSelfSignedId(selfSignedId);
++        return authData;
++    }
++
+     public String getMultiplayerToken() {
+         return this.multiplayerToken;
+     }
 diff --git a/src/test/java/net/raphimc/viabedrock/netty/nethernet/BedrockHttpSignalingTest.java b/src/test/java/net/raphimc/viabedrock/netty/nethernet/BedrockHttpSignalingTest.java
 new file mode 100644
 index 000000000..ed500d130
@@ -427,6 +545,152 @@ index 000000000..ed500d130
 +                socket.close();
 +            }
 +        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/LoginIdentityTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/LoginIdentityTest.java
+new file mode 100644
+index 000000000..46f88b3d9
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/LoginIdentityTest.java
+@@ -0,0 +1,90 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.packet;
++
++import com.viaversion.viaversion.api.Via;
++import com.viaversion.viaversion.api.ViaManager;
++import com.viaversion.viaversion.api.protocol.ProtocolManager;
++import com.viaversion.viaversion.debug.DebugHandlerImpl;
++import com.viaversion.viaversion.api.platform.providers.ViaProviders;
++import com.viaversion.viaversion.api.protocol.packet.Direction;
++import com.viaversion.viaversion.api.protocol.packet.State;
++import com.viaversion.viaversion.api.type.Types;
++import com.viaversion.viaversion.connection.UserConnectionImpl;
++import com.viaversion.viaversion.protocol.packet.PacketWrapperImpl;
++import com.viaversion.viaversion.protocols.base.ServerboundLoginPackets;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.ViaBedrock;
++import net.raphimc.viabedrock.platform.ViaBedrockConfig;
++import net.raphimc.viabedrock.protocol.BedrockProtocol;
++import net.raphimc.viabedrock.protocol.provider.SkinProvider;
++import net.raphimc.viabedrock.protocol.storage.AuthData;
++import net.raphimc.viabedrock.protocol.storage.HandshakeStorage;
++import org.junit.jupiter.api.Test;
++
++import java.nio.charset.StandardCharsets;
++import java.util.Map;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++final class LoginIdentityTest {
++
++    @Test
++    void registeredLoginPreservesOfflineIdentityAcrossLateAndEarlySignaling() throws Exception {
++        final String username = UUID.randomUUID().toString().substring(0, 16);
++        final AuthData early = AuthData.createSelfSigned(username);
++        final AuthData legacy = new AuthData(early.getMultiplayerToken(), early.getSessionKeyPair());
++        final ViaBedrockConfig config = mock(ViaBedrockConfig.class);
++        when(config.shouldDisableServerBlacklist()).thenReturn(true);
++        final ViaManager manager = mock(ViaManager.class);
++        when(manager.getProtocolManager()).thenReturn(mock(ProtocolManager.class));
++        when(manager.debugHandler()).thenReturn(new DebugHandlerImpl());
++        final ViaProviders providers = new ViaProviders();
++        final SkinProvider skins = mock(SkinProvider.class);
++        when(skins.getClientPlayerSkin(any())).thenReturn(Map.of());
++        providers.register(SkinProvider.class, skins);
++        when(manager.getProviders()).thenReturn(providers);
++        try (var platform = mockStatic(ViaBedrock.class);
++             var via = mockStatic(Via.class)) {
++            platform.when(ViaBedrock::getConfig).thenReturn(config);
++            via.when(Via::getManager).thenReturn(manager);
++            final BedrockProtocol protocol = new BedrockProtocol();
++            LoginPackets.register(protocol);
++            final UUID expected = UUID.nameUUIDFromBytes(("pocket-auth-1-xuid:" + early.getXuid()).getBytes(StandardCharsets.UTF_8));
++            Long clientRandomId = null;
++            for (final AuthData supplied : new AuthData[]{legacy, early, null}) {
++                final var user = new UserConnectionImpl(null, true);
++                user.put(new HandshakeStorage(2193, "127.0.0.1", 19132));
++                if (supplied != null) {
++                    user.put(supplied);
++                }
++                final var input = Unpooled.buffer();
++                try {
++                    Types.STRING.write(input, username);
++                    Types.UUID.write(input, UUID.randomUUID());
++                    protocol.transform(Direction.SERVERBOUND, State.LOGIN, new PacketWrapperImpl(ServerboundLoginPackets.HELLO, input, user));
++                    final AuthData actual = user.get(AuthData.class);
++                    if (supplied != null) {
++                        assertSame(supplied, actual);
++                    }
++                    assertEquals(username, user.getProtocolInfo().getUsername());
++                    assertEquals(expected, user.getProtocolInfo().getUuid());
++                    assertEquals(expected, actual.getSelfSignedId());
++                    if (clientRandomId == null) {
++                        clientRandomId = actual.getClientRandomId();
++                    }
++                    assertEquals(clientRandomId, actual.getClientRandomId());
++                    assertEquals(0, input.readableBytes());
++                } finally {
++                    input.release();
++                }
++            }
++        }
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/protocol/storage/AuthDataTest.java b/src/test/java/net/raphimc/viabedrock/protocol/storage/AuthDataTest.java
+new file mode 100644
+index 000000000..acf26be1f
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/protocol/storage/AuthDataTest.java
+@@ -0,0 +1,44 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.protocol.storage;
++
++import io.jsonwebtoken.Jwts;
++import io.jsonwebtoken.security.SignatureException;
++import org.junit.jupiter.api.Test;
++
++import java.util.Base64;
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class AuthDataTest {
++
++    @Test
++    void offlineTokenBindsGameIdentityToTheSignalingKey() {
++        final String username = UUID.randomUUID().toString();
++        final AuthData auth = AuthData.createSelfSigned(username);
++        final var parsed = Jwts.parser().verifyWith(auth.getSessionKeyPair().getPublic()).build().parseSignedClaims(auth.getMultiplayerToken());
++        final byte[] encodedKey = auth.getSessionKeyPair().getPublic().getEncoded();
++        assertArrayEquals(encodedKey, Base64.getDecoder().decode((String) parsed.getHeader().get("x5u")));
++        assertArrayEquals(encodedKey, Base64.getDecoder().decode(parsed.getPayload().get("cpk", String.class)));
++        assertEquals(auth.getSelfSignedId(), UUID.fromString(parsed.getPayload().get("leguuid", String.class)));
++        assertEquals(username, auth.getDisplayName());
++        assertEquals(auth.getXuid(), parsed.getPayload().get("xid", String.class));
++        assertTrue(parsed.getPayload().getExpiration().after(parsed.getPayload().getIssuedAt()));
++    }
++
++    @Test
++    void reconnectPreservesPlayerIdentityWithoutReusingTheSessionKey() {
++        final String username = UUID.randomUUID().toString();
++        final AuthData first = AuthData.createSelfSigned(username);
++        final AuthData second = AuthData.createSelfSigned(username);
++        assertEquals(first.getXuid(), second.getXuid());
++        assertEquals(first.getSelfSignedId(), second.getSelfSignedId());
++        assertNotEquals(first.getSessionKeyPair().getPublic(), second.getSessionKeyPair().getPublic());
++        assertThrows(SignatureException.class, () -> Jwts.parser().verifyWith(second.getSessionKeyPair().getPublic()).build().parseSignedClaims(first.getMultiplayerToken()));
 +    }
 +
 +}

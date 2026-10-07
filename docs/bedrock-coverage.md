@@ -8216,3 +8216,60 @@ Production identity sharing is under separate development. Complete direct/ViaPr
 The numeric refusal remains unmapped; an unrelated game-disconnect enum does not establish its meaning.
 RakNet success does not close the NetherNet requirement.
 Private evidence is under `.stackanvil/research/inventory-bundle/live/` and `.stackanvil/research/nethernet-runtime/`.
+
+## Account-free HTTP gameplay verification, October 7, 2026
+
+**Implemented and verified:** Direct and ViaProxy HTTP joins now share one self-signed identity between signaling and game login.
+Core owns the identity factory. The add-on supplies it before the HTTP offer.
+ViaProxy waits for one real Java login packet because the handshake contains no player name.
+The wait has a deadline and clears its callback on disconnect or unexpected input.
+Login and transfer handshakes use the same production route predicate.
+Online accounts and RakNet retain their existing paths.
+The changes belong to core `0090`, add-on `0007`, and proxy `0001`.
+
+Both actual game routes reached the matching offline BDS world with strict movement enabled.
+Each initialized the local player and retained 30 seconds of continuing input.
+The journals contain 619 direct input packets and 618 proxy input packets.
+The actual HTTP token and key match the outgoing game-login token and key on each route.
+Both offline token and skin token signatures validate against the same session key.
+These joins extend the earlier transport-only proof.
+
+The reviewed core, add-on, and proxy artifact hashes are respectively:
+
+- `46879d1a75d261a322aaa3c2424b9f01c549722ccdae0ff97368e594982895c6`
+- `017a50e55e15270b7ca2adc92e412222eff1d2a14da9905b5a901a1488c1215e`
+- `a38d2e6e46afbedec3400d193e59b1c5b05bd1beeac2da7bf5676661872fd212`
+
+All 1,260 core file entries match both downstream artifacts, including 1,071 Java classes.
+Both isolated runtime profiles also preserve those processed core file entries.
+The proxy class log identifies the reviewed shaded artifact as the loaded `AuthData` source.
+Prism did not produce the requested direct class log; that limitation remains in the private evidence.
+The direct profile identity and required early factory flow provide separate provenance evidence.
+
+Full builds pass with 833 core tests, 495 add-on tests, and four proxy tests.
+Thirty core tests and 117 add-on tests skip optional fixtures.
+The owned clients, proxy, and BDS stopped normally. All 35 installed inventory entries and shared services remained unchanged.
+Private verification is `.stackanvil/research/nethernet-runtime/joined-runtime/verification.json`.
+
+Full transfer reconnects, online-account acceptance, platform joins, and broader movement parity remain unverified for this change.
+The preceding flight artifacts passed actual plain and Iris rendering checks on both routes.
+Shader enable, disable, reload, and native lighting checks passed in those runs.
+The new HTTP artifacts did not repeat that four-route rendering suite.
+The completed preceding CI build also passed all three operating-system permission jobs; those jobs do not establish game joins.
+
+### Further native component application evidence
+
+Another 158 bounded native controls bind base/permutation application order, light dampening updates, and unit-cube tag insertion.
+Actual constructors, callbacks, and description dispatch execute in the pinned binary.
+Existing-name selection and literal condition inputs remain supplied in that fixture.
+The supplied literal branch rounds before testing its integer result; actual StringTag parsing and nonliteral evaluation remain open.
+This difference does not yet justify changing the production condition evaluator.
+The private summary is `.stackanvil/research/billboards/cached-identities/definition-application-evidence-summary.json`.
+
+Further research separates the legacy filter getter from the published state absorption value.
+Sixteen controls execute the original property publisher with own, inherited, and absent runtime dampening components.
+Own components override inherited components. Geometry and its absorption flag determine the fallback when neither component supplies a value.
+The original publisher returns zero for supplied geometry without the block-type absorption flag, despite a legacy filter getter of 15.
+The actual captured geometry reader and final engine consumption remain verification boundaries.
+No global lighting default changed from these supplied controls.
+World propagation, enhanced lighting, native visible results, and the complete lighting matrix remain required.

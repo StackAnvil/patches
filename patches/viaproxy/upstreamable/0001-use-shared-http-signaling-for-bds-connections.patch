@@ -1,4 +1,4 @@
-From dc081ad64aed17816ac35b2476a7c0cc82d5d63f Mon Sep 17 00:00:00 2001
+From c80d4fd7e7300a52d97f212c843f21250b8adaf5 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 01:02:37 +0200
 Subject: [PATCH] fix(bedrock): use shared HTTP signaling for BDS connections
@@ -7,12 +7,170 @@ BDS 1.26.51.1 returns successful capability responses without JSON metadata.
 The bundled transport rejects that response before posting the client offer.
 Use ViaBedrock's HTTP signaling implementation so the proxy follows the same
 native-compatible connection flow as direct clients.
----
- .../raphimc/viaproxy/proxy/session/BedrockProxyConnection.java | 3 ++-
- 1 file changed, 2 insertions(+), 1 deletion(-)
 
+Account-free HTTP offers also require a signed player identity. Wait for
+one real Java LoginHello before opening that backend, then use the core
+self-signed AuthData token and key for both SDP and game login. Preserve
+normal proxy login validation and online-mode verification after the
+backend handshake. Cancel the bounded wait on disconnect or malformed
+input, and do not retain another packet queue. Online accounts and
+RakNet keep their existing connection path.
+
+EmbeddedChannel tests cover one-Hello consumption, deadline cancellation,
+disconnect cleanup and rejection of unexpected input. Exact offline
+BDS1.26.51.1 opens the self-signed transport while rejecting unsigned
+SDP with numeric37; initialized proxy gameplay remains a separate gate.
+---
+ build.gradle                                  |   6 +
+ .../client2proxy/Client2ProxyHandler.java     |  67 ++++++-
+ .../proxy/session/BedrockProxyConnection.java |  22 ++-
+ .../OfflineHttpIdentityLoginTest.java         | 163 ++++++++++++++++++
+ 4 files changed, 255 insertions(+), 3 deletions(-)
+ create mode 100644 src/test/java/net/raphimc/viaproxy/proxy/client2proxy/OfflineHttpIdentityLoginTest.java
+
+diff --git a/build.gradle b/build.gradle
+index a834cfd..1e1f1e9 100644
+--- a/build.gradle
++++ b/build.gradle
+@@ -65,6 +65,8 @@ repositories {
+ }
+ 
+ dependencies {
++    testImplementation "org.junit.jupiter:junit-jupiter:6.1.3"
++    testRuntimeOnly "org.junit.platform:junit-platform-launcher:6.1.3"
+     includeInJar "com.viaversion:viaversion-common:5.12.1-SNAPSHOT"
+     includeInJar "com.viaversion:viabackwards-common:5.12.1-SNAPSHOT"
+     includeInJar "com.viaversion:viarewind-common:4.2.0"
+@@ -142,3 +144,7 @@ tasks.withType(Jar).configureEach {
+ }
+ 
+ tasks.javadoc.enabled = false
++
++tasks.test {
++    useJUnitPlatform()
++}
+diff --git a/src/main/java/net/raphimc/viaproxy/proxy/client2proxy/Client2ProxyHandler.java b/src/main/java/net/raphimc/viaproxy/proxy/client2proxy/Client2ProxyHandler.java
+index 6adff42..263e88f 100644
+--- a/src/main/java/net/raphimc/viaproxy/proxy/client2proxy/Client2ProxyHandler.java
++++ b/src/main/java/net/raphimc/viaproxy/proxy/client2proxy/Client2ProxyHandler.java
+@@ -35,6 +35,9 @@ import net.raphimc.netminecraft.constants.ConnectionState;
+ import net.raphimc.netminecraft.constants.IntendedState;
+ import net.raphimc.netminecraft.packet.Packet;
+ import net.raphimc.netminecraft.packet.impl.handshaking.C2SHandshakingClientIntentionPacket;
++import net.raphimc.netminecraft.packet.impl.login.C2SLoginHelloPacket;
++import net.raphimc.viabedrock.protocol.storage.AuthData;
++import net.raphimc.viaproxy.saves.impl.accounts.BedrockAccount;
+ import net.raphimc.netminecraft.packet.impl.status.S2CStatusPongResponsePacket;
+ import net.raphimc.netminecraft.packet.impl.status.S2CStatusResponsePacket;
+ import net.raphimc.viabedrock.api.BedrockProtocolVersion;
+@@ -64,10 +67,15 @@ import java.net.SocketAddress;
+ import java.util.List;
+ import java.util.concurrent.CompletableFuture;
+ import java.util.function.Supplier;
++import java.util.function.Consumer;
++import java.util.concurrent.ScheduledFuture;
++import java.util.concurrent.TimeUnit;
+ 
+ public class Client2ProxyHandler extends SimpleChannelInboundHandler<Packet> {
+ 
+     private ProxyConnection proxyConnection;
++    private Consumer<C2SLoginHelloPacket> pendingIdentityLogin;
++    private ScheduledFuture<?> identityLoginTimeout;
+ 
+     @Override
+     public void channelActive(ChannelHandlerContext ctx) throws Exception {
+@@ -80,6 +88,7 @@ public class Client2ProxyHandler extends SimpleChannelInboundHandler<Packet> {
+     @Override
+     public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+         super.channelInactive(ctx);
++        this.clearPendingIdentityLogin();
+         if (this.proxyConnection instanceof DummyProxyConnection) return;
+ 
+         try {
+@@ -92,6 +101,18 @@ public class Client2ProxyHandler extends SimpleChannelInboundHandler<Packet> {
+     protected void channelRead0(ChannelHandlerContext ctx, Packet packet) throws Exception {
+         if (this.proxyConnection.isClosed()) return;
+ 
++        if (this.pendingIdentityLogin != null) {
++            if (!(packet instanceof C2SLoginHelloPacket hello)) {
++                this.clearPendingIdentityLogin();
++                throw new IllegalStateException("Expected LoginHello before offline NetherNet connection");
++            }
++            final Consumer<C2SLoginHelloPacket> connect = this.pendingIdentityLogin;
++            this.clearPendingIdentityLogin();
++            ChannelUtil.disableAutoRead(ctx.channel());
++            connect.accept(hello);
++            return;
++        }
++
+         if (this.proxyConnection.getC2pConnectionState() == ConnectionState.HANDSHAKING) {
+             if (packet instanceof C2SHandshakingClientIntentionPacket) this.handleHandshake((C2SHandshakingClientIntentionPacket) packet);
+             else throw new IllegalStateException("Unexpected packet in HANDSHAKING state");
+@@ -239,10 +260,39 @@ public class Client2ProxyHandler extends SimpleChannelInboundHandler<Packet> {
+     }
+ 
+     private void connect(final SocketAddress serverAddress, final ProtocolVersion serverVersion, final ProtocolVersion clientVersion, final IntendedState intendedState, final HostAndPort clientHandshakeAddress, final UserOptions userOptions, final String[] handshakeParts) {
++        if (requiresHttpIdentityLogin(serverAddress, serverVersion, intendedState, userOptions.account() instanceof BedrockAccount)) {
++            // The Java handshake has no player name. Keep exactly one Hello until its identity can sign the offer.
++            this.pendingIdentityLogin = hello -> this.connectWithIdentity(serverAddress, serverVersion, clientVersion, intendedState, clientHandshakeAddress, userOptions, handshakeParts, AuthData.createSelfSigned(hello.name), hello);
++            this.identityLoginTimeout = this.proxyConnection.getC2P().eventLoop().schedule(() -> {
++                this.clearPendingIdentityLogin();
++                this.proxyConnection.kickClient("§cTimed out waiting for login before the offline Bedrock connection.");
++            }, ViaProxy.getConfig().getConnectTimeout(), TimeUnit.MILLISECONDS);
++            ChannelUtil.restoreAutoRead(this.proxyConnection.getC2P());
++            return;
++        }
++        this.connectWithIdentity(serverAddress, serverVersion, clientVersion, intendedState, clientHandshakeAddress, userOptions, handshakeParts, null, null);
++    }
++
++    static boolean requiresHttpIdentityLogin(final SocketAddress serverAddress, final ProtocolVersion serverVersion, final IntendedState intendedState, final boolean hasBedrockAccount) {
++        return intendedState.getConnectionState() == ConnectionState.LOGIN && serverVersion.equals(BedrockProtocolVersion.BEDROCK_LATEST)
++                && serverAddress instanceof NetherNetHttpAddress && !hasBedrockAccount;
++    }
++
++    private void clearPendingIdentityLogin() {
++        this.pendingIdentityLogin = null;
++        if (this.identityLoginTimeout != null) {
++            this.identityLoginTimeout.cancel(false);
++            this.identityLoginTimeout = null;
++        }
++    }
++
++    private void connectWithIdentity(final SocketAddress serverAddress, final ProtocolVersion serverVersion, final ProtocolVersion clientVersion, final IntendedState intendedState, final HostAndPort clientHandshakeAddress, final UserOptions userOptions, final String[] handshakeParts, final AuthData selfSignedIdentity, final C2SLoginHelloPacket savedHello) {
+         final Supplier<ChannelHandler> handlerSupplier = () -> ViaProxy.EVENT_MANAGER.call(new Proxy2ServerHandlerCreationEvent(new Proxy2ServerHandler(), false)).getHandler();
+         final ProxyConnection proxyConnection;
+         if (serverVersion.equals(BedrockProtocolVersion.BEDROCK_LATEST)) {
+-            proxyConnection = new BedrockProxyConnection(new Proxy2ServerChannelInitializer(handlerSupplier), this.proxyConnection.getC2P());
++            final BedrockProxyConnection bedrock = new BedrockProxyConnection(new Proxy2ServerChannelInitializer(handlerSupplier), this.proxyConnection.getC2P());
++            bedrock.setSelfSignedIdentity(selfSignedIdentity);
++            proxyConnection = bedrock;
+         } else {
+             proxyConnection = new ProxyConnection(new Proxy2ServerChannelInitializer(handlerSupplier), this.proxyConnection.getC2P());
+         }
+@@ -318,7 +368,20 @@ public class Client2ProxyHandler extends SimpleChannelInboundHandler<Packet> {
+                                 userConnection.get(CookieStorage.class).cookies().putAll(TransferDataHolder.removeCookieStorage(this.proxyConnection.getC2P()).cookies());
+                             }
+                             this.proxyConnection.setP2sConnectionState(intendedState.getConnectionState());
+-                            ChannelUtil.restoreAutoRead(this.proxyConnection.getC2P());
++                            if (savedHello == null) {
++                                ChannelUtil.restoreAutoRead(this.proxyConnection.getC2P());
++                            } else {
++                                this.proxyConnection.getC2P().eventLoop().execute(() -> {
++                                    final ChannelHandlerContext context = this.proxyConnection.getC2P().pipeline().context(this);
++                                    if (context == null || !context.channel().isActive()) return;
++                                    try {
++                                        this.channelRead0(context, savedHello);
++                                        ChannelUtil.restoreAutoRead(context.channel());
++                                    } catch (Exception exception) {
++                                        this.exceptionCaught(context, exception);
++                                    }
++                                });
++                            }
+                         }
+                     });
+                 });
 diff --git a/src/main/java/net/raphimc/viaproxy/proxy/session/BedrockProxyConnection.java b/src/main/java/net/raphimc/viaproxy/proxy/session/BedrockProxyConnection.java
-index 3901b23..6be38d4 100644
+index 3901b23..8b76455 100644
 --- a/src/main/java/net/raphimc/viaproxy/proxy/session/BedrockProxyConnection.java
 +++ b/src/main/java/net/raphimc/viaproxy/proxy/session/BedrockProxyConnection.java
 @@ -25,6 +25,7 @@ import net.raphimc.minecraftauth.bedrock.BedrockAuthManager;
@@ -23,7 +181,42 @@ index 3901b23..6be38d4 100644
  import net.raphimc.viabedrock.netty.raknet.MessageCodec;
  import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
  import net.raphimc.viaproxy.ViaProxy;
-@@ -101,7 +102,7 @@ public class BedrockProxyConnection extends ProxyConnection {
+@@ -38,17 +39,34 @@ import org.cloudburstmc.netty.channel.raknet.RakClientChannel;
+ import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
+ import org.cloudburstmc.netty.util.nethernet.OperatorIdentity;
+ 
++import com.viaversion.viaversion.api.connection.UserConnection;
++import net.raphimc.viabedrock.protocol.storage.AuthData;
++
+ import java.net.SocketAddress;
+ import java.util.concurrent.ThreadLocalRandom;
+ 
+ public class BedrockProxyConnection extends ProxyConnection {
+ 
+     private SocketAddress serverAddress;
++    private AuthData pendingSelfSignedIdentity;
+ 
+     public BedrockProxyConnection(final ChannelInitializer<Channel> channelInitializer, final Channel c2p) {
+         super(channelInitializer, c2p);
+     }
+ 
++    public void setSelfSignedIdentity(final AuthData authData) {
++        this.pendingSelfSignedIdentity = authData;
++    }
++
++    @Override
++    public void setUserConnection(final UserConnection userConnection) {
++        super.setUserConnection(userConnection);
++        if (this.pendingSelfSignedIdentity != null) {
++            userConnection.put(this.pendingSelfSignedIdentity);
++            this.pendingSelfSignedIdentity = null;
++        }
++    }
++
+     @Override
+     public void initialize(final TransportType transportType, final Bootstrap bootstrap) {
+         bootstrap
+@@ -101,7 +119,7 @@ public class BedrockProxyConnection extends ProxyConnection {
      protected void initializeNetherNet(final TransportType transportType, final Bootstrap bootstrap) {
          final NetherNetClientSignaling netherNetSignaling;
          if (this.serverAddress instanceof NetherNetHttpAddress) {
@@ -32,5 +225,183 @@ index 3901b23..6be38d4 100644
          } else if (this.serverAddress instanceof NetherNetLanAddress) {
              netherNetSignaling = new NetherNetDiscoverySignaling();
          } else if (this.serverAddress instanceof NetherNetXboxAddress || this.serverAddress instanceof NetherNetXboxJsonRpcAddress) {
+@@ -126,6 +144,8 @@ public class BedrockProxyConnection extends ProxyConnection {
+             final BedrockAuthManager authManager = bedrockAccount.getAuthManager();
+             final MinecraftMultiplayerToken multiplayerToken = authManager.getMinecraftMultiplayerToken().getUpToDateUnchecked();
+             identity = OperatorIdentity.fromToken(authManager.getSessionKeyPair(), multiplayerToken.getToken(), "https://authorization.franchise.minecraft-services.net/");
++        } else if (this.pendingSelfSignedIdentity != null) {
++            identity = OperatorIdentity.fromToken(this.pendingSelfSignedIdentity.getSessionKeyPair(), this.pendingSelfSignedIdentity.getMultiplayerToken(), "self");
+         } else {
+             identity = null;
+         }
+diff --git a/src/test/java/net/raphimc/viaproxy/proxy/client2proxy/OfflineHttpIdentityLoginTest.java b/src/test/java/net/raphimc/viaproxy/proxy/client2proxy/OfflineHttpIdentityLoginTest.java
+new file mode 100644
+index 0000000..93742f0
+--- /dev/null
++++ b/src/test/java/net/raphimc/viaproxy/proxy/client2proxy/OfflineHttpIdentityLoginTest.java
+@@ -0,0 +1,163 @@
++/*
++ * This file is part of ViaProxy - https://github.com/RaphiMC/ViaProxy
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viaproxy.proxy.client2proxy;
++
++import com.google.common.net.HostAndPort;
++import com.viaversion.viaversion.api.protocol.version.ProtocolVersion;
++import io.netty.channel.ChannelHandlerContext;
++import io.netty.channel.embedded.EmbeddedChannel;
++import net.raphimc.netminecraft.constants.ConnectionState;
++import net.raphimc.netminecraft.constants.IntendedState;
++import net.raphimc.netminecraft.packet.impl.login.C2SLoginHelloPacket;
++import net.raphimc.netminecraft.packet.impl.status.C2SStatusRequestPacket;
++import net.raphimc.viabedrock.api.BedrockProtocolVersion;
++import net.raphimc.viaproxy.ViaProxy;
++import net.raphimc.viaproxy.protocoltranslator.viaproxy.ViaProxyConfig;
++import net.raphimc.viaproxy.proxy.session.DummyProxyConnection;
++import net.raphimc.viaproxy.proxy.session.UserOptions;
++import net.raphimc.viaproxy.proxy.util.ChannelUtil;
++import net.raphimc.viaproxy.util.address.NetherNetHttpAddress;
++import org.junit.jupiter.api.AfterEach;
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++
++import java.lang.reflect.Field;
++import java.net.SocketAddress;
++import java.net.InetSocketAddress;
++import java.util.List;
++import java.util.concurrent.ScheduledFuture;
++import java.util.concurrent.atomic.AtomicInteger;
++import java.util.concurrent.atomic.AtomicReference;
++import java.util.function.Consumer;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++final class OfflineHttpIdentityLoginTest {
++    private Object oldConfig;
++
++    @BeforeEach
++    void installDefaultConfig() throws Exception {
++        final Field field = ViaProxy.class.getDeclaredField("CONFIG");
++        field.setAccessible(true);
++        this.oldConfig = field.get(null);
++        field.set(null, new ViaProxyConfig());
++    }
++
++    @AfterEach
++    void restoreConfig() throws Exception {
++        final Field field = ViaProxy.class.getDeclaredField("CONFIG");
++        field.setAccessible(true);
++        field.set(null, this.oldConfig);
++    }
++
++    @Test
++    void onlyOfflineBedrockHttpLoginAndTransferRequireAnEarlyIdentity() {
++        final SocketAddress http = new NetherNetHttpAddress("127.0.0.1", 19132);
++        final SocketAddress rakNet = new InetSocketAddress("127.0.0.1", 19132);
++        for (final IntendedState state : List.of(IntendedState.LOGIN, IntendedState.TRANSFER)) {
++            assertTrue(Client2ProxyHandler.requiresHttpIdentityLogin(http, BedrockProtocolVersion.BEDROCK_LATEST, state, false));
++            assertFalse(Client2ProxyHandler.requiresHttpIdentityLogin(http, BedrockProtocolVersion.BEDROCK_LATEST, state, true));
++            assertFalse(Client2ProxyHandler.requiresHttpIdentityLogin(rakNet, BedrockProtocolVersion.BEDROCK_LATEST, state, false));
++            assertFalse(Client2ProxyHandler.requiresHttpIdentityLogin(http, ProtocolVersion.v26_3, state, false));
++        }
++        assertFalse(Client2ProxyHandler.requiresHttpIdentityLogin(http, BedrockProtocolVersion.BEDROCK_LATEST, IntendedState.STATUS, false));
++    }
++
++    @Test
++    void consumesOneHelloAndCancelsItsDeadlineBeforeTheBackendCallback() throws Exception {
++        final Handler handler = new Handler();
++        final EmbeddedChannel channel = new EmbeddedChannel(handler);
++        try {
++            this.defer(handler, channel);
++            assertTrue(channel.config().isAutoRead());
++            final ScheduledFuture<?> deadline = (ScheduledFuture<?>) field("identityLoginTimeout").get(handler);
++            final AtomicReference<C2SLoginHelloPacket> seen = new AtomicReference<>();
++            field("pendingIdentityLogin").set(handler, (Consumer<C2SLoginHelloPacket>) seen::set);
++            final C2SLoginHelloPacket hello = new C2SLoginHelloPacket();
++            channel.writeInbound(hello);
++            assertSame(hello, seen.get());
++            assertNull(field("pendingIdentityLogin").get(handler));
++            assertNull(field("identityLoginTimeout").get(handler));
++            assertTrue(deadline.isCancelled());
++            assertFalse(channel.config().isAutoRead());
++            assertNull(handler.failure);
++        } finally {
++            channel.finishAndReleaseAll();
++        }
++    }
++
++    @Test
++    void disconnectDropsTheDeferredCallbackAndDeadline() throws Exception {
++        final Handler handler = new Handler();
++        final EmbeddedChannel channel = new EmbeddedChannel(handler);
++        try {
++            this.defer(handler, channel);
++            final ScheduledFuture<?> deadline = (ScheduledFuture<?>) field("identityLoginTimeout").get(handler);
++            final AtomicInteger calls = new AtomicInteger();
++            field("pendingIdentityLogin").set(handler, (Consumer<C2SLoginHelloPacket>) hello -> calls.incrementAndGet());
++            channel.close();
++            assertNull(field("pendingIdentityLogin").get(handler));
++            assertNull(field("identityLoginTimeout").get(handler));
++            assertTrue(deadline.isCancelled());
++            assertEquals(0, calls.get());
++        } finally {
++            channel.finishAndReleaseAll();
++        }
++    }
++
++    @Test
++    void anUnexpectedPacketCannotRemainQueuedOrOpenABackend() throws Exception {
++        final Handler handler = new Handler();
++        final EmbeddedChannel channel = new EmbeddedChannel(handler);
++        try {
++            this.defer(handler, channel);
++            final ScheduledFuture<?> deadline = (ScheduledFuture<?>) field("identityLoginTimeout").get(handler);
++            final AtomicInteger calls = new AtomicInteger();
++            field("pendingIdentityLogin").set(handler, (Consumer<C2SLoginHelloPacket>) hello -> calls.incrementAndGet());
++            channel.writeInbound(new C2SStatusRequestPacket());
++            assertInstanceOf(IllegalStateException.class, handler.failure);
++            assertNull(field("pendingIdentityLogin").get(handler));
++            assertTrue(deadline.isCancelled());
++            assertEquals(0, calls.get());
++        } finally {
++            channel.finishAndReleaseAll();
++        }
++    }
++
++    private void defer(final Handler handler, final EmbeddedChannel channel) throws Exception {
++        ChannelUtil.disableAutoRead(channel);
++        final var method = Client2ProxyHandler.class.getDeclaredMethod("connect", SocketAddress.class, ProtocolVersion.class, ProtocolVersion.class,
++                IntendedState.class, HostAndPort.class, UserOptions.class, String[].class);
++        method.setAccessible(true);
++        method.invoke(handler, new NetherNetHttpAddress("127.0.0.1", 19132), BedrockProtocolVersion.BEDROCK_LATEST,
++                ProtocolVersion.v26_3, IntendedState.LOGIN, HostAndPort.fromParts("127.0.0.1", 25565), new UserOptions(null, null), new String[]{"127.0.0.1"});
++        assertNotNull(field("pendingIdentityLogin").get(handler));
++    }
++
++    private static Field field(final String name) throws Exception {
++        final Field field = Client2ProxyHandler.class.getDeclaredField(name);
++        field.setAccessible(true);
++        return field;
++    }
++
++    private static final class Handler extends Client2ProxyHandler {
++        private Throwable failure;
++
++        @Override
++        public void channelActive(final ChannelHandlerContext context) throws Exception {
++            final DummyProxyConnection connection = new DummyProxyConnection(context.channel());
++            connection.setClientVersion(ProtocolVersion.v26_3);
++            connection.setC2pConnectionState(ConnectionState.LOGIN);
++            field("proxyConnection").set(this, connection);
++        }
++
++        @Override
++        public void exceptionCaught(final ChannelHandlerContext context, final Throwable cause) {
++            this.failure = cause;
++            context.close();
++        }
++    }
++}
 -- 
 2.55.0

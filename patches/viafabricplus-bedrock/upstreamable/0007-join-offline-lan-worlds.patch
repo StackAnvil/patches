@@ -1,4 +1,4 @@
-From 5063c069420c5e10d9bb20cc007814fd251754d4 Mon Sep 17 00:00:00 2001
+From 0062433f9ade6cdd12cfecb1e1a0fcb1b5f7dd1e Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sun, 27 Sep 2026 13:38:54 +0200
 Subject: [PATCH] feat(bedrock): join offline LAN worlds
@@ -10,16 +10,21 @@ For self-signed worlds, create one identity before the NetherNet offer and pass 
 Receive complete NetherNet signaling datagrams and repair iOS LAN answers that omit trailing SDP attributes from their declared length. Otherwise the client can time out before the ICE connection opens even though discovery succeeded.
 
 Place the LAN subtitle and world list immediately beneath the VFP logo. This screen has no search bar or tabs, so the extra header space obscured the list.
+
+Use core AuthData.createSelfSigned for LAN and account-free HTTP offers.
+Transfer the exact pre-handshake token and key independently of LAN
+metadata, and preserve them for game login. Exact offline BDS1.26.51.1
+rejects unsigned HTTP offers but opens the signed self identity transport.
+Online account tokens retain their existing path.
 ---
  .../appearance/ViaFabricPlusSkinProvider.java |   4 +-
- .../core/connection/MixinConnectScreen_1.java |   6 +
- .../core/connection/MixinConnection.java      |  54 +++-
+ .../core/connection/MixinConnectScreen_1.java |   3 +
+ .../core/connection/MixinConnection.java      |  56 +++-
  .../connection/MixinNetherNetDiscovery.java   |  46 +++
  .../connection/MixinServerNameResolver.java   |   7 +
  .../core/integration/MixinVFPScreen.java      |   7 +-
  .../bedrock/lan/BedrockLanAddress.java        |  35 +++
  .../bedrock/lan/BedrockLanDiscovery.java      | 279 ++++++++++++++++++
- .../bedrock/lan/BedrockLanIdentity.java       |  57 ++++
  .../lan/BedrockLanInetSocketAddress.java      |  25 ++
  .../bedrock/lan/BedrockLanSession.java        |  19 ++
  .../bedrock/lan/BedrockLanWorld.java          |  33 +++
@@ -30,11 +35,10 @@ Place the LAN subtitle and world list immediately beneath the VFP logo. This scr
  .../viafabricplus-bedrock.mixins.json         |   1 +
  .../bedrock/lan/BedrockLanDiscoveryTest.java  | 111 +++++++
  .../lan/NetherNetConnectResponseTest.java     |  53 ++++
- 19 files changed, 1004 insertions(+), 7 deletions(-)
+ 18 files changed, 946 insertions(+), 7 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinNetherNetDiscovery.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanAddress.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanDiscovery.java
- create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanIdentity.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanInetSocketAddress.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanSession.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanWorld.java
@@ -66,46 +70,35 @@ index 26512d7..06a178b 100644
              claims.put("Nonce", nonce);
          }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnectScreen_1.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnectScreen_1.java
-index 0a761a7..c5a9a15 100644
+index 0a761a7..6561291 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnectScreen_1.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnectScreen_1.java
-@@ -27,6 +27,8 @@ import com.llamalad7.mixinextras.sugar.Local;
- import com.viaversion.viafabricplus.ViaFabricPlus;
- import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
- import com.viaversion.viafabricplus.bedrock.injection.access.IEventLoopGroupHolder;
-+import com.viaversion.viafabricplus.bedrock.lan.BedrockLanSession;
-+import com.viaversion.viafabricplus.bedrock.lan.BedrockLanWorld;
- import com.viaversion.viafabricplus.injection.access.core.IConnection;
- import com.viaversion.viaversion.api.connection.UserConnection;
- import java.io.IOException;
-@@ -67,6 +69,10 @@ public abstract class MixinConnectScreen_1 {
+@@ -67,6 +67,9 @@ public abstract class MixinConnectScreen_1 {
          }
  
          final UserConnection connection = ((IConnection) clientConnection).viaFabricPlus$getUserConnection();
-+        final BedrockLanSession lan = connection.get(BedrockLanSession.class);
-+        if (lan != null && lan.address().authMode() == BedrockLanWorld.AuthMode.SELF_SIGNED) {
++        if (connection.has(AuthData.class)) {
 +            return; // The identity used by NetherNet signaling is already stored for ViaBedrock login.
 +        }
          final BedrockAuthManager account = ViaFabricPlusBedrock.impl().account().get();
          if (account == null) {
              ViaFabricPlusBedrock.impl().logger().warn("Could not get Bedrock account. Joining online mode servers will not work!");
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnection.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnection.java
-index d153bc1..bd3dc0f 100644
+index d153bc1..5ee2b4a 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnection.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/core/connection/MixinConnection.java
-@@ -29,6 +29,11 @@ import com.llamalad7.mixinextras.sugar.ref.LocalRef;
+@@ -29,6 +29,10 @@ import com.llamalad7.mixinextras.sugar.ref.LocalRef;
  import com.viaversion.viafabricplus.bedrock.ViaFabricPlusBedrock;
  import com.viaversion.viafabricplus.bedrock.friends.BedrockFriendsService;
  import com.viaversion.viafabricplus.bedrock.injection.access.IEventLoopGroupHolder;
 +import com.viaversion.viafabricplus.bedrock.lan.BedrockLanAddress;
-+import com.viaversion.viafabricplus.bedrock.lan.BedrockLanIdentity;
 +import com.viaversion.viafabricplus.bedrock.lan.BedrockLanInetSocketAddress;
 +import com.viaversion.viafabricplus.bedrock.lan.BedrockLanSession;
 +import com.viaversion.viafabricplus.bedrock.lan.BedrockLanWorld;
  import com.viaversion.viafabricplus.bedrock.protocoltranslator.netty.RakNetPingEncapsulationCodec;
  import com.viaversion.viafabricplus.bedrock.protocoltranslator.network.NetherNetInetSocketAddress;
  import com.viaversion.viafabricplus.bedrock.protocoltranslator.network.NetherNetHttpAddress;
-@@ -42,7 +47,7 @@ import org.cloudburstmc.netty.channel.nethernet.NetherNetChannelFactory;
+@@ -42,7 +46,7 @@ import org.cloudburstmc.netty.channel.nethernet.NetherNetChannelFactory;
  import org.cloudburstmc.netty.channel.nethernet.config.NetherChannelOption;
  import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetClientSignaling;
  import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetDiscoverySignaling;
@@ -114,7 +107,7 @@ index d153bc1..bd3dc0f 100644
  import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetXboxRpcSignaling;
  import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetXboxSignaling;
  import org.cloudburstmc.netty.util.nethernet.OperatorIdentity;
-@@ -64,16 +69,19 @@ import java.net.InetSocketAddress;
+@@ -64,16 +68,19 @@ import java.net.InetSocketAddress;
  import java.net.SocketAddress;
  import java.io.IOException;
  import net.minecraft.network.Connection;
@@ -134,7 +127,7 @@ index d153bc1..bd3dc0f 100644
  import org.spongepowered.asm.mixin.injection.At;
  import org.spongepowered.asm.mixin.injection.Inject;
  import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
-@@ -82,6 +90,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+@@ -82,6 +89,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  @Mixin(value = Connection.class, priority = 1001) // Apply after ViaFabricPlus' own connection mixin
  public abstract class MixinConnection extends SimpleChannelInboundHandler<Packet<?>> {
  
@@ -142,28 +135,28 @@ index d153bc1..bd3dc0f 100644
 +    private BedrockLanSession viaFabricPlusBedrock$pendingLanSession;
 +
 +    @Unique
-+    private AuthData viaFabricPlusBedrock$pendingLanIdentity;
++    private AuthData viaFabricPlusBedrock$pendingIdentity;
 +
      @Inject(method = "channelInactive", at = @At("HEAD"))
      private void leaveFriendWorld(final ChannelHandlerContext context, final CallbackInfo ci) {
          BedrockFriendsService.leaveIfCurrent(context.channel().remoteAddress());
-@@ -89,6 +103,15 @@ public abstract class MixinConnection extends SimpleChannelInboundHandler<Packet
+@@ -89,6 +102,15 @@ public abstract class MixinConnection extends SimpleChannelInboundHandler<Packet
  
      @Override
      public void channelRegistered(final ChannelHandlerContext ctx) throws Exception {
 +        if (this.viaFabricPlusBedrock$pendingLanSession != null) {
 +            final UserConnection user = ((IConnection) this).viaFabricPlus$getUserConnection();
 +            user.put(this.viaFabricPlusBedrock$pendingLanSession);
-+            if (this.viaFabricPlusBedrock$pendingLanIdentity != null) {
-+                user.put(this.viaFabricPlusBedrock$pendingLanIdentity);
-+            }
 +            this.viaFabricPlusBedrock$pendingLanSession = null;
-+            this.viaFabricPlusBedrock$pendingLanIdentity = null;
++        }
++        if (this.viaFabricPlusBedrock$pendingIdentity != null) {
++            ((IConnection) this).viaFabricPlus$getUserConnection().put(this.viaFabricPlusBedrock$pendingIdentity);
++            this.viaFabricPlusBedrock$pendingIdentity = null;
 +        }
          super.channelRegistered(ctx);
          if (BedrockProtocolVersion.BEDROCK_LATEST.equals(((IConnection) this).viaFabricPlus$getTargetVersion())) { // Call channelActive manually when the channel is registered
              this.channelActive(ctx);
-@@ -116,13 +139,30 @@ public abstract class MixinConnection extends SimpleChannelInboundHandler<Packet
+@@ -116,13 +138,33 @@ public abstract class MixinConnection extends SimpleChannelInboundHandler<Packet
              return original.call(instance, channelTypeClass);
          }
  
@@ -180,7 +173,7 @@ index d153bc1..bd3dc0f 100644
 +        if (lanAddress != null) {
 +            mixinConnection.viaFabricPlusBedrock$pendingLanSession = new BedrockLanSession(lanAddress);
 +            if (lanAddress.authMode() == BedrockLanWorld.AuthMode.SELF_SIGNED) {
-+                mixinConnection.viaFabricPlusBedrock$pendingLanIdentity = BedrockLanIdentity.create(Minecraft.getInstance().getUser().getName());
++                mixinConnection.viaFabricPlusBedrock$pendingIdentity = AuthData.createSelfSigned(Minecraft.getInstance().getUser().getName());
 +            }
 +        }
 +
@@ -192,24 +185,27 @@ index d153bc1..bd3dc0f 100644
 -                signaling = new NetherNetHTTPClientSignaling();
 -            } else if (remote instanceof NetherNetLanAddress) {
 +                signaling = new BedrockHttpSignaling();
++                if (account == null) {
++                    mixinConnection.viaFabricPlusBedrock$pendingIdentity = AuthData.createSelfSigned(Minecraft.getInstance().getUser().getName());
++                }
 +            } else if (remote instanceof NetherNetLanAddress || remote instanceof BedrockLanAddress) {
                  signaling = new NetherNetDiscoverySignaling();
              } else {
                  if (account == null) {
-@@ -139,7 +179,11 @@ public abstract class MixinConnection extends SimpleChannelInboundHandler<Packet
+@@ -139,7 +181,11 @@ public abstract class MixinConnection extends SimpleChannelInboundHandler<Packet
                      : new NetherNetXboxSignaling(authorizationHeader);
              }
  
 -            if (account != null) {
-+            if (lanAddress != null && lanAddress.authMode() == BedrockLanWorld.AuthMode.SELF_SIGNED) {
-+                final AuthData authData = mixinConnection.viaFabricPlusBedrock$pendingLanIdentity;
++            if (mixinConnection.viaFabricPlusBedrock$pendingIdentity != null) {
++                final AuthData authData = mixinConnection.viaFabricPlusBedrock$pendingIdentity;
 +                instance.option(NetherChannelOption.NETHER_CLIENT_IDENTITY,
 +                    OperatorIdentity.fromToken(authData.getSessionKeyPair(), authData.getMultiplayerToken(), "self"));
 +            } else if (account != null) {
                  try {
                      final MinecraftMultiplayerToken token = account.getMinecraftMultiplayerToken().refresh();
                      instance.option(NetherChannelOption.NETHER_CLIENT_IDENTITY,
-@@ -171,6 +215,8 @@ public abstract class MixinConnection extends SimpleChannelInboundHandler<Packet
+@@ -171,6 +217,8 @@ public abstract class MixinConnection extends SimpleChannelInboundHandler<Packet
                      connectAddress = new InetSocketAddress(httpAddress.host(), httpAddress.port());
                  } else if (remote instanceof NetherNetLanAddress lanAddress) {
                      connectAddress = new InetSocketAddress(lanAddress.host(), lanAddress.port());
@@ -649,69 +645,6 @@ index 0000000..46ad363
 +            throw new IllegalArgumentException("Invalid LAN string length");
 +        }
 +        return data.readCharSequence(length, StandardCharsets.UTF_8).toString();
-+    }
-+
-+}
-diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanIdentity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanIdentity.java
-new file mode 100644
-index 0000000..6285136
---- /dev/null
-+++ b/src/main/java/com/viaversion/viafabricplus/bedrock/lan/BedrockLanIdentity.java
-@@ -0,0 +1,57 @@
-+/*
-+ * This file is part of ViaFabricPlus Bedrock - https://github.com/florianreuth/viafabricplus-bedrock
-+ * Copyright (C) 2023-2026 ViaVersion and contributors
-+ * SPDX-License-Identifier: GPL-3.0-or-later
-+ */
-+
-+package com.viaversion.viafabricplus.bedrock.lan;
-+
-+import io.jsonwebtoken.Claims;
-+import io.jsonwebtoken.Jwts;
-+import java.nio.charset.StandardCharsets;
-+import java.security.KeyPair;
-+import java.time.Instant;
-+import java.time.temporal.ChronoUnit;
-+import java.util.Base64;
-+import java.util.Date;
-+import java.util.Locale;
-+import java.util.UUID;
-+import net.raphimc.viabedrock.api.util.CryptUtil;
-+import net.raphimc.viabedrock.api.util.Fnv1;
-+import net.raphimc.viabedrock.protocol.storage.AuthData;
-+
-+/** Creates ViaBedrock's self-signed login identity before NetherNet prepares its offer. */
-+public final class BedrockLanIdentity {
-+
-+    private BedrockLanIdentity() {
-+    }
-+
-+    public static AuthData create(final String username) {
-+        final Instant now = Instant.now();
-+        final KeyPair keyPair = CryptUtil.generateEcdsa384KeyPair();
-+        final String publicKey = Base64.getEncoder().encodeToString(keyPair.getPublic().getEncoded());
-+        final long rawXuid = Fnv1.fnv1_64(username.getBytes(StandardCharsets.UTF_8));
-+        final String xuid = String.valueOf(Math.abs(rawXuid));
-+        final UUID selfSignedId = UUID.nameUUIDFromBytes(("pocket-auth-1-xuid:" + xuid).getBytes(StandardCharsets.UTF_8));
-+        final String token = Jwts.builder()
-+            .signWith(keyPair.getPrivate(), Jwts.SIG.ES384)
-+            .header().add("x5u", publicKey).and()
-+            .claim(Claims.AUDIENCE, "api://auth-minecraft-services/multiplayer")
-+            .claim("cpk", publicKey)
-+            .claim("leguuid", selfSignedId)
-+            .claim("mid", Long.toHexString(rawXuid).toUpperCase(Locale.ROOT))
-+            .claim("nid", "")
-+            .claim("nname", "")
-+            .claim("pid", "")
-+            .claim("pname", "")
-+            .claim("xid", xuid)
-+            .claim("xname", username)
-+            .issuedAt(Date.from(now))
-+            .expiration(Date.from(now.plus(365, ChronoUnit.DAYS)))
-+            .compact();
-+        final AuthData authData = new AuthData(token, keyPair);
-+        authData.setSelfSignedId(selfSignedId);
-+        return authData;
 +    }
 +
 +}
