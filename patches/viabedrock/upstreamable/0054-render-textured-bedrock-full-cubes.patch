@@ -1,4 +1,4 @@
-From 20cec5f5dad8f9e9ebf4bf79dda6b93910f5025d Mon Sep 17 00:00:00 2001
+From 21bd7441e609c54c45956ccf61429bdd27ef37aa Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:38:26 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -169,9 +169,17 @@ corner ambient light and directional dimming, before tint and lightmap.
 Native instruction probes cover six faces and 2,304 corner outputs with
 unchanged light coordinates. The core carries metadata on both routes;
 faithful per-face evaluation requires client renderer integration.
+
+Native corner light takes independent maxima across block and sky
+channels, without Java's zero replacement or arithmetic average.
+Expose that calculation in the shared lighting helper so client terrain
+integration can retain native corner brightness on both routes.
+A private full-routine fixture verifies 12,288 heterogeneous corner
+samples across six directions, face planes and opaque diagonal controls.
+Neighborhood lookup and interpolation remain separate parity work.
 ---
  .../api/model/CustomBlockCulling.java         | 206 +++++++
- .../api/model/CustomBlockLighting.java        |  42 ++
+ .../api/model/CustomBlockLighting.java        |  49 ++
  .../api/model/CustomBlockOffset.java          |  97 +++
  .../api/model/CustomBlockProperties.java      | 150 +++++
  .../api/model/CustomBlockVisual.java          |  27 +
@@ -196,7 +204,7 @@ faithful per-face evaluation requires client renderer integration.
  .../protocol/storage/ResourcePackStorage.java |  44 +-
  .../protocol/storage/VoxelShapeRegistry.java  | 125 ++++
  .../api/model/CustomBlockCullingTest.java     |  54 ++
- .../api/model/CustomBlockLightingTest.java    |  43 ++
+ .../api/model/CustomBlockLightingTest.java    |  73 +++
  .../api/model/CustomBlockOffsetTest.java      |  80 +++
  .../api/model/CustomBlockPropertiesTest.java  |  69 +++
  .../http/ConvertedResourcePackCacheTest.java  |  29 +
@@ -209,7 +217,7 @@ faithful per-face evaluation requires client renderer integration.
  .../protocol/storage/ChunkTrackerTest.java    |  24 +
  .../storage/CustomBlockPackStorageTest.java   | 169 ++++++
  .../storage/VoxelShapeRegistryTest.java       | 130 ++++
- 39 files changed, 4227 insertions(+), 23 deletions(-)
+ 39 files changed, 4264 insertions(+), 23 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockCulling.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockOffset.java
@@ -451,10 +459,10 @@ index 000000000..f01a834b7
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java
 new file mode 100644
-index 000000000..d953aa47f
+index 000000000..3dec74c45
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,49 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -489,6 +497,13 @@ index 000000000..d953aa47f
 +            throw new IllegalArgumentException("Invalid material lighting fields");
 +        }
 +        return new CustomBlockLighting(json.get("ambient_occlusion").getAsFloat(), json.get("face_dimming").getAsBoolean());
++    }
++
++    /** Combine native corner samples in Java's packed smooth-light representation without averaging or zero replacement. */
++    public static int maximumLight(final int first, final int second, final int third, final int fourth) {
++        final int block = Math.max(Math.max(first & 0xFF, second & 0xFF), Math.max(third & 0xFF, fourth & 0xFF));
++        final int sky = Math.max(Math.max((first >>> 16) & 0xFF, (second >>> 16) & 0xFF), Math.max((third >>> 16) & 0xFF, (fourth >>> 16) & 0xFF));
++        return block | (sky << 16);
 +    }
 +
 +    /** Native terrain applies the exponent after corner averaging and directional attenuation, before tint and world light. */
@@ -3161,10 +3176,10 @@ index 000000000..d9e0da375
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java
 new file mode 100644
-index 000000000..0ce35064e
+index 000000000..e180e29d9
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,73 @@
 +package net.raphimc.viabedrock.api.model;
 +
 +import com.viaversion.viaversion.libs.gson.JsonParser;
@@ -3185,6 +3200,36 @@ index 000000000..0ce35064e
 +        assertEquals(1F, new CustomBlockLighting(0F, true).shade(0.2F, 0.5F));
 +        assertEquals(0.4F, new CustomBlockLighting(1F, true).shade(0.5F, 0.8F));
 +        assertEquals(0F, new CustomBlockLighting(10F, true).shade(0F, 0.8F));
++    }
++
++    @Test
++    void cornerLightKeepsIndependentChannelMaximaAndDarkSamples() {
++        assertEquals(0x00F000F0, CustomBlockLighting.maximumLight(0x000000F0, 0x00F00000, 0x00300040, 0));
++        assertEquals(0x00900070, CustomBlockLighting.maximumLight(0, 0x00900000, 0, 0x00000070));
++        assertEquals(0, CustomBlockLighting.maximumLight(0, 0, 0, 0));
++        // Smooth channels can retain fractional levels after interpolation.
++        assertEquals(0x00BD00E7, CustomBlockLighting.maximumLight(0x002400E7, 0x00BD0008, 0, 0x008400C9));
++    }
++
++    @Test
++    void nativeCornerNeighborhoodsMatchMaximumLight() throws Exception {
++        final String fixture = System.getProperty("stackanvil.test.nativeCornerLight");
++        Assumptions.assumeTrue(fixture != null);
++        final var cases = JsonParser.parseString(Files.readString(Path.of(fixture))).getAsJsonObject().getAsJsonArray("cases");
++        assertFalse(cases.isEmpty());
++        for (var value : cases) {
++            for (var corner : value.getAsJsonObject().getAsJsonArray("corners")) {
++                final var sample = corner.getAsJsonObject();
++                final var inputs = sample.getAsJsonArray("inputs");
++                assertEquals(javaLight(sample.get("light").getAsInt()), CustomBlockLighting.maximumLight(
++                        javaLight(inputs.get(0).getAsInt()), javaLight(inputs.get(1).getAsInt()),
++                        javaLight(inputs.get(2).getAsInt()), javaLight(inputs.get(3).getAsInt())));
++            }
++        }
++    }
++
++    private static int javaLight(final int nativeLight) {
++        return ((nativeLight & 0xFF) << 4) | (((nativeLight >>> 8) & 0xFF) << 20);
 +    }
 +
 +    @Test

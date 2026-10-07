@@ -209,3 +209,20 @@ The fixture supplies uniform neighborhood values, material lookup, TLS storage, 
 It establishes the material arithmetic, not complete native terrain sampling or visible image parity.
 Semantic tests cover mixed face strengths, disabled dimming, invalid exponents, and preservation of geometry, emission, and occlusion.
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-material-ambient-occlusion-october-7-2026) records integration results and remaining limits.
+
+## Native corner light maxima
+
+Bedrock's target corner routine takes independent maxima for block light and sky light.
+Java instead averages four samples and replaces some dark channels before the blend.
+The shared core lighting helper now retains native maxima in Java's packed smooth-light format.
+This is a rendering calculation. It does not change propagated chunk light.
+
+A private fixture executes the original corner routine for 3,072 faces, or 12,288 corners.
+It varies all six directions, both face planes, source-selection flags, four neighbor flags, uneven light values, and corner occlusion.
+Independent expectations select the diagonal sample and verify both light channels and corner attenuation.
+The fixture supplies cached neighbors, the self-light lookup, TLS storage, material lookup, and the imported float power function.
+It does not execute native world lookup or produce a visible comparison.
+
+The optional native fixture test verifies every resulting corner through the production helper.
+Additional controls distinguish channel maxima from averages, retain dark samples, and preserve packed smooth-channel precision.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-corner-light-maxima-october-7-2026) records terrain integration and remaining limits.

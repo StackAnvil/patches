@@ -236,7 +236,7 @@ Core still needs to derive equipment attributes from target item definitions, in
 | R2 | Server particle dispatch | Incomplete | Core transports complete requests, typed variables, actor identity, and Java fallback bodies to native clients. Direct and ViaProxy authored fixtures verify dispatch, typed size/tint records, and fallback decoding. Complete actor queries, remote actor transport, interpolation, lifecycle comparisons, and visible native parity remain open. |
 | R3 | Particle runtime | Incomplete | Complete components, actor contexts, child effects, concurrency, and visible lifecycle comparisons. |
 | R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core transports signed loops, optional playback fields, handle controls, and ordered sound resources through direct connections and ViaProxy. Add-on playback controls pass captured-session OpenAL checks on both routes. Native request admission now matches the tested float range gate on both add-on routes. Server captions now have core state, transported translations, client controls, and a HUD on both add-on routes. Complete actor/local captions, localization/layout comparisons, stream policies, range behavior for other sources, audible comparisons, and broader lifecycle verification. |
-| R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties and per-face ambient strengths through ViaProxy. Native material arithmetic matches 576 executable cases. Both routes retain the settings through model baking and injected terrain lighting. Java still supplies corner sampling and interpolation. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Core carries native random offsets in converted metadata. The add-on verifies continuous terrain, outline, and camera offsets separately from floored movement collision on both routes, including edge and corner queries. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, directional light occlusion, vanilla per-type collision shapes, and native collision solving. |
+| R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties and per-face ambient strengths through ViaProxy. Native material arithmetic matches 576 executable cases. Native corner maxima also match 12,288 executable samples. Both routes retain the settings through model baking and injected terrain lighting. Java still supplies corner sampling and interpolation. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Core carries native random offsets in converted metadata. The add-on verifies continuous terrain, outline, and camera offsets separately from floored movement collision on both routes, including edge and corner queries. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, directional light occlusion, vanilla per-type collision shapes, and native collision solving. |
 | R6 | Equipped attachables | Incomplete | Accepted actor graphs now travel through ViaProxy. Both routes render the supported costume and owner-bound chest wings. Complete proxy properties, variants, explicit bone bindings, per-bone materials, material families, and broader native comparisons. |
 
 The attachable matrix tests establish supported same-name affine bindings.
@@ -7427,3 +7427,50 @@ Artifact replacements use reviewed inventories and private rollback copies. Exis
 **Remaining:** Native corner sampling, interpolation, directional coefficients, and world-light sampling need controlled visible comparisons.
 Other dimensions, held-item lighting, End sky inputs, secondary fluids, directional occlusion, alternative terrain renderers, and enhanced lighting remain open.
 Strict BDS, movement, combat, account, and platform requirements retain their existing scope.
+
+## Native corner light maxima, October 7, 2026
+
+**Goal classification: progress. Full lighting and Bedrock parity remain incomplete.**
+
+The previous iteration changes production material lighting and passes its complete direct and ViaProxy replays.
+Its [GitHub CI run](https://github.com/StackAnvil/patches/actions/runs/37589729544) also passes.
+This continuation verifies another difference in the target native terrain routine.
+It takes the maximum of each sampled light channel independently. Java averages the samples and replaces some dark channels first.
+
+Core now supplies native corner maxima in Java's packed smooth-light representation.
+The add-on uses this helper for registered custom faces with accepted native lighting annotations.
+The existing partial-face interpolation follows this calculation.
+Ordinary Java states and faces without these annotations retain Java's original blend.
+This rendering integration requires the add-on. Propagated chunk light and ordinary Java clients keep their existing behavior.
+
+**Native sampling arithmetic verified:** The original routine passes 3,072 heterogeneous face cases, or 12,288 corner comparisons.
+Cases cover six directions, outside and inside face planes, source-selection flags, sixteen side-neighbor flag combinations, and eight input profiles.
+Independent expectations verify diagonal substitution, corner occlusion, and both light-channel maxima.
+
+The fixture supplies cached neighbor values, self-light lookup, TLS storage, material lookup, and the imported float power function.
+It establishes corner calculation from those inputs rather than actual world lookup or complete native visuals.
+Executable code and raw fixture output remain private.
+
+**Client integration:** Six accepted full-unit CubeCraft faces use three controlled world-light profiles.
+Actual direct and ViaProxy clients each load all 276 custom definitions and match all 72 native reference vertex values.
+Forty-four corners differ from Java's original blend, so the controls distinguish the corrected path.
+All 72 ordinary-stone controls retain Java's original values.
+
+The probe invokes the actual injected terrain method on accepted baked faces and restores each annotation afterward.
+Its world-light inputs are controlled. It does not place the sampled blocks or compare visible native images.
+
+The first probe incorrectly classified lowercase Java direction names and selected only one full face.
+A corrected probe uses all six accepted faces. It needs no substitute geometry.
+Direct and ViaProxy scene replays for this change complete unchanged and pass gameplay, pack-loading, and model checks.
+The preceding iteration's intermittent ViaProxy handshake timeout remains unresolved.
+
+**Build verification:** Both owning patches replay through their complete stacks.
+Core build and Checkstyle pass with 806 tests, including 25 optional fixture skips.
+Both native material and corner-light fixture tests execute in this build.
+The add-on passes 605 tests, including 117 optional fixture skips. Neither suite reports failures or errors.
+ViaProxy builds successfully. All 1,251 core entries match both downstream bundles, except their manifests.
+Reviewed artifact inventories and fresh private rollback copies cover the exact replacements.
+
+**Remaining:** Native world lookup, blocked-neighbor identity, partial-face interpolation, and all-zero-strength model path selection need further evidence.
+Flat terrain, vanilla block visuals, dimensions, held-item sampling, End sky inputs, fluids, directional occlusion, and alternative renderers remain incomplete or unverified.
+Enhanced lighting remains a separate requirement. The full movement, combat, protocol, accounts, and platform goals retain their scope.

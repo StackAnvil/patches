@@ -103,3 +103,17 @@ These probes use loaded models but do not place each sampled block or compare na
 Java still supplies the corner neighborhood, interpolation, and light coordinates.
 Alternative terrain renderers, other dimensions, and enhanced lighting require separate verification.
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-material-ambient-occlusion-october-7-2026) records the evidence boundaries.
+
+## Corner light sampling
+
+Registered custom terrain now uses the core helper at Java's corner-light blend boundary.
+Each channel retains its brightest sample independently, before the existing partial-face interpolation.
+Faces without native lighting metadata and ordinary Java block states retain Java's original blend.
+The hook uses the same accepted-model path through direct connections and ViaProxy.
+
+A private game probe evaluates six accepted full-unit faces against three controlled world-light profiles.
+The original native routine supplies 72 reference vertex values.
+The probe invokes the actual injected terrain method and compares ordinary-stone and annotation-removal controls.
+It restores face annotations after each case. It does not place the blocks or compare visible native images.
+Java's neighborhood selection, partial interpolation, flat-path selection, and alternative terrain renderers remain separate verification requirements.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-corner-light-maxima-october-7-2026) records route results.
