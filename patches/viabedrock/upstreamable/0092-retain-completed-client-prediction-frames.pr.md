@@ -855,3 +855,21 @@ The strict BDS join through ViaProxy stays connected for 20 seconds.
 The observer records 36 exact float lift changes, 275 unchanged phases after source removal, and subsequent effect expiration.
 The saved full stack reproduces the tested source tree.
 The coverage ledger records exact artifact replacements, preserved inventories, rollback paths, and remaining verification requirements.
+
+### Native effect presence and captured input
+
+The original mutable snapshot path retains effect-component presence without copying the effect vector.
+New native checks pass 128 snapshot cases and 126 captured-input cases.
+Captured input preserves selected timestamps, durations, and types under input flag `0x100`.
+
+The corrected combined fixture passes 168 cases and executes 189 registered physics steps.
+Queued commands execute before historical input. Enabled input overwrites the command in 42 controlled cases.
+Stored-but-disabled records match absent-input controls.
+A separate handler fixture passes 112 cases and 336 registered movement steps.
+Independent replay-frame, effect-state, float-lift, and countdown expectations match the recorded results.
+
+Historical input records, ECS discovery, ownership, and other world physics remain supplied fixture boundaries.
+Earlier full effect-snapshot substitutions do not establish native restoration semantics.
+No production source changes follow from this research alone.
+Ordered command/input replay, actual client rewind, zero-duration scheduling, and both-route gameplay verification remain required.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-effect-snapshots-and-captured-input-october-7-2026) records the functions, controls, and evidence limits.

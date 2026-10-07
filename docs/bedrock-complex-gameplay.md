@@ -1575,3 +1575,20 @@ The strict BDS regression through ViaProxy stays connected for 20 seconds.
 It records 36 exact float lift changes and 275 unchanged phases after source removal, followed by effect expiration.
 The add-on passes 605 tests. ViaProxy builds, and both bundles contain the updated core files.
 These results verify the sampled effect regression. Complete native trajectories, delayed commands, both routes, and mixed gameplay actions remain required.
+
+## Native effect input during replay, October 7, 2026
+
+Native mutable snapshots retain effect-component presence. Captured input retains selected effect records.
+New checks pass 128 snapshot cases and 126 input cases against the pinned 1.26.51.1 executable.
+
+The corrected combined fixture executes 168 cases and 189 replayed physics steps.
+Queued commands execute before historical input. Enabled input overwrites the command in 42 controlled cases.
+Stored records with disabled flags match the absent-input controls.
+A separate handler fixture verifies 112 cases and 336 registered movement steps.
+Independent expected states, float lift changes, countdowns, and replay frames match both fixtures.
+
+Historical records, ECS discovery, snapshot ownership, and other physics bodies remain fixture boundaries.
+Earlier supplied effect snapshots do not establish complete native restoration behavior.
+Production still needs ordered command/input replay and actual world rewind.
+Zero-duration scheduling, collision, mixed gameplay actions, both routes, and every scenario in this matrix remain required.
+The [coverage ledger](bedrock-coverage.md#native-effect-snapshots-and-captured-input-october-7-2026) records the native functions, controls, evidence limits, and remaining implementation requirements.

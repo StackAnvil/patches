@@ -7014,8 +7014,8 @@ These samples verify component activity, not full gameplay parity.
 
 The fixture supplies ECS lookup, snapshot storage, input callbacks, and an explicit rewind request for cases without a native dirty frame.
 It executes the original effect countdown at the physics boundary. It does not execute complete native world movement.
-An expired tick-zero command can regain 95 frames after clamped history replay and a second effect that forces rewind.
-This remaining gap requires original-duration restoration during replay.
+With supplied snapshot and input callbacks, an expired tick-zero command regains 95 frames after clamped replay and a forced rewind.
+Original-duration restoration remains required. Native captured input can change the result, as the later input-replay evidence establishes.
 Another 21 cases restore snapshots while commands remain pending. The fixture does not drain those commands into a subsequent frame.
 Their intermediate states do not establish final native game behavior.
 Private probes, results, and audit files remain under `.stackanvil/research/movement-command-replay/`.
@@ -7193,3 +7193,62 @@ The client dry run reviews 2,689 source files and 11 existing inventory files. T
 Both managed add-on copies match the reviewed artifact. Only those copies, launcher launch time, and the game log change.
 The seven other client files remain unchanged. Rollback copies remain under `.stackanvil/research/movement-registration/java-client-rollback-1/`.
 The private display and owned processes stop. Both existing user servers retain their original process identities.
+
+## Native effect snapshots and captured input, October 7, 2026
+
+**Native evidence:** New probes execute the pinned 1.26.51.1 executable, protocol 2193.
+The executable checksum remains `537c0aee2e79afbdc94b44b28e00f466ae62bc50e2733d953b430db9dbaa9ee7`.
+
+The materialized packet handler `14133f140` reads actor identity, effect type, duration, and server tick.
+Without a replay component, it applies the normalized duration directly and ignores elapsed replay time.
+With a replay component, it calls `143281540` and dispatches through `142890810`.
+The fixture supplies session guards and actor lookup. It does not execute the raw packet decoder or receive scheduler.
+
+Mutable snapshots retain **component presence**, rather than copies of the effect records.
+The original view constructor `143284430` puts MovementEffects in slot 76, corresponding to presence bit 74.
+Across 128 cases, capture `143276a40` records presence without copying the vector.
+In 64 existing-component restore cases, `14327b7c0` preserves the target vector and its records.
+Absent component creation, removal, and ownership remain outside this fixture.
+
+Captured input follows a different path.
+The original capture method `14328d4e0` retains each record's timestamp, duration, and type in the input vector.
+It sets input flag `0x100`, including when the supplied record has the invalid type marker.
+The original `14328b620` pre-input method calls `143270d50` when that flag is enabled.
+The helper applies valid records selected by the native mask's first byte, `0xfe`.
+These writes preserve the captured timestamp and duration without command timestamp admission checks.
+The 126-case fixture covers types -1 through 7, seven duration values, and enabled or disabled flags.
+Type zero remains unchanged. Missing records and invalid markers leave existing records unchanged.
+Cached view discovery, ECS storage, and preallocated vectors are supplied boundaries.
+
+### Commands before historical input
+
+A combined 168-case fixture executes the original handler, queue insertion, replay loop, frame capture, and effect input methods.
+It uses the original registered category, geyser callback, and countdown callback.
+Replay applies queued commands **before** captured input, then executes registered movement and countdown.
+The fixture retains effect presence during snapshot restore and no longer substitutes full effect-vector snapshots.
+
+Historical input contains controlled records, rather than records from a complete native world capture.
+In 42 cases, enabled captured input overwrites the queued command before movement.
+Stored records with disabled flags produce the same states as absent input.
+Across 189 replayed physics steps, all 40,635 registered system dispatches follow the constructed native category order.
+Independent expectations verify selected frames, command/input ordering, effect states, float lift changes, and countdown results.
+
+A separate 112-case handler fixture executes 336 registered movement steps and 72,240 system dispatches.
+It covers actors with and without replay state, prior activity, seven durations, and four packet ticks.
+Independent duration, lift, and countdown expectations match all recorded steps.
+Zero-duration markers can lift in this supplied handler-to-movement sequence before countdown clears them.
+That observation does not establish when ordinary native packet scheduling exposes those markers to movement.
+
+The earlier command fixtures supplied snapshot and input callbacks.
+Their results remain evidence for those bounded command paths. They do not establish complete native effect restoration.
+The corrected input fixture supersedes the intermediate 56-case replay fixture that still copied effect snapshots.
+Private scripts, queries, cases, independent verification, and proof remain under `.stackanvil/research/movement-packet-phases/`.
+
+**Production status: incomplete.** No production source or runtime artifact changes in this continuation.
+Core still needs ordered commands and captured input. Actual client physics rewind remains required.
+Complete snapshots, external state, collision, mixed actions, clock synchronization, ownership, and lifecycle cleanup remain required.
+Direct and ViaProxy gameplay comparisons, strict BDS, native baselines, experimental Boar diagnostics, and platform joins remain in scope.
+
+The previous production change passes [GitHub CI](https://github.com/StackAnvil/patches/actions/runs/37580455925).
+Tooling, build, and patch permission replay checks pass on Ubuntu, Windows, and macOS.
+Those runner checks do not replace actual Windows or macOS game joins.
