@@ -1592,3 +1592,19 @@ Earlier supplied effect snapshots do not establish complete native restoration b
 Production still needs ordered command/input replay and actual world rewind.
 Zero-duration scheduling, collision, mixed gameplay actions, both routes, and every scenario in this matrix remain required.
 The [coverage ledger](bedrock-coverage.md#native-effect-snapshots-and-captured-input-october-7-2026) records the native functions, controls, evidence limits, and remaining implementation requirements.
+
+## Native-generated effect history and source changes, October 7, 2026
+
+The original sulfur producer now executes through actor admission and input capture in 1,792 bounded cases.
+A separate 4,704-case admission fixture verifies duration preservation, retained-frame selection, and client/server paths.
+The client records successful refreshes into the matching historical input. Missing input leaves the effect update intact.
+
+A 336-case combined fixture generates historical records through native admission and capture.
+It covers current source removal and addition, with missing effect records and disabled capture flags as controls.
+Independent expectations match 2,016 historical movement steps and 378 replayed steps.
+The published core matches immediate confirmation duration activity in all 336 cases.
+It differs after 28 of 84 historical rewinds, including 14 cases with the current source removed.
+
+Production still needs ordered command/input replay and actual historical physics.
+Native clock advancement, complete snapshots, world ownership, mixed actions, both routes, and the full matrix remain required.
+The [coverage ledger](bedrock-coverage.md#native-generation-of-effect-input-and-remaining-replay-gaps-october-7-2026) records the exact functions, boundaries, and production audit.

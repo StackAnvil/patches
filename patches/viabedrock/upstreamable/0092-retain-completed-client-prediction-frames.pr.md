@@ -873,3 +873,22 @@ Earlier full effect-snapshot substitutions do not establish native restoration s
 No production source changes follow from this research alone.
 Ordered command/input replay, actual client rewind, zero-duration scheduling, and both-route gameplay verification remain required.
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-effect-snapshots-and-captured-input-october-7-2026) records the functions, controls, and evidence limits.
+
+### Native-generated effect input and production replay audit
+
+The original admission helper passes 4,704 cases, including virtual client capture and materialized server packets.
+An extended producer fixture passes 1,792 cases through original actor admission and input capture.
+Successful client refreshes record into the matching retained input. Longer or infinite durations prevent refresh and capture.
+Missing input preserves admission without creating a captured record.
+
+The combined 336-case fixture generates historical records through native admission.
+It verifies current source changes, command/input order, countdown, and bounded registered movement.
+Independent expected states match 2,016 historical steps and 378 replayed steps.
+The published core matches immediate confirmation duration activity in all 336 cases.
+It differs after 28 of 84 historical rewinds, including 14 source-removal cases.
+All 1,250 core files match both downstream bundles, excluding the manifest.
+
+Source eligibility, clocks, ECS discovery, ownership, and non-effect snapshot callbacks remain fixture boundaries.
+Full historical physics, clock advancement/alignment, zero-duration scheduling, and both-route verification remain required.
+This continuation changes research ledgers without changing production source or runtime artifacts.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-generation-of-effect-input-and-remaining-replay-gaps-october-7-2026) records the native paths and production gaps.
