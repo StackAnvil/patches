@@ -16,6 +16,7 @@ export interface WindowInfo {
   height: number;
 }
 export type Client = "bedrock" | "java";
+export interface DragPoint { x: number; y: number }
 export type UiExecutor = (program: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) => Promise<string>;
 const execute = promisify(execFile);
 const executeUi: UiExecutor = async (program, args, cwd, env) => {
@@ -158,6 +159,29 @@ export function createCaptureUi(options: {
     await run(nativeBinary, ["button-hold", window.id, button, String(durationMs)], root, env);
   }
 
+  async function drag(points: readonly DragPoint[], button: "left" | "right", dwellMs: number,
+    windowId?: string, client?: Client, allowFocus = false): Promise<void> {
+    if (!Array.isArray(points) || points.length < 2 || points.length > 64
+      || !points.every(point => point && [point.x, point.y].every(value => Number.isFinite(value) && value >= 0 && value <= 1))) {
+      throw new Error("Drag needs 2 to 64 points with coordinates between 0 and 1.");
+    }
+    if (button !== "left" && button !== "right") throw new Error("Use left or right mouse button.");
+    if (!Number.isInteger(dwellMs) || dwellMs < 1 || dwellMs > 1000 || points.length * dwellMs > 10_000) {
+      throw new Error("Drag dwell must be 1 to 1000 ms per point, totaling at most 10000 ms.");
+    }
+    const window = await chosenWindow(windowId, client);
+    const env = await uiEnvironment();
+    const isolated = env.STACKANVIL_UI_ISOLATED === "1";
+    if (!isolated && !allowFocus) throw new Error("Input on your desktop would steal focus. Start the virtual display or pass --allow-focus explicitly.");
+    if (!isolated && env.XDG_CURRENT_DESKTOP?.toLowerCase().includes("gnome")) {
+      throw new Error("Drag input requires the private display on GNOME Wayland.");
+    }
+    const coordinates = points.flatMap(point => [String(Math.floor(point.x * (window.width - 1))),
+      String(Math.floor(point.y * (window.height - 1)))]);
+    if (!isolated) await run(nativeBinary, ["focus", window.id], root, env);
+    await run(nativeBinary, ["drag", window.id, button, String(dwellMs), ...coordinates], root, env);
+  }
+
   async function typeText(value: string, windowId?: string, client?: Client, allowFocus = false): Promise<void> {
     if (!/^[a-z0-9 .-]{1,120}$/.test(value)) throw new Error("Text must contain 1 to 120 lowercase ASCII letters, digits, spaces, periods, or hyphens.");
     const window = await chosenWindow(windowId, client);
@@ -203,12 +227,24 @@ export function createCaptureUi(options: {
         await buttonHold(button, Number(input[1]), windowId, client, allowFocus);
         return "";
       }
+      case "drag": {
+        const flag = input.findIndex(value => value.startsWith("--"));
+        const values = flag < 0 ? input : input.slice(0, flag);
+        const [button, dwell, ...coordinates] = values;
+        if (button !== "left" && button !== "right") throw new Error("Use left or right mouse button.");
+        if (coordinates.length % 2) throw new Error("Supply an x and y coordinate for each drag point.");
+        const points = Array.from({ length: coordinates.length / 2 }, (_, index) => ({
+          x: Number(coordinates[index * 2]), y: Number(coordinates[index * 2 + 1]),
+        }));
+        await drag(points, button, Number(dwell), windowId, client, allowFocus);
+        return "";
+      }
       case "key": if (!input[0]) throw new Error("Supply a key name."); await key(input[0], windowId, client, allowFocus); return "";
       case "double-key": if (!input[0]) throw new Error("Supply a key name."); await key(input[0], windowId, client, allowFocus, undefined, true); return "";
       case "key-hold": if (!input[0]) throw new Error("Supply a key name."); await key(input[0], windowId, client, allowFocus, Number(input[1])); return "";
       case "type": if (!input[0]) throw new Error("Supply text."); await typeText(input[0], windowId, client, allowFocus); return "";
     }
-    throw new Error("Usage: bun run capture ui <list|screenshot|pixel|click|double-click|mouse-hold|button-hold|key|double-key|key-hold|type>");
+    throw new Error("Usage: bun run capture ui <list|screenshot|pixel|click|double-click|mouse-hold|button-hold|drag|key|double-key|key-hold|type>");
   }
-  return { command, windows, chosenWindow, screenshot, pixel, click, key, buttonHold, typeText };
+  return { command, windows, chosenWindow, screenshot, pixel, click, key, buttonHold, drag, typeText };
 }

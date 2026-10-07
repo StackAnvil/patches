@@ -4,10 +4,128 @@
 #include <X11/Xutil.h>
 #include <X11/extensions/XTest.h>
 #include <X11/keysym.h>
+#include <errno.h>
+#include <limits.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
+
+static volatile sig_atomic_t drag_signal;
+static int drag_x_error;
+
+static void interrupt_drag(int signal_number) {
+    drag_signal = signal_number;
+}
+
+static int capture_drag_error(Display *display, XErrorEvent *event) {
+    (void)display;
+    (void)event;
+    drag_x_error = 1;
+    return 0;
+}
+
+static int parse_drag_integer(const char *text, int *value) {
+    char *end;
+    errno = 0;
+    long parsed = strtol(text, &end, 10);
+    if (errno || !*text || *end || parsed < 0 || parsed > INT_MAX) return 0;
+    *value = (int)parsed;
+    return 1;
+}
+
+static void drag_wait(int milliseconds) {
+    struct timespec remaining = { milliseconds / 1000, (milliseconds % 1000) * 1000000L };
+    while (!drag_signal && nanosleep(&remaining, &remaining) == -1 && errno == EINTR) { }
+}
+
+static int drag_pointer(Display *display, Window root, int argc, char **argv) {
+    int count = (argc - 5) / 2, dwell_ms;
+    int button = argc > 3 && strcmp(argv[3], "left") == 0 ? 1
+        : argc > 3 && strcmp(argv[3], "right") == 0 ? 3 : 0;
+    int x[64], y[64];
+    if (argc < 9 || (argc - 5) % 2 || count > 64 || !button
+        || !parse_drag_integer(argv[4], &dwell_ms) || dwell_ms < 1 || dwell_ms > 1000
+        || count * dwell_ms > 10000) {
+        fprintf(stderr, "Drag needs left or right, 2 to 64 points, and a dwell of 1 to 1000 ms totaling at most 10000 ms\n");
+        return 1;
+    }
+    for (int i = 0; i < count; i++) {
+        if (!parse_drag_integer(argv[5 + i * 2], &x[i]) || !parse_drag_integer(argv[6 + i * 2], &y[i])) {
+            fprintf(stderr, "Drag coordinates must be nonnegative integers\n"); return 1;
+        }
+    }
+    char *end;
+    errno = 0;
+    Window window = (Window)strtoul(argv[2], &end, 0);
+    if (errno || !*argv[2] || *end || !window) { fprintf(stderr, "Invalid drag window\n"); return 1; }
+    int (*previous_error_handler)(Display *, XErrorEvent *) = XSetErrorHandler(capture_drag_error);
+    struct sigaction handler = { 0 }, previous_term, previous_int;
+    handler.sa_handler = interrupt_drag;
+    sigemptyset(&handler.sa_mask);
+    drag_signal = 0;
+    drag_x_error = 0;
+    int result = 1, pressed = 0;
+    if (sigaction(SIGTERM, &handler, &previous_term) != 0) goto restore_error_handler;
+    if (sigaction(SIGINT, &handler, &previous_int) != 0) goto restore_term_handler;
+
+    XWindowAttributes attributes;
+    if (!XGetWindowAttributes(display, window, &attributes) || drag_x_error || attributes.map_state != IsViewable) {
+        fprintf(stderr, "Drag window is not visible\n"); goto cleanup;
+    }
+    for (int i = 0; i < count; i++) {
+        if (x[i] >= attributes.width || y[i] >= attributes.height) {
+            fprintf(stderr, "Drag point is outside the window\n"); goto cleanup;
+        }
+    }
+    Window pointer_root, pointer_child;
+    int pointer_x, pointer_y, local_x, local_y;
+    unsigned int mask;
+    if (!XQueryPointer(display, root, &pointer_root, &pointer_child, &pointer_x, &pointer_y, &local_x, &local_y, &mask)
+        || (mask & (button == 1 ? Button1Mask : Button3Mask))) {
+        fprintf(stderr, "Drag button is already held or pointer is unavailable\n"); goto cleanup;
+    }
+    if (drag_signal) goto cleanup;
+    XRaiseWindow(display, window);
+    XSetInputFocus(display, window, RevertToParent, CurrentTime);
+    for (int i = 0; i < count && !drag_signal; i++) {
+        int root_x, root_y;
+        Window child;
+        if (!XGetWindowAttributes(display, window, &attributes) || drag_x_error || attributes.map_state != IsViewable
+            || x[i] >= attributes.width || y[i] >= attributes.height
+            || !XTranslateCoordinates(display, window, root, x[i], y[i], &root_x, &root_y, &child)) {
+            fprintf(stderr, "Drag window changed or disappeared\n"); goto cleanup;
+        }
+        if (!XTestFakeMotionEvent(display, DefaultScreen(display), root_x, root_y, CurrentTime)) goto cleanup;
+        XSync(display, False);
+        if (drag_x_error) goto cleanup;
+        if (i == 0) {
+            drag_wait(50);
+            if (drag_signal) goto cleanup;
+            pressed = 1;
+            if (!XTestFakeButtonEvent(display, button, True, CurrentTime)) goto cleanup;
+            XSync(display, False);
+            if (drag_x_error) goto cleanup;
+        }
+        drag_wait(dwell_ms);
+    }
+    result = 0;
+cleanup:
+    if (pressed) {
+        XTestFakeButtonEvent(display, button, False, CurrentTime);
+        XSync(display, False);
+    }
+    if (drag_x_error) result = 1;
+    if (drag_signal) result = 128 + drag_signal;
+    sigaction(SIGINT, &previous_int, NULL);
+restore_term_handler:
+    sigaction(SIGTERM, &previous_term, NULL);
+restore_error_handler:
+    XSetErrorHandler(previous_error_handler);
+    return result;
+}
 
 static void json_string(const char *value) {
     putchar('"');
@@ -52,7 +170,11 @@ int main(int argc, char **argv) {
     Display *display = XOpenDisplay(NULL);
     if (!display) { fprintf(stderr, "Cannot open X display\n"); return 1; }
     Window root = DefaultRootWindow(display);
-    if (argc == 2 && strcmp(argv[1], "pointer") == 0) {
+    if (argc >= 2 && strcmp(argv[1], "drag") == 0) {
+        int result = drag_pointer(display, root, argc, argv);
+        XCloseDisplay(display);
+        return result;
+    } else if (argc == 2 && strcmp(argv[1], "pointer") == 0) {
         Window root_return, child;
         int root_x, root_y, window_x, window_y;
         unsigned int mask;

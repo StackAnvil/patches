@@ -9,7 +9,7 @@ import { Effect } from "effect";
 import { root } from "../model.ts";
 import { displayEnv } from "../lab/display.ts";
 import { captureUiEnvironment } from "./ui-environment.ts";
-import { createCaptureUi, type Client } from "./ui.ts";
+import { createCaptureUi, type Client, type DragPoint } from "./ui.ts";
 
 const execute = promisify(execFile);
 const uiEnvironment = captureUiEnvironment(() => displayEnv(), process.env);
@@ -20,7 +20,7 @@ const nativeBinary = join(root, ".stackanvil", "tools", "capture-x11");
 const mitmdump = Bun.which("mitmdump") ?? join(root, ".stackanvil", "tools", "mitmproxy", "bin", "mitmdump");
 const launcher = process.env.BEDROCK_LAUNCHER ?? Bun.which("bedrock-on-linux") ?? join(homedir(), "AppImages", "bedrockonlinux.appimage");
 const ui = createCaptureUi({ captureDirectory: async () => capturePath((await load()).id), environment: uiEnvironment });
-const { windows, chosenWindow, screenshot, click, key, buttonHold, typeText } = ui;
+const { windows, chosenWindow, screenshot, click, key, buttonHold, drag, typeText } = ui;
 const extractedLauncher = join(root, ".stackanvil", "tools", "bedrock-on-linux");
 
 async function muteBedrockSettings(): Promise<void> {
@@ -57,6 +57,7 @@ type Step =
   | { action: "doubleClick"; x: number; y: number; button?: "left" | "right" }
   | { action: "mouseHold"; x: number; y: number; button: "left" | "right"; ms: number }
   | { action: "buttonHold"; button: "left" | "right"; ms: number }
+  | { action: "drag"; points: DragPoint[]; button: "left" | "right"; ms: number }
   | { action: "type"; text: string }
   | { action: "key"; key: string }
   | { action: "doubleKey"; key: string }
@@ -335,6 +336,7 @@ async function scenario(file: string, windowId?: string, client: Client = "bedro
       case "doubleClick": await click(step.x, step.y, windowId, client, allowFocus, step.button, undefined, true); break;
       case "mouseHold": await click(step.x, step.y, windowId, client, allowFocus, step.button, step.ms); break;
       case "buttonHold": await buttonHold(step.button, step.ms, windowId, client, allowFocus); break;
+      case "drag": await drag(step.points, step.button, step.ms, windowId, client, allowFocus); break;
       case "key": await key(step.key, windowId, client, allowFocus); break;
       case "doubleKey": await key(step.key, windowId, client, allowFocus, undefined, true); break;
       case "keyHold": await key(step.key, windowId, client, allowFocus, step.ms); break;
