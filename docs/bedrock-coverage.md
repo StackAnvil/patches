@@ -8421,7 +8421,8 @@ A later desktop run verifies accepted native textures in the Lobby and Wardrobe 
 Their visible layouts remain incorrect: hidden stack children advance the layout cursor and reduce the available fill space, labels overflow, and some panels shrink or shift.
 The live drawing path also rejects an asymmetric nine-slice and opens ordinary form controls.
 The metric-only scene checks did not exercise that drawing path.
-The owning renderer patch is correcting these defects with actual texture regions and native stack and nine-slice consumer fixtures.
+The owning renderer patch now corrects these defects with actual texture regions and native stack and nine-slice consumer fixtures.
+The repaired candidate still needs a fresh desktop check.
 The screenshots and raw runtime evidence remain private.
 
 Original native stack execution distinguishes measured size from space used to position siblings.
@@ -8431,9 +8432,11 @@ These controls cover both orientations and do not establish that a disabled butt
 Subsequent execution through the original constructor, registration and topological scheduler establishes that a newly hidden control starts with a zero metric and skips dimension evaluation.
 Execution through the actual visibility setter establishes hidden, visible, hidden and visible metrics of zero, authored size, zero and authored size.
 The setter resets computed size when hiding; the earlier direct aggregate tests bypass that lifecycle.
-The renderer must preserve authored properties and collection identities while resetting hidden computed metrics.
+The renderer preserves authored properties and collection identities while resetting hidden computed metrics.
+Hidden subtrees also skip offset and anchor evaluation; disabled controls retain their measured geometry.
+Default stacks sum the main axis and use the resolved parent extent on the cross axis.
 Original native nine-slice execution establishes left, top, right and bottom border order, source scaling from UV and base dimensions, and signed center regions for small destinations.
-Fractional source borders must reach the Java drawing path without integer rounding.
+Fractional source borders reach the existing Java GUI drawing path without integer rounding.
 These CPU consumer checks do not establish final GPU clipping or winding behavior.
 
 Native fixtures establish expression, grid, missing-template and size-unit behavior for Bedrock 1.26.51.1.
@@ -8443,14 +8446,20 @@ All four action forms resolve against the accepted pack and licensed baseline, i
 The custom settings form retains its existing controls.
 The Wardrobe scene retains all sixteen bound hover-text nodes and their formatted components.
 Private renderer checks accept all four captured action scenes, including the Wardrobe tooltip controls.
-Each enabled action has positive bounds and nonzero alpha.
-These checks use inferred font and image metrics, so actual desktop rendering and interaction still require verification.
-The full replay passes 873 core tests, with 30 skipped.
+At two viewports, the repaired headers retain positive width and the first Wardrobe category enters its viewport.
+Original visible action sets and response indices remain unchanged.
+An audit checks 603 image nodes and 4,195 regions against actual converted PNGs and cached HTTPS images.
+Six native draw fixtures match 54 Java region quads and 432 coordinates.
+These checks use inferred font metrics and do not establish actual GPU rendering or interaction.
+The full replay passes 873 core tests, with 30 skipped, and 528 add-on tests, with 117 skipped.
+Access-widener validation also passes.
 
 The accepted server pack also contains JPEG UI assets omitted by the former PNG-only export.
 Core now normalizes JPEG and TGA images through the existing content decoders, retaining image priority and metadata.
 Three affected actual assets retain identical decoded pixels after the production resource rewriter exports them as PNGs.
 The UI conversion revision invalidates older converted packs.
+The existing 4,096-pixel image-axis limit excludes the built-in 4,160-pixel-wide world-upgrade texture.
+That asset is not used by these captured forms; complete baseline asset support remains open.
 These conversion checks do not establish complete desktop rendering.
 
 Legacy `buttons` remains supported through the existing form codec.
