@@ -118,3 +118,11 @@ The matching native client accepts identical pack resources and shows selected h
 Its visible placement differs from Java, which remains an explicit comparison gap.
 The dependency build passes 1,001 tests with 115 optional skips and no failures or errors.
 Fixture assets, screenshots, and raw journals remain private.
+
+## Reuse scoped visibility patterns in first-person costumes
+
+First-person controller selection now reuses each declared rule's compiled bone pattern. The model selects case-insensitive matching only for normalized humanoid names. This restores legacy skin arms when controller spelling differs from the converted bone spelling. Custom actor names and explicit controller hides retain their existing matching. The change also removes repeated pattern compilation from first-person surface selection.
+
+The owning Character Creator patch contains the shared pattern type and actor-path cube regressions. Candidate rendering on Vulkan and Iris remains a separate runtime gate.
+
+The complete stack replays, and the full add-on build passes 616 tests with 117 optional skips. No failures or errors occur. The focused tests retain actor selection equality and intentional hides. Actual candidate rendering remains pending.

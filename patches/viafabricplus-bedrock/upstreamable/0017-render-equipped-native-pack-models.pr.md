@@ -39,3 +39,11 @@ The final unchanged native capture passes direct and ViaProxy playback. Each acc
 Equipped model queries now read owner inputs from the shared actor registry on both connection routes.
 Named properties and variants retain their core values without a direct Bedrock connection.
 This change does not complete binding expressions, material families, or first-person equipment.
+
+## Match costume visibility in the model's name scope
+
+The costume-rule overload now uses the same humanoid scope as actor-rule visibility. Cached patterns match converted legacy skin names without changing custom actor matching. Two actual model-cube regressions cover mixed case, wildcard override order, intentional hides, and exact custom actor controls. Both tests failed before this overload changed.
+
+These tests verify submitted model state. Candidate Vulkan and Iris rendering checks remain separate runtime gates.
+
+All four actor and costume cube regressions pass. The complete add-on stack replays all 30 patches. The full build passes 616 tests with 117 optional skips and no failures or errors. Actual candidate rendering remains pending.

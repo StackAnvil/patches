@@ -1,4 +1,4 @@
-From c3b43666251b8a45eb059929ca7c40e18212e5bb Mon Sep 17 00:00:00 2001
+From 2d8ecc7ac335591ca2a64fa34271d3425400e301 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Fri, 2 Oct 2026 18:26:58 +0200
 Subject: [PATCH] feat(attachables): render equipped native pack models
@@ -50,6 +50,12 @@ geometry, texture, and material selection succeeds. The target native
 iron_chestplate.player override renders wings without vanilla iron armor.
 Clearing only the vanilla head item left duplicate chest, leg, and foot
 armor visible in Java. Unsupported native surfaces retain vanilla fallback.
+
+Match costume visibility against the same humanoid name scope as actor
+visibility. Legacy player skin imports fold bone names to ASCII lowercase,
+while server controller rules retain their authored spelling. Cached
+patterns restore the arm and sleeve without changing exact matching for
+custom actors or the order of explicit visibility overrides.
 ---
  .../appearance/BedrockActorAnimation.java     |  10 +
  .../BedrockAttachableSelection.java           |  51 +++
@@ -65,9 +71,10 @@ armor visible in Java. Unsupported native surfaces retain vanilla fallback.
  .../BedrockEquippedAnimationTest.java         |  46 +++
  .../BedrockPlayerControllersTest.java         |  22 ++
  .../render/BedrockAttachableMatricesTest.java | 150 +++++++++
+ .../render/BedrockCostumeVisibilityTest.java  |  45 +++
  .../render/BedrockEquippedAttachableTest.java |  98 ++++++
  .../render/BedrockPlayerModelTest.java        |  58 ++++
- 16 files changed, 973 insertions(+), 4 deletions(-)
+ 17 files changed, 1018 insertions(+), 4 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableSelection.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquipmentCache.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableLayer.java
@@ -75,10 +82,11 @@ armor visible in Java. Unsupported native surfaces retain vanilla fallback.
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockAttachableSelectionTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockEquippedAnimationTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockAttachableMatricesTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCostumeVisibilityTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java
 
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
-index eb78d2b..60788b4 100644
+index a71fb9a..0671ce9 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/appearance/BedrockActorAnimation.java
 @@ -66,6 +66,10 @@ public final class BedrockActorAnimation {
@@ -92,7 +100,7 @@ index eb78d2b..60788b4 100644
      public static BedrockActorAnimation serverEntity(final ResourcePackStorage packs,
                                                       final String identifier) throws IOException {
          return serverActor(packs, "entity/", "minecraft:client_entity", identifier);
-@@ -544,6 +548,12 @@ public final class BedrockActorAnimation {
+@@ -588,6 +592,12 @@ public final class BedrockActorAnimation {
              return this.pose;
          }
  
@@ -237,7 +245,7 @@ index aa2083a..cbc48ea 100644
  
      @Override
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
-index 4546bf6..98c1035 100644
+index 1c1c8c8..6ee9381 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockAnimatedModel.java
 @@ -6,6 +6,7 @@
@@ -336,7 +344,7 @@ index 4546bf6..98c1035 100644
 +    void visibility(final List<BedrockPlayerControllers.Visibility> rules) {
 +        this.parts.forEach((name, part) -> {
 +            boolean visible = true;
-+            for (final var rule : rules) if (rule.matches(this.names.get(part))) visible = rule.visible();
++            for (final var rule : rules) if (rule.matches(this.names.get(part), this.humanoidNames)) visible = rule.visible();
 +            // Hide this bone's authored surfaces without implicitly hiding independently controlled descendants.
 +            for (int cube = 0; part.hasChild("cube_" + cube); cube++) part.getChild("cube_" + cube).visible = visible;
 +            if (part.hasChild("mesh")) part.getChild("mesh").visible = visible;
@@ -774,7 +782,7 @@ index 2224643..4cf95ab 100644
 +
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
-index 638d748..bd7b8ef 100644
+index af3da3c..fd59f32 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockPlayerSkins.java
 @@ -778,7 +778,7 @@ public final class BedrockPlayerSkins {
@@ -1106,6 +1114,57 @@ index 0000000..a99fd48
 +            {"name":"wing","parent":"body","pivot":[5,20,5],"rotation":[10,20,30]}]}]}
 +            """).getFirst();
 +        return BedrockGeometry.animatedModel(geometry, Map.of());
++    }
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCostumeVisibilityTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCostumeVisibilityTest.java
+new file mode 100644
+index 0000000..c02a65c
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockCostumeVisibilityTest.java
+@@ -0,0 +1,45 @@
++package com.viaversion.viafabricplus.bedrock.render;
++
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++import com.viaversion.viafabricplus.bedrock.appearance.BedrockPlayerControllers;
++import java.util.List;
++import org.junit.jupiter.api.Test;
++
++final class BedrockCostumeVisibilityTest {
++    @Test
++    void showsNormalizedCostumeArmsWithoutChangingCustomActorNames() {
++        final var rules = List.of(new BedrockPlayerControllers.Visibility("*", false),
++                new BedrockPlayerControllers.Visibility("rightArm", true),
++                new BedrockPlayerControllers.Visibility("rightSleeve", true));
++        final var humanoid = BedrockHumanoidVisibilityTest.model(true);
++        humanoid.visibility(rules);
++        assertTrue(BedrockHumanoidVisibilityTest.cube(humanoid, "rightarm").visible);
++        assertTrue(BedrockHumanoidVisibilityTest.cube(humanoid, "rightsleeve").visible);
++        assertFalse(BedrockHumanoidVisibilityTest.cube(humanoid, "leftarm").visible);
++        assertFalse(BedrockHumanoidVisibilityTest.cube(humanoid, "body").visible);
++
++        final var custom = BedrockHumanoidVisibilityTest.model(false);
++        custom.visibility(rules);
++        assertFalse(BedrockHumanoidVisibilityTest.cube(custom, "rightarm").visible);
++        assertFalse(BedrockHumanoidVisibilityTest.cube(custom, "rightsleeve").visible);
++        custom.visibility(List.of(new BedrockPlayerControllers.Visibility("*", false),
++                new BedrockPlayerControllers.Visibility("rightarm", true)));
++        assertTrue(BedrockHumanoidVisibilityTest.cube(custom, "rightarm").visible);
++    }
++
++    @Test
++    void retainsWildcardOrderAndExplicitlyHiddenCostumeParts() {
++        final var humanoid = BedrockHumanoidVisibilityTest.model(true);
++        humanoid.visibility(List.of(new BedrockPlayerControllers.Visibility("*", false),
++                new BedrockPlayerControllers.Visibility("right*", true),
++                new BedrockPlayerControllers.Visibility("rightArm", false)));
++        assertFalse(BedrockHumanoidVisibilityTest.cube(humanoid, "rightarm").visible);
++        assertTrue(BedrockHumanoidVisibilityTest.cube(humanoid, "rightsleeve").visible);
++        assertFalse(BedrockHumanoidVisibilityTest.cube(humanoid, "leftarm").visible);
++        humanoid.visibility(List.of(new BedrockPlayerControllers.Visibility("*", false)));
++        assertFalse(BedrockHumanoidVisibilityTest.cube(humanoid, "rightarm").visible);
++        assertFalse(BedrockHumanoidVisibilityTest.cube(humanoid, "rightsleeve").visible);
 +    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/render/BedrockEquippedAttachableTest.java

@@ -2863,3 +2863,15 @@ Both downstream bundles retain all 1,246 core files byte-for-byte, excluding the
 
 Reviewed artifact replacements preserve 32 unrelated files per project and retain private rollback copies under `.stackanvil/research/fishing-feedback/crt/build-rollback/`.
 No service restarts or new live-server joins occur in this verification.
+
+## First-person visibility for normalized legacy skin bones
+
+The official EarthSkin geometry uses `rightArm` and `rightSleeve`. The legacy importer applies the verified native ASCII lowercase conversion to bone names. CubeCraft retains camel case in its first-person visibility rules. The old exact matcher hid the converted arm and sleeve after the controller hid `*`. A planned native surface then suppressed the Java hand fallback.
+
+Read-only inspection of the joined client confirmed empty actual and rendered main-hand stacks. The matching surface used `humanoidNames=true`, with hidden arm and sleeve cubes. The client used Vulkan after its OpenGL context failed to initialize. This observation identifies the visibility error independently of that backend difference.
+
+The fix caches exact and ASCII case-insensitive patterns when resources load. Humanoid models select the case-insensitive pattern. Custom actor models retain exact matching. Actor and costume samples reuse the compiled patterns. Explicit hides, ordered wildcard overrides, and controller unions keep their existing behavior.
+
+Two actual model-cube tests failed before the fix. The regressions cover visible arms, hidden body cubes, wildcard order, controller unions, and exact custom actor controls. Candidate runtime checks for Vulkan and Iris reloads remain separate gates. No general change to native custom actor case semantics is inferred.
+
+The complete 30-patch add-on stack replays with normal hooks. The focused suite passes 16 tests with one optional skip. The full build passes 616 tests with 117 optional skips and no failures or errors. The immutable candidate retains all 1,260 embedded core files. Cached rule objects preserve their previous value equality. The candidate is not installed; actual desktop and Iris checks remain pending.
