@@ -1,4 +1,4 @@
-From d592db70ad7ebecc14d220c25e249a40665f4e1d Mon Sep 17 00:00:00 2001
+From ac9af801e91f449f8152be9069cbeb7a5702cffa Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:28 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -332,10 +332,26 @@ agent loading and global protocol or mapping mutations.
 Full collision phases, trajectories, strict BDS, Boar and historical
 reconciliation remain required; bounded native calculations do not close
 those verification gates.
+
+Reproduce target 1.26.51.1/protocol 2193 SwimControl interpolation with
+separate float subtraction, multiplication and addition. Flying uses 1.3F;
+ordinary control uses 0.085F below -0.2F and 0.06F otherwise. Keep independent
+slow descent distinct from normal WantDown, and expose native physical jump
+eligibility without clearing the raw vertical input requests.
+
+Original startup 146822800/nested 14681da00 registers VerticalFlySpeedControl,
+JumpInput and SwimControl in that order. Original manager registration and
+category executor preserve it; 1425c6a00 is another registration overload, not
+a sorting pass. Original callback 1490c0a00 matches 3072 supplied input cases.
+A stateful original callback sequence covers flight start/stop, held jump,
+simultaneous vertical requests, swimming/material and WasInWater changes.
+
+Native angle-table initialization, complete world collision and live strict
+BDS/direct/ViaProxy trajectories remain separate verification requirements.
 ---
  build.gradle                                  |  30 +++
  .../api/model/CollisionContact.java           |  80 ++++++
- .../viabedrock/api/model/FlightMovement.java  |  78 ++++++
+ .../viabedrock/api/model/FlightMovement.java  |  83 ++++++
  .../api/model/FlightMovementContext.java      |  50 ++++
  .../viabedrock/api/model/FluidCurrent.java    |  44 +++
  .../viabedrock/api/model/GeyserMovement.java  |  87 ++++++
@@ -349,7 +365,7 @@ those verification gates.
  .../api/model/SneakingInputState.java         |  21 ++
  .../viabedrock/api/model/SwiftSneakState.java |  25 ++
  .../model/UnderwaterMovementAttribute.java    |  42 +++
- .../viabedrock/api/model/WaterMovement.java   |  47 ++++
+ .../viabedrock/api/model/WaterMovement.java   |  61 +++++
  .../api/model/entity/ClientPlayerEntity.java  |  70 ++++-
  .../viabedrock/api/model/entity/Entity.java   |  34 ++-
  .../api/model/entity/LivingEntity.java        |  30 ++-
@@ -374,6 +390,7 @@ those verification gates.
  .../model/GeyserMovementReferenceTest.java    |  50 ++++
  .../api/model/GeyserMovementTest.java         | 131 +++++++++
  .../api/model/GlideMovementTest.java          | 115 ++++++++
+ .../model/MovementControllerOrderTest.java    |  52 ++++
  .../api/model/MovementEffectTest.java         | 105 ++++++++
  .../api/model/MovementEffectTimelineTest.java | 253 ++++++++++++++++++
  .../api/model/PlayerCorrectionTest.java       |  67 +++++
@@ -393,7 +410,7 @@ those verification gates.
  .../packet/MovementEffectPacketsTest.java     | 116 ++++++++
  .../packet/PlayerCorrectionPacketTest.java    | 184 +++++++++++++
  .../packet/PlayerPredictionPacketTest.java    |  87 ++++++
- 60 files changed, 3849 insertions(+), 43 deletions(-)
+ 61 files changed, 3920 insertions(+), 43 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovement.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FlightMovementContext.java
@@ -419,6 +436,7 @@ those verification gates.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementReferenceTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/GlideMovementTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementControllerOrderTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/PlayerCorrectionTest.java
@@ -577,10 +595,10 @@ index 000000000..925b0654a
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/FlightMovement.java b/src/main/java/net/raphimc/viabedrock/api/model/FlightMovement.java
 new file mode 100644
-index 000000000..475443576
+index 000000000..1537f6898
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/FlightMovement.java
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,83 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -594,6 +612,11 @@ index 000000000..475443576
 +public final class FlightMovement {
 +
 +    private FlightMovement() {
++    }
++
++    /** Flying removes the native physical jump tag without clearing vertical input requests. */
++    public static boolean isJumping(final boolean jumpRequested, final boolean flying) {
++        return jumpRequested && !flying;
 +    }
 +
 +    public static boolean creative(final int gameType, final int levelGameType) {
@@ -1499,10 +1522,10 @@ index 000000000..31ace03fc
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/WaterMovement.java b/src/main/java/net/raphimc/viabedrock/api/model/WaterMovement.java
 new file mode 100644
-index 000000000..a7c717155
+index 000000000..7698d4fba
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/WaterMovement.java
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,61 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1544,6 +1567,20 @@ index 000000000..a7c717155
 +            drag += (0.54600006F - drag) * (level / 3F);
 +        }
 +        return new Position3f(motion.x() * drag, motion.y() * 0.8F, motion.z() * drag);
++    }
++
++    /** Native SwimControl runs after vertical flight input and excludes actors that are jumping. */
++    public static float swimmingVertical(final float velocity, final float lookY, final boolean swimming,
++                                         final boolean flying, final boolean breathingInAir,
++                                         final boolean breathingInLiquid, final boolean wantDownSlow) {
++        if (!swimming) {
++            return velocity;
++        }
++        if (lookY <= 0F || breathingInLiquid || flying && (!breathingInAir || wantDownSlow)) {
++            final float rate = flying ? 1.3F : lookY < -0.2F ? 0.085F : 0.06F;
++            return rate * (lookY - velocity) + velocity;
++        }
++        return 0F;
 +    }
 +
 +    private WaterMovement() {
@@ -3163,6 +3200,64 @@ index 000000000..be74f06d7
 +
 +    private record Case(float x, float y, float z, float pitch, float yaw, float previousPitch, float previousYaw,
 +                        boolean slowFalling, int expectedX, int expectedY, int expectedZ) {
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MovementControllerOrderTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MovementControllerOrderTest.java
+new file mode 100644
+index 000000000..3416ab840
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/MovementControllerOrderTest.java
+@@ -0,0 +1,52 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++class MovementControllerOrderTest {
++
++    @Test
++    void followsNativeVerticalJumpAndSwimOrderAcrossTransitions() {
++        // Native callbacks run in this order. No collision or post-travel damping is supplied here.
++        final float[][] steps = {
++            {0, 1, 128, 1, 1, -1.0F, 1, 0, 1.0F},
++            {1, 1, 128, 1, 1, -1.0F, 1, 0, 1.0F},
++            {1, 1, 0, 1, 1, -1.0F, 1, 0, 1.0F},
++            {1, 1, 1, 1, 1, 0.5F, 1, 0, 1.0F},
++            {1, 1, 129, 1, 1, -1.0F, 1, 0, 1.0F},
++            {1, 6, 128, 1, 1, 0.5F, 0, 0, 0.25F},
++            {1, 6, 0, 1, 1, 0.5F, 1, 1, 2.0F},
++            {0, 0, 128, 1, 1, -1.0F, 1, 1, 1.0F},
++            {0, 0, 0, 1, 1, -1.0F, 1, 1, 1.0F},
++            {1, 1, 128, 0, 1, -1.0F, 1, 1, 1.0F},
++            {1, 1, 128, 1, 0, -1.0F, 1, 1, 1.0F},
++            {1, 1, 0, 1, 1, -0.2F, 1, 1, 1.0F}
++        };
++        final int[] expectedVertical = {0x3D4CCCCD, 0x3E4CCCCD, 0xBF028F5C, 0xBFAEF9DB, 0x00000000, 0xBFA19999, 0x3F83AE13, 0x3EAEC8B6, 0x3EAEC8B6, 0x3EC13517, 0x3F0700F2, 0x3E4A816B};
++        final int[] expected = {0x3D4CCCCD, 0xBFAE147B, 0xBF92D0E5, 0x00000000, 0xBFA66666, 0x3F83AE13, 0x3EAEC8B6, 0x3EAEC8B6, 0x3E68D094, 0x3EC13517, 0x3F0700F2, 0xBEA37EEE};
++        float velocity = 0.05F;
++        for (int i = 0; i < steps.length; i++) {
++            final float[] step = steps[i];
++            final boolean flying = step[0] != 0;
++            final int flags = (int) step[2];
++            final FlightMovementContext context = new FlightMovementContext(1, (int) step[1], 0, step[8], false, 1F, 1F);
++            velocity = FlightMovement.verticalInput(velocity, 0F, 0F, flying,
++                    (flags & 0x20080) != 0, (flags & 0x40001) != 0, false, false, context);
++            assertEquals(expectedVertical[i], Float.floatToRawIntBits(velocity));
++            final boolean jumping = FlightMovement.isJumping((flags & 128) != 0, flying);
++            assertEquals(i == 0 || i == 7, jumping);
++            if (step[4] != 0 && !jumping) {
++                velocity = WaterMovement.swimmingVertical(velocity, step[5], step[3] != 0, flying,
++                        step[6] == 1, step[7] != 0, false);
++            }
++            assertEquals(expected[i], Float.floatToRawIntBits(velocity));
++        }
 +    }
 +
 +}

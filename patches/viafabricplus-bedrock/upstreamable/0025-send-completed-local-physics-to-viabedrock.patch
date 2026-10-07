@@ -1,4 +1,4 @@
-From b3eefc607efa19b3da723d873f1bd8e3d1f10b14 Mon Sep 17 00:00:00 2001
+From 0bffabaff28653adc2a1bfc6af04083afa4a6fe5 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:53 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -340,7 +340,30 @@ modifyVelocityZero hook at actual client startup. Preserve that threshold
 hook and the computed magnitudes; suppress comparisons only for active
 native flight. Include Java's separate player horizontal-squared cutoff.
 Keep explicit four-match requirements and ordinary Java behavior.
+
+Preserve the actor swimming flag during negotiated native flight instead of
+Player.isSwimming's Java flying exclusion. Apply the core float SwimControl
+1.3F interpolation before travel; suppress the Java swimming interpolation.
+Clear only the effective physical jump read while flying, preserving normal
+ascent/descent keys and the raw jump requests sent to Bedrock.
+
+Pinned 1.26.51.1/protocol 2193 startup registration and original category
+executor establish VerticalFlySpeedControl -> JumpInput -> SwimControl.
+Original callbacks and a 12-step retained-velocity sequence confirm flying
+jump removal, normal/simultaneous requests and swimming/material transitions.
+Use composable return/expression hooks with exact supported target counts.
+The versioned flight context, local camera actor and nonpassenger gates keep
+ordinary Java and unnegotiated sessions on their existing behavior.
+
+Targeted test-only Mockito transport/context fixtures cover positive swimming
+retention, negative context loss, flight stop, passenger/camera exclusions,
+ordinary Java and actual native swimming assignment without raw jump mutation.
+Native look-table entries were supplied in callback tests. Runtime Java look
+and material producers, full collision and native/strict BDS/direct/ViaProxy
+trajectories remain verification boundaries. Nonflying local swimming still
+uses Java interpolation pending its complete jump and input binding proof.
 ---
+ build.gradle.kts                              |   1 +
  .../bedrock/ViaFabricPlusBedrock.java         |   6 +
  .../access/IBedrockFlightMotion.java          |  14 ++
  .../access/IBedrockPlayerPosture.java         |  14 ++
@@ -349,9 +372,9 @@ Keep explicit four-match requirements and ordinary Java behavior.
  .../movement/MixinEntityFluidInteraction.java |  16 ++
  ...tyFluidInteraction_CurrentAccumulator.java |  49 +++--
  .../movement/MixinFireworkRocketEntity.java   |  28 +++
- .../features/movement/MixinLivingEntity.java  | 110 ++++++++++
+ .../features/movement/MixinLivingEntity.java  | 115 ++++++++++
  .../features/movement/MixinLocalPlayer.java   | 205 +++++++++++++++++-
- .../mixin/features/movement/MixinPlayer.java  | 107 +++++++--
+ .../mixin/features/movement/MixinPlayer.java  | 119 ++++++++--
  .../MixinPlayerCorrectionPacketListener.java  |  23 ++
  .../MixinPotentSulfurBlockEntity.java         |  44 ++++
  .../features/movement/MixinVoxelShape.java    |  28 +++
@@ -363,16 +386,17 @@ Keep explicit four-match requirements and ordinary Java behavior.
  .../input/PlayerPredictionPayload.java        |  24 ++
  .../input/UnderwaterMovementPayload.java      |  24 ++
  .../movement/BedrockCollisionContacts.java    |  50 +++++
- .../movement/BedrockFlightPhysics.java        |  36 +++
+ .../movement/BedrockFlightPhysics.java        |  60 +++++
  .../bedrock/movement/BedrockFluidPhysics.java |  86 ++++++++
  .../movement/BedrockGeyserPhysics.java        |  70 ++++++
  .../movement/BedrockPlayerPosture.java        |  63 ++++++
  .../viafabricplus-bedrock.mixins.json         |   5 +
  .../BedrockCollisionContactsTest.java         |  39 ++++
+ .../movement/BedrockFlightPhysicsTest.java    | 114 ++++++++++
  .../movement/BedrockFluidPhysicsTest.java     | 121 +++++++++++
  .../movement/BedrockGeyserPhysicsTest.java    | 101 +++++++++
  .../movement/BedrockPlayerPostureTest.java    |  45 ++++
- 31 files changed, 1506 insertions(+), 66 deletions(-)
+ 33 files changed, 1661 insertions(+), 67 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockFlightMotion.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java
@@ -393,10 +417,23 @@ Keep explicit four-match requirements and ordinary Java behavior.
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockGeyserPhysics.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPosture.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockCollisionContactsTest.java
+ create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFlightPhysicsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockGeyserPhysicsTest.java
  create mode 100644 src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockPlayerPostureTest.java
 
+diff --git a/build.gradle.kts b/build.gradle.kts
+index 310545e..6dfbd92 100644
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -24,6 +24,7 @@ tasks.withType<Jar>().configureEach {
+ dependencies {
+     implementation(viaFabricPlusDependency)
+     testImplementation("org.junit.jupiter:junit-jupiter:5.12.2")
++    testImplementation("org.mockito:mockito-core:5.24.0")
+     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+ 
+     jarInJar("org.redlance.mochafloats:runtime:6.1.0") {
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
 index 924035a..64aaea6 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
@@ -700,10 +737,10 @@ index 0000000..b648ca3
 +
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-index 1c9125e..461e8fe 100644
+index 1c9125e..350b404 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinLivingEntity.java
-@@ -21,27 +21,137 @@
+@@ -21,27 +21,142 @@
  
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
@@ -759,6 +796,11 @@ index 1c9125e..461e8fe 100644
 +    @ModifyExpressionValue(method = "aiStep", at = @At("MIXINEXTRAS:EXPRESSION"), require = 4, allow = 4)
 +    private boolean deferNativeFlightMotionCutoff(final boolean belowCutoff) {
 +        return belowCutoff && !((Object) this instanceof LocalPlayer player && BedrockFlightPhysics.applies(player));
++    }
++
++    @ModifyExpressionValue(method = "aiStep", at = @At(value = "FIELD", target = "Lnet/minecraft/world/entity/LivingEntity;jumping:Z", opcode = Opcodes.GETFIELD), require = 1, allow = 1)
++    private boolean clearPhysicalJumpWhileFlying(final boolean jumping) {
++        return jumping && !((Object) this instanceof LocalPlayer player && BedrockFlightPhysics.applies(player));
 +    }
 +
 +    @WrapOperation(method = "travelInAir", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/LivingEntity;computeModifiedFriction(FF)F", ordinal = 0))
@@ -1072,10 +1114,10 @@ index e5a8167..ec4c27f 100644
  
  }
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
-index 49a37ac..a4626ef 100644
+index 49a37ac..f18d263 100644
 --- a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPlayer.java
-@@ -22,36 +22,92 @@
+@@ -22,36 +22,97 @@
  package com.viaversion.viafabricplus.bedrock.injection.mixin.features.movement;
  
  import com.llamalad7.mixinextras.injector.v2.WrapWithCondition;
@@ -1123,12 +1165,12 @@ index 49a37ac..a4626ef 100644
 +
 +    @Unique
 +    private float viaFabricPlusBedrock$flightInputX;
-+
-+    @Unique
-+    private float viaFabricPlusBedrock$flightInputZ;
  
      @Unique
 -    private int viaFabricPlusBedrock$ticksSinceSwimming;
++    private float viaFabricPlusBedrock$flightInputZ;
++
++    @Unique
 +    private boolean viaFabricPlusBedrock$flightInputPrepared;
 +
 +    @Override
@@ -1162,6 +1204,11 @@ index 49a37ac..a4626ef 100644
 +        return ((IBedrockPlayerPosture) this).viaFabricPlusBedrock$posture().crawling() ? Pose.SWIMMING : desiredPose;
 +    }
 +
++    @ModifyReturnValue(method = "isSwimming", at = @At("RETURN"), require = 1, allow = 1)
++    private boolean retainSwimmingWhileFlying(final boolean swimming) {
++        return BedrockFlightPhysics.retainSwimming((Player) (Object) this, swimming, super.isSwimming());
++    }
++
 +    @Shadow
 +    protected abstract boolean canPlayerFitWithinBlocksAndEntitiesWhen(Pose pose);
 +
@@ -1175,14 +1222,19 @@ index 49a37ac..a4626ef 100644
      @Redirect(method = "travel", at = @At(value = "INVOKE", target = "Lnet/minecraft/core/BlockPos;containing(DDD)Lnet/minecraft/core/BlockPos;"))
      private BlockPos modifyWaterAbovePosition(final double x, final double y, final double z) {
          if (BedrockInputPermissions.isBedrockConnection()) {
-@@ -67,17 +123,12 @@ public abstract class MixinPlayer extends Avatar {
+@@ -63,21 +124,16 @@ public abstract class MixinPlayer extends Avatar {
+ 
+     @WrapWithCondition(method = "travel", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;setDeltaMovement(Lnet/minecraft/world/phys/Vec3;)V", ordinal = 0))
+     private boolean preventSwimmingMotionWhenJumping(final Player instance, final Vec3 movement) {
+-        return !BedrockInputPermissions.isBedrockConnection() || !instance.isJumping();
++        return !BedrockInputPermissions.isBedrockConnection() || !BedrockFlightPhysics.isJumping(instance);
      }
  
      @Inject(method = "travel", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;getAbilities()Lnet/minecraft/world/entity/player/Abilities;"))
 -    private void preventJumpingWhenStartedSwimming(final Vec3 input, final CallbackInfo ci) {
 -        if (!BedrockInputPermissions.isBedrockConnection()) {
 +    private void suppressLiquidJumpDuringSwimmingTransition(final Vec3 input, final CallbackInfo ci) {
-+        if (!BedrockInputPermissions.isBedrockConnection() || !this.isInWater() || !this.isJumping()) {
++        if (!BedrockInputPermissions.isBedrockConnection() || !this.isInWater() || !BedrockFlightPhysics.isJumping((Player) (Object) this)) {
              return;
          }
 -
@@ -1197,7 +1249,7 @@ index 49a37ac..a4626ef 100644
              this.setDeltaMovement(this.getDeltaMovement().x(), 0, this.getDeltaMovement().z());
          }
      }
-@@ -88,9 +139,15 @@ public abstract class MixinPlayer extends Avatar {
+@@ -88,9 +144,20 @@ public abstract class MixinPlayer extends Avatar {
              return instance.isSwimming();
          }
  
@@ -1208,6 +1260,11 @@ index 49a37ac..a4626ef 100644
 +        if (!instance.isInWater()) {
 +            return false;
 +        }
++        if (instance instanceof LocalPlayer player && BedrockFlightPhysics.applies(player)) {
++            // VerticalFlySpeedControl precedes JumpInput and SwimControl in the native category executor.
++            BedrockFlightPhysics.applySwimmingControl(player);
++            return false;
++        }
 +        if (instance.getAbilities().flying || instance.isJumping()) {
 +            return true;
 +        }
@@ -1216,7 +1273,7 @@ index 49a37ac..a4626ef 100644
              instance.setDeltaMovement(instance.getDeltaMovement().x(), 0, instance.getDeltaMovement().z());
              return false;
          }
-@@ -99,12 +156,18 @@ public abstract class MixinPlayer extends Avatar {
+@@ -99,12 +166,18 @@ public abstract class MixinPlayer extends Avatar {
      }
  
      @Redirect(method = "travel", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/entity/player/Player;setDeltaMovement(Lnet/minecraft/world/phys/Vec3;)V", ordinal = 1))
@@ -1711,10 +1768,10 @@ index 0000000..9f16513
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFlightPhysics.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFlightPhysics.java
 new file mode 100644
-index 0000000..004cb4b
+index 0000000..7383391
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFlightPhysics.java
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,60 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1722,20 +1779,44 @@ index 0000000..004cb4b
 + */
 +package com.viaversion.viafabricplus.bedrock.movement;
 +
-+import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
 +import com.viaversion.viafabricplus.bedrock.injection.access.IBedrockFlightMotion;
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
 +import com.viaversion.viafabricplus.bedrock.input.BedrockMovementEffects;
-+import net.minecraft.client.player.LocalPlayer;
 +import net.minecraft.client.Minecraft;
++import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.core.BlockPos;
++import net.minecraft.world.entity.player.Player;
 +import net.raphimc.viabedrock.api.model.FlightMovement;
++import net.raphimc.viabedrock.api.model.WaterMovement;
 +
 +public final class BedrockFlightPhysics {
-+    private BedrockFlightPhysics() {}
++    private BedrockFlightPhysics() {
++    }
 +
 +    public static boolean applies(final LocalPlayer player) {
 +        return BedrockInputPermissions.isBedrockConnection() && player.getAbilities().flying
 +                && Minecraft.getInstance().getCameraEntity() == player && !player.isPassenger()
 +                && BedrockMovementEffects.flightContext(player.getId()) != null;
++    }
++
++    public static boolean retainSwimming(final Player player, final boolean original, final boolean actorSwimming) {
++        return player instanceof LocalPlayer local && applies(local) ? actorSwimming : original;
++    }
++
++    public static boolean isJumping(final Player player) {
++        return FlightMovement.isJumping(player.isJumping(), player instanceof LocalPlayer local && applies(local));
++    }
++
++    public static void applySwimmingControl(final LocalPlayer player) {
++        if (!applies(player) || !player.isSwimming() || !player.isInWater() || isJumping(player)) {
++            return;
++        }
++        final var material = player.level().getBlockState(BlockPos.containing(player.getEyePosition(0F)));
++        final var motion = player.getDeltaMovement();
++        // Normal descent remains WantDown. Java has no independent WantDownSlow binding.
++        final float vertical = WaterMovement.swimmingVertical((float) motion.y, (float) player.getLookAngle().y,
++                true, true, material.isAir(), material.liquid(), false);
++        player.setDeltaMovement(motion.x, vertical, motion.z);
 +    }
 +
 +    public static void applyInput(final LocalPlayer player) {
@@ -2054,6 +2135,126 @@ index 0000000..6094186
 +        assertEquals(0.5, BedrockCollisionContacts.collide(Shapes.empty(), Direction.Axis.Z, intoPost, 0.5));
 +    }
 +
++}
+diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFlightPhysicsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFlightPhysicsTest.java
+new file mode 100644
+index 0000000..e91ea57
+--- /dev/null
++++ b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFlightPhysicsTest.java
+@@ -0,0 +1,114 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.movement;
++
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import com.viaversion.viafabricplus.bedrock.input.BedrockMovementEffects;
++import net.minecraft.SharedConstants;
++import net.minecraft.client.Minecraft;
++import net.minecraft.client.multiplayer.ClientLevel;
++import net.minecraft.world.level.block.Blocks;
++import net.minecraft.world.phys.Vec3;
++import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.server.Bootstrap;
++import net.minecraft.world.entity.player.Abilities;
++import net.minecraft.world.entity.player.Player;
++import net.raphimc.viabedrock.api.model.FlightMovementContext;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++import static org.mockito.Mockito.*;
++
++class BedrockFlightPhysicsTest {
++
++    @BeforeAll
++    static void initializeGame() {
++        SharedConstants.tryDetectVersion();
++        Bootstrap.bootStrap();
++    }
++
++    @Test
++    void keepsRawJumpAndRejectsUnnegotiatedOrUncontrolledActorsAcrossTransitions() {
++        final LocalPlayer player = mock(LocalPlayer.class);
++        final Minecraft client = mock(Minecraft.class);
++        final Abilities abilities = new Abilities();
++        abilities.flying = true;
++        when(player.getAbilities()).thenReturn(abilities);
++        when(player.isJumping()).thenReturn(true);
++        when(client.getCameraEntity()).thenReturn(player);
++        try (final var connection = mockStatic(BedrockInputPermissions.class);
++             final var game = mockStatic(Minecraft.class);
++             final var effects = mockStatic(BedrockMovementEffects.class)) {
++            game.when(Minecraft::getInstance).thenReturn(client);
++            connection.when(BedrockInputPermissions::isBedrockConnection).thenReturn(false);
++            assertFalse(BedrockFlightPhysics.applies(player));
++            assertFalse(BedrockFlightPhysics.retainSwimming(player, false, true));
++            assertTrue(BedrockFlightPhysics.isJumping(player));
++            connection.when(BedrockInputPermissions::isBedrockConnection).thenReturn(true);
++            assertFalse(BedrockFlightPhysics.applies(player));
++            assertFalse(BedrockFlightPhysics.retainSwimming(player, false, true));
++            assertTrue(BedrockFlightPhysics.isJumping(player));
++            effects.when(() -> BedrockMovementEffects.flightContext(0))
++                    .thenReturn(new FlightMovementContext(0, 1, 0, 1F, false, 1F, 1F));
++            assertTrue(BedrockFlightPhysics.applies(player));
++            assertTrue(BedrockFlightPhysics.retainSwimming(player, false, true));
++            assertFalse(BedrockFlightPhysics.retainSwimming(player, true, false));
++            assertFalse(BedrockFlightPhysics.retainSwimming(mock(Player.class), false, true));
++            assertFalse(BedrockFlightPhysics.isJumping(player));
++            assertTrue(player.isJumping());
++            abilities.flying = false;
++            assertFalse(BedrockFlightPhysics.retainSwimming(player, false, true));
++            assertTrue(BedrockFlightPhysics.isJumping(player));
++            abilities.flying = true;
++            when(player.isPassenger()).thenReturn(true);
++            assertTrue(BedrockFlightPhysics.isJumping(player));
++            when(player.isPassenger()).thenReturn(false);
++            when(client.getCameraEntity()).thenReturn(null);
++            assertTrue(BedrockFlightPhysics.isJumping(player));
++            when(client.getCameraEntity()).thenReturn(player);
++            effects.when(() -> BedrockMovementEffects.flightContext(0)).thenReturn(null);
++            assertTrue(BedrockFlightPhysics.isJumping(player));
++            assertFalse(BedrockFlightPhysics.retainSwimming(player, false, true));
++            verify(player, never()).setJumping(anyBoolean());
++        }
++    }
++    @Test
++    void appliesNativeSwimmingOnceAndLeavesJavaAndMissingWaterUnchanged() {
++        final LocalPlayer player = mock(LocalPlayer.class);
++        final Minecraft client = mock(Minecraft.class);
++        final ClientLevel level = mock(ClientLevel.class);
++        final Abilities abilities = new Abilities();
++        abilities.flying = true;
++        when(player.getAbilities()).thenReturn(abilities);
++        when(client.getCameraEntity()).thenReturn(player);
++        when(player.level()).thenReturn(level);
++        when(player.getEyePosition(0F)).thenReturn(Vec3.ZERO);
++        when(level.getBlockState(any())).thenReturn(Blocks.AIR.defaultBlockState());
++        when(player.getLookAngle()).thenReturn(new Vec3(0, -1, 0));
++        when(player.getDeltaMovement()).thenReturn(new Vec3(0.25, 0.2F, -0.5));
++        when(player.isSwimming()).thenReturn(true);
++        when(player.isInWater()).thenReturn(true);
++        when(player.isJumping()).thenReturn(true);
++        try (final var connection = mockStatic(BedrockInputPermissions.class);
++             final var game = mockStatic(Minecraft.class);
++             final var effects = mockStatic(BedrockMovementEffects.class)) {
++            game.when(Minecraft::getInstance).thenReturn(client);
++            effects.when(() -> BedrockMovementEffects.flightContext(0))
++                    .thenReturn(new FlightMovementContext(0, 1, 0, 1F, false, 1F, 1F));
++            BedrockFlightPhysics.applySwimmingControl(player);
++            verify(player, never()).setDeltaMovement(anyDouble(), anyDouble(), anyDouble());
++            connection.when(BedrockInputPermissions::isBedrockConnection).thenReturn(true);
++            when(player.isInWater()).thenReturn(false);
++            BedrockFlightPhysics.applySwimmingControl(player);
++            verify(player, never()).setDeltaMovement(anyDouble(), anyDouble(), anyDouble());
++            when(player.isInWater()).thenReturn(true);
++            BedrockFlightPhysics.applySwimmingControl(player);
++            verify(player).setDeltaMovement(0.25, (double) Float.intBitsToFloat(0xBFAE147B), -0.5);
++            verify(player, never()).setJumping(anyBoolean());
++        }
++    }
 +}
 diff --git a/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java b/src/test/java/com/viaversion/viafabricplus/bedrock/movement/BedrockFluidPhysicsTest.java
 new file mode 100644

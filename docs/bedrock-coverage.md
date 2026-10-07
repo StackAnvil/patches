@@ -8096,7 +8096,7 @@ The original jump eligibility routine passes 512 bounded cases and ten stateful 
 Flying clears the mob jump flag, while normal flight requests still use the separate jump input.
 Original sparse storage and tag branches execute; generic ECS insertion and removal remain supplied.
 The current Java swimming handlers can retain ordinary jump eligibility during flight.
-Native player-state reachability and system execution order remain required before changing those handlers.
+The later flight implementation below establishes bounded player-state reachability and the relevant startup order.
 The fixture results are private under `.stackanvil/research/movement-flight/`.
 
 
@@ -8121,6 +8121,98 @@ All 97 patches replay; seven later patches change only headers and context, with
 The full core suite runs 859 cases: 829 pass, 30 existing optional cases skip, and none fail or error.
 Core main, test, and tool Checkstyle tasks and the full build pass.
 
-Installed artifacts retain the previous four-route rendering verification identities until a separate reviewed rollout.
-This core source fix does not claim graphical native or direct/ViaProxy bundle interaction parity.
+The subsequent reviewed rollout installs the rebuilt inventory fix in core, the add-on, and ViaProxy.
+Both downstream artifacts contain all 1,260 approved core entries unchanged, excluding the JAR manifest.
+Nine exact artifact and manifest targets change. All 26 unrelated files remain unchanged, and rollback copies preserve the replaced files.
+The current source passes its full CI run, including Ubuntu, Windows, and macOS private-file permission checks.
+Those operating-system checks do not exercise actual game joins.
+The earlier four-route rendering verification retains its original artifact identities; it has not repeated for this inventory-only change.
+This core source fix does not establish graphical native or direct/ViaProxy bundle interaction parity.
 Private evidence is under `.stackanvil/research/inventory-bundle/live/`.
+
+### Native custom block constructor selection
+
+Another 410 original-code controls narrow the remaining lighting bindings for the pinned build.
+They include 289 geometry-constructor controls, 32 archetype registry controls, 24 complete base constructors and installed virtual getters, and 65 definition-reader controls.
+The geometry constructor distinguishes canonical full geometry, version-one full geometry, geometry ignored for solidity, absorption inherited from block type, and rotation.
+These fields remain independent.
+
+The original registry initializes 27 exact archetype names.
+Its selector rejects unknown, namespace-prefixed, and wrong-case names.
+The candidate fence constructor is registered specifically as `fence_block`; it is not a generic custom block constructor.
+The complete base constructor initializes light filtering to 15 and emission to zero.
+Its installed emissive-override getter returns zero, and its shade getter returns one without cached solidity or direct opacity.
+Earlier zero stores within that constructor do not establish its final defaults.
+
+All 26 captured base descriptions containing `minecraft:unit_cube` omit `block_archetype` and `material`.
+The original reader segment follows the omitted-archetype branch for those records.
+Actual existing-name lookup, factory fallback selection, reflected component registry construction, complete captured component dispatch, and block-state cache initialization remain unexecuted.
+These controls do not justify a universal lighting default change or establish world propagation and native visible parity.
+The private proof summary is `.stackanvil/research/billboards/cached-identities/runtime-binding-evidence-summary.json`.
+
+### Swimming and jump state during flight
+
+The original startup registers vertical flight control, jump eligibility, then swimming control.
+Bounded native player-state and posture checks establish that swimming can remain active during flight.
+Core now calculates vertical swimming velocity with the native float operation order.
+Its production helper matches all 3,072 original-code cases bit for bit.
+Twelve stateful steps cover flight transitions, raw and inherited game modes, simultaneous requests, water state, and retained velocity.
+
+The add-on restores actor swimming state only for the local camera player in negotiated Bedrock flight.
+It suppresses the physical jump flag while preserving raw requests for vertical flight control.
+Composable expression hooks preserve ordinary Java, remote actors, passengers, and context-loss behavior.
+Tests exercise the production helper, actual velocity assignment, lifecycle gates, and expected pinned-client hook locations.
+The full core build passes 830 tests with 30 existing optional skips.
+The full add-on build passes 495 tests with 117 existing optional skips.
+ViaProxy builds; all 1,260 core entries match both downstream artifacts, excluding the manifest.
+
+The reviewed rollout replaces nine exact artifact and manifest targets, preserving all 26 unrelated files.
+Rollback copies remain outside active artifact directories.
+All four current-artifact routes pass: direct and ViaProxy, with plain graphics and Iris.
+Each loads the complete original recorded scene, all 216 skins, and all 31 controllers.
+Actual transformed startup observes both new hooks, the negotiated local context, and exact approved class resources.
+Plain runs pass 1,200 light/color corner checks and 120 actual flat-model dispatches.
+Both Iris runs pass enabled, disabled with reload, enabled with reload, and resource reload stages.
+Native and ordinary Sodium lighting, lifecycle, normals, culling, and emissive controls pass at every stage.
+Font/name controls also pass. All owned clients, proxies, launchers, and the handed-off display stop normally.
+Shared server identities and all 35 installed files remain unchanged.
+These software-rendered recorded-scene runs do not establish native visible parity or live flight trajectories.
+The private aggregate is `.stackanvil/research/movement-swim-runtime/runtime-evidence.json`.
+The earlier four rendering runs retain their original identities.
+Ordinary non-flying jump eligibility, native look and material producers, complete collision physics, and live trajectories remain required.
+Private evidence is under `.stackanvil/research/movement-flight/`.
+
+### Reflected custom block components
+
+A further 503 original-code controls execute reflected registry construction, raw factories, name resolution, component dispatch, and runtime initialization.
+The reflected component resolver accepts ASCII case variations of names such as `minecraft:unit_cube` and `minecraft:light_dampening`.
+It rejects missing namespaces and extra suffixes.
+The original normalizer changes only ASCII uppercase bytes, preserving other bytes and lengths.
+This reflected path differs from the exact archetype registry described above.
+
+The complete bounded dispatcher processes the 26 captured unit-cube descriptions through their actual description vtable.
+Controlled runtime initialization preserves native allocation and duplicate-handling behavior.
+Fixture storage, ownership, complete base/permutation initialization, existing-name fallback, and final cache selection remain boundaries.
+Production component normalization needs those ordering bindings before changing the owning custom-block patch.
+These results do not establish complete world propagation, enhanced lighting, or visible native parity.
+The private summary is `.stackanvil/research/billboards/cached-identities/reflected-producer-evidence-summary.json`.
+
+### Live bundle checks and transport failure
+
+A fresh ordinary Java 26.3 client completes five actual slot-held and cursor-held bundle actions.
+Independent server inventory and advancing game-time observations confirm the results.
+The direct strict-movement BDS route also completes slot and cursor pickup, append, and extraction over RakNet.
+Matched native action responses and independent Script API snapshots confirm those bounded cases.
+The external chest scenario also passes cursor updates, return, close, and reopen.
+Eight matching accepted native requests cover the three direct scenarios.
+Broader bundle interactions and ViaProxy checks remain pending at this milestone.
+These checks do not establish graphical native bundle parity.
+
+The account-free NetherNet attempt fails before joining because its HTTP signaling response contains no SDP answer.
+Historical captures contain one unsigned refusal and 86 signed SDP successes.
+The private probe reproduces the unsigned refusal and opens the actual data channel with a self-signed identity.
+It uses the pinned offline BDS with strict movement enabled.
+Production identity sharing is under separate development. Complete direct/ViaProxy HTTP game login remains unverified.
+The numeric refusal remains unmapped; an unrelated game-disconnect enum does not establish its meaning.
+RakNet success does not close the NetherNet requirement.
+Private evidence is under `.stackanvil/research/inventory-bundle/live/` and `.stackanvil/research/nethernet-runtime/`.

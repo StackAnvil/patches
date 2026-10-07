@@ -1288,4 +1288,28 @@ The failed official-artifact launch remains a negative control.
 The replay supervisor now checks client failure before reading a packet journal, so startup errors remain visible.
 The retained bad-artifact rerun rejects startup without a secondary missing-file error.
 
-Final direct and ViaProxy runs, with plain graphics and Iris, verify the actual local flight context, production identities, and merged movement handlers. The corrected cutoff hook starts without an injection conflict. These observations do not drive flight or establish live trajectory parity.\nThe [combined runtime record](../../../docs/bedrock-coverage.md#final-combined-runtime-verification) retains the complete scene gates and remaining requirements.\n
+Final direct and ViaProxy runs, with plain graphics and Iris, verify the actual local flight context, production identities, and merged movement handlers. The corrected cutoff hook starts without an injection conflict. These observations do not drive flight or establish live trajectory parity.
+The [combined runtime record](../../../docs/bedrock-coverage.md#final-combined-runtime-verification) retains the complete scene gates and remaining requirements.
+
+### Swimming and jump state during flight
+
+Native startup registers vertical flight control, jump eligibility, then swimming control.
+Core now preserves that calculation order and separate float operations for vertical swimming velocity.
+Flying suppresses the physical jump flag while retaining raw jump requests for flight control.
+The add-on retains the actor swimming state during negotiated local Bedrock flight.
+Its composable hooks preserve ordinary Java, remote actors, passengers, and context-loss behavior.
+
+The production core helper matches all 3,072 native swimming cases bit for bit.
+Twelve stateful native steps cover flight transitions, simultaneous requests, water state, and retained velocity.
+Targeted tests cover calculation order, lifecycle gates, and the actual add-on assignment.
+The full builds pass: 830 core tests and 495 add-on tests pass; 30 and 117 existing optional cases skip, respectively.
+ViaProxy builds. Both downstream artifacts contain all 1,260 core entries unchanged, excluding the JAR manifest.
+All owning patches replay cleanly.
+
+Actual transformed startup passes with the new swimming and jump hooks on all four routes.
+Direct and ViaProxy runs pass the complete recorded scene with 216 skins and all 31 controllers.
+Both Iris runs pass shader disable, enable, and resource reload with native and ordinary lighting controls.
+Plain rendering also passes directional light and actual model-dispatch controls.
+The earlier rendering runs retain their different artifact identities.
+Ordinary non-flying input eligibility, native look and material producers, complete collision physics, and live trajectories remain required.
+The [coverage ledger](../../../docs/bedrock-coverage.md#swimming-and-jump-state-during-flight) records the evidence and remaining limits.
