@@ -201,3 +201,30 @@ A private probe with real mappings handles a cyclic registered slot update witho
 After repair, it round-trips a depth-sixteen bundle through the Java item wire codec.
 The earlier production artifact's recursive failure remains retained as a negative control.
 Graphical native, direct and ViaProxy menu interactions remain separate verification requirements.
+
+## Single-slot quick craft and cursor bundles
+
+Core delegates one eligible quick-craft destination to the ordinary pickup handler, with the original mouse mode.
+Slot validation precedes this fallback. Unresolved, output, equipment, and incompatible occupied slots cannot trigger an unrelated pickup or swap.
+Ordinary multi-slot distribution remains unchanged.
+Java 26.3 `AbstractContainerMenu` resets drag state and invokes `PICKUP` when its selected slot set contains one slot.
+
+An isolated strict official BDS 1.26.51.1 ViaProxy run exposed this difference with an ordinary Java client.
+The actual right-click gesture sent three `QUICK_CRAFT` packets with buttons 4, 5, and 6.
+The HUD bundle identity, storage registry, and four diamonds remained valid before all three packets.
+Core instead requested `Place` for the bundle holder. The server accepted that request, leaving the cursor empty.
+The first post-response server inventory and actual Java inventory screen agree on the resulting bundle position and contents.
+The correct pickup path requests `Take` for the diamonds and retains the bundle on the cursor.
+
+All 15 stateful bundle action tests pass after the full 97-patch replay.
+Four tests fail on the previous core behavior with the same incorrect `Place` action.
+The new cases cover duplicate adds, invalid slot sets, empty bundles, mismatched phases, queued rejection and retry, and ordinary multi-slot distribution.
+The earlier ordinary Java baseline verifies cursor extraction, but it does not retain the exact three packets.
+A fresh ordinary Java 26.3 client now verifies the fix through ViaProxy and strict official BDS.
+The same three drag packets produce accepted Take actions for four diamonds from dynamic storage zero.
+The server inventory confirms the diamonds in the destination; the actual client retains the empty bundle on the cursor.
+Loaded support, dry air blocks, health, stationary position, and advancing Survival ticks precede the input.
+Script API cannot observe the UI cursor directly; the client components and matched native response establish its identity and contents.
+Fresh native graphical comparison, broader phase-one selection rules, and creative clone behavior remain required.
+The failed live run also records later authoritative drowning damage and a DeathInfo packet reporting drowning.
+The preceding platform fall remains unexplained. Those later events are separate from the paired cursor result.
