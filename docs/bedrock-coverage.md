@@ -8068,3 +8068,59 @@ All owned clients, proxies, launchers, and displays stop normally. Shared test s
 The aggregate evidence remains private at `.stackanvil/research/lighting-flat/final-combined-runtime-evidence.json`.
 Original startup, nonzero flat-lighting, and client-only proxy audit failures remain retained.
 These recorded-scene checks establish tested integration compatibility; native GPU, full name camera/font, live movement, world propagation, enhanced lighting, and platform joins remain required.
+
+### Native lighting identities and remaining bindings
+
+Another 1,914 original-code controls establish narrower runtime identities for the pinned build.
+The `minecraft:unit_cube` description produces the stateless tag used by cached solidity.
+Its numeric identifier comes from runtime allocation; it is not a fixed protocol enum.
+The recorded scene contains 26 base descriptions and ten permutation occurrences of this component.
+The fixtures exercise 864 producer, lookup, and solidity combinations, plus the original name initializer.
+Twelve further cases check exact named registry lookup against supplied native-layout registry tables.
+
+The default shade getter returns 0.2 when cached solidity, legacy flag 0x20, or direct opaque-full applies; otherwise it returns 1.
+All 256 supplied-field combinations pass. These results do not select the getter for actual custom block types.
+A separate state-dependent emission getter uses `sculk_sensor_phase` and returns 15 only for phase 1.
+Its 781 controls include the original state initializer, bitfield extraction, and dynamic fallback search.
+Constructor selection, fallback values, and some state descriptors remain supplied boundaries.
+
+The earlier vtable scan contains 271 candidate windows.
+Only 103 have the expected shade-slot offset; the other 168 may cross adjacent tables.
+Do not interpret those candidate windows as 271 verified runtime block types.
+Complete custom block constructors, captured component dispatch, authoring-version normalization, world propagation, and visible native comparisons remain open.
+Private evidence is under `.stackanvil/research/billboards/cached-identities/`.
+
+### Flying jump eligibility
+
+The original jump eligibility routine passes 512 bounded cases and ten stateful transitions.
+Flying clears the mob jump flag, while normal flight requests still use the separate jump input.
+Original sparse storage and tag branches execute; generic ECS insertion and removal remain supplied.
+The current Java swimming handlers can retain ordinary jump eligibility during flight.
+Native player-state reachability and system execution order remain required before changing those handlers.
+The fixture results are private under `.stackanvil/research/movement-flight/`.
+
+
+### Nested bundle refresh and conversion recovery
+
+The owning core inventory patch now resolves nested bundles to their visible Java root.
+Full external-menu refreshes include 36 player inventory slots, while cursor-held bundle updates use the cursor packet.
+Ordinary HUD snapshots preserve inventory and crafting contents and separately update an open external menu's cursor.
+Unattached bundles retain authoritative revisions and can resolve after a later parent attachment.
+Native action addresses continue to identify the immediate dynamic container.
+
+Metadata conversion checks cycles and counts nested bundle occurrences before recursive item conversion.
+Memoized graph counts prevent exponential expansion through shared children.
+Java's minimum nesting cost bounds representable contents; stack amounts and repeated occurrences still count.
+Invalid contents omit only the optional Java bundle component and produce a diagnostic.
+Authoritative state and the real item survive, and repaired updates recover without leaked traversal state.
+
+Eighteen targeted tests pass, including registered raw packet handlers, cursor routing, open-menu slot counts, authoritative rollback, shared graphs, and capacity boundaries.
+A real-mapping probe retains a cyclic slot update's authoritative revision and round-trips repaired depth-sixteen contents through the Java wire codec.
+The previous production artifact's stack overflow and three incorrect refresh controls remain retained.
+All 97 patches replay; seven later patches change only headers and context, with unchanged source additions and deletions.
+The full core suite runs 859 cases: 829 pass, 30 existing optional cases skip, and none fail or error.
+Core main, test, and tool Checkstyle tasks and the full build pass.
+
+Installed artifacts retain the previous four-route rendering verification identities until a separate reviewed rollout.
+This core source fix does not claim graphical native or direct/ViaProxy bundle interaction parity.
+Private evidence is under `.stackanvil/research/inventory-bundle/live/`.

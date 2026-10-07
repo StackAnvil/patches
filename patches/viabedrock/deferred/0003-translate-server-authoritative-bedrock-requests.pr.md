@@ -178,3 +178,26 @@ Isolated official BDS 1.26.51.1, build 51061372, protocol 2193 accepts insertion
 It rejects overweight and shulker requests with result 55, and an atomic request with a stale second action with result 49.
 A retry with the original authoritative identity succeeds after rejection.
 These probes use a headless protocol driver. Native graphical, Java direct and ViaProxy, ordinary Java, and in-use dropping comparisons remain required.
+
+## Nested bundle refresh and bounded metadata conversion
+
+Dynamic bundle updates resolve the visible root through nested storage identities.
+The Java packet refreshes that root slot or screen, while Bedrock requests retain their immediate storage address.
+Full external-menu refreshes include the player's 36 inventory slots.
+Unattached storage still receives authoritative revisions, so rejected predictions cannot overwrite later server updates.
+
+Cursor-held bundles use Java's cursor packet for full and single-slot updates.
+Ordinary HUD snapshots retain inventory and crafting contents, with a separate cursor update for an open external menu.
+Java 26.3 applies menu-zero contents to the inventory menu, which does not refresh the external menu's carried item.
+
+Bundle metadata conversion checks cycles and the minimum capacity cost of nested bundle occurrences before recursion.
+Memoized counts bound shared graphs; each occurrence still contributes its nesting cost and stack amount.
+Unrepresentable contents omit the optional Java component and log a diagnostic.
+The real item identity and authoritative storage remain intact, allowing a later repaired update to render normally.
+This bound follows Java's nesting cost; it is not described as a packet codec depth limit.
+
+Eighteen targeted tests cover registered packet handling, orphan attachment, revisions, rollback, cursor routing, root slot counts, cycles, shared graphs, and capacity boundaries.
+A private probe with real mappings handles a cyclic registered slot update without a stack overflow.
+After repair, it round-trips a depth-sixteen bundle through the Java item wire codec.
+The earlier production artifact's recursive failure remains retained as a negative control.
+Graphical native, direct and ViaProxy menu interactions remain separate verification requirements.
