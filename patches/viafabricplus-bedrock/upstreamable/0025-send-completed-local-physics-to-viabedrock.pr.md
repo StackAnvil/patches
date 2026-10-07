@@ -1313,3 +1313,25 @@ Plain rendering also passes directional light and actual model-dispatch controls
 The earlier rendering runs retain their different artifact identities.
 Ordinary non-flying input eligibility, native look and material producers, complete collision physics, and live trajectories remain required.
 The [coverage ledger](../../../docs/bedrock-coverage.md#swimming-and-jump-state-during-flight) records the evidence and remaining limits.
+
+### Swimming pitch lookup
+
+Negotiated local swimming flight now passes current and previous pitch into the core swimming helper.
+The helper preserves the original wrapped float angle and Windows sine lookup instead of the Java look-vector calculation.
+The ordinary Java and non-flying paths keep their existing behavior.
+
+The original Bedrock 1.26.51.1 swimming callback passes 26,660 supplied pitch comparisons across flying and ordinary states.
+Actual Java 26.3 `Mth` differs at float-index and sine-table rounding boundaries.
+The add-on assignment test distinguishes previous-pitch changes and stops assignments after flight-context loss.
+It also preserves horizontal motion and raw jump requests.
+
+These controls verify the calculation and client field binding.
+They do not verify native rotation-component construction, scheduling, breathing material, full collision, or live trajectories.
+Earlier direct, ViaProxy, and Iris runtime checks used their recorded artifact identities, not these updated sources.
+
+Combined build verification: core passes 837 cases with 30 optional skips.
+The add-on passes 495 cases with 117 optional skips. ViaProxy passes four cases.
+Both downstream artifacts preserve all 1,260 core content files, excluding the JAR manifest.
+The final core JAR also matches all 26,660 original callback comparisons.
+Private artifact snapshots retain these exact build identities before the separate inventory repair.
+No installation or runtime joins occur in this verification.

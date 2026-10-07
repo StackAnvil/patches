@@ -958,3 +958,27 @@ Plain rendering also passes directional light and actual model-dispatch controls
 The earlier rendering runs retain their different artifact identities.
 Ordinary non-flying input eligibility, native look and material producers, complete collision physics, and live trajectories remain required.
 The [coverage ledger](../../../docs/bedrock-coverage.md#swimming-and-jump-state-during-flight) records the evidence and remaining limits.
+
+### Swimming pitch lookup
+
+Core now owns the swimming look-Y calculation from current and previous float pitch.
+It preserves the wrapped angle, negative float radians, and shared Windows sine lookup.
+The add-on uses this helper only during negotiated local swimming flight.
+
+The original Bedrock 1.26.51.1 callback `1490c0a00` passes 26,660 comparisons with supplied player pitch and previous pitch.
+Both flying and ordinary swimming calculations match every look and motion bit.
+The fixture reuses the exact table from the complete game initializer linked to official Windows UCRT `10.0.26100.9444`.
+Actual Java 26.3 `Mth` differs in 17,364 resulting motion values across these boundary controls.
+The largest flying difference is approximately `0.000125274` blocks per tick.
+These controls deliberately sample rounding boundaries. Their counts do not estimate the frequency of differences during gameplay.
+
+Targeted tests distinguish previous-pitch rounding, positive and negative lookup entries, flying amplification, and ordinary descent.
+The native fixture supplies rotation fields, actor flags, breathing material, imported remainder, and initial motion.
+Rotation-component construction, scheduling, material production, collision, and live strict BDS trajectories remain separate requirements.
+
+Combined build verification: core passes 837 cases with 30 optional skips.
+The add-on passes 495 cases with 117 optional skips. ViaProxy passes four cases.
+Both downstream artifacts preserve all 1,260 core content files, excluding the JAR manifest.
+The final core JAR also matches all 26,660 original callback comparisons.
+Private artifact snapshots retain these exact build identities before the separate inventory repair.
+No installation or runtime joins occur in this verification.
