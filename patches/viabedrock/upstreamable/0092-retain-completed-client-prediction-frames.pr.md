@@ -536,3 +536,17 @@ CubeConverter passes all 16 tests.
 Both complete patch stacks replay, all four project builds pass, and the TypeScript check passes.
 Native GPU execution remains blocked by the current-boot guard.
 Fresh native comparisons, rewind, resimulation, vehicle reconciliation, and the full gameplay matrix remain required.
+
+## Corrected sine-table reference
+
+The shared table now uses the pinned constructor's float division instead of a rounded reciprocal.
+Reexecuting 8,732 boosted and unboosted glide cases matches every production float output.
+One portable slow-falling expectation changes by one bit.
+The native cases retain supplied CRT remainder, status slots, boost components, and the corrected table.
+Windows CRT sine rounding, live movement comparisons, and the complete gameplay matrix remain open.
+
+Validation: core passes 779 tests with 19 optional skips, and the add-on passes 602 tests with 69 optional skips.
+Both counts include the new private reference checks, with no failures or errors.
+Core, add-on, and ViaProxy builds pass. Both standalone reference PR checks pass.
+The final add-on and ViaProxy bundles retain all 1,243 core content files byte-for-byte, excluding bundle metadata.
+Reviewed artifact replacements preserve 32 unrelated files and keep private rollback copies. No service restarts occur.

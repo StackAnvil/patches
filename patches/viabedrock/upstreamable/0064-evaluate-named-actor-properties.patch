@@ -1,4 +1,4 @@
-From bdfcd2151be0e98b877a4c3de32eee75d12e6541 Mon Sep 17 00:00:00 2001
+From 7066acab63da3578e67a6a328c75d68facb8e9b4 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Thu, 1 Oct 2026 16:22:35 +0200
 Subject: [PATCH] feat(entities): evaluate named actor properties and
@@ -229,6 +229,18 @@ CubeCraft thread samples show repeated parser work in network-thread
 controller ticks. Keep only syntax in the cache and reevaluate current
 queries, variables, and fresh temporary bindings on every call. This avoids
 sharing mutable state between actors or retaining pack source globally.
+
+Match the native shared sine table constructor using float division by
+10430.378 before sine evaluation. Multiplying by a rounded reciprocal
+changes 8,554 captured entries. Preserve cvttss2si invalid conversion:
+NaN and overflow produce INT_MIN, whose low 16 bits select entry zero,
+where Java saturation incorrectly selected entry 65535.
+
+Pinned handler 14205a520 executes 3,200 float-domain cases including every
+exponent, signed zero, subnormal, conversion boundaries, infinities and NaNs.
+Complete initializer 142647070 verifies all 65,536 divisions with supplied
+sinf, stack probing and memcpy. Keep the 86 remaining Windows CRT rounding
+differences and complete visual parity open; do not embed a captured table.
 ---
  build.gradle                                  |   4 +-
  .../main/groovy/viabedrock.checkstyle.gradle  |   8 +-
@@ -240,7 +252,7 @@ sharing mutable state between actors or retaining pack source globally.
  .../api/model/NativeShieldBlockingState.java  |  45 +++
  .../api/model/entity/CustomEntity.java        | 112 +++++-
  .../viabedrock/api/model/entity/Entity.java   |  75 ++++
- .../api/util/BedrockTrigonometry.java         |  33 ++
+ .../api/util/BedrockTrigonometry.java         |  37 ++
  .../api/util/MoLangControlFlow.java           | 256 +++++++++++++
  .../viabedrock/api/util/MoLangEngine.java     | 128 +++++--
  .../viabedrock/api/util/MoLangMath.java       | 248 +++++++++++++
@@ -259,9 +271,10 @@ sharing mutable state between actors or retaining pack source globally.
  .../CustomEntityMaterialSelectionTest.java    |  70 ++++
  .../CustomEntityModelSelectionTest.java       |   2 +-
  .../api/model/entity/EntityScaleTest.java     | 157 ++++++++
+ .../api/util/BedrockTrigonometryTest.java     |  69 ++++
  .../viabedrock/api/util/MoLangEngineTest.java | 338 ++++++++++++++++++
  .../viabedrock/api/util/MoLangMathTest.java   | 115 ++++++
- 31 files changed, 2954 insertions(+), 56 deletions(-)
+ 32 files changed, 3027 insertions(+), 56 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorMessage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeActorStates.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeCustomEntityMessage.java
@@ -280,6 +293,7 @@ sharing mutable state between actors or retaining pack source globally.
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeShieldBlockingStateTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/CustomEntityMaterialSelectionTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/entity/EntityScaleTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/util/BedrockTrigonometryTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/util/MoLangEngineTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/util/MoLangMathTest.java
 
@@ -1212,10 +1226,10 @@ index 0cee5d86a..0fb3e14ef 100644
  }
 diff --git a/src/main/java/net/raphimc/viabedrock/api/util/BedrockTrigonometry.java b/src/main/java/net/raphimc/viabedrock/api/util/BedrockTrigonometry.java
 new file mode 100644
-index 000000000..db96764c2
+index 000000000..09ca1659f
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/util/BedrockTrigonometry.java
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,37 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1232,18 +1246,22 @@ index 000000000..db96764c2
 +    }
 +
 +    public static float sine(final float radians) {
-+        return SINE[(int) (radians * 10430.378F) & 65535];
++        return SINE[index(radians * 10430.378F)];
 +    }
 +
 +    public static float cosine(final float radians) {
-+        return SINE[(int) (radians * 10430.378F + 16384F) & 65535];
++        return SINE[index(radians * 10430.378F + 16384F)];
++    }
++
++    private static int index(final float value) {
++        // Native cvttss2si yields INT_MIN for invalid conversions, whose low 16 bits are zero.
++        return value >= -0x1p31F && value < 0x1p31F ? (int) value & 65535 : 0;
 +    }
 +
 +    private static float[] sineTable() {
 +        final float[] values = new float[65536];
-+        final float step = (2F * (float) Math.PI) / values.length;
 +        for (int index = 0; index < values.length; index++) {
-+            values[index] = (float) Math.sin(index * step);
++            values[index] = (float) Math.sin(index / 10430.378F);
 +        }
 +        return values;
 +    }
@@ -3290,6 +3308,81 @@ index 000000000..8fb58f5e0
 +            return ((List<?>) models.get(this)).size();
 +        }
 +
++    }
++
++}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/util/BedrockTrigonometryTest.java b/src/test/java/net/raphimc/viabedrock/api/util/BedrockTrigonometryTest.java
+new file mode 100644
+index 000000000..c0449c2bc
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/util/BedrockTrigonometryTest.java
+@@ -0,0 +1,69 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.util;
++
++import com.google.gson.JsonParser;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
++
++import java.nio.ByteBuffer;
++import java.nio.ByteOrder;
++import java.nio.file.Files;
++import java.nio.file.Path;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class BedrockTrigonometryTest {
++
++    @Test
++    void usesNativeInvalidConversionInsteadOfJavaSaturation() {
++        for (final float angle : new float[]{Float.MAX_VALUE, -Float.MAX_VALUE, Float.POSITIVE_INFINITY,
++            Float.NEGATIVE_INFINITY, Float.NaN}) {
++            assertEquals(0, Float.floatToRawIntBits(BedrockTrigonometry.sine(angle)));
++            assertEquals(0, Float.floatToRawIntBits(BedrockTrigonometry.cosine(angle)));
++        }
++        for (final float angle : new float[]{0F, -0F, Float.MIN_VALUE, -Float.MIN_VALUE}) {
++            assertEquals(0, Float.floatToRawIntBits(BedrockTrigonometry.sine(angle)));
++            assertEquals(1F, BedrockTrigonometry.cosine(angle));
++        }
++    }
++
++    @Test
++    void convertsTheCosineShiftBeforeCheckingItsOwnBoundary() {
++        final float boundary = 0x1p31F / 10430.378F;
++        assertEquals(0F, BedrockTrigonometry.sine(boundary));
++        assertEquals(0F, BedrockTrigonometry.cosine(boundary));
++        assertEquals(0F, BedrockTrigonometry.sine(Math.nextUp(boundary)));
++        final float below = Math.nextDown(boundary);
++        assertNotEquals(0F, BedrockTrigonometry.sine(below));
++        assertEquals(0F, BedrockTrigonometry.cosine(below));
++        assertEquals(0F, BedrockTrigonometry.sine(-boundary));
++        assertEquals(1F, BedrockTrigonometry.cosine(-boundary));
++    }
++
++    @Test
++    @EnabledIfEnvironmentVariable(named = "STACKANVIL_TRIGONOMETRY_REFERENCE", matches = ".+")
++    void matchesExecutedNativeLookupIncludingEveryFloatExponent() throws Exception {
++        final var fixture = JsonParser.parseString(Files.readString(Path.of(System.getenv("STACKANVIL_TRIGONOMETRY_REFERENCE"),
++                "native-trigonometry.json"))).getAsJsonObject();
++        final var table = ByteBuffer.wrap(Files.readAllBytes(Path.of(System.getenv("STACKANVIL_TRIGONOMETRY_REFERENCE"),
++                "native-sine-producer.bin"))).order(ByteOrder.LITTLE_ENDIAN);
++        for (final var entry : fixture.getAsJsonArray("cases")) {
++            final var row = entry.getAsJsonObject();
++            final float angle = Float.intBitsToFloat((int) row.get("inputBits").getAsLong());
++            final float sine = BedrockTrigonometry.sine(angle);
++            final float cosine = BedrockTrigonometry.cosine(angle);
++            assertEquals(table.getInt(row.get("sineIndex").getAsInt() * Float.BYTES), Float.floatToRawIntBits(sine));
++            assertEquals(table.getInt(row.get("cosineIndex").getAsInt() * Float.BYTES), Float.floatToRawIntBits(cosine));
++            // Windows CRT sinf differs by one float ULP from the supplied producer's sine boundary.
++            final float nativeSine = Float.intBitsToFloat((int) row.get("sineBits").getAsLong());
++            final float nativeCosine = Float.intBitsToFloat((int) row.get("cosineBits").getAsLong());
++            assertEquals(nativeSine, sine, Math.ulp(nativeSine));
++            assertEquals(nativeCosine, cosine, Math.ulp(nativeCosine));
++        }
 +    }
 +
 +}

@@ -1243,3 +1243,50 @@ The observer confirms opposing approach pairs, integral splash origins, count ze
 Its recorder finishes with spawn and movement acknowledgments.
 A later reel command arrives after the recorder stops its display, so this run does not verify stock retrieval.
 The hook disappears on disconnect. Stock fish-position graphs and complete visible parity remain unavailable or unverified.
+
+## Native trigonometry boundaries, October 7, 2026
+
+Core now preserves the native float-to-integer conversion used by the shared sine lookup.
+NaN and overflowing products select entry zero instead of Java's saturated positive index.
+The cosine shift occurs before its own conversion check.
+The table constructor now divides each integer index by `10430.378F` before sine evaluation.
+Multiplication by the rounded reciprocal disagreed with 8,554 entries in the captured target table.
+
+The pinned fishing lookup executes 3,200 inputs covering every float exponent, conversion boundaries, signed zero, subnormals, infinities, and NaNs.
+Production matches the executed indices and the initializer with its supplied sine boundary exactly.
+The complete native initializer executes all 65,536 float divisions and stores.
+Stack probing, byte copying, and the imported sine function remain supplied.
+The supplied function rounds double sine to float; 86 entries still differ from the captured Windows CRT table.
+The tests retain exact checks for the supplied initializer and a separate one-ULP check against captured values.
+Exact Windows CRT rounding remains incomplete. No captured table enters production.
+
+The corrected table also matches 8,732 executed glide cases with and without rocket boosts.
+These cover turns, ascent, descent, angle seams, slow falling, and differing previous rotations.
+Their native kernel retains supplied status slots, boost components, CRT remainder, and the corrected table.
+One portable glide expectation changes by one float bit after correcting its reference table.
+The 720 fishing approach and tease cases also pass with the corrected initializer.
+These arithmetic checks do not establish complete movement, fishing, or visible parity.
+
+## Fishing tease splash expiration, October 7, 2026
+
+The licensed target splash graph expires particles outside `minecraft:air`.
+Its point shape places a new particle half a block above the integral tease origin.
+Water at that sampled cell therefore expires the particle; air retains it.
+This follows the [documented block-expiration predicate](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/particlesreference/particlecomponents/minecraftparticle_expire_if_not_in_blocks?view=minecraft-bedrock-stable).
+The target asset and executed native predicate establish the version-specific result.
+
+Twenty native controls use recorded tease origins, negative heights, water, and air.
+They execute the real predicate, origin getter, cache flag, and hash membership.
+Prepared block identities, the resolved air set, and CRT floor remain supplied.
+The production test loads the licensed graph privately and verifies its birth offset, block query, survivor count, expiration, and available visuals.
+A zero-time update isolates birth and expiration; it does not reproduce the full native frame scheduler or collision sequence.
+
+This explains the empty simulation output at water cells without removing the native asset's expiration rule.
+Full native scheduling, collision, final pixels, audio, later fishing physics, and the complete gameplay matrix remain required.
+No new live-server, CubeCraft, Boar, Windows, or macOS join is claimed by these component checks.
+
+Validation: core passes 779 tests with 19 optional skips, and the add-on passes 602 tests with 69 optional skips.
+Both counts include the new private reference checks, with no failures or errors.
+Core, add-on, and ViaProxy builds pass. Both standalone reference PR checks pass.
+The final add-on and ViaProxy bundles retain all 1,243 core content files byte-for-byte, excluding bundle metadata.
+Reviewed artifact replacements preserve 32 unrelated files and keep private rollback copies. No service restarts occur.
