@@ -117,3 +117,23 @@ The probe invokes the actual injected terrain method and compares ordinary-stone
 It restores face annotations after each case. It does not place the blocks or compare visible native images.
 Java's neighborhood selection, partial interpolation, flat-path selection, and alternative terrain renderers remain separate verification requirements.
 The [coverage ledger](../../../docs/bedrock-coverage.md#native-corner-light-maxima-october-7-2026) records route results.
+
+
+## Zero-strength corner lighting
+
+Both target native terrain routines retain four corner light values at zero ambient strength.
+A private executable fixture compares their cached and uncached paths across 1,920 pairs, or 7,680 corners.
+Cases vary face direction, sampling plane, source and neighbor flags, heterogeneous light and occlusion, and five material strengths.
+The fixture supplies world lookup values, material lookup, TLS storage, and the imported float power function.
+It verifies the terrain calculations rather than the native world implementation or visible scene.
+
+Java selects flat rendering for models that disable ambient occlusion.
+Annotated zero-strength custom faces now enter corner preparation from that flat path.
+Their zero exponent removes ambient and directional attenuation while preserving native light maxima.
+Ordinary states and unannotated faces retain flat rendering and caller-provided light coordinates.
+The core model fallback stays unchanged for ordinary Java clients.
+
+Private client probes verify caller-provided and uncached light, actual model dispatch, and ordinary-state controls against 72 native reference vertices per route.
+The probes temporarily set accepted face annotations to zero and wrap accepted model parts with ambient occlusion disabled.
+They restore the face annotations after each case. They do not install a separate zero-strength pack or compare native images.
+The [coverage ledger](../../../docs/bedrock-coverage.md#zero-strength-terrain-lighting-october-7-2026) records route completion and remaining requirements.

@@ -7474,3 +7474,53 @@ Reviewed artifact inventories and fresh private rollback copies cover the exact 
 **Remaining:** Native world lookup, blocked-neighbor identity, partial-face interpolation, and all-zero-strength model path selection need further evidence.
 Flat terrain, vanilla block visuals, dimensions, held-item sampling, End sky inputs, fluids, directional occlusion, and alternative renderers remain incomplete or unverified.
 Enhanced lighting remains a separate requirement. The full movement, combat, protocol, accounts, and platform goals retain their scope.
+
+
+## Zero-strength terrain lighting, October 7, 2026
+
+**Goal classification: progress. Full lighting and Bedrock parity remain incomplete.**
+
+The previous turn changes production corner light and verifies both routes.
+Its [GitHub CI run](https://github.com/StackAnvil/patches/actions/runs/37591775784) passes.
+This continuation finds that zero ambient strength still requires four native corner light values.
+The two target terrain routines compute identical light values and material colors for 1,920 paired cases, or 7,680 corners.
+The matrix includes six directions, two planes, two source flags, sixteen side-neighbor flag combinations, and five material strengths.
+The 384 zero-strength path pairs retain 1,536 corner values without ambient or directional attenuation.
+
+The executable fixture supplies heterogeneous block, light, and occlusion lookups, material lookup, TLS storage, and the imported float power function.
+Both original terrain routines execute. The fixture verifies their calculations rather than actual native world lookup or visible terrain.
+A focused Ghidra query ends with a desktop-startup or attention error.
+Private disassembly and executable fixtures supply the evidence for this change.
+
+**Production change:** Annotated zero-strength custom faces enter corner preparation when Java selects flat rendering.
+The existing native maximum-light helper supplies their block and sky channels.
+The zero material exponent removes ambient and directional attenuation.
+Ordinary states and unannotated faces retain their original flat behavior and caller-provided light coordinates.
+The core model fallback remains unchanged for ordinary Java clients.
+
+**Client verification:** Direct and ViaProxy clients each load 276 custom definitions and match 72 native reference vertices.
+Both caller-provided and uncached flat preparation pass. Actual model dispatch also passes with ambient occlusion disabled in the model parts.
+All 72 color controls retain full material color, and all 72 ordinary-state light controls retain Java's original values.
+All 72 reference light values differ from the caller-provided single-sample control.
+
+The probes temporarily change accepted face annotations and wrap accepted model parts, then restore the annotations.
+They do not install a separate zero-strength resource pack or compare visible native images.
+Full direct and ViaProxy scene replays complete unchanged and pass transport, pack-loading, and model checks.
+The preceding iteration's intermittent ViaProxy handshake timeout remains an independent unresolved requirement.
+
+**Interpolation evidence:** Native color interpolation follows corner shading and the material exponent.
+A private instruction fixture passes 18,816 interpolation and color-packing samples across fractional coordinates, heterogeneous corner inputs, dimming, and material strengths.
+Of these, 8,393 distinguish native ordering from an exponent applied after interpolation.
+Our current Java hook applies the exponent after weighted ambient interpolation, so partial-face material lighting remains incomplete.
+This fixture executes the original interpolation and packing instructions with supplied corner colors.
+It does not execute their original caller, complete mesh submission, world lookup, or visible scene.
+
+**Build verification:** The owning add-on patch replays through all 30 patches.
+The build passes 605 tests, including 117 optional fixture skips, with no errors or failures.
+The pinned Jenkins build, commit, dependency JARs, and POM checksums pass fresh verification.
+The core and ViaProxy artifacts remain unchanged. Every core file entry remains identical in the add-on bundle.
+Reviewed inventories and fresh private rollback copies cover exactly three local artifact replacements. Existing server processes remain unchanged.
+
+**Remaining:** Partial-face interpolation order now has a measured mismatch to fix.
+Native world lookup, neighbor identity, emissive custom states, nonzero-strength flat paths, alternative terrain renderers, and visible comparisons remain open.
+All other lighting, movement, combat, protocol, account, and platform requirements retain their scope.
