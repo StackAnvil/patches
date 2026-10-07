@@ -414,9 +414,9 @@ The pinned fishing lookup executes 3,200 inputs covering every float exponent, c
 Production matches the executed indices and the initializer with its supplied sine boundary exactly.
 The complete native initializer executes all 65,536 float divisions and stores.
 Stack probing, byte copying, and the imported sine function remain supplied.
-The supplied function rounds double sine to float; 86 entries still differ from the captured Windows CRT table.
-The tests retain exact checks for the supplied initializer and a separate one-ULP check against captured values.
-Exact Windows CRT rounding remains incomplete. No captured table enters production.
+The initial supplied function rounds double sine to float; 86 entries differ from the captured Wine runtime table.
+Initial tests check the supplied initializer exactly and the captured values within one float ULP.
+The Windows follow-up below replaces that supplied sine boundary. No captured table enters production.
 
 The corrected table also matches 8,732 executed glide cases with and without rocket boosts.
 These cover turns, ascent, descent, angle seams, slow falling, and differing previous rotations.
@@ -430,3 +430,33 @@ Both counts include the new private reference checks, with no failures or errors
 Core, add-on, and ViaProxy builds pass. Both standalone reference PR checks pass.
 The final add-on and ViaProxy bundles retain all 1,243 core content files byte-for-byte, excluding bundle metadata.
 Reviewed artifact replacements preserve 32 unrelated files and keep private rollback copies. No service restarts occur.
+
+## Windows sine-table verification, October 7, 2026
+
+The captured Linux native-client table uses Wine's `sinf`, not Microsoft's Windows runtime.
+Executing Wine's complete function reproduces all 65,536 captured entries exactly.
+The installed Windows guest supplies official UCRT `10.0.26100.9444` through a read-only disk extraction.
+Its complete SSE function differs from Wine at one entry and from rounded double sine at 85 entries.
+Independent hardware executions of the Windows SSE and FMA paths produce identical tables.
+
+The pinned game's complete initializer now executes with the official Windows sine import in one emulated address space.
+Only stack probing and the final byte copy remain supplied.
+A portable producer matches every resulting float bit through bounded range reduction and polynomials.
+Its arithmetic derives from [AMD's BSD-licensed AOCL-LibM implementation](https://github.com/amd/aocl-libm-ose/blob/29fd054f383e6c5e2dec2fce781d5220059f1836/src/isa/avx/masm/sinf.asm).
+The source and packaged resources retain the license notice.
+Production ships no runtime DLL, captured table, or dependency on a Bedrock installation.
+
+Nine portable controls distinguish Windows rounding from rounded double sine and Wine.
+The private all-entry test verifies the complete production table against the linked native initializer.
+Reexecuting 8,732 glide cases and 720 fishing approach and tease cases uses the Windows table.
+The glide comparison matches every production motion bit, including boosted cases.
+These probes still supply status slots, boost components, random samples, world getters, and other documented boundaries.
+Windows process initialization, other runtime versions, Android and console math, live movement, and complete visible parity remain separate requirements.
+
+Validation: core passes 781 tests with 19 optional skips. The add-on passes 602 tests with 69 optional skips.
+Both suites report no failures or errors. Core, ViaProxy, and add-on builds pass.
+Both standalone reference PR checks pass, and the complete 97-patch core stack replays from its pinned base.
+Both downstream bundles retain all 1,246 core files byte-for-byte, excluding the JAR manifest, including the AMD license.
+
+Reviewed artifact replacements preserve 32 unrelated files per project and retain private rollback copies under `.stackanvil/research/fishing-feedback/crt/build-rollback/`.
+No service restarts or new live-server joins occur in this verification.

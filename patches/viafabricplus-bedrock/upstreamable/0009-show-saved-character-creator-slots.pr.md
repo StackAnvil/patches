@@ -416,7 +416,7 @@ These results establish requests and parameters for the inspected target backend
 
 Extend the standard math object with inverse interpolation and all 30 easing functions present in Bedrock 1.26.51.1. Preserve float operands, reversed ranges, overshoot, and extrapolation. Exponential curves retain the target's small endpoint offsets. Elastic curves retain explicit endpoint checks and the target's 0.3 period, including the in-out variant.
 
-Independent execution of the target's constant-fold handlers verifies 13,578 cases across all 31 functions. The dispatcher and descriptor table establish their names and argument order. The harness supplies constant eligibility, argument cleanup, and imported exponential and square-root calls. Native instructions perform the curve calculations and sine-table indexing. The initialized target sine table is a private oracle input. Production generates its own table and requires no executable, installation, copied table, or external extractor. Tests allow small float rounding differences from the target's CRT sine implementation.
+Independent execution of the target's constant-fold handlers verifies 13,578 cases across all 31 functions. The dispatcher and descriptor table establish their names and argument order. The harness supplies constant eligibility, argument cleanup, and imported exponential and square-root calls. Native instructions perform the curve calculations and sine-table indexing. The initialized target sine table is a private oracle input. Production generates its own table and requires no executable, installation, copied table, or external extractor. Tests allow small float rounding differences from Wine's sine implementation in the Linux native-client capture.
 
 The licensed player script also exposes assignment precedence errors in Mocha's parser. A conditional assignment retained its boolean condition instead of the selected numeric value. Parse expressions with assignment below conditionals, right-associated nested conditionals, and unary operators around complete function calls. Retain Mocha's lexer, expression types, and evaluator. Bound parser recursion before building the expression tree, then apply the existing expression and execution limits.
 
@@ -2833,3 +2833,33 @@ Both counts include the new private reference checks, with no failures or errors
 Core, add-on, and ViaProxy builds pass. Both standalone reference PR checks pass.
 The final add-on and ViaProxy bundles retain all 1,243 core content files byte-for-byte, excluding bundle metadata.
 Reviewed artifact replacements preserve 32 unrelated files and keep private rollback copies. No service restarts occur.
+
+## Windows sine-table verification, October 7, 2026
+
+The captured Linux native-client table uses Wine's `sinf`, not Microsoft's Windows runtime.
+Executing Wine's complete function reproduces all 65,536 captured entries exactly.
+The installed Windows guest supplies official UCRT `10.0.26100.9444` through a read-only disk extraction.
+Its complete SSE function differs from Wine at one entry and from rounded double sine at 85 entries.
+Independent hardware executions of the Windows SSE and FMA paths produce identical tables.
+
+The pinned game's complete initializer now executes with the official Windows sine import in one emulated address space.
+Only stack probing and the final byte copy remain supplied.
+A portable producer matches every resulting float bit through bounded range reduction and polynomials.
+Its arithmetic derives from [AMD's BSD-licensed AOCL-LibM implementation](https://github.com/amd/aocl-libm-ose/blob/29fd054f383e6c5e2dec2fce781d5220059f1836/src/isa/avx/masm/sinf.asm).
+The source and packaged resources retain the license notice.
+Production ships no runtime DLL, captured table, or dependency on a Bedrock installation.
+
+Nine portable controls distinguish Windows rounding from rounded double sine and Wine.
+The private all-entry test verifies the complete production table against the linked native initializer.
+Reexecuting 8,732 glide cases and 720 fishing approach and tease cases uses the Windows table.
+The glide comparison matches every production motion bit, including boosted cases.
+These probes still supply status slots, boost components, random samples, world getters, and other documented boundaries.
+Windows process initialization, other runtime versions, Android and console math, live movement, and complete visible parity remain separate requirements.
+
+Validation: core passes 781 tests with 19 optional skips. The add-on passes 602 tests with 69 optional skips.
+Both suites report no failures or errors. Core, ViaProxy, and add-on builds pass.
+Both standalone reference PR checks pass, and the complete 97-patch core stack replays from its pinned base.
+Both downstream bundles retain all 1,246 core files byte-for-byte, excluding the JAR manifest, including the AMD license.
+
+Reviewed artifact replacements preserve 32 unrelated files per project and retain private rollback copies under `.stackanvil/research/fishing-feedback/crt/build-rollback/`.
+No service restarts or new live-server joins occur in this verification.
