@@ -1005,6 +1005,49 @@ The existing native particle transport can carry the effects through ViaProxy.
 An additive impulse requires the client's current hook velocity and must preserve native float rounding.
 Subsequent physics and any state outside this handler still need verification.
 
-**Remaining:** No production fishing-event translation or visible native parity is claimed from these fixtures.
+**Scope of these fixtures:** Native execution alone does not establish production translation or visible native parity.
 Events 11, 12, and 14, audio resolution, particle playback, hook physics, catch inventory display, and both client routes remain open.
 The complete fishing matrix, ordinary Java coverage, all eight coverage groups, Boar diagnostics, CubeCraft, and actual Windows/macOS joins remain required.
+
+### Fishing bite impulses, October 7, 2026
+
+**Implemented:** ViaBedrock now decodes native bite event 13 and checks that its actor is a fishing hook.
+It sends the resolved Java entity ID and spawn UUID through `viabedrock:fishing_bite_v1` when the client advertises that capability.
+The codec validates its version, protocol, size, identity, and trailing data.
+The add-on uses the hook's current motion on the client thread.
+It applies the native float impulse and preserves both horizontal components.
+
+A standard Java packet cannot express an additive impulse without replacing the client's local velocity.
+The callback therefore supplies the client operation, while core owns decoding, actor resolution, capability routing, and float arithmetic.
+The callback requires the active connection, a live fishing hook, and the matching spawn UUID.
+It retains no timer or pending state.
+Java's unrelated biting timer remains unchanged.
+
+**Native comparison:** The production helper matches all 108 bounded native impulse cases bit for bit.
+The full core build reports 767 tests, zero failures, and 19 optional skips.
+The add-on build reports 594 tests, zero failures, and 114 optional skips.
+ViaProxy builds against the same core artifact.
+The exported 97-patch core stack replays successfully.
+The metadata patch changes only replay context, and the standalone entity reference patch remains byte-identical.
+
+**Live verification:** Genuine casts produce native event 13 against strict BDS 1.26.51.1, build 51061372, protocol 2193.
+A private observer records the original hook setter on the render thread.
+It preserves the original arguments and does not supply gameplay values.
+On the direct route, vertical motion changes from `-0.011957276348685734` to `-0.5119572877883911`.
+Through ViaProxy, it changes from `-0.02294432376807235` to `-0.5229443311691284`.
+Both results match native float arithmetic, and horizontal motion stays unchanged.
+Each route rejects messages with another spawn UUID, another entity type, and another connection without changing hook motion.
+Early reeling gives no reward or durability damage on either route.
+Bite-triggered reeling gives one cod and one durability point.
+Reeling a live cow pulls the target and uses three durability points.
+All six casts remove their hooks and clear the actual local player's fishing pointer.
+Both recorders exit successfully, and the owned BDS stops.
+These server reward observations do not establish the client's displayed reward inventory.
+
+The first test observer failed because Fabric could not load its callback class.
+That attempt supplies no positive motion evidence.
+The corrected observer resolves its callback through the system class loader, and the fresh runs supply the results above.
+
+**Remaining:** Events 11, 12, and 14, bite particles, audio resolution, later hook physics, and native visible comparisons remain required.
+Displayed rewards, ordinary Java feedback, enchantments, repeated casts, interrupted use, and the complete fishing matrix remain open.
+All eight coverage groups, strict BDS, Boar diagnostics, CubeCraft, and actual Windows/macOS joins remain required.

@@ -6582,5 +6582,17 @@ A bite adds `-0.5F` to the hook's current vertical velocity.
 Its particles use the water surface position and width-dependent variables.
 This handler does not start a fixed bite timer.
 Subsequent physics, audio resolution, particle playback, and visible results remain unverified.
-No production event translation is claimed from this research.
+The research alone does not establish production event translation.
 All eight coverage groups, the full gameplay matrix, both routes, native baselines, Boar diagnostics, CubeCraft, and actual Windows/macOS joins remain required.
+
+## Fishing bite impulses, October 7, 2026
+
+Core now translates native bite event 13 into a capability message with the resolved hook ID and spawn UUID.
+The add-on applies the impulse to current client motion after checking connection, actor type, and spawn identity.
+The production float calculation matches all 108 native impulse cases bit for bit.
+Live strict BDS casts verify the actual vertical update and unchanged horizontal motion on direct and ViaProxy connections.
+Three invalid-message controls per route leave motion unchanged.
+
+The [fishing bite record](bedrock-complex-gameplay.md#fishing-bite-impulses-october-7-2026) retains the build results, observer failure, and remaining boundaries.
+Particles, audio, later hook physics, visible native parity, ordinary Java feedback, and the full fishing matrix remain required.
+All eight coverage groups and the complete gameplay, server, and platform requirements remain active.

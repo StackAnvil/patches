@@ -1,0 +1,114 @@
+From 70943ad672a0823a6b21932c532190d7d2b7a14b Mon Sep 17 00:00:00 2001
+From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
+Date: Wed, 7 Oct 2026 02:53:57 +0200
+Subject: [PATCH] feat(entities): apply native fishing bite impulses
+
+Apply ViaBedrock's bite message to the current fishing hook on the client
+thread. Require the active connection and the exact Java spawn UUID so
+queued messages cannot affect a replaced hook, another entity, or another
+connection. Preserve horizontal motion and delegate float vertical addition
+to the core calculation verified against the pinned native executable.
+
+Bedrock event 13 adds -0.5 to existing vertical motion. Java has no standard
+additive-motion update for a tracked hook. A dedicated capability works for
+both direct translation and ViaProxy without guessing an authoritative
+velocity or enabling Java's unrelated biting timer. Particle effects,
+sound, later hook physics, and complete visible parity remain separate work.
+---
+ .../bedrock/ViaFabricPlusBedrock.java         |  6 ++++
+ .../render/BedrockFishingFeedback.java        | 28 +++++++++++++++++++
+ .../render/NativeFishingBitePayload.java      | 24 ++++++++++++++++
+ 3 files changed, 58 insertions(+)
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFishingFeedback.java
+ create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeFishingBitePayload.java
+
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+index 20f0aea..88d2ed4 100644
+--- a/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/ViaFabricPlusBedrock.java
+@@ -26,6 +26,8 @@ import com.viaversion.viafabricplus.bedrock.render.NativeSkinPayload;
+ import com.viaversion.viafabricplus.bedrock.render.NativeCustomEntityPayload;
+ import com.viaversion.viafabricplus.bedrock.render.NativeActorPayload;
+ import com.viaversion.viafabricplus.bedrock.render.NativeProjectileOwnerPayload;
++import com.viaversion.viafabricplus.bedrock.render.NativeFishingBitePayload;
++import com.viaversion.viafabricplus.bedrock.render.BedrockFishingFeedback;
+ import com.viaversion.viafabricplus.bedrock.render.BedrockProjectileOwners;
+ import com.viaversion.viafabricplus.bedrock.render.NativeAnimationPayload;
+ import com.viaversion.viafabricplus.bedrock.render.BedrockActorState;
+@@ -102,6 +104,10 @@ public final class ViaFabricPlusBedrock implements ViaFabricPlusEntrypoint {
+                 (payload, context) -> CustomEntityRenderStore.accept(listener.getConnection(), payload.message())));
+         ClientPlayConnectionEvents.DISCONNECT.register((listener, client) -> CustomEntityRenderStore.clear());
+         PayloadTypeRegistry.clientboundPlay().register(NativeProjectileOwnerPayload.TYPE, NativeProjectileOwnerPayload.CODEC);
++        PayloadTypeRegistry.clientboundPlay().register(NativeFishingBitePayload.TYPE, NativeFishingBitePayload.CODEC);
++        ClientPlayConnectionEvents.INIT.register((listener, client) ->
++            ClientPlayNetworking.registerReceiver(NativeFishingBitePayload.TYPE,
++                (payload, context) -> BedrockFishingFeedback.accept(listener.getConnection(), payload.message())));
+         ClientPlayConnectionEvents.INIT.register((listener, client) ->
+             ClientPlayNetworking.registerReceiver(NativeProjectileOwnerPayload.TYPE,
+                 (payload, context) -> BedrockProjectileOwners.accept(listener.getConnection(), payload.message())));
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFishingFeedback.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFishingFeedback.java
+new file mode 100644
+index 0000000..18cae63
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/BedrockFishingFeedback.java
+@@ -0,0 +1,28 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import net.minecraft.client.Minecraft;
++import net.minecraft.network.Connection;
++import net.minecraft.world.entity.projectile.FishingHook;
++import net.raphimc.viabedrock.api.model.NativeFishingBite;
++
++/** The translated hook receives the native impulse without Java's unrelated biting timer. */
++public final class BedrockFishingFeedback {
++    private BedrockFishingFeedback() {}
++
++    public static void accept(final Connection connection, final NativeFishingBite message) {
++        final Minecraft client = Minecraft.getInstance();
++        client.execute(() -> {
++            final var listener = client.getConnection();
++            if (!connection.isConnected() || listener == null || listener.getConnection() != connection || client.level == null) return;
++            final var entity = client.level.getEntity(message.entityId());
++            if (!(entity instanceof FishingHook hook) || hook.isRemoved() || !message.uuid().equals(hook.getUUID())) return;
++            final var motion = hook.getDeltaMovement();
++            hook.setDeltaMovement(motion.x(), NativeFishingBite.verticalVelocity(motion.y()), motion.z());
++        });
++    }
++}
+diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeFishingBitePayload.java b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeFishingBitePayload.java
+new file mode 100644
+index 0000000..fd8d750
+--- /dev/null
++++ b/src/main/java/com/viaversion/viafabricplus/bedrock/render/NativeFishingBitePayload.java
+@@ -0,0 +1,24 @@
++/*
++ * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
++ * Copyright (C) 2026 ViaVersion and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package com.viaversion.viafabricplus.bedrock.render;
++
++import net.minecraft.network.RegistryFriendlyByteBuf;
++import net.minecraft.network.codec.StreamCodec;
++import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
++import net.minecraft.resources.Identifier;
++import net.raphimc.viabedrock.api.model.NativeFishingBite;
++
++public record NativeFishingBitePayload(NativeFishingBite message) implements CustomPacketPayload {
++    public static final Type<NativeFishingBitePayload> TYPE = new Type<>(Identifier.parse(NativeFishingBite.CHANNEL));
++    public static final StreamCodec<RegistryFriendlyByteBuf, NativeFishingBitePayload> CODEC = CustomPacketPayload.codec(
++            (payload, buffer) -> NativeFishingBite.TYPE.write(buffer, payload.message),
++            buffer -> new NativeFishingBitePayload(NativeFishingBite.TYPE.read(buffer)));
++
++    @Override
++    public Type<NativeFishingBitePayload> type() {
++        return TYPE;
++    }
++}
+-- 
+2.55.0

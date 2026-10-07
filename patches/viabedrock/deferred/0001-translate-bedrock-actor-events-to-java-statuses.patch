@@ -1,4 +1,4 @@
-From f9fedaeb7feaaedee7e7276d7e5ed0017736a321 Mon Sep 17 00:00:00 2001
+From 47ace4f851bd7728ca00498562206e41acbc8be8 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Sat, 26 Sep 2026 00:11:24 +0200
 Subject: [PATCH] feat(entity-events): translate Bedrock actor events to Java
@@ -13,13 +13,91 @@ charging 74. Matching native rocket code 143346100 also emits 25. Restore
 the upstream IDs instead of applying the misleading documentation values.
 Raw-ID translation tests cover the low and high sparse ranges, explosions,
 totem feedback and charge completion. Raw evidence remains private.
+
+Translate fishing bite event 13 into a capability-gated client message
+bound to the hook's Java spawn UUID. The pinned native handler adds -0.5
+using float arithmetic to the current local vertical motion. There is no
+standard Java additive-motion packet for a tracked hook, and a core-side
+velocity snapshot cannot preserve intervening client physics. Retain the
+calculation and validation in core and use a minimal client callback.
+Do not substitute a fixed velocity or assume a Java biting timer.
+
+Bounded native execution verifies 108 impulse cases and 90 complete bite
+handler cases against Windows 1.26.51.1 protocol 2193. Keep particles,
+audio, subsequent physics, ordinary Java behavior and visible native
+comparisons as separate remaining requirements.
 ---
+ .../api/model/NativeFishingBite.java          | 55 ++++++++++++++++
  .../viabedrock/api/model/entity/Entity.java   |  2 +-
- .../protocol/packet/EntityPackets.java        | 40 +++++++++++-
+ .../protocol/packet/EntityPackets.java        | 51 ++++++++++++++-
+ .../api/model/NativeFishingBiteTest.java      | 57 +++++++++++++++++
  .../protocol/packet/EntityPacketsTest.java    | 63 +++++++++++++++++++
- 3 files changed, 101 insertions(+), 4 deletions(-)
+ 5 files changed, 224 insertions(+), 4 deletions(-)
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/NativeFishingBite.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/NativeFishingBiteTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/packet/EntityPacketsTest.java
 
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/NativeFishingBite.java b/src/main/java/net/raphimc/viabedrock/api/model/NativeFishingBite.java
+new file mode 100644
+index 000000000..20180894d
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/NativeFishingBite.java
+@@ -0,0 +1,55 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Type;
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.ByteBuf;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++
++import java.util.Objects;
++import java.util.UUID;
++
++/** A native bite adds an impulse to the client's current hook motion. */
++public record NativeFishingBite(int entityId, UUID uuid) {
++
++    public static final String CHANNEL = "viabedrock:fishing_bite_v1";
++    public static final Type<NativeFishingBite> TYPE = new Type<>(NativeFishingBite.class) {
++        @Override
++        public NativeFishingBite read(final ByteBuf buffer) {
++            if (buffer.readableBytes() > 32 || Types.VAR_INT.readPrimitive(buffer) != 1
++                    || Types.VAR_INT.readPrimitive(buffer) != ProtocolConstants.BEDROCK_PROTOCOL_VERSION) {
++                throw new IllegalArgumentException("Unsupported fishing bite message");
++            }
++            final NativeFishingBite message = new NativeFishingBite(Types.VAR_INT.readPrimitive(buffer), Types.UUID.read(buffer));
++            if (buffer.isReadable()) {
++                throw new IllegalArgumentException("Trailing fishing bite data");
++            }
++            return message;
++        }
++
++        @Override
++        public void write(final ByteBuf buffer, final NativeFishingBite message) {
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION);
++            Types.VAR_INT.writePrimitive(buffer, message.entityId);
++            Types.UUID.write(buffer, message.uuid);
++        }
++    };
++
++    public NativeFishingBite {
++        Objects.requireNonNull(uuid);
++        if (entityId <= 0) {
++            throw new IllegalArgumentException("Invalid fishing hook entity ID");
++        }
++    }
++
++    /** Bedrock stores motion as floats and performs this addition in float precision. */
++    public static float verticalVelocity(final double current) {
++        return (float) current - 0.5F;
++    }
++
++}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 index e4ab26a1c..376b1714c 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
@@ -34,10 +112,18 @@ index e4ab26a1c..376b1714c 100644
          levelSoundEvent.write(BedrockTypes.LONG_LE, -1L); // entity unique id
          levelSoundEvent.write(BedrockTypes.OPTIONAL_POSITION_3F, null); // fire at position
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
-index 74b778fb2..c1beadf4a 100644
+index 74b778fb2..6d5bf7d10 100644
 --- a/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/packet/EntityPackets.java
-@@ -49,6 +49,7 @@ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
+@@ -35,6 +35,7 @@ import com.viaversion.viaversion.util.Key;
+ import net.raphimc.viabedrock.ViaBedrock;
+ import net.raphimc.viabedrock.api.model.NativeActorMessage;
+ import net.raphimc.viabedrock.api.model.NativeAnimationMessage;
++import net.raphimc.viabedrock.api.model.NativeFishingBite;
+ import net.raphimc.viabedrock.api.model.entity.ClientPlayerEntity;
+ import net.raphimc.viabedrock.api.model.entity.CustomEntity;
+ import net.raphimc.viabedrock.api.model.entity.Entity;
+@@ -49,6 +50,7 @@ import net.raphimc.viabedrock.protocol.ClientboundBedrockPackets;
  import net.raphimc.viabedrock.protocol.data.enums.Direction;
  import net.raphimc.viabedrock.protocol.data.enums.bedrock.generated.*;
  import net.raphimc.viabedrock.protocol.data.enums.java.AnimateAction;
@@ -45,7 +131,24 @@ index 74b778fb2..c1beadf4a 100644
  import net.raphimc.viabedrock.protocol.data.enums.java.Relative;
  import net.raphimc.viabedrock.protocol.data.enums.java.generated.EquipmentSlot;
  import net.raphimc.viabedrock.protocol.data.generated.java.EntityDataFields;
-@@ -505,12 +506,17 @@ public final class EntityPackets {
+@@ -476,6 +478,16 @@ public final class EntityPackets {
+                 return;
+             }
+             switch (event) {
++                case FISHHOOK_HOOKTIME -> {
++                    wrapper.cancel();
++                    if (entity.javaType() == EntityTypes26_3.FISHING_BOBBER
++                            && wrapper.user().get(ChannelStorage.class).hasChannel(NativeFishingBite.CHANNEL)) {
++                        final PacketWrapper bite = PacketWrapper.create(ClientboundPackets26_3.CUSTOM_PAYLOAD, wrapper.user());
++                        bite.write(Types.STRING, NativeFishingBite.CHANNEL);
++                        bite.write(NativeFishingBite.TYPE, new NativeFishingBite(entity.javaId(), entity.javaUuid()));
++                        bite.send(BedrockProtocol.class);
++                    }
++                }
+                 case HURT -> {
+                     final CompoundTag damageTypeRegistry = gameSession.getJavaRegistries().getCompoundTag(RegistryKeys.DAMAGE_TYPE);
+                     final SharedTypes_Legacy_ActorDamageCause damageCause = SharedTypes_Legacy_ActorDamageCause.getByValue(data, SharedTypes_Legacy_ActorDamageCause.Override);
+@@ -505,12 +517,17 @@ public final class EntityPackets {
                      }
                      if (entity != entityTracker.getClientPlayer()) {
                          entity.playSound("death");
@@ -66,7 +169,7 @@ index 74b778fb2..c1beadf4a 100644
                  }
              }
          });
-@@ -704,6 +710,34 @@ public final class EntityPackets {
+@@ -704,6 +721,34 @@ public final class EntityPackets {
          return entity;
      }
  
@@ -101,6 +204,69 @@ index 74b778fb2..c1beadf4a 100644
      private EntityPackets() {
      }
  
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/NativeFishingBiteTest.java b/src/test/java/net/raphimc/viabedrock/api/model/NativeFishingBiteTest.java
+new file mode 100644
+index 000000000..689e584b2
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/NativeFishingBiteTest.java
+@@ -0,0 +1,57 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.api.type.Types;
++import io.netty.buffer.Unpooled;
++import net.raphimc.viabedrock.protocol.data.ProtocolConstants;
++import org.junit.jupiter.api.Test;
++
++import java.util.UUID;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class NativeFishingBiteTest {
++
++    @Test
++    void preservesSpawnIdentityAndRejectsInvalidBodies() {
++        final var expected = new NativeFishingBite(Integer.MAX_VALUE, UUID.randomUUID());
++        final var buffer = Unpooled.buffer();
++        try {
++            NativeFishingBite.TYPE.write(buffer, expected);
++            assertEquals(expected, NativeFishingBite.TYPE.read(buffer));
++            buffer.clear();
++            NativeFishingBite.TYPE.write(buffer, expected);
++            buffer.writeByte(0);
++            assertThrows(IllegalArgumentException.class, () -> NativeFishingBite.TYPE.read(buffer));
++            buffer.clear();
++            Types.VAR_INT.writePrimitive(buffer, 1);
++            Types.VAR_INT.writePrimitive(buffer, ProtocolConstants.BEDROCK_PROTOCOL_VERSION + 1);
++            assertThrows(IllegalArgumentException.class, () -> NativeFishingBite.TYPE.read(buffer));
++            buffer.clear();
++            Types.VAR_INT.writePrimitive(buffer, 2);
++            assertThrows(IllegalArgumentException.class, () -> NativeFishingBite.TYPE.read(buffer));
++            buffer.clear();
++            buffer.writeZero(33);
++            assertThrows(IllegalArgumentException.class, () -> NativeFishingBite.TYPE.read(buffer));
++            assertThrows(IllegalArgumentException.class, () -> new NativeFishingBite(0, expected.uuid()));
++            assertThrows(IllegalArgumentException.class, () -> new NativeFishingBite(-1, expected.uuid()));
++        } finally {
++            buffer.release();
++        }
++    }
++
++    @Test
++    void matchesNativeFloatAdditionForExistingMotion() {
++        final double[] input = {0D, -0D, 0.4D, -0.4D, 1D, -1D, 0.00001D, -0.00001D};
++        final int[] nativeBits = {0xBF000000, 0xBF000000, 0xBDCCCCCC, 0xBF666666,
++            0x3F000000, 0xBFC00000, 0xBEFFFEB0, 0xBF0000A8};
++        for (int index = 0; index < input.length; index++) {
++            assertEquals(nativeBits[index], Float.floatToRawIntBits(NativeFishingBite.verticalVelocity(input[index])));
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/EntityPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/EntityPacketsTest.java
 new file mode 100644
 index 000000000..cdff98375
