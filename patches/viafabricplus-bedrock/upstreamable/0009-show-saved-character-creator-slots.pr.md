@@ -2875,3 +2875,31 @@ The fix caches exact and ASCII case-insensitive patterns when resources load. Hu
 Two actual model-cube tests failed before the fix. The regressions cover visible arms, hidden body cubes, wildcard order, controller unions, and exact custom actor controls. Candidate runtime checks for Vulkan and Iris reloads remain separate gates. No general change to native custom actor case semantics is inferred.
 
 The complete 30-patch add-on stack replays with normal hooks. The focused suite passes 16 tests with one optional skip. The full build passes 616 tests with 117 optional skips and no failures or errors. The immutable candidate retains all 1,260 embedded core files. Cached rule objects preserve their previous value equality. The candidate is not installed; actual desktop and Iris checks remain pending.
+
+## Native actor picking
+
+The addon accepts `viabedrock:actor_picking` separately from `actor_state_v2`.
+ViaBedrock supplies one nonphysical Interaction target per native picking box.
+The addon applies exact X/Y/Z bounds to those owned targets.
+The original actor retains its physical dimensions and position.
+
+Private Bedrock 1.26.51.1 (build 51061372, protocol 2193) execution binds metadata 118 to the native `HitboxComponent`.
+The decoder reads FloatTag `Min`, `Max`, and `Pivot` components from the `Hitboxes` list.
+Missing or differently typed components become zero.
+The position producer sorts endpoints and recenters extents around actor position plus pivot.
+Finite zero extents remain valid entries.
+The captured Discord actor supplies a separate 1×2×1 picking box despite zero physical width and height.
+
+Existing Java 26.3 predicates determine owner eligibility.
+Proxy targets inherit root-vehicle and inside-pick behavior from their owners.
+The original actor stops participating only while current negotiated picking parts exist.
+Empty metadata restores the ordinary actor target.
+Connection identity, generation, and actor lifetime reject stale updates.
+Local player targets and conflicting proxy identities are rejected.
+
+Eighteen targeted core and addon tests pass in private compilation.
+They cover typed decoding, sparse updates, multipart movement, alias hit coordinates, empty restoration, removal, codec bounds, and lifecycle rejection.
+Exact rectangular clipping tests retain multipart gaps and rays shortened by blocks or reach.
+These tests do not establish native radius callbacks or exact boundary behavior.
+The addon retains Java clipping without guessed margins.
+Full stack builds and live joined NPC click acceptance remain pending for this candidate.

@@ -1,12 +1,13 @@
 ## Purpose
 
-Render server-authored Bedrock form scenes after ViaBedrock resolves pack definitions, variables, bindings and response actions. Keep each original form ID and button index. Use the existing Java click-action response path and a negotiated client payload. Negotiate native custom-form support separately, and keep the original content indices and response types.
+Render server-authored Bedrock form and container scenes after ViaBedrock resolves pack definitions, variables and bindings. Keep each original form ID and button index. Use the existing Java click-action response path and a negotiated client payload. Negotiate native custom-form support separately, and keep the original content indices and response types.
 
 The renderer uses accepted pack textures and bundled licensed UI definitions. Pack paths use accepted textures; public HTTPS image URLs load asynchronously without account credentials or another package acquisition. No local Bedrock installation is required. Ordinary Java controls remain the fallback when a visible control or dimension cannot be rendered. Missing or corrupt individual images retain usable captions and responses.
 
 ## Behavior
 
 - Keep authored control hierarchy, anchors, signed offsets, stack and grid layouts, content dimensions, layers and clipping.
+- Default image dimensions inherit the control's owner extent. Use texture aspect sizing only when `default_size_scales_to_ratio` is enabled. Slider skins therefore fill their authored track and thumb bounds.
 - Apply native small, normal, large and extra-large font multipliers consistently to label measurements, wrapping and drawing. Multiply by the authored font factor without imposing a minimum size. A zero factor has zero text extent; unknown size names use normal, as the native parser does. Visible negative factors retain ordinary controls until native layout and mirrored drawing are verified. Hidden controls with negative factors remain accepted.
 - Measure wrapped labels within their resolved width and clip text to authored bounds. Draw labels, accepted pack images, public HTTPS images and native four-side nine-slice borders. Select authored default, hover and locked visual branches. Support the native `hover_text_renderer` through formatted Java tooltips; other visible custom renderers retain the ordinary-form fallback.
 - Play resolved alpha tracks, including initially transparent cards and hover branch reentry.
@@ -42,9 +43,69 @@ The provider currently reads only its packaged, version-checked asset library. I
 - Three production HTTP fixture tests cover nonblocking deduplication, offline cache reuse, target-version isolation, redirects, stream bounds, corrupt caches and decoded pixel limits, rejected queues and reopening after a transient HTTP failure. All 18 distinct remote images from five actual captured raw forms download and decode through this loader in a private probe. That result does not prove actual client rendering.
 - Private probes parse and lay out all four actual captured ActionForm scenes with inferred font and image metrics. Their original button counts are 19, 36, 8 and 25. At two viewports, the repaired header retains positive width and the first captured Wardrobe category enters its viewport. Original visible action sets remain unchanged. A separate audit resolves all 603 image nodes through actual converted PNGs and cached HTTPS images, then verifies all 4,195 production-generated source and destination regions. Six complete native draw controls match 54 Java region quads and 432 coordinates. These are CPU geometry and real-image-dimension checks, not Java GPU drawing. The Wardrobe scene includes sixteen bound native hover-text nodes. Earlier synthetic Game Selector and variant probes remain separate evidence. These checks do not claim native screenshot parity.
 - Three additional font regressions exercise native size factors through wrapped stack allocation, explicit clipping, zero and hidden negative factors, original response identity, normal fallback and small unclamped text. All fail with the prior factor-only implementation and pass with the change. The private font/layout suite passes all 26 cases. A separate gate keeps the original action sets and positive sized captions in all four actual captured scenes at two viewports, using inferred Java glyph metrics. The combined replay and full build now include this source change.
-- The complete 31-patch replay and combined Gradle test, check and build gates pass: 674 tests, 556 passed, 118 skipped, no failures or errors. Access-widener validation passes. This project declares no Checkstyle task.
+- Before the container extension, the complete 31-patch replay and combined Gradle test, check and build gates passed: 674 tests, 556 passed, 118 skipped, no failures or errors. Access-widener validation passes. This project declares no Checkstyle task.
 - Four interaction tests exercise the actual SDL left-button value, dependent toggle visibility, dropdown expansion and selection, typed responses with null slots, inverted scalar and stepped sliders, single-option sliders, and validation of newly visible unsupported controls. The click regression fails before the mouse-button fix.
 - Native slider execution fixtures cover 184 placement, pointer, state and progress cases. Image-clipping fixtures compare 80 controls and 1,888 coordinates, plus aspect-dispatch and zero-source cases. These are CPU consumer checks with supplied components; native scheduler integration and GPU drawing remain unverified.
-- The immutable core candidate has SHA-256 `36a00d4397385e4ac5f11cafd70e3aa1726b5828ef67ca726d5056aa75770b20`. The addon candidate has SHA-256 `2710357438a85cd7c9b6faababb3fc5a4853fb415471c416d84f81a12ade0b41`; all 1,273 embedded core file entries match, excluding the manifest and the Loom-added module descriptor. Detailed evidence remains private. No credentials, captures, screenshots, bundled official assets or private paths are added to this patch.
+- The current immutable core candidate has SHA-256 `d66890ee017d9f4aa629c6b4b46d5f18491826ff05aaf27f4aa341998a36d99a`. The paired addon candidate has SHA-256 `ee6fbbf0703e873e478e8cf884b8fabd7f54f03ba412d713f97ebd509bccbdac`; all 1,302 embedded core file entries match, excluding the manifest and the Loom-added module descriptor. Detailed evidence remains private. No credentials, captures, screenshots, bundled official assets or private paths are added to this patch.
 
 Actual client menu rendering, resource reloads and Iris routes must be checked with the final candidate before release.
+
+The image sizing change passes all 27 layout tests. Seven native default, explicit, hidden and min/max sizing controls and four opt-in aspect controls establish the pinned build's behavior. All five captured Settings step sliders pass CPU layout at two viewports using the actual program and PNG dimensions. Live GPU rendering remains pending for this change.
+
+## Native chest presentation
+
+The renderer also imports the core's native container program through a separate negotiated payload.
+It binds the actual connection, menu object, menu ID and increasing presentation sequence.
+The existing ChestMenu owns slots, carried stacks, state revisions and every inventory action.
+Unsupported presentation keeps the complete ordinary container screen.
+
+Shared UI classes now own bounded scene parsing, layout, images, text, font factors, scroll geometry and visual states.
+Modal forms retain their own response model and custom input state.
+Native containers use typed slot and cursor annotations, rather than fake form actions.
+
+Authored slot buttons inherit their real cell extent when their dimensions are absent or default.
+Explicit dimensions still apply. Each ordinary native cell has an 18-pixel input rectangle and a 16-pixel item renderer.
+The same clipped rectangle controls hovering, tooltips and vanilla click, release and quickcraft handling.
+Scrolled rows retain their registration while their hover rectangles respect the viewport.
+
+Native progress bars use authored dimensions and flags, original endpoint quantization, shadow bounds, rounding, storage minimums and durability colors.
+Java damage and count come from the actual stack, including vanilla's quickcraft preview.
+The slot decoration hook suppresses duplicate Java bars and counts.
+Typed authored count labels use Java count presentation once at their resolved bounds and clip.
+The vanilla carried item and its decorations remain authoritative.
+
+Transient flights compare actual mapped slot states after genuine menu operations or revisions.
+They cancel unchanged same-slot counts and match equivalent item losses to gains.
+Unmatched additions or removals produce no flight.
+Matched collection controls provide top-left coordinates and width divided by sixteen for scale.
+Flights use native quintic motion, distance-based duration and the original 0.3-second lifetime.
+No synthetic carried-item collection or mouse anchor is added.
+
+Native lock bytes come from retained pre-conversion user data with exact ByteTag semantics.
+Absent or wrong-type values produce zero. The owned Bedrock connection supplies the actual showTags gamerule.
+Nonzero values keep ordinary controls if that rule source is unavailable. Empty stacks suppress lock decorations.
+Known Java or retained native bundles keep ordinary controls while storage bindings remain unsupported.
+Unknown storage values stay absent, rather than fabricated zero amounts.
+An active progress bar with invalid amounts or an active unsupported item filter triggers ordinary controls.
+
+### Evidence and remaining boundaries
+
+Original native CPU fixtures cover twenty progress cases, seven flight timing cases, four initial queue cases, eight state comparisons and five anchors.
+Twenty-five genuine NBT controls and 125 complete UI callback controls establish unsigned typed lock reads, missing-value behavior and showTags-gated decorations.
+Native collection marker preference, local Java operation timing, item equivalence and cursor collection membership remain bounded adapter assumptions.
+Absent inactive-item filters use ordinary Java item presentation; no false native binding is manufactured. A projected active filter keeps the ordinary screen.
+Java device scale supplies endpoint quantization. Count formatting uses Java presentation, not a claimed native formatter.
+
+Actual accepted-pack three-row and six-row programs resolve all 63 and 90 slot addresses.
+Their active slot rectangles and 65 or 92 PNG slice paths pass CPU validation with actual image dimensions.
+The paired v9 overlay retains all 63 and 90 typed authored count labels and one chest title per kind.
+That shallow same-name definition overlay follows the actual versioned partial pack declarations; original native publication semantics remain under investigation.
+A separate export/import probe preserves a supplied OPEN_SCREEN title while retaining the captured condition title.
+The private shared form/container suite passes 72 tests with one skipped fixture.
+It also rejects an unsupported visible button action while accepting the same hidden control.
+Tooltip tests preserve styled runs and leading, repeated and trailing blank lines across CRLF normalization and width wrapping.
+The actual Wardrobe capture has sixteen components with two line breaks and no authored width; these now use the multiline path.
+These checks do not establish GPU drawing, live transfer behavior, resource reloads or Iris compatibility.
+Those final client gates remain required before release.
+
+The final container, form, tooltip and preserved actor changes pass the complete normal 31-patch replay and clean Gradle check, build and POM gates: 696 tests, 578 passed, 118 optional skips, no failures or errors. Access-widener validation passes. All 1,302 embedded core entries match the paired immutable core. The 38 installed artifacts remain unchanged. Live inventory transfers, resource reloads and Iris compatibility remain required before release.
