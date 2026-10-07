@@ -1,4 +1,4 @@
-From 31b269adb29caac67a1793e4cc1b9262e97f8d46 Mon Sep 17 00:00:00 2001
+From 20cec5f5dad8f9e9ebf4bf79dda6b93910f5025d Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Mon, 28 Sep 2026 10:38:26 +0200
 Subject: [PATCH] feat(blocks): render Bedrock state geometry and materials
@@ -160,8 +160,18 @@ translation; native wrappers use different paths. Metadata format 2 makes
 those definitions available through ViaProxy as well as direct sessions.
 This supplies custom component shapes, not a complete native movement
 solver or vanilla per-type collision provider.
+
+Retain the material AO exponent on each authored face in the converted
+model, including aliases and generated reverse-winding planes. One face
+with exponent zero must not disable AO on all other faces. Bedrock
+1.26.51.1 retains a float exponent and applies it to the product of
+corner ambient light and directional dimming, before tint and lightmap.
+Native instruction probes cover six faces and 2,304 corner outputs with
+unchanged light coordinates. The core carries metadata on both routes;
+faithful per-face evaluation requires client renderer integration.
 ---
  .../api/model/CustomBlockCulling.java         | 206 +++++++
+ .../api/model/CustomBlockLighting.java        |  42 ++
  .../api/model/CustomBlockOffset.java          |  97 +++
  .../api/model/CustomBlockProperties.java      | 150 +++++
  .../api/model/CustomBlockVisual.java          |  27 +
@@ -177,8 +187,8 @@ solver or vanilla per-type collision provider.
  .../protocol/packet/VoxelShapePackets.java    |  35 ++
  .../protocol/rewriter/BlockStateRewriter.java |  72 ++-
  .../rewriter/ResourcePackRewriter.java        |   2 +
- .../CustomBlockCullingCompiler.java           | 162 ++++++
- .../resourcepack/CustomBlockModel.java        | 550 ++++++++++++++++++
+ .../CustomBlockCullingCompiler.java           | 162 +++++
+ .../resourcepack/CustomBlockModel.java        | 557 ++++++++++++++++++
  .../CustomBlockResourceRewriter.java          | 233 ++++++++
  .../CustomBlockStateDefinitions.java          | 153 +++++
  .../protocol/storage/ChunkTracker.java        |  33 +-
@@ -186,20 +196,22 @@ solver or vanilla per-type collision provider.
  .../protocol/storage/ResourcePackStorage.java |  44 +-
  .../protocol/storage/VoxelShapeRegistry.java  | 125 ++++
  .../api/model/CustomBlockCullingTest.java     |  54 ++
+ .../api/model/CustomBlockLightingTest.java    |  43 ++
  .../api/model/CustomBlockOffsetTest.java      |  80 +++
  .../api/model/CustomBlockPropertiesTest.java  |  69 +++
  .../http/ConvertedResourcePackCacheTest.java  |  29 +
  .../rewriter/CustomBlockBoneGeometryTest.java | 177 ++++++
- .../CustomBlockModelSelectionTest.java        | 424 ++++++++++++++
+ .../CustomBlockModelSelectionTest.java        | 466 +++++++++++++++
  .../CustomBlockPlaneGeometryTest.java         | 170 ++++++
  .../CustomBlockCullingCompilerTest.java       | 140 +++++
  .../CustomBlockMaterialVisibilityTest.java    | 106 ++++
  .../CustomBlockStateDefinitionsTest.java      | 218 +++++++
  .../protocol/storage/ChunkTrackerTest.java    |  24 +
  .../storage/CustomBlockPackStorageTest.java   | 169 ++++++
- .../storage/VoxelShapeRegistryTest.java       | 130 +++++
- 37 files changed, 4093 insertions(+), 23 deletions(-)
+ .../storage/VoxelShapeRegistryTest.java       | 130 ++++
+ 39 files changed, 4227 insertions(+), 23 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockCulling.java
+ create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockOffset.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockProperties.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CustomBlockVisual.java
@@ -213,6 +225,7 @@ solver or vanilla per-type collision provider.
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/CustomBlockPackStorage.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/protocol/storage/VoxelShapeRegistry.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CustomBlockCullingTest.java
+ create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CustomBlockOffsetTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/api/model/CustomBlockPropertiesTest.java
  create mode 100644 src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockBoneGeometryTest.java
@@ -433,6 +446,54 @@ index 000000000..f01a834b7
 +        public List<Rectangle> slice(final Direction direction) {
 +            return this.slices.getOrDefault(direction, List.of());
 +        }
++    }
++
++}
+diff --git a/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java
+new file mode 100644
+index 000000000..d953aa47f
+--- /dev/null
++++ b/src/main/java/net/raphimc/viabedrock/api/model/CustomBlockLighting.java
+@@ -0,0 +1,42 @@
++/*
++ * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
++ * Copyright (C) 2026 RK_01/RaphiMC and contributors
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.libs.gson.JsonObject;
++
++/** Material lighting retained on each authored face, independently of texture and culling identity. */
++public record CustomBlockLighting(float ambientOcclusion, boolean faceDimming) {
++
++    public static final String KEY = "viabedrock_lighting";
++
++    public CustomBlockLighting {
++        if (!Float.isFinite(ambientOcclusion) || ambientOcclusion < 0F || ambientOcclusion > 10F) {
++            throw new IllegalArgumentException("Invalid material ambient occlusion exponent");
++        }
++    }
++
++    public JsonObject json() {
++        final JsonObject json = new JsonObject();
++        json.addProperty("ambient_occlusion", this.ambientOcclusion);
++        json.addProperty("face_dimming", this.faceDimming);
++        return json;
++    }
++
++    public static CustomBlockLighting fromJson(final JsonObject json) {
++        if (!json.has("ambient_occlusion") || !json.has("face_dimming")
++                || !json.get("ambient_occlusion").isJsonPrimitive() || !json.getAsJsonPrimitive("ambient_occlusion").isNumber()
++                || !json.get("face_dimming").isJsonPrimitive() || !json.getAsJsonPrimitive("face_dimming").isBoolean()) {
++            throw new IllegalArgumentException("Invalid material lighting fields");
++        }
++        return new CustomBlockLighting(json.get("ambient_occlusion").getAsFloat(), json.get("face_dimming").getAsBoolean());
++    }
++
++    /** Native terrain applies the exponent after corner averaging and directional attenuation, before tint and world light. */
++    public float shade(final float ambient, final float directional) {
++        return (float) Math.pow(ambient * (this.faceDimming ? directional : 1F), this.ambientOcclusion);
 +    }
 +
 +}
@@ -1660,10 +1721,10 @@ index 000000000..5a7981fc9
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
 new file mode 100644
-index 000000000..5cf78b912
+index 000000000..053cfa769
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/protocol/rewriter/resourcepack/CustomBlockModel.java
-@@ -0,0 +1,550 @@
+@@ -0,0 +1,557 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -1676,6 +1737,7 @@ index 000000000..5cf78b912
 +import com.viaversion.viaversion.libs.gson.*;
 +import net.raphimc.viabedrock.api.model.CustomBlockVisual;
 +import net.raphimc.viabedrock.api.model.CustomBlockCulling;
++import net.raphimc.viabedrock.api.model.CustomBlockLighting;
 +import net.raphimc.viabedrock.api.util.JsonUtil;
 +import net.raphimc.viabedrock.protocol.storage.ResourcePackStorage;
 +import org.cube.converter.converter.enums.RotationType;
@@ -1731,10 +1793,10 @@ index 000000000..5cf78b912
 +        final Map<String, String> textureBindings = new LinkedHashMap<>();
 +        final Map<String, String> textureMethods = new LinkedHashMap<>();
 +        final Map<Direction, String> directionMethods = new LinkedHashMap<>();
-+        final Map<String, Boolean> faceDimming = new LinkedHashMap<>();
++        final Map<String, CustomBlockLighting> faceLighting = new LinkedHashMap<>();
 +        final Map<String, Boolean> visibleSprites = new LinkedHashMap<>();
 +        boolean opaque = true;
-+        boolean ao = true;
++        boolean ao = false;
 +        String renderMethod = "opaque";
 +        for (Direction direction : Direction.values()) {
 +            final String face = direction.name().toLowerCase(java.util.Locale.ROOT);
@@ -1761,9 +1823,13 @@ index 000000000..5cf78b912
 +            textureIds.put(direction, image == null ? vanillaTexture : "viabedrock:block/custom/slot_" + javaState + '/' + binding);
 +            visibleSprites.put(textureIds.get(direction), CustomBlockResourceRewriter.hasVisiblePixels(image, method));
 +            directionMethods.put(direction, method);
-+            faceDimming.put(face, !(material.get("face_dimming") instanceof NumberTag value) || value.asInt() != 0);
++            final float exponent = material.get("ambient_occlusion") instanceof NumberTag value ? value.asFloat() : 1F;
++            if (!Float.isFinite(exponent) || exponent < 0F || exponent > 10F) {
++                return null;
++            }
++            faceLighting.put(face, new CustomBlockLighting(exponent, !(material.get("face_dimming") instanceof NumberTag value) || value.asInt() != 0));
 +            opaque &= method.equals("opaque") || !method.equals("blend") && CustomBlockResourceRewriter.hasOpaquePixels(image);
-+            ao &= !(material.get("ambient_occlusion") instanceof NumberTag value) || value.asDouble() != 0;
++            ao |= exponent != 0F;
 +            if (method.equals("blend") || renderMethod.equals("opaque")) {
 +                renderMethod = method;
 +            }
@@ -1796,7 +1862,7 @@ index 000000000..5cf78b912
 +        final Transform transformation = new Transform(components.getCompoundTag("minecraft:transformation"));
 +        CustomBlockCullingCompiler.apply(storage, state, geometryTag, fullCube, model, transformation);
 +        transformModel(model, transformation);
-+        applyFaceMaterials(model, faceDimming, directionMethods);
++        applyFaceMaterials(model, faceLighting, directionMethods);
 +        omitInvisibleFaces(model, visibleSprites);
 +        final boolean occluding = fullCube && opaque && transformation.identity();
 +        return new CustomBlockVisual(state, javaState, textureBindings.values().iterator().next(), JsonUtil.sort(model, Comparator.naturalOrder()).toString(), renderMethod,
@@ -1870,7 +1936,7 @@ index 000000000..5cf78b912
 +        }
 +    }
 +
-+    private static void applyFaceMaterials(final JsonObject model, final Map<String, Boolean> faceDimming, final Map<Direction, String> methods) {
++    private static void applyFaceMaterials(final JsonObject model, final Map<String, CustomBlockLighting> faceLighting, final Map<Direction, String> methods) {
 +        final JsonArray elements = new JsonArray();
 +        for (JsonElement value : model.getAsJsonArray("elements")) {
 +            final JsonObject element = value.getAsJsonObject();
@@ -1878,7 +1944,9 @@ index 000000000..5cf78b912
 +            final JsonObject shadedFaces = new JsonObject();
 +            final JsonObject unshadedFaces = new JsonObject();
 +            for (Map.Entry<String, JsonElement> face : element.getAsJsonObject("faces").entrySet()) {
-+                (faceDimming.getOrDefault(face.getKey(), true) ? shadedFaces : unshadedFaces).add(face.getKey(), face.getValue());
++                final CustomBlockLighting lighting = faceLighting.get(face.getKey());
++                face.getValue().getAsJsonObject().add(CustomBlockLighting.KEY, lighting.json());
++                (lighting.faceDimming() ? shadedFaces : unshadedFaces).add(face.getKey(), face.getValue());
 +            }
 +            if (!shadedFaces.isEmpty()) {
 +                element.add("faces", shadedFaces);
@@ -3091,6 +3159,55 @@ index 000000000..d9e0da375
 +    }
 +
 +}
+diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java
+new file mode 100644
+index 000000000..0ce35064e
+--- /dev/null
++++ b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockLightingTest.java
+@@ -0,0 +1,43 @@
++package net.raphimc.viabedrock.api.model;
++
++import com.viaversion.viaversion.libs.gson.JsonParser;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.api.Assumptions;
++
++import java.nio.file.Files;
++import java.nio.file.Path;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class CustomBlockLightingTest {
++
++    @Test
++    void exponentIncludesDimmingAndKeepsUntintedWorldLightSeparate() {
++        assertEquals(0.16F, new CustomBlockLighting(2F, true).shade(0.5F, 0.8F), 1E-7F);
++        assertEquals(0.25F, new CustomBlockLighting(2F, false).shade(0.5F, 0.8F));
++        assertEquals(1F, new CustomBlockLighting(0F, true).shade(0.2F, 0.5F));
++        assertEquals(0.4F, new CustomBlockLighting(1F, true).shade(0.5F, 0.8F));
++        assertEquals(0F, new CustomBlockLighting(10F, true).shade(0F, 0.8F));
++    }
++
++    @Test
++    void nativeCornerSamplesMatchMaterialCalculation() throws Exception {
++        final String fixture = System.getProperty("stackanvil.test.nativeAo");
++        Assumptions.assumeTrue(fixture != null);
++        final var cases = JsonParser.parseString(Files.readString(Path.of(fixture))).getAsJsonObject().getAsJsonArray("cases");
++        for (var value : cases) {
++            final var sample = value.getAsJsonObject();
++            final var lighting = new CustomBlockLighting(sample.get("exponent").getAsFloat(), true);
++            final float actual = lighting.shade(sample.get("ao").getAsFloat(), sample.get("dimming").getAsFloat());
++            final var colors = sample.getAsJsonArray("colors");
++            for (int corner = 0; corner < 4; corner++) {
++                for (int channel = 0; channel < 3; channel++) {
++                    assertEquals(colors.get(corner * 4 + channel).getAsFloat(), actual, 2E-7F);
++                }
++                assertEquals(1F, colors.get(corner * 4 + 3).getAsFloat());
++            }
++            assertEquals(lighting, CustomBlockLighting.fromJson(lighting.json()));
++        }
++    }
++
++}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockOffsetTest.java b/src/test/java/net/raphimc/viabedrock/api/model/CustomBlockOffsetTest.java
 new file mode 100644
 index 000000000..2615420e9
@@ -3485,10 +3602,10 @@ index 000000000..a347e5aa6
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
 new file mode 100644
-index 000000000..32e6c03d7
+index 000000000..b8737a6f9
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/rewriter/CustomBlockModelSelectionTest.java
-@@ -0,0 +1,424 @@
+@@ -0,0 +1,466 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/RaphiMC/ViaBedrock
 + * Copyright (C) 2026 RK_01/RaphiMC and contributors
@@ -3806,6 +3923,48 @@ index 000000000..32e6c03d7
 +        final var allElements = JsonParser.parseString(allUnshaded.modelJson()).getAsJsonObject().getAsJsonArray("elements");
 +        assertEquals(1, allElements.size());
 +        assertEquals(6, allElements.get(0).getAsJsonObject().getAsJsonObject("faces").size());
++    }
++
++    @Test
++    void retainsIndependentFaceExponentsWithMixedAmbientOcclusion() {
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB))));
++        final CompoundTag components = components("minecraft:geometry.full_block", "ruby", "opaque");
++        final List<String> directions = List.of("down", "up", "north", "south", "west", "east");
++        final float[] exponents = {0F, 0.25F, 0.5F, 1F, 2F, 10F};
++        for (int index = 0; index < directions.size(); index++) {
++            final CompoundTag material = components.getCompoundTag("minecraft:material_instances").getCompoundTag("*").copy();
++            material.putFloat("ambient_occlusion", exponents[index]);
++            material.putByte("face_dimming", (byte) (index % 2));
++            components.getCompoundTag("minecraft:material_instances").put(directions.get(index), material);
++        }
++        final var visual = CustomBlockModel.compile(storage, "test:mixed", 12, components);
++        final var model = JsonParser.parseString(visual.modelJson()).getAsJsonObject();
++        assertTrue(model.get("ambientocclusion").getAsBoolean());
++        int faceCount = 0;
++        for (var element : model.getAsJsonArray("elements")) {
++            for (var face : element.getAsJsonObject().getAsJsonObject("faces").entrySet()) {
++                final int index = directions.indexOf(face.getKey());
++                final var lighting = net.raphimc.viabedrock.api.model.CustomBlockLighting.fromJson(face.getValue().getAsJsonObject()
++                        .getAsJsonObject(net.raphimc.viabedrock.api.model.CustomBlockLighting.KEY));
++                assertEquals(exponents[index], lighting.ambientOcclusion());
++                assertEquals(index % 2 != 0, lighting.faceDimming());
++                faceCount++;
++            }
++        }
++        assertEquals(6, faceCount);
++        assertEquals(0, visual.lightEmission());
++        assertTrue(visual.occluding());
++        assertEquals(0F, components.getCompoundTag("minecraft:material_instances").getCompoundTag("down").getFloat("ambient_occlusion"));
++    }
++
++    @Test
++    void rejectsInvalidMaterialExponentsBeforeExport() {
++        final ResourcePackStorage storage = new ResourcePackStorage(List.of(pack(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB))));
++        final CompoundTag components = components("minecraft:geometry.full_block", "ruby", "opaque");
++        for (float exponent : new float[]{-1F, 10.01F, Float.NaN, Float.POSITIVE_INFINITY}) {
++            components.getCompoundTag("minecraft:material_instances").getCompoundTag("*").putFloat("ambient_occlusion", exponent);
++            assertNull(CustomBlockModel.compile(storage, "test:invalid", 12, components));
++        }
 +    }
 +
 +    @Test

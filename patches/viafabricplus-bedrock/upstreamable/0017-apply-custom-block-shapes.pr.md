@@ -86,3 +86,20 @@ Prepared reload results cannot restore a cleared session.
 The lifecycle recordings deliberately disconnect; earlier uninterrupted recordings establish the tested landing and reload behavior.
 The final dependency build passes 677 core, 585 add-on, and 16 converter tests with zero failures or errors.
 There are 19 optional core skips and 114 optional add-on skips.
+
+## Native material ambient strength
+
+The model parser and face bakery retain core lighting annotations alongside the existing culling rules.
+Each baked face keeps its own exponent and face-dimming flag.
+The terrain hook applies the exponent after corner averaging and directional attenuation, before Java quantizes the vertex color.
+It avoids a second directional multiplier. The flat path uses the same material arithmetic without corner occlusion.
+Only registered custom carriers use these settings.
+
+Private probes evaluate the actual injected flat and ambient methods using accepted CubeCraft models on both routes.
+Each route loads 276 definitions and evaluates 24 baked faces at a supplied world position.
+Zero strength removes vertex attenuation. Strength two matches squared strength-one colors within two byte-quantization levels.
+Neither change alters lightmap coordinates.
+These probes use loaded models but do not place each sampled block or compare native screenshots.
+Java still supplies the corner neighborhood, interpolation, and light coordinates.
+Alternative terrain renderers, other dimensions, and enhanced lighting require separate verification.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-material-ambient-occlusion-october-7-2026) records the evidence boundaries.

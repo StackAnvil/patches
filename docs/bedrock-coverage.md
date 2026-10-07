@@ -236,7 +236,7 @@ Core still needs to derive equipment attributes from target item definitions, in
 | R2 | Server particle dispatch | Incomplete | Core transports complete requests, typed variables, actor identity, and Java fallback bodies to native clients. Direct and ViaProxy authored fixtures verify dispatch, typed size/tint records, and fallback decoding. Complete actor queries, remote actor transport, interpolation, lifecycle comparisons, and visible native parity remain open. |
 | R3 | Particle runtime | Incomplete | Complete components, actor contexts, child effects, concurrency, and visible lifecycle comparisons. |
 | R4 | Server audio | Incomplete | Native capture verifies PlaySound coordinates already use eighths of a block. Core transports signed loops, optional playback fields, handle controls, and ordered sound resources through direct connections and ViaProxy. Add-on playback controls pass captured-session OpenAL checks on both routes. Native request admission now matches the tested float range gate on both add-on routes. Server captions now have core state, transported translations, client controls, and a HUD on both add-on routes. Complete actor/local captions, localization/layout comparisons, stream policies, range behavior for other sources, audible comparisons, and broader lifecycle verification. |
-| R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties through ViaProxy. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Core carries native random offsets in converted metadata. The add-on verifies continuous terrain, outline, and camera offsets separately from floored movement collision on both routes, including edge and corner queries. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, directional light occlusion, vanilla per-type collision shapes, and native collision solving. |
+| R5 | Custom block geometry and lighting | Incomplete | Converted packs carry physical properties and per-face ambient strengths through ViaProxy. Native material arithmetic matches 576 executable cases. Both routes retain the settings through model baking and injected terrain lighting. Java still supplies corner sampling and interpolation. Both routes verify distinct collision/selection bounds, standing height, and light values with the add-on. Core carries native random offsets in converted metadata. The add-on verifies continuous terrain, outline, and camera offsets separately from floored movement collision on both routes, including edge and corner queries. Complete ordinary-Java carrier occlusion, rotated nonuniform scale, legacy texture variation, bottom-face native comparisons, directional light occlusion, vanilla per-type collision shapes, and native collision solving. |
 | R6 | Equipped attachables | Incomplete | Accepted actor graphs now travel through ViaProxy. Both routes render the supported costume and owner-bound chest wings. Complete proxy properties, variants, explicit bone bindings, per-bone materials, material families, and broader native comparisons. |
 
 The attachable matrix tests establish supported same-name affine bindings.
@@ -7379,3 +7379,51 @@ The add-on build passes with 605 tests, including 117 fixture skips. Neither sui
 ViaProxy builds successfully. All 1,250 core files match both downstream bundles, except their manifests.
 The emission regressions fail with the old rules and pass with the corrected rules.
 These checks do not include a new live Java/native screenshot comparison.
+
+## Native material ambient occlusion, October 7, 2026
+
+**Goal classification: progress. Full lighting and Bedrock parity remain incomplete.**
+
+The pinned Bedrock material reader retains a floating-point ambient exponent, with a default of one.
+The native terrain routine averages neighbor occlusion, multiplies directional dimming, then applies that exponent.
+Tint and world light follow the material operation.
+The selected classic terrain shader multiplies texture, vertex color, and lightmap before fog.
+This inspection does not cover enhanced lighting variants.
+
+Core now preserves per-face strengths from zero to ten and their independent face-dimming flags in converted models.
+Mixed materials use Java's ambient path when any face needs occlusion.
+Previously, a zero-strength face disabled ambient occlusion for the whole model.
+The add-on retains the annotations through model parsing and baking, alongside authored culling rules.
+It applies native material arithmetic before color quantization on the flat and ambient terrain paths.
+Converted packs carry this integration through ViaProxy. Ordinary Java clients retain approximate model-level ambient behavior.
+
+**Native arithmetic verified:** A private executable fixture covers 576 combinations, or 2,304 corners.
+It executes the original corner routine and neighbor-index initializer from build 51061372.
+The production helper matches all three color channels within 2E-7, preserves alpha, and leaves sampled light coordinates unchanged.
+The fixture supplies uniform neighborhood values, TLS storage, material lookup results, and the imported float power function.
+It does not establish native neighborhood sampling, interpolation, or a complete visible scene.
+Raw executable code and fixture output remain private.
+
+**Client integration verified:** Direct and ViaProxy probes each load all 276 CubeCraft custom definitions.
+They evaluate 24 accepted, baked faces through the actual injected flat and ambient methods.
+Zero strength produces white vertex color. Strength two matches squared strength-one colors within two quantization levels.
+Each route passes 192 corner comparisons across three color channels. Neither control changes lightmap coordinates.
+The probes evaluate carrier models at a supplied world position rather than placing every sampled block.
+They establish parser, bakery, and terrain-hook integration, not visible native parity.
+
+**Replay verification and limits:** Longer direct and ViaProxy runs complete the unchanged CubeCraft scene and load both converted packs.
+Both pass gameplay and model checks. These checks establish transport and model installation rather than native pixel parity.
+The first direct run reaches spawn, but its 120-second duration cannot finish the 172-second recording.
+The first ViaProxy attempt times out before resource-pack information reaches its packet journal.
+Its subsequent diagnostic run completes successfully. The earlier handshake timeout remains unresolved and separate from the measured material arithmetic.
+
+**Build verification:** Both owning patches replay through their full stacks.
+The core build and Checkstyle pass with 804 tests, including 25 fixture skips.
+The optional native ambient fixture executes in this build. The add-on passes 605 tests, including 117 fixture skips.
+Neither suite reports failures or errors. ViaProxy builds successfully.
+All 1,251 core entries match both downstream bundles, except their manifests.
+Artifact replacements use reviewed inventories and private rollback copies. Existing server processes remain unchanged.
+
+**Remaining:** Native corner sampling, interpolation, directional coefficients, and world-light sampling need controlled visible comparisons.
+Other dimensions, held-item lighting, End sky inputs, secondary fluids, directional occlusion, alternative terrain renderers, and enhanced lighting remain open.
+Strict BDS, movement, combat, account, and platform requirements retain their existing scope.

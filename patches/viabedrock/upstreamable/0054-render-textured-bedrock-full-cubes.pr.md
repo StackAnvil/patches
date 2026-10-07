@@ -189,3 +189,23 @@ The [coverage ledger](../../../docs/bedrock-coverage.md#production-custom-block-
 The actual isolated-profile launcher refused a visible native comparison because a previous GPU session ended uncleanly during this boot.
 The generic preflight had reported no problem; the launch supplied the authoritative blocker.
 These arithmetic and wire checks do not establish complete movement or rendering parity.
+
+## Per-face ambient occlusion strength
+
+The target build retains `minecraft:material_instances.ambient_occlusion` as a float, rather than a boolean.
+[Microsoft's material reference](https://learn.microsoft.com/en-us/minecraft/creator/reference/content/blockreference/examples/blockcomponents/minecraftblock_material_instances?view=minecraft-bedrock-stable) documents the exponent range from zero to ten.
+Inspection of Bedrock 1.26.51.1 build 51061372 establishes the order: average corner occlusion, multiply face dimming, then apply the exponent.
+Tint and world light follow this operation.
+
+Core retains the exponent and face-dimming flag on each authored model face.
+Mixed materials enable Java's ambient path when any face needs occlusion.
+An exponent of zero on one face no longer disables occlusion across the entire model.
+The accepted converted pack carries these annotations through both connection routes.
+Ordinary Java clients retain their approximate model-level ambient setting. Exact per-face exponents require the add-on.
+
+A private executable fixture runs the original corner-lighting routine across 576 combinations, with four corners per face.
+The production helper matches all color channels within 2E-7, while every sampled light coordinate remains unchanged.
+The fixture supplies uniform neighborhood values, material lookup, TLS storage, and the imported float power function.
+It establishes the material arithmetic, not complete native terrain sampling or visible image parity.
+Semantic tests cover mixed face strengths, disabled dimming, invalid exponents, and preservation of geometry, emission, and occlusion.
+The [coverage ledger](../../../docs/bedrock-coverage.md#native-material-ambient-occlusion-october-7-2026) records integration results and remaining limits.
