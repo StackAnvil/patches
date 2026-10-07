@@ -409,10 +409,6 @@ async function main(): Promise<void> {
     // Proxy libraries write their own saves with default permissions.
     for (const name of ["saves.json", "viaproxy.yml"]) if (existsSync(join(proxyHome, name))) await chmod(join(proxyHome, name), 0o600);
   }
-  const summary = await inspectJournal(join(directory, "packets.sbr"));
-  await writeFile(join(directory, "manifest.json"), `${JSON.stringify({ schema: 1, mode, client, graphics, server: mode === "record" ? input : undefined, capturedAt: new Date().toISOString(), summary }, null, 2)}\n`, { mode: 0o600 });
-  console.log(JSON.stringify(summary, null, 2));
-  console.log(`Saved private ${mode} artifacts: ${directory}`);
   if (client === "native" && /Native connection failed:|Native capture failed:/.test(await logText(join(directory, "proxy.log")))) throw new Error("The native recorder failed. Read its private proxy log; this capture is incomplete.");
   if (client === "native" && /Native pack observation failed:/.test(await logText(join(directory, "proxy.log")))) throw new Error("Native pack reconstruction failed. The raw recording is preserved for offline repair; read its private proxy log.");
   if (client === "native" && !/StackAnvil native pack observation complete/.test(await logText(join(directory, "proxy.log")))) throw new Error("Native pack reconstruction did not finish before shutdown. The raw recording is preserved; read its private proxy log.");
@@ -424,6 +420,11 @@ async function main(): Promise<void> {
     const failures = graphicsFailures(await logText(join(directory, "client.log")), (await readGraphicsLock()).shader.filename);
     if (failures.length) throw new Error(`${failures.join(" ")} Read the private client log.`);
   }
+  if (!existsSync(join(directory, "packets.sbr"))) throw new Error("The client produced no packet journal. Read its private client and server logs.");
+  const summary = await inspectJournal(join(directory, "packets.sbr"));
+  await writeFile(join(directory, "manifest.json"), `${JSON.stringify({ schema: 1, mode, client, graphics, server: mode === "record" ? input : undefined, capturedAt: new Date().toISOString(), summary }, null, 2)}\n`, { mode: 0o600 });
+  console.log(JSON.stringify(summary, null, 2));
+  console.log(`Saved private ${mode} artifacts: ${directory}`);
   if (!summary.reachedStartGame || !summary.reachedSpawn) throw new Error("The server did not announce initialization and spawn. Read its private logs and screenshot.");
   if (!hasGameplayAcknowledgments(summary.serverboundIds)) throw new Error("The server announced spawn, but the client did not initialize its player and begin gameplay movement. Read its private logs and screenshot.");
   if (mode === "replay" && !/StackAnvil replay scene complete/.test(await logText(join(directory, "replay.log")))) throw new Error("The replay stopped before the complete scene was sent.");
