@@ -342,7 +342,7 @@ Prediction transport revision 7 includes a completed client frame identity.
 Core binds accepted frames to the exact ticks sent in `PLAYER_AUTH_INPUT` and retains 512 bindings.
 The add-on applies confirmed glide boosts against that binding, including elapsed frames before receipt.
 Missing bindings never create a new countdown at receipt time.
-Older confirmations cannot replace newer actor effects.
+The October 7 command ordering update below replaces the earlier rejection of older actor confirmations.
 Actor removal and disconnect clear the add-on state.
 
 The shared `GlideMovement` calculator now includes the native rocket impulse before drag.
@@ -1413,3 +1413,61 @@ The private display and owned processes stopped. Both existing user servers reta
 Direct route comparisons, stock Java movement, mixed terrain, vehicles, Boar, CubeCraft, and actual platform joins remain required.
 The full gameplay matrix and all other goal requirements remain open.
 Private evidence remains under `.stackanvil/research/geyser-live/`.
+
+## Native movement-effect command ordering, October 7, 2026
+
+**Observed failure:** The native removal, activation, and infinite-effect sequence produced three different results from the old production timeline.
+Core rejected each older confirmation because it retained the latest packet tick as an ordering timestamp.
+A bounded comparison also found 720 differences across 1,944 synthetic command states.
+This comparison covers component state. It does not count reachable gameplay failures or establish full movement parity.
+
+**Native evidence:** The pinned 1.26.51.1 binary passes 16,038 constructor and application cases.
+The original functions are `143281540`, `143298740`, and `143298970`.
+They clamp durations below `-1` to zero and preserve infinite duration `-1`.
+Finite adjustment uses unsigned tick comparison and signed 32-bit subtraction.
+A change between active and inactive state forces application despite an older ordering timestamp.
+Application clears that timestamp. Local prediction can set it again.
+
+The original `142890810` dispatcher passes 3,521 cases with missing, partial, and complete fixture history.
+It clamps selection to the oldest retained tick, distinguishes history and fallback paths, and marks the next retained frame dirty.
+The original packet tick remains in the command after this selection.
+A combined fixture passes 6,144 cases through the constructor, dispatcher, live application, and `142bbcd70` ring insertion.
+It preserves each command's virtual table and records insertion into retained frames or the pending command vector.
+A tick-zero command with duration 100 and clock 53 retains duration 47 in this fixture.
+Tick zero therefore does not imply either permanent inactivity or a fresh receipt-time duration of 100.
+
+The fixtures supply allocation, component storage, dispatch, preallocated frame arrays, and a replay-controller result.
+They do not execute complete rewind, later queued callbacks, native actor creation, scheduling, or world trajectories.
+Private evidence remains under `.stackanvil/research/movement-confirmation/`.
+
+**Implemented:** Core now separates a local prediction frame from the confirmation's wire tick.
+Mapped confirmations can force a state transition and clear local ordering state after admission.
+Older confirmations no longer fail a blanket latest-packet-tick check.
+Core snapshots retain packet arrival order.
+Infinite effects remain active without a frame binding because they require no expiration deadline.
+A finite effect with an unknown frame still requires an explicit input-clock reference for native duration adjustment.
+The existing add-on consumes the shared core timeline.
+
+**Verification:** The same stateful native countdown sequence now matches all four production observations.
+Tests cover older removal, older activation, infinite duration, local prediction protection, forced transitions, and packet arrival order.
+The owning core patch contains the fix. The full stack replays all 97 patches.
+
+**Still required:** Transport the explicit native input-clock reference and retain commands for full history application.
+Reproduce missing-frame, evicted-frame, future-tick, wraparound, and replay-controller behavior.
+Verify correction replay, phase ordering, complete native trajectories, direct connections, and ViaProxy under latency.
+Keep stock Java, vehicles, mixed terrain, Boar, CubeCraft, actual platform joins, and the full gameplay matrix in scope.
+
+**Build and live regression:** Core passes 791 tests, with 22 optional skips and no failures or errors.
+The add-on passes 605 tests, with 117 optional skips and no failures or errors. ViaProxy also builds.
+Both upstream PR checks pass. All 1,250 core files match the client and proxy bundles, excluding each bundle's manifest.
+A fresh strict BDS join through ViaProxy stays connected for 20 seconds.
+The observer records 375 paired travel phases, 89 active geyser phases, and 36 bit-exact native float lift changes.
+All 278 phases after source removal leave vertical velocity unchanged. The retained effect subsequently expires.
+This check verifies the existing lift path after the ordering change. It does not verify complete native replay.
+
+Dry runs review nine exact artifact replacements and the managed client fixture.
+Each artifact replacement preserves the other 32 inventory entries.
+The final client inventory contains the same 11 files. Both managed add-on copies match the reviewed artifact.
+The launcher changes only its launch-time field and game log. Seven other inventory files remain unchanged.
+Rollback copies remain under `.stackanvil/research/movement-confirmation/artifacts/build-rollback/` and `.stackanvil/research/movement-confirmation/java-client-rollback-1/`.
+The private display and owned processes stop. Both existing user servers retain their original process identities.

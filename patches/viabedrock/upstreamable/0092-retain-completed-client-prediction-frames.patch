@@ -1,4 +1,4 @@
-From b09f356970b2cb97f0672772be909165d002847f Mon Sep 17 00:00:00 2001
+From 1086b25e85366dd6950775a592463c9e1ab47d4c Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:28 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -256,13 +256,27 @@ Native incoming handler 14133f140 uses direct application without replay
 state, or duration adjustment and history commands with replay state.
 Do not invent a receipt-time deadline for an unknown input tick. Complete
 confirmation command replay and native phase ordering remain required.
+
+Match native movement-effect command ordering for known client frames.
+The pinned constructor and live command callback use an active-state
+transition to force application, then clear the command ordering stamp.
+Keep the local prediction frame separately from the packet wire tick.
+Retain core snapshots in arrival order and allow infinite effects without
+an expiration clock binding. Do not infer a finite deadline for an unknown
+frame; full raw input-clock transport and history replay remain required.
+
+Execute 16,038 native constructor/application cases, 3,521 dispatcher
+cases and 6,144 combined command/ring cases privately against build
+1.26.51.1. A native countdown sequence reproduces three old-state failures;
+targeted production tests now match removal, activation and infinite-state
+results. The fixture does not execute complete world motion or rewind.
 ---
  .../api/model/CollisionContact.java           |  80 ++++++++
  .../viabedrock/api/model/FluidCurrent.java    |  44 +++++
  .../viabedrock/api/model/GeyserMovement.java  |  87 +++++++++
  .../viabedrock/api/model/GlideMovement.java   |  64 ++++++
- .../viabedrock/api/model/MovementEffect.java  |  59 ++++++
- .../api/model/MovementEffectTimeline.java     |  79 ++++++++
+ .../viabedrock/api/model/MovementEffect.java  |  63 ++++++
+ .../api/model/MovementEffectTimeline.java     |  91 +++++++++
  .../api/model/PlayerCorrection.java           |  45 +++++
  .../api/model/PlayerCorrectionTracker.java    |  27 +++
  .../viabedrock/api/model/PlayerPosture.java   |  63 ++++++
@@ -272,7 +286,7 @@ confirmation command replay and native phase ordering remain required.
  .../model/UnderwaterMovementAttribute.java    |  42 ++++
  .../viabedrock/api/model/WaterMovement.java   |  47 +++++
  .../api/model/entity/ClientPlayerEntity.java  |  33 +++-
- .../viabedrock/api/model/entity/Entity.java   |  35 +++-
+ .../viabedrock/api/model/entity/Entity.java   |  34 +++-
  .../api/model/entity/LivingEntity.java        |  25 ++-
  .../definition/ItemDefinitions.java           |  13 ++
  .../raphimc/viabedrock/api/util/MathUtil.java |   6 +-
@@ -294,8 +308,8 @@ confirmation command replay and native phase ordering remain required.
  .../model/GeyserMovementReferenceTest.java    |  50 +++++
  .../api/model/GeyserMovementTest.java         | 131 +++++++++++++
  .../api/model/GlideMovementTest.java          | 115 +++++++++++
- .../api/model/MovementEffectTest.java         |  51 +++++
- .../api/model/MovementEffectTimelineTest.java | 109 +++++++++++
+ .../api/model/MovementEffectTest.java         |  52 +++++
+ .../api/model/MovementEffectTimelineTest.java | 141 ++++++++++++++
  .../api/model/PlayerCorrectionTest.java       |  67 +++++++
  .../api/model/PlayerPostureTest.java          | 152 +++++++++++++++
  .../api/model/PlayerPredictionTest.java       | 139 +++++++++++++
@@ -311,7 +325,7 @@ confirmation command replay and native phase ordering remain required.
  .../packet/ClientPlayerPacketsTest.java       |  32 ++-
  .../packet/MovementEffectPacketsTest.java     | 116 +++++++++++
  .../packet/PlayerCorrectionPacketTest.java    | 184 ++++++++++++++++++
- 54 files changed, 2923 insertions(+), 43 deletions(-)
+ 54 files changed, 2971 insertions(+), 43 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FluidCurrent.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/GeyserMovement.java
@@ -651,10 +665,10 @@ index 000000000..e3df1f47a
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/MovementEffect.java b/src/main/java/net/raphimc/viabedrock/api/model/MovementEffect.java
 new file mode 100644
-index 000000000..8ed1101b9
+index 000000000..4688dbec2
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/MovementEffect.java
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,63 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -707,6 +721,10 @@ index 000000000..8ed1101b9
 +
 +    /** An unknown frame never creates a new receipt-time deadline. */
 +    public boolean activeAt(final long frame) {
++        if (this.duration == -1 && this.clientFrame < 0) {
++            // Native infinite effects do not require a clock binding or an expiration deadline.
++            return frame >= 0;
++        }
 +        if (this.clientFrame < 0 || frame < this.clientFrame || this.duration < -1) {
 +            return false;
 +        }
@@ -716,10 +734,10 @@ index 000000000..8ed1101b9
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java b/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java
 new file mode 100644
-index 000000000..c004de7b1
+index 000000000..6c9d125ae
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,91 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -738,7 +756,7 @@ index 000000000..c004de7b1
 +public final class MovementEffectTimeline {
 +
 +    private long completedFrame = -1;
-+    private final Map<Integer, Map<MovementEffectType, MovementEffect>> effects = new HashMap<>();
++    private final Map<Integer, Map<MovementEffectType, EffectState>> effects = new HashMap<>();
 +
 +    public long completeFrame() {
 +        return ++this.completedFrame;
@@ -749,10 +767,18 @@ index 000000000..c004de7b1
 +        if (type == null) {
 +            return;
 +        }
-+        final Map<MovementEffectType, MovementEffect> actorEffects = this.effects.computeIfAbsent(effect.entityId(), ignored -> new EnumMap<>(MovementEffectType.class));
-+        final MovementEffect previous = actorEffects.get(type);
-+        if (previous == null || Long.compareUnsigned(effect.serverTick(), previous.serverTick()) >= 0) {
-+            actorEffects.put(type, effect);
++        final Map<MovementEffectType, EffectState> actorEffects = this.effects.computeIfAbsent(effect.entityId(), ignored -> new EnumMap<>(MovementEffectType.class));
++        final EffectState previous = actorEffects.get(type);
++        final long frame = this.completedFrame + 1;
++        final boolean knownIncomingState = effect.clientFrame() >= 0 || effect.duration() <= 0;
++        final boolean forced = previous != null && knownIncomingState
++                && previous.effect().activeAt(frame) != effect.activeAt(frame);
++        // Native commands clear their ordering timestamp after application. Only local prediction
++        // can retain a newer timestamp; an active/inactive transition forces application regardless.
++        if (previous == null || previous.predictedFrame() < 0 || !previous.effect().activeAt(frame)
++                || effect.clientFrame() >= previous.predictedFrame()
++                || forced) {
++            actorEffects.put(type, new EffectState(effect, -1));
 +        }
 +    }
 +
@@ -771,22 +797,23 @@ index 000000000..c004de7b1
 +    /** The native sulfur ticker refreshes a 100-tick effect without shortening a longer active effect. */
 +    public void predictGeyserBoost(final int entityId) {
 +        final MovementEffectType type = MovementEffectType.GEYSER_BOOST;
-+        final Map<MovementEffectType, MovementEffect> actorEffects = this.effects.computeIfAbsent(entityId, ignored -> new EnumMap<>(MovementEffectType.class));
-+        final MovementEffect previous = actorEffects.get(type);
++        final Map<MovementEffectType, EffectState> actorEffects = this.effects.computeIfAbsent(entityId, ignored -> new EnumMap<>(MovementEffectType.class));
++        final EffectState state = actorEffects.get(type);
++        final MovementEffect previous = state == null ? null : state.effect();
 +        final long frame = this.completedFrame + 1;
 +        if (previous != null && previous.activeAt(frame)
 +                && (previous.duration() == -1 || previous.duration() - (frame - previous.clientFrame()) > 100)) {
 +            return;
 +        }
-+        // Local prediction preserves the ordering identity of the last confirmation.
-+        actorEffects.put(type, new MovementEffect(entityId, type.getValue(), 100,
-+                previous == null ? 0 : previous.serverTick(), frame));
++        // Keep the wire tick as evidence, separately from the native local ordering timestamp.
++        actorEffects.put(type, new EffectState(new MovementEffect(entityId, type.getValue(), 100,
++                previous == null ? 0 : previous.serverTick(), frame), frame));
 +    }
 +
 +    private boolean hasEffect(final int entityId, final MovementEffectType type) {
-+        final Map<MovementEffectType, MovementEffect> actorEffects = this.effects.get(entityId);
-+        final MovementEffect effect = actorEffects == null ? null : actorEffects.get(type);
-+        return effect != null && effect.activeAt(this.completedFrame + 1);
++        final Map<MovementEffectType, EffectState> actorEffects = this.effects.get(entityId);
++        final EffectState state = actorEffects == null ? null : actorEffects.get(type);
++        return state != null && state.effect().activeAt(this.completedFrame + 1);
 +    }
 +
 +    public void retainEntities(final IntPredicate present) {
@@ -796,6 +823,9 @@ index 000000000..c004de7b1
 +    public void clear() {
 +        this.effects.clear();
 +        this.completedFrame = -1;
++    }
++
++    private record EffectState(MovementEffect effect, long predictedFrame) {
 +    }
 +
 +}
@@ -1272,7 +1302,7 @@ index f69b430bf..79c646df3 100644
          if (shouldSneak != this.bedrockSneaking) {
              this.addAuthInputData(shouldSneak ? PlayerAuthInputData.StartSneaking : PlayerAuthInputData.StopSneaking);
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
-index 830fc8d36..099844428 100644
+index 830fc8d36..e58720a7b 100644
 --- a/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/entity/Entity.java
 @@ -22,22 +22,24 @@ import com.viaversion.viaversion.api.minecraft.entities.EntityTypes26_3;
@@ -1311,17 +1341,16 @@ index 830fc8d36..099844428 100644
      protected final String type;
      protected final int javaId;
      protected final UUID javaUuid;
-@@ -187,6 +190,32 @@ public class Entity {
+@@ -187,6 +190,31 @@ public class Entity {
          return this.uniqueId;
      }
  
 +    public void setMovementEffect(final MovementEffect effect) {
 +        final MovementEffectType type = MovementEffectType.getByValue(effect.type());
 +        if (type != null) {
-+            final MovementEffect previous = this.movementEffects.get(type);
-+            if (previous == null || Long.compareUnsigned(effect.serverTick(), previous.serverTick()) >= 0) {
-+                this.movementEffects.put(type, effect);
-+            }
++            // Native commands can force a transition from an older tick. Retain packet arrival order;
++            // the client's prediction timeline decides admission against locally predicted state.
++            this.movementEffects.put(type, effect);
 +        }
 +    }
 +
@@ -2580,10 +2609,10 @@ index 000000000..be74f06d7
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTest.java
 new file mode 100644
-index 000000000..fdf73f7c1
+index 000000000..14e55eba1
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTest.java
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,52 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2608,6 +2637,7 @@ index 000000000..fdf73f7c1
 +        assertFalse(effect.activeAt(100));
 +        assertFalse(new MovementEffect(10, 0, 20, 81, -1).activeAt(7));
 +        assertTrue(new MovementEffect(10, 0, -1, 81, 7).activeAt(Long.MAX_VALUE));
++        assertTrue(new MovementEffect(10, 0, -1, 81, -1).activeAt(Long.MAX_VALUE));
 +        assertFalse(new MovementEffect(10, 0, 0, 81, 7).activeAt(7));
 +        assertFalse(new MovementEffect(10, 0, -2, 81, 7).activeAt(7));
 +    }
@@ -2637,10 +2667,10 @@ index 000000000..fdf73f7c1
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java
 new file mode 100644
-index 000000000..234092e15
+index 000000000..419e63216
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,141 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2653,6 +2683,31 @@ index 000000000..234092e15
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class MovementEffectTimelineTest {
++
++    @Test
++    void followsNativeCommandOrderingAcrossRemovalActivationAndInfiniteEffects() {
++        final MovementEffectTimeline timeline = new MovementEffectTimeline();
++        for (int frame = 0; frame < 10; frame++) {
++            timeline.completeFrame();
++        }
++        timeline.accept(new MovementEffect(1, 2, 20, 10, 10));
++        timeline.completeFrame();
++        timeline.completeFrame();
++        assertTrue(timeline.hasGeyserBoost(1));
++        timeline.accept(new MovementEffect(1, 2, 0, 9, 9));
++        timeline.completeFrame();
++        assertFalse(timeline.hasGeyserBoost(1));
++        timeline.accept(new MovementEffect(1, 2, 100, 8, 8));
++        for (int frame = 0; frame < 25; frame++) {
++            timeline.completeFrame();
++        }
++        assertTrue(timeline.hasGeyserBoost(1));
++        timeline.accept(new MovementEffect(1, 2, -1, 0, 0));
++        for (int frame = 0; frame < 100; frame++) {
++            timeline.completeFrame();
++        }
++        assertTrue(timeline.hasGeyserBoost(1));
++    }
 +
 +    @Test
 +    void refreshesLocallyAdmittedGeysersAndExpiresAfterTheLastAdmission() {
@@ -2676,7 +2731,7 @@ index 000000000..234092e15
 +    }
 +
 +    @Test
-+    void localAdmissionPreservesLongerEffectsAndConfirmationOrdering() {
++    void localAdmissionPreservesLongerEffectsAndAllowsForcedTransitions() {
 +        final MovementEffectTimeline timeline = new MovementEffectTimeline();
 +        timeline.accept(new MovementEffect(1, 2, 150, 81, 0));
 +        timeline.predictGeyserBoost(1);
@@ -2685,11 +2740,14 @@ index 000000000..234092e15
 +        }
 +        assertTrue(timeline.hasGeyserBoost(1));
 +        timeline.predictGeyserBoost(1);
-+        timeline.accept(new MovementEffect(1, 2, 0, 80, 100));
++        timeline.accept(new MovementEffect(1, 2, 5, 180, 99));
++        for (int i = 0; i < 10; i++) {
++            timeline.completeFrame();
++        }
 +        assertTrue(timeline.hasGeyserBoost(1));
-+        timeline.accept(new MovementEffect(1, 2, 0, 82, 100));
++        timeline.accept(new MovementEffect(1, 2, 0, 180, 99));
 +        assertFalse(timeline.hasGeyserBoost(1));
-+        timeline.accept(new MovementEffect(1, 2, -1, 83, 100));
++        timeline.accept(new MovementEffect(1, 2, -1, 181, 100));
 +        timeline.predictGeyserBoost(1);
 +        for (int i = 0; i < 101; i++) {
 +            timeline.completeFrame();
@@ -2700,7 +2758,7 @@ index 000000000..234092e15
 +    }
 +
 +    @Test
-+    void boundsLateBoostsToConfirmedFramesAndRejectsOlderConfirmations() {
++    void boundsLateBoostsToConfirmedFramesAndAppliesOlderRemovals() {
 +        final MovementEffectTimeline timeline = new MovementEffectTimeline();
 +        for (int frame = 0; frame < 10; frame++) {
 +            assertEquals(frame, timeline.completeFrame());
@@ -2709,6 +2767,8 @@ index 000000000..234092e15
 +        assertTrue(timeline.hasGlideBoost(1));
 +        assertFalse(timeline.hasGlideBoost(2));
 +        timeline.accept(new MovementEffect(1, 0, 1, 99, 0));
++        assertFalse(timeline.hasGlideBoost(1));
++        timeline.accept(new MovementEffect(1, 0, 20, 98, 0));
 +        assertTrue(timeline.hasGlideBoost(1));
 +        for (int frame = 10; frame < 20; frame++) {
 +            assertTrue(timeline.hasGlideBoost(1));
@@ -2718,7 +2778,7 @@ index 000000000..234092e15
 +        timeline.accept(new MovementEffect(1, 0, 5, 101, 0));
 +        assertFalse(timeline.hasGlideBoost(1));
 +        timeline.accept(new MovementEffect(1, 0, -1, 102, -1));
-+        assertFalse(timeline.hasGlideBoost(1));
++        assertTrue(timeline.hasGlideBoost(1));
 +    }
 +
 +    @Test
@@ -2726,6 +2786,8 @@ index 000000000..234092e15
 +        final MovementEffectTimeline timeline = new MovementEffectTimeline();
 +        timeline.accept(new MovementEffect(1, 0, -1, Long.MIN_VALUE, 0));
 +        timeline.accept(new MovementEffect(1, 0, 0, Long.MAX_VALUE, 0));
++        assertFalse(timeline.hasGlideBoost(1));
++        timeline.accept(new MovementEffect(1, 0, -1, 0, 0));
 +        timeline.accept(new MovementEffect(1, 1, 1, Long.MIN_VALUE, 0));
 +        timeline.accept(new MovementEffect(2, 2, -1, 0, 0));
 +        assertTrue(timeline.hasGlideBoost(1));
@@ -3752,7 +3814,7 @@ index ad55fc55c..93bdd824d 100644
          final ClientPlayerEntity player = player();
 diff --git a/src/test/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPacketsTest.java b/src/test/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPacketsTest.java
 new file mode 100644
-index 000000000..a0835b55a
+index 000000000..fcc1b09b8
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/protocol/packet/MovementEffectPacketsTest.java
 @@ -0,0 +1,116 @@
@@ -3830,7 +3892,7 @@ index 000000000..a0835b55a
 +            final ClientPlayerEntity player = tracker.addEntity(new ClientPlayerEntity(user, 1, UUID.randomUUID(),
 +                    new PlayerAbilities(1, (byte) 0, (byte) 0)), false);
 +            for (int type : new int[]{0, 1, 2}) {
-+                for (long tick : new long[]{0, 91, 92}) {
++                for (long tick : new long[]{91, 92, 0}) {
 +                    final var input = Unpooled.buffer();
 +                    final var output = Unpooled.buffer();
 +                    try {
