@@ -621,3 +621,55 @@ The current client spawns through ViaProxy on strict BDS 1.26.51.1 and remains c
 An ordinary Java 26.3 connection also completes the same stability check.
 Runtime inspection confirms that both the sulfur ticker wrapper and the player travel injection transform their intended classes.
 These connection checks do not exercise an active geyser or establish ordinary Java geyser motion.
+
+## Local geyser admission investigation, October 7, 2026
+
+**Observed failure:** The strict BDS fixture sends geyser effects with tick `0` and duration `100`.
+Before this change, all ten observed confirmations had no client-frame binding.
+None of the 173 observed travel calls had an active local geyser effect.
+Upward server corrections did not prove local geyser physics worked.
+
+**Implemented:** Core now reproduces local sulfur admission and the 100-frame effect refresh.
+The add-on supplies actor bounds from the sulfur block ticker before Java checks its launch range.
+Admission uses strict overlap with a one-block-wide column, from the sulfur base to `baseY + 6 * waterDepth`.
+This range differs from the subsequent body-center lift check and its upper limit.
+Refresh preserves longer and infinite active effects.
+The local Bedrock actor still skips Java's launch impulse and fall-distance reset.
+
+**Native evidence:** The original `144ae5140` producer and water-column helpers produced all 32 expected admission AABBs.
+Cases cover both active sulfur states, all four profiles, negative coordinates, and large coordinates.
+The fixture supplies block getters, collision boxes, dispatch, and client-level access.
+Execution stops at the actor query. It does not execute native actor selection, scheduling, or complete world motion.
+The existing 6,780 native lift cases still match the refactored core rule.
+
+The native incoming handler `14133f140` applies effects directly to actors without replay state.
+With replay state, `143281540` adjusts durations and `142890810` dispatches history commands.
+Tick zero does not select a universal receipt-time deadline in this path.
+The production timeline still needs complete confirmation-command replay and native phase verification.
+Local admission fixes a separate missing production step.
+
+**Regression checks:** The core build passes 790 tests, with 22 optional skips and no failures or errors.
+The complete add-on build passes 605 tests, with 117 optional skips and no failures or errors.
+The core native geyser reference test executes.
+Both patch stacks replay, ViaProxy builds, and all 1,249 embedded core files match both bundles.
+Artifact dry runs review nine exact replacement paths. Every replacement preserves the other 32 inventory entries.
+Private rollback copies remain under `.stackanvil/research/geyser-live/artifacts/build-rollback/`.
+Private client rollback copies remain under `.stackanvil/research/geyser-live/java-client-rollback-5/`.
+
+**Live verification:** The current client joined strict BDS 1.26.51.1 through ViaProxy and stayed connected for 20 seconds.
+The observer recorded 375 paired travel phases, including 89 active geyser phases and 36 velocity changes.
+Every changed velocity matches the native float addition of `0.2F` bit for bit.
+After the server removed the source, all 276 control phases left vertical velocity unchanged.
+The retained effect was active for the first 20 control phases and inactive from completed frame 118 onward.
+The observer supplied no client effect, input, or velocity values.
+These observations verify this local lift path. They do not establish complete native trajectories or correction replay.
+
+The fixture starts with an inactive source and waits for the client frame clock before activating the geyser.
+An earlier driver activated the source before loading finished. BDS lifted the actor outside the admission range before observation began.
+The final inventory contains the same 11 files. Only the launcher launch-time field and game log changed.
+The private display and owned processes stopped. Both existing user servers retain their original process identities.
+
+**Still required:** Complete native trajectories, actor selection, phase ordering, fall distance, history replay, and delayed confirmations.
+Direct route comparisons, stock Java movement, mixed terrain, vehicles, Boar, CubeCraft, and actual platform joins remain required.
+The full gameplay matrix and all other goal requirements remain open.
+Private evidence remains under `.stackanvil/research/geyser-live/`.

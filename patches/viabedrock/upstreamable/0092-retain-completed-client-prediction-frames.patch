@@ -1,4 +1,4 @@
-From 3a38ae4f6cddc6ea8330eb24f6eb3eec3f2f11f5 Mon Sep 17 00:00:00 2001
+From b09f356970b2cb97f0672772be909165d002847f Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:28 +0200
 Subject: [PATCH] feat(movement): retain completed client prediction frames
@@ -244,13 +244,25 @@ Private execution of the pinned 1.26.51.1 callback and all four helpers
 matches 6,780 positive and negative cases. Original property lookup and
 component admission execute unchanged. Native world trajectory, client
 phase ordering and correction/history comparisons remain required.
+
+Reproduce local sulfur ticker admission from the pinned native block
+entity producer 144ae5140. Use strict actor AABB overlap with the native
+water-depth range, then refresh the 100-frame geyser effect without
+shortening longer or infinite active effects. Keep admission separate
+from the center-column lift query. Tick-zero server confirmations are
+not sufficient to reproduce native local effect prediction.
+
+Native incoming handler 14133f140 uses direct application without replay
+state, or duration adjustment and history commands with replay state.
+Do not invent a receipt-time deadline for an unknown input tick. Complete
+confirmation command replay and native phase ordering remain required.
 ---
  .../api/model/CollisionContact.java           |  80 ++++++++
  .../viabedrock/api/model/FluidCurrent.java    |  44 +++++
- .../viabedrock/api/model/GeyserMovement.java  |  70 +++++++
+ .../viabedrock/api/model/GeyserMovement.java  |  87 +++++++++
  .../viabedrock/api/model/GlideMovement.java   |  64 ++++++
  .../viabedrock/api/model/MovementEffect.java  |  59 ++++++
- .../api/model/MovementEffectTimeline.java     |  64 ++++++
+ .../api/model/MovementEffectTimeline.java     |  79 ++++++++
  .../api/model/PlayerCorrection.java           |  45 +++++
  .../api/model/PlayerCorrectionTracker.java    |  27 +++
  .../viabedrock/api/model/PlayerPosture.java   |  63 ++++++
@@ -280,10 +292,10 @@ phase ordering and correction/history comparisons remain required.
  .../api/model/CollisionContactTest.java       |  60 ++++++
  .../api/model/FluidCurrentTest.java           |  56 ++++++
  .../model/GeyserMovementReferenceTest.java    |  50 +++++
- .../api/model/GeyserMovementTest.java         | 106 ++++++++++
+ .../api/model/GeyserMovementTest.java         | 131 +++++++++++++
  .../api/model/GlideMovementTest.java          | 115 +++++++++++
  .../api/model/MovementEffectTest.java         |  51 +++++
- .../api/model/MovementEffectTimelineTest.java |  64 ++++++
+ .../api/model/MovementEffectTimelineTest.java | 109 +++++++++++
  .../api/model/PlayerCorrectionTest.java       |  67 +++++++
  .../api/model/PlayerPostureTest.java          | 152 +++++++++++++++
  .../api/model/PlayerPredictionTest.java       | 139 +++++++++++++
@@ -299,7 +311,7 @@ phase ordering and correction/history comparisons remain required.
  .../packet/ClientPlayerPacketsTest.java       |  32 ++-
  .../packet/MovementEffectPacketsTest.java     | 116 +++++++++++
  .../packet/PlayerCorrectionPacketTest.java    | 184 ++++++++++++++++++
- 54 files changed, 2821 insertions(+), 43 deletions(-)
+ 54 files changed, 2923 insertions(+), 43 deletions(-)
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/CollisionContact.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/FluidCurrent.java
  create mode 100644 src/main/java/net/raphimc/viabedrock/api/model/GeyserMovement.java
@@ -476,10 +488,10 @@ index 000000000..45fe897b6
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/GeyserMovement.java b/src/main/java/net/raphimc/viabedrock/api/model/GeyserMovement.java
 new file mode 100644
-index 000000000..292df8788
+index 000000000..a0b8ce34e
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/GeyserMovement.java
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,87 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -493,6 +505,18 @@ index 000000000..292df8788
 +public final class GeyserMovement {
 +
 +    private static final float[] SPEED_LIMITS = {0.4F, 0.5F, 0.6F, 0.7F};
++
++    /** Native sulfur ticker admission uses actor overlap, independently of the body-center lift query. */
++    public static boolean admits(final Position3f minimum, final Position3f maximum, final int x, final int y,
++                                 final int z, final BlockAccess blocks) {
++        if (!blocks.cell(x, y, z).erupting()) {
++            return false;
++        }
++        final int depth = waterDepth(x, y, z, blocks);
++        return depth != 0 && maximum.x() > (float) x && minimum.x() < (float) (x + 1)
++                && maximum.y() > (float) y && minimum.y() < (float) (y + depth * 6)
++                && maximum.z() > (float) z && minimum.z() < (float) (z + 1);
++    }
 +
 +    public static float calculate(final Position3f minimum, final Position3f maximum, final float verticalMotion,
 +                                  final boolean boosted, final boolean flying, final BlockAccess blocks) {
@@ -512,6 +536,15 @@ index 000000000..292df8788
 +        if (!blocks.cell(x, y, z).erupting()) {
 +            return verticalMotion;
 +        }
++        final int depth = waterDepth(x, y, z, blocks);
++        if (depth != 0 && minimum.y() < (float) (y + depth * 6 + 1) && verticalMotion < SPEED_LIMITS[depth - 1]) {
++            // The cap is checked before addition; native can overshoot it by this increment.
++            return verticalMotion + 0.2F;
++        }
++        return verticalMotion;
++    }
++
++    private static int waterDepth(final int x, final int y, final int z, final BlockAccess blocks) {
 +        int depth = 0;
 +        for (int offset = 1; offset <= 4; offset++) {
 +            final Cell cell = blocks.cell(x, y + offset, z);
@@ -523,13 +556,9 @@ index 000000000..292df8788
 +        final Cell top = blocks.cell(x, y + depth + 1, z);
 +        // Any source liquid rejects the cap, including lava. Flowing liquid does not.
 +        if (depth == 0 || top.sourceLiquid() || top.colliding()) {
-+            return verticalMotion;
++            return 0;
 +        }
-+        if (minimum.y() < (float) (y + depth * 6 + 1) && verticalMotion < SPEED_LIMITS[depth - 1]) {
-+            // The cap is checked before addition; native can overshoot it by this increment.
-+            return verticalMotion + 0.2F;
-+        }
-+        return verticalMotion;
++        return depth;
 +    }
 +
 +    private static int coordinate(final float value) {
@@ -687,10 +716,10 @@ index 000000000..8ed1101b9
 +}
 diff --git a/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java b/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java
 new file mode 100644
-index 000000000..3b2b68d41
+index 000000000..c004de7b1
 --- /dev/null
 +++ b/src/main/java/net/raphimc/viabedrock/api/model/MovementEffectTimeline.java
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,79 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -705,7 +734,7 @@ index 000000000..3b2b68d41
 +import java.util.Map;
 +import java.util.function.IntPredicate;
 +
-+/** Client frame clock and confirmed per-actor effects; no receipt-time duration estimates. */
++/** Client frame clock, local effect prediction and server confirmations. */
 +public final class MovementEffectTimeline {
 +
 +    private long completedFrame = -1;
@@ -737,6 +766,21 @@ index 000000000..3b2b68d41
 +
 +    public boolean hasGeyserBoost(final int entityId) {
 +        return this.hasEffect(entityId, MovementEffectType.GEYSER_BOOST);
++    }
++
++    /** The native sulfur ticker refreshes a 100-tick effect without shortening a longer active effect. */
++    public void predictGeyserBoost(final int entityId) {
++        final MovementEffectType type = MovementEffectType.GEYSER_BOOST;
++        final Map<MovementEffectType, MovementEffect> actorEffects = this.effects.computeIfAbsent(entityId, ignored -> new EnumMap<>(MovementEffectType.class));
++        final MovementEffect previous = actorEffects.get(type);
++        final long frame = this.completedFrame + 1;
++        if (previous != null && previous.activeAt(frame)
++                && (previous.duration() == -1 || previous.duration() - (frame - previous.clientFrame()) > 100)) {
++            return;
++        }
++        // Local prediction preserves the ordering identity of the last confirmation.
++        actorEffects.put(type, new MovementEffect(entityId, type.getValue(), 100,
++                previous == null ? 0 : previous.serverTick(), frame));
 +    }
 +
 +    private boolean hasEffect(final int entityId, final MovementEffectType type) {
@@ -2278,10 +2322,10 @@ index 000000000..e46ebbb44
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementTest.java b/src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementTest.java
 new file mode 100644
-index 000000000..9fc7bd39e
+index 000000000..a26a9542f
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/GeyserMovementTest.java
-@@ -0,0 +1,106 @@
+@@ -0,0 +1,131 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2302,6 +2346,31 @@ index 000000000..9fc7bd39e
 +    private static final GeyserMovement.Cell AIR = new GeyserMovement.Cell(false, false, false, false, false);
 +    private static final GeyserMovement.Cell SULFUR = new GeyserMovement.Cell(true, true, false, false, false);
 +    private static final GeyserMovement.Cell WATER = new GeyserMovement.Cell(false, false, true, false, true);
++
++    @Test
++    void admitsActorOverlapWithinEachNativeProfileWithoutRequiringItsCenterInside() {
++        for (int depth = 1; depth <= 4; depth++) {
++            final var column = column(depth);
++            final GeyserMovement.BlockAccess blocks = (x, y, z) -> column.getOrDefault(y, AIR);
++            final float top = depth * 6F;
++            assertTrue(GeyserMovement.admits(new Position3f(-0.5F, Math.nextDown(top), -0.5F),
++                    new Position3f(0.1F, top + 1.8F, 0.1F), 0, 0, 0, blocks));
++            assertFalse(GeyserMovement.admits(new Position3f(0F, top, 0F),
++                    new Position3f(0.6F, top + 1.8F, 0.6F), 0, 0, 0, blocks));
++            for (final Position3f minimum : new Position3f[]{new Position3f(1F, 1F, 0F), new Position3f(0F, 1F, 1F)}) {
++                assertFalse(GeyserMovement.admits(minimum, new Position3f(minimum.x() + 0.6F, 2.8F, minimum.z() + 0.6F),
++                        0, 0, 0, blocks));
++            }
++            column.put(depth + 1, WATER);
++            if (depth == 4) {
++                assertFalse(GeyserMovement.admits(new Position3f(0F, 1F, 0F),
++                        new Position3f(0.6F, 2.8F, 0.6F), 0, 0, 0, blocks));
++            }
++            column.put(0, AIR);
++            assertFalse(GeyserMovement.admits(new Position3f(0F, 1F, 0F),
++                    new Position3f(0.6F, 2.8F, 0.6F), 0, 0, 0, blocks));
++        }
++    }
 +
 +    @Test
 +    void selectsEveryProfileAndChecksTheCapBeforeAddingLift() {
@@ -2568,10 +2637,10 @@ index 000000000..fdf73f7c1
 +}
 diff --git a/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java
 new file mode 100644
-index 000000000..a314eb9d4
+index 000000000..234092e15
 --- /dev/null
 +++ b/src/test/java/net/raphimc/viabedrock/api/model/MovementEffectTimelineTest.java
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,109 @@
 +/*
 + * This file is part of ViaBedrock - https://github.com/ViaVersionAddons/ViaBedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -2584,6 +2653,51 @@ index 000000000..a314eb9d4
 +import static org.junit.jupiter.api.Assertions.*;
 +
 +class MovementEffectTimelineTest {
++
++    @Test
++    void refreshesLocallyAdmittedGeysersAndExpiresAfterTheLastAdmission() {
++        final MovementEffectTimeline timeline = new MovementEffectTimeline();
++        timeline.accept(new MovementEffect(1, 2, 100, 0, -1));
++        assertFalse(timeline.hasGeyserBoost(1));
++        timeline.predictGeyserBoost(1);
++        for (int frame = 0; frame < 17; frame++) {
++            assertTrue(timeline.hasGeyserBoost(1));
++            timeline.completeFrame();
++        }
++        timeline.predictGeyserBoost(1);
++        for (int frame = 0; frame < 100; frame++) {
++            assertTrue(timeline.hasGeyserBoost(1));
++            assertFalse(timeline.hasGeyserBoost(2));
++            timeline.completeFrame();
++        }
++        assertFalse(timeline.hasGeyserBoost(1));
++        timeline.accept(new MovementEffect(1, 2, 100, 0, -1));
++        assertFalse(timeline.hasGeyserBoost(1));
++    }
++
++    @Test
++    void localAdmissionPreservesLongerEffectsAndConfirmationOrdering() {
++        final MovementEffectTimeline timeline = new MovementEffectTimeline();
++        timeline.accept(new MovementEffect(1, 2, 150, 81, 0));
++        timeline.predictGeyserBoost(1);
++        for (int i = 0; i < 100; i++) {
++            timeline.completeFrame();
++        }
++        assertTrue(timeline.hasGeyserBoost(1));
++        timeline.predictGeyserBoost(1);
++        timeline.accept(new MovementEffect(1, 2, 0, 80, 100));
++        assertTrue(timeline.hasGeyserBoost(1));
++        timeline.accept(new MovementEffect(1, 2, 0, 82, 100));
++        assertFalse(timeline.hasGeyserBoost(1));
++        timeline.accept(new MovementEffect(1, 2, -1, 83, 100));
++        timeline.predictGeyserBoost(1);
++        for (int i = 0; i < 101; i++) {
++            timeline.completeFrame();
++        }
++        assertTrue(timeline.hasGeyserBoost(1));
++        timeline.clear();
++        assertFalse(timeline.hasGeyserBoost(1));
++    }
 +
 +    @Test
 +    void boundsLateBoostsToConfirmedFramesAndRejectsOlderConfirmations() {

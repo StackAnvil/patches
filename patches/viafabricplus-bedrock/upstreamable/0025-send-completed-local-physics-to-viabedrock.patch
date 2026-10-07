@@ -1,4 +1,4 @@
-From 64c553840b6c20721b8956e13c40a7a5ef1549dd Mon Sep 17 00:00:00 2001
+From a6e03e1c59de5969bd5da82760170bc58432b893 Mon Sep 17 00:00:00 2001
 From: AlexProgrammerDE <40795980+AlexProgrammerDE@users.noreply.github.com>
 Date: Tue, 6 Oct 2026 04:35:53 +0200
 Subject: [PATCH] feat(movement): send completed local physics to ViaBedrock
@@ -312,6 +312,13 @@ The pinned native callback and four helpers match 6,780 cases. Client
 world adapters distinguish sulfur states, source/flowing/falling fluids
 and waterlogged collision shapes. Full native phase ordering, speculative
 geyser admission, live trajectories and history replay remain required.
+
+Observe sulfur block entity ticks before Java's launch-range checks and
+feed the local actor bounds into core native geyser admission. Refresh
+the effect timeline while the actor overlaps the source range, then
+apply lift during travel. Java's launch impulse and fall-distance reset
+remain excluded for the local Bedrock actor. Native command-history
+replay and full-world trajectories remain separate verification gates.
 ---
  .../bedrock/ViaFabricPlusBedrock.java         |   6 +
  .../access/IBedrockPlayerPosture.java         |  14 ++
@@ -324,9 +331,9 @@ geyser admission, live trajectories and history replay remain required.
  .../features/movement/MixinLocalPlayer.java   | 194 +++++++++++++++++-
  .../mixin/features/movement/MixinPlayer.java  |  55 +++--
  .../MixinPlayerCorrectionPacketListener.java  |  23 +++
- .../MixinPotentSulfurBlockEntity.java         |  33 +++
+ .../MixinPotentSulfurBlockEntity.java         |  44 ++++
  .../features/movement/MixinVoxelShape.java    |  28 +++
- .../bedrock/input/BedrockMovementEffects.java |  76 +++++++
+ .../bedrock/input/BedrockMovementEffects.java |  80 ++++++++
  .../input/BedrockPlayerCorrections.java       |  44 ++++
  .../bedrock/input/MovementEffectPayload.java  |  24 +++
  .../input/PlayerCorrectionPayload.java        |  24 +++
@@ -334,14 +341,14 @@ geyser admission, live trajectories and history replay remain required.
  .../input/UnderwaterMovementPayload.java      |  24 +++
  .../movement/BedrockCollisionContacts.java    |  50 +++++
  .../bedrock/movement/BedrockFluidPhysics.java |  86 ++++++++
- .../movement/BedrockGeyserPhysics.java        |  53 +++++
+ .../movement/BedrockGeyserPhysics.java        |  70 +++++++
  .../movement/BedrockPlayerPosture.java        |  63 ++++++
  .../viafabricplus-bedrock.mixins.json         |   5 +
  .../BedrockCollisionContactsTest.java         |  39 ++++
  .../movement/BedrockFluidPhysicsTest.java     | 121 +++++++++++
  .../movement/BedrockGeyserPhysicsTest.java    | 101 +++++++++
  .../movement/BedrockPlayerPostureTest.java    |  45 ++++
- 28 files changed, 1297 insertions(+), 61 deletions(-)
+ 28 files changed, 1329 insertions(+), 61 deletions(-)
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/access/IBedrockPlayerPosture.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinAvatar.java
  create mode 100644 src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinFireworkRocketEntity.java
@@ -1114,10 +1121,10 @@ index 0000000..906163e
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPotentSulfurBlockEntity.java b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPotentSulfurBlockEntity.java
 new file mode 100644
-index 0000000..ddb9bb3
+index 0000000..485eabe
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/injection/mixin/features/movement/MixinPotentSulfurBlockEntity.java
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,44 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1128,13 +1135,18 @@ index 0000000..ddb9bb3
 +import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 +import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 +import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import com.viaversion.viafabricplus.bedrock.movement.BedrockGeyserPhysics;
 +import net.minecraft.client.player.LocalPlayer;
++import net.minecraft.core.BlockPos;
 +import net.minecraft.world.entity.Entity;
 +import net.minecraft.world.level.Level;
 +import net.minecraft.world.level.block.entity.PotentSulfurBlockEntity;
++import net.minecraft.world.level.block.state.BlockState;
 +import net.minecraft.world.phys.AABB;
 +import org.spongepowered.asm.mixin.Mixin;
 +import org.spongepowered.asm.mixin.injection.At;
++import org.spongepowered.asm.mixin.injection.Inject;
++import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 +
 +import java.util.List;
 +import java.util.function.Predicate;
@@ -1142,10 +1154,16 @@ index 0000000..ddb9bb3
 +@Mixin(PotentSulfurBlockEntity.class)
 +public abstract class MixinPotentSulfurBlockEntity {
 +
++    @Inject(method = "lambda$static$5", at = @At("HEAD"))
++    private static void admitNativeLocalTravel(final Level level, final BlockPos position, final BlockState state,
++                                               final PotentSulfurBlockEntity blockEntity, final CallbackInfo ci) {
++        BedrockGeyserPhysics.admit(level, position);
++    }
++
 +    @WrapOperation(method = "lambda$static$5", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/Level;getEntitiesOfClass(Ljava/lang/Class;Lnet/minecraft/world/phys/AABB;Ljava/util/function/Predicate;)Ljava/util/List;"))
 +    private static <T extends Entity> List<T> excludeNativeLocalTravel(final Level level, final Class<T> type, final AABB box,
 +                                                                      final Predicate<? super T> predicate, final Operation<List<T>> original) {
-+        // Core applies confirmed native lift during local travel. Java's block ticker must not add a second impulse or reset fall distance.
++        // Core applies native lift during local travel. Java's block ticker must not add a second impulse or reset fall distance.
 +        return original.call(level, type, box, (Predicate<T>) entity -> predicate.test(entity)
 +                && !(entity instanceof LocalPlayer && BedrockInputPermissions.isBedrockConnection()));
 +    }
@@ -1187,10 +1205,10 @@ index 0000000..39a52c2
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java
 new file mode 100644
-index 0000000..cd4e565
+index 0000000..321b3bb
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/input/BedrockMovementEffects.java
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,80 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1261,6 +1279,10 @@ index 0000000..cd4e565
 +
 +    public static boolean hasGeyserBoost(final int entityId) {
 +        return TIMELINE.hasGeyserBoost(entityId);
++    }
++
++    public static void predictGeyserBoost(final int entityId) {
++        TIMELINE.predictGeyserBoost(entityId);
 +    }
 +
 +    public static @Nullable Float underwaterSpeed(final int entityId) {
@@ -1587,10 +1609,10 @@ index 0000000..d45e6d4
 +}
 diff --git a/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockGeyserPhysics.java b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockGeyserPhysics.java
 new file mode 100644
-index 0000000..c169135
+index 0000000..21ba2e9
 --- /dev/null
 +++ b/src/main/java/com/viaversion/viafabricplus/bedrock/movement/BedrockGeyserPhysics.java
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,70 @@
 +/*
 + * This file is part of ViaFabricPlus Bedrock - https://github.com/ViaVersionAddons/viafabricplus-bedrock
 + * Copyright (C) 2026 ViaVersion and contributors
@@ -1599,9 +1621,12 @@ index 0000000..c169135
 +package com.viaversion.viafabricplus.bedrock.movement;
 +
 +import com.viaversion.viafabricplus.bedrock.input.BedrockMovementEffects;
++import com.viaversion.viafabricplus.bedrock.input.BedrockInputPermissions;
++import net.minecraft.client.Minecraft;
 +import net.minecraft.client.player.LocalPlayer;
 +import net.minecraft.core.BlockPos;
 +import net.minecraft.world.level.BlockGetter;
++import net.minecraft.world.level.Level;
 +import net.minecraft.world.level.block.Blocks;
 +import net.minecraft.world.level.block.PotentSulfurBlock;
 +import net.minecraft.world.level.block.state.properties.PotentSulfurState;
@@ -1612,6 +1637,20 @@ index 0000000..c169135
 +
 +/** Supplies local block and collision observations to the core geyser rule. */
 +public final class BedrockGeyserPhysics {
++
++    public static void admit(final Level level, final BlockPos position) {
++        final LocalPlayer player = Minecraft.getInstance().player;
++        if (player == null || player.level() != level || !BedrockInputPermissions.isBedrockConnection()) {
++            return;
++        }
++        final var box = player.getBoundingBox();
++        if (GeyserMovement.admits(new Position3f((float) box.minX, (float) box.minY, (float) box.minZ),
++                new Position3f((float) box.maxX, (float) box.maxY, (float) box.maxZ),
++                position.getX(), position.getY(), position.getZ(),
++                (x, y, z) -> cell(level, new BlockPos(x, y, z)))) {
++            BedrockMovementEffects.predictGeyserBoost(player.getId());
++        }
++    }
 +
 +    public static void apply(final LocalPlayer player) {
 +        if (!BedrockMovementEffects.hasGeyserBoost(player.getId()) || player.getAbilities().flying) {
