@@ -8478,3 +8478,26 @@ A second bounded desktop capture verifies twelve container-screen samples across
 The invalid-block closure does not recur, and the actual screen uses the chest title.
 The connection stays active after observer cleanup.
 Native screen styling, left-click comparison and complete menu interaction parity remain open.
+
+Same-name resource-pack definitions now retain lower members when an upper
+definition supplies only an override. This restores native count and title
+labels in three-row and six-row inventory scenes. The shared renderer uses
+the live Java menu's slots and cursor; the ordinary menu remains available
+when an authored scene contains unsupported controls.
+
+Retaining the lower definitions exposed an inactive-controller regression.
+Settings and Wardrobe fell back to generic dialogs because the resolver read
+the other form controller's collection. Known inactive action and custom-form
+collections now remain empty, including their length bindings. The active
+controller retains its input state and response indices. Unknown collections
+still fail safely. All five captured forms resolve and pass the unchanged
+client consumer checks after the fix. Core passes 922 tests with 30 optional
+skips; the paired add-on passes 578 with 118 optional skips. ViaProxy passes
+four tests and carries the same core entries.
+
+The corrected desktop artifact starts successfully, but its connected menus
+still need live verification. The latest capture did not include a Social
+Menu opening. Private production-loader checks accept both recorded and
+code-derived container titles, but do not establish live delivery, filled-slot
+rendering or the menu replacement lifecycle. NPC link clicks work in the
+user's latest report. Full native UI, route and shader comparisons remain open.
